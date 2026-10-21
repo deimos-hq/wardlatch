@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Deimos AI LLC
+#
+# Wardlatch has no npm dependencies, so the only things to keep current are the GitHub Actions its workflows pin by
+# commit SHA. Dependabot proposes each update as a pull request, which goes through CI and review like any change.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "CI"

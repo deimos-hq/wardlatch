@@ -1,0 +1,114 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Deimos AI LLC
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request:
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: ['18', '20', '22']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with: { node-version: '${{ matrix.node }}' }
+      - name: Every module parses on this Node
+        run: for f in bin/*.mjs lib/*.mjs test/*.mjs; do node --check "$f" || exit 1; done
+      - name: Tests (offline; deprecations are errors)
+        # The engine floor is 18.17, so a Node API that is deprecated anywhere in 18 to 22 fails here rather
+        # than warning a user later.
+        run: node --test test/
+        env:
+          NODE_OPTIONS: --throw-deprecation --pending-deprecation
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with: { node-version: '22' }
+      - name: Line, branch and function coverage of bin/ and lib/ (fails below 80% of lines or functions)
+        run: npm run coverage
+
+  mac-fix:
+    name: mac fix (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { persist-credentials: false }
+      - name: The Mac fix is the published file
+        # www.deimoscore.com serves fix/fix-macos.sh as a download and prints this SHA-256 on the page and in the
+        # site's public changelog (CL-18). Any edit, even a comment, breaks that published checksum. A deliberate
+        # change to the script must update the site's download, the page's hash and the changelog record together,
+        # and this hash with them.
+        run: echo "22153b4acaaa8675f9b4a87390a06cae077f9b5c8f748945ff6b886e400f6a86  fix/fix-macos.sh" | shasum -a 256 -c -
+      - name: The Mac fix on copies of this runner's /etc/ssl/cert.pem (refuses to run off macOS)
+        run: bash test/fix-macos.check.sh
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { persist-credentials: false }
+      - name: ShellCheck, default checks
+        run: |
+          shellcheck --version
+          shellcheck fix/fix-macos.sh test/fix-macos.check.sh
+
+  reuse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { persist-credentials: false }
+      - name: Every file declares its licence
+        uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5  # v6.0.0
+
+  dco:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { fetch-depth: 0, persist-credentials: false }
+      - name: Every commit is signed off
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          # The commits this push or pull request adds, and no others: the 13 commits before the sign-off rule
+          # (21 October 2026) are never in a range. --no-merges, because on a pull request GitHub checks out a merge
+          # commit it wrote itself, which nobody can sign off.
+          if [ "$EVENT" = pull_request ]; then
+            range="$PR_BASE..$PR_HEAD"
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            range="$BEFORE..$AFTER"
+          else
+            range="$AFTER~1..$AFTER"
+          fi
+          fail=0; checked=0
+          while read -r sha; do
+            checked=$((checked + 1))
+            author=$(git log -1 --format=%ae "$sha")
+            case "$author" in *'[bot]@users.noreply.github.com') echo "skip $sha (bot: $author)"; continue ;; esac
+            if ! git log -1 --format=%B "$sha" | grep -qi '^Signed-off-by: .\+ <.\+@.\+>'; then
+              echo "::error::commit $sha is missing Signed-off-by (use git commit -s)"; fail=1
+            fi
+          done < <(git rev-list --no-merges "$range")
+          # A range that matched nothing is a gate that checked nothing; say so rather than passing quietly.
+          echo "checked $checked commit(s) in $range"
+          exit $fail
