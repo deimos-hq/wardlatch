@@ -127,3 +127,12 @@ test('WordPress: compromised Rank Math PRO, old UpdraftPlus, the indicator, and 
   plugin('updraftplus', 'updraftplus.php', '2.26.13');
   assert.ok(checkSite(site, rules).some((x) => x.status === 'SAFE' && x.what === 'updraftplus 2.26.13'), 'premium line fixed in 2.26.13');
 });
+
+test('PHP-style fixes per release line: patched, unpatched, and end of life', () => {
+  const bin = join(dir, 'phpbin'); mkdirSync(bin, { recursive: true });
+  const php = (v) => writeFileSync(join(bin, 'php'), `#!/bin/sh\necho "PHP ${v} (cli)"\n`, { mode: 0o755 });
+  const rule = { binary: 'php', versionArgs: ['-v'], versionRe: 'PHP (\\d+\\.\\d+\\.\\d+)', fixedIn: ['8.2.40', '8.3.40', '8.4.30', '8.5.15'] };
+  php('8.3.40'); assert.equal(checkBinary(rule, bin).status, 'SAFE');
+  php('8.3.39'); assert.match(checkBinary(rule, bin).reason, /fixed in 8\.3\.40/);
+  php('7.4.33'); assert.match(checkBinary(rule, bin).reason, /end of life/);
+});
