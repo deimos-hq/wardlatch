@@ -32,8 +32,9 @@ sent, nothing changed) and quick to act on (a fix on every line).
 - **Signed releases and tags.** The release workflow attests the source archive and the npm package with Sigstore;
   the next release is the first to go through it, from a signed tag. Signed tags for 0.1.0 to 0.1.2 at the commits
   npm recorded.
-- **A second maintainer**, then required review: see [GOVERNANCE.md](GOVERNANCE.md#continuity). Once a successor has
-  access, every change to `main` goes through a pull request approved by someone other than its author.
+- **A second maintainer**, then required review: see [GOVERNANCE.md](GOVERNANCE.md#continuity). The successor has
+  had write access since 21 October 2026; npm ownership is pending. Then every change to `main` goes through a pull
+  request approved by someone other than its author.
 - **Windows.** Untested today. Either test and support it in CI, or say plainly in the README that it is not
   supported.
 

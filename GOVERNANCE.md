@@ -1,6 +1,6 @@
 # Governance
 
-Who decides, and what happens if they stop. Everything here is true as of 21 October 2026; where something is only
+Who decides, and what happens if they stop. Everything here is true as of 21 October 2026, evening; where something is only
 planned, it says so.
 
 ## Model
@@ -15,8 +15,8 @@ why on the thread.
 
 | Role | Holder | Responsibilities |
 |---|---|---|
-| **Maintainer** | [@thearchitect0x-glitch](https://github.com/thearchitect0x-glitch) | Reviews and merges changes; keeps the incident data current as advisories change; answers issues; triages security reports within the times in [SECURITY.md](SECURITY.md); cuts and publishes releases ([docs/RELEASING.md](docs/RELEASING.md)); keeps CI green; keeps `fix/fix-macos.sh` and the copy served on www.deimoscore.com identical; owns the roadmap and these documents. Holds the only admin access to this repository and is the only owner of the `wardlatch` package on npm. |
-| **Proposed successor** | [@mlimano5](https://github.com/mlimano5) | Pending. Would take on every maintainer duty if the maintainer cannot continue. **Has no access yet**: not a collaborator on this repository and not an owner of the npm package. See "Continuity" below. |
+| **Maintainer** | [@thearchitect0x-glitch](https://github.com/thearchitect0x-glitch) | Reviews and merges changes; keeps the incident data current as advisories change; answers issues; triages security reports within the times in [SECURITY.md](SECURITY.md); cuts and publishes releases ([docs/RELEASING.md](docs/RELEASING.md)); keeps CI green; keeps `fix/fix-macos.sh` and the copy served on www.deimoscore.com identical; owns the roadmap and these documents. Holds the only admin access to this repository and is, for now, the only owner of the `wardlatch` package on npm. |
+| **Successor** | [@mlimano5](https://github.com/mlimano5) | Named on 21 October 2026. Would take on every maintainer duty if the maintainer cannot continue. **Has write access to this repository** since 21 October 2026: he can push to `main`, merge pull requests, manage issues and push release tags. **Not yet an owner of the npm package** (pending). See "Continuity" below. |
 | **Security contact** | The maintainer, through [SECURITY.md](SECURITY.md) | Receives private vulnerability reports, acknowledges them within 72 hours, and runs the response process. |
 | **Contributors** | Anyone | Propose changes under the DCO and the testing policy in [CONTRIBUTING.md](CONTRIBUTING.md). |
 
@@ -30,8 +30,9 @@ the [roadmap](ROADMAP.md).
 
 ## Continuity
 
-**Status: not in place. The bus factor is 1.** If the maintainer stopped today, nobody else could merge a change,
-close an issue as a maintainer, or publish a release on npm.
+**Status: partly in place.** Since 21 October 2026 a second person can merge changes, manage issues and run the
+release workflow. Only the maintainer can still publish to npm, so for releases **the bus factor is still 1** until the
+npm step below is done.
 
 What the project needs to continue without the maintainer is small. There is no service, no database and no secret:
 the source in this repository is the whole product, there is no build, and a release is `npm publish` by an owner of
@@ -39,20 +40,19 @@ the package. So continuity comes down to two accesses held by a second person:
 
 | Step | Status |
 |---|---|
-| A named successor with a published role | **Proposed**: @mlimano5, listed above; pending the steps below |
-| Admin access to this repository for the successor | **Not done** |
-| Owner of the `wardlatch` npm package for the successor | **Not done** |
+| A named successor with a published role | **Done**, 21 October 2026: @mlimano5, listed above |
+| Access to this repository for the successor | **Done**, 21 October 2026: write access, the highest role a repository owned by a personal account can give a collaborator. Repository settings stay with the maintainer; moving the repository to an organization would allow a second admin |
+| Owner of the `wardlatch` npm package for the successor | **Pending**: waiting on his npm username |
 | A rehearsal: the successor merges a change and publishes a release without the maintainer | **Not done** |
 
-What the maintainer has to do to close the first three:
+What is left for the maintainer:
 
-1. Add @mlimano5 as a collaborator with the **Admin** role: GitHub, Settings, Collaborators, "Add people", or
-   `gh api -X PUT repos/thearchitect0x-glitch/wardlatch/collaborators/mlimano5 -f permission=admin`. He accepts the
-   invitation.
-2. Add him as an owner of the npm package, once he has an npm account with two-factor authentication:
+1. Add him as an owner of the npm package, once he has an npm account with two-factor authentication:
    `npm owner add <his npm username> wardlatch`. Check with `npm owner ls wardlatch`.
-3. Update this file in the same week: the successor row loses "proposed", the table says "Done" with the date, and
-   the status line changes.
+2. Update this file in the same week: the npm row says "Done" with the date, and the status line changes.
+
+A release tag he pushes would be signed with his own key, so [docs/RELEASING.md](docs/RELEASING.md)'s verification
+step would list his signing key next to the maintainer's.
 
 Then either person can create and close issues, accept changes and publish a release without the other. The rehearsal
 in the last row is what turns that from an access list into something known to work, and it should be done and
@@ -64,5 +64,5 @@ this repository is the source, and its SHA-256 is fixed in CI.
 
 ## Changing this file
 
-By a commit or pull request from the maintainer. If the successor row still says "proposed" a year from now, that is
+By a commit or pull request from the maintainer. If the npm row still says "pending" a year from now, that is
 information about the project's real risk, and it belongs in the README rather than buried here.

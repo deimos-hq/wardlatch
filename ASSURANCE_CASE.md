@@ -191,8 +191,9 @@ changed that format, the script would find no root to remove; it then re-tests o
 still trusts the test host. If the test host were also down at that moment, it would report the file as clean without
 having been able to check. The script also trusts `/usr/bin/curl` for the re-test.
 
-**Releases 0.1.0 to 0.1.2 are not signed by the project**, and there is one maintainer, with no second reviewer and no
-successor with access yet (see [GOVERNANCE.md](GOVERNANCE.md#continuity)).
+**Releases 0.1.0 to 0.1.2 are not signed by the project**, and there is one maintainer and no second reviewer. A named
+successor has had write access to the repository since 21 October 2026 but is not yet an owner of the npm package (see
+[GOVERNANCE.md](GOVERNANCE.md#continuity)).
 
 ## 5. Supply chain
 
