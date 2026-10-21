@@ -32,12 +32,12 @@
   ],
   "canaryHost": "{id}-emudhra.we-have-a-problem.com",
   "fixes": {
-    "curl:/usr/bin/curl:darwin": "macOS's built-in curl reads /etc/ssl/cert.pem, which Apple has not updated yet. The advisory's fix (backs the file up first, asks for your Mac password): sudo cp /etc/ssl/cert.pem /etc/ssl/cert.pem.bak && awk '/^(###|===) /{skip=0} /^=== .*\\/CN=(AAA Certificate Services|emSign ECC Root CA - G3)$/{skip=1} !skip' /etc/ssl/cert.pem.bak | sudo tee /etc/ssl/cert.pem > /dev/null",
-    "python:/usr/bin/python3:darwin": "Apple's built-in Python reads /etc/ssl/cert.pem too. Apply the same fix as for macOS curl (see the curl line), or use a Python whose certifi is 2026.10.19 or newer.",
+    "curl:/usr/bin/curl:darwin": "macOS's built-in curl, git, python3 and openssl read /etc/ssl/cert.pem, which no macOS release has updated yet (the newest, 27.0.1, 26.7.1 and 15.8.1, shipped on 28 Sep 2026); updating macOS does not fix it. The advisory's fix (backs the file up first, asks for your Mac password): sudo cp /etc/ssl/cert.pem /etc/ssl/cert.pem.bak && awk '/^(###|===) /{skip=0} /^=== .*\\/CN=(AAA Certificate Services|emSign ECC Root CA - G3)$/{skip=1} !skip' /etc/ssl/cert.pem.bak | sudo tee /etc/ssl/cert.pem > /dev/null",
+    "python:/usr/bin/python3:darwin": "Apple's built-in Python reads /etc/ssl/cert.pem too, as do the built-in git and openssl. Apply the same fix as for macOS curl (see the curl line), or use a Python whose certifi is 2026.10.19 or newer.",
     "curl:linux": "Update your distribution's ca-certificates package (Debian 12: 20250419~deb12u2, Debian 13: 20250419+deb13u1). Until it ships, see the advisory's Linux workaround.",
     "python:linux": "Update your distribution's ca-certificates package; Python's default context reads the system store.",
     "curl": "Update the CA bundle this curl uses (Homebrew: brew upgrade ca-certificates, fixed in 2026-09-25_1 and later).",
-    "node": "Node bundles its own roots; the fix is pending upstream (nodejs/node#66871). Until a fixed release: run Node with --use-openssl-ca and SSL_CERT_FILE pointing at an updated bundle (for example the cleaned /etc/ssl/cert.pem), or use a Node built on the system store (Homebrew's node).",
+    "node": "Node bundles its own roots; the fix is merged upstream (nodejs/node#66871) and awaiting a release. Until a fixed release: run Node with --use-openssl-ca and SSL_CERT_FILE pointing at an updated bundle (for example the cleaned /etc/ssl/cert.pem), or use a Node built on the system store (Homebrew's node).",
     "python-certifi": "Upgrade certifi in this environment to 2026.10.19 or newer: pip install -U certifi (uv: uv lock --upgrade-package certifi).",
     "python": "Upgrade the CA bundle this Python uses. python.org builds: pip install -U certifi (2026.10.19+) or run 'Install Certificates.command'.",
     "macos-system": "Install the latest macOS update (System Settings → General → Software Update). Apple blocks the compromised certificates through its updates; Safari and Apple's apps use this layer."
