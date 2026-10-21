@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Deimos AI LLC
+// The incident files are data the checks trust, so they are checked like code: the shape each check reads, https
+// sources only, the bundled roots are exactly the advisory's roots, and the fix commands people copy are safe to run.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
+import { X509Certificate } from 'node:crypto';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'incidents');
+const incidents = readdirSync(DIR).filter((f) => f.endsWith('.json')).map((f) => ({ file: f, ...JSON.parse(readFileSync(join(DIR, f), 'utf8')) }));
+const TYPES = ['trust', 'binaries', 'workflows', 'secrets', 'wordpress'];
+const https = (u) => typeof u === 'string' && new URL(u).protocol === 'https:';
+
+test('every incident has the fields its check reads, named after its file', () => {
+  assert.ok(incidents.length >= 6);
+  for (const i of incidents) {
+    assert.equal(`${i.id}.json`, i.file);
+    assert.ok(TYPES.includes(i.type), `${i.id}: type ${i.type}`);
+    assert.match(i.date, /^\d{4}-\d{2}-\d{2}$/); assert.ok(i.title && i.summary, i.id);
+    assert.ok(https(i.advisory), `${i.id}: the source is an https URL`);
+    for (const b of i.binaries ?? []) assert.ok(b.binary && b.fix && (b.bad || b.fixedIn || b.pendingUntil), `${i.id}: ${b.binary}`);
+    if (i.type === 'workflows') assert.ok(!Number.isNaN(Date.parse(i.since)) && i.fix);
+    if (i.type === 'secrets') assert.ok(i.fix);
+    if (i.type === 'wordpress') { assert.ok(!Number.isNaN(Date.parse(i.addedSince)) && i.reviewFix); for (const r of i.rules) assert.ok(r.plugin && r.mainFile && r.fix); }
+  }
+  assert.equal(new Set(incidents.map((i) => i.id)).size, incidents.length, 'ids are unique');
+});
+
+test('the trust incident: unique test hosts, and the bundled roots are exactly the advisory\'s roots', () => {
+  for (const i of incidents.filter((x) => x.type === 'trust')) {
+    assert.ok(i.canaryHost.includes('{id}'));
+    assert.equal(new Set(i.canaries).size, i.canaries.length);
+    for (const id of i.canaries) assert.match(id, /^[a-z0-9-]+$/);
+    // The positive control forces these roots in, so they must be the ones the advisory names, by fingerprint.
+    const pems = readFileSync(join(DIR, i.rootsPem), 'utf8').match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g);
+    assert.deepEqual(pems.map((p) => new X509Certificate(p).fingerprint256).sort(), i.distrustedRoots.map((r) => r.sha256).sort());
+  }
+});
+
+test('regression: the copyable macOS fix runs awk with sudo, so a root-only backup cannot leave cert.pem empty', () => {
+  // 0.1.2 fixed this (advisory issue #35): with a plain awk, reading a root-only backup fails, and `sudo tee` has
+  // already emptied /etc/ssl/cert.pem by then.
+  const texts = incidents.flatMap((i) => Object.values(i.fixes ?? {})).filter((t) => t.includes('tee /etc/ssl/cert.pem'));
+  assert.ok(texts.length >= 1);
+  for (const t of texts) {
+    assert.match(t, /sudo cp \/etc\/ssl\/cert\.pem \/etc\/ssl\/cert\.pem\.bak && sudo awk /, 'back up first, then read the backup as root');
+    assert.doesNotMatch(t, /(?<!sudo) awk '/, 'no awk without sudo');
+  }
+});
