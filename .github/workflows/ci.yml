@@ -26,7 +26,7 @@ jobs:
       - name: Tests (offline; deprecations are errors)
         # The engine floor is 18.17, so a Node API that is deprecated anywhere in 18 to 22 fails here rather
         # than warning a user later.
-        run: node --test test/
+        run: node --test test/*.test.mjs   # npm test, without npm itself running under these options
         env:
           NODE_OPTIONS: --throw-deprecation --pending-deprecation
 

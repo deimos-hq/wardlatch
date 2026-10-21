@@ -33,7 +33,7 @@ before(() => { dir = mkdtempSync(join(tmpdir(), 'wardlatch-cli-')); });
 test('--help and --list answer without checking anything', () => {
   const help = run(['--help']);
   assert.equal(help.code, 0);
-  assert.match(help.out, new RegExp(`wardlatch ${VERSION.replace(/\./g, '\\.')}`));
+  assert.ok(help.out.startsWith(`wardlatch ${VERSION}: `));
   assert.match(help.out, /Exit code: 0 all safe/);
   assert.match(help.out, /Sends nothing anywhere except TLS connections to the incidents' public test hosts and two control sites/);
   const list = run(['--list']);

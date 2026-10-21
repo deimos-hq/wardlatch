@@ -31,7 +31,7 @@ jobs:
 
       # Nothing ships untested.
       - name: Tests
-        run: node --test test/
+        run: node --test test/*.test.mjs   # npm test, without npm itself running under these options
         env:
           NODE_OPTIONS: --throw-deprecation --pending-deprecation
 

@@ -16,6 +16,7 @@ import { workflowsAddedSince } from '../lib/workflows.mjs';
 import { scanText } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
 import { listContainers, checkContainer } from '../lib/containers.mjs';
+import { readCapped } from '../lib/files.mjs';
 
 const OPENSSL = ['/opt/homebrew/bin/openssl', '/usr/local/bin/openssl', '/usr/bin/openssl'].find(existsSync);
 let dir, server, canary, badCa, otherCa;
@@ -167,4 +168,23 @@ exit 1
   assert.equal(await checkContainer(engine, list[0], [{ ...canaries[0], up: false }], opts).then((r) => r.status), 'UNKNOWN', 'no test host up is never SAFE');
   writeFileSync(join(bin, 'down'), '#!/bin/sh\necho "Cannot connect to the Docker daemon" >&2; exit 1\n', { mode: 0o755 });
   assert.equal(listContainers(join(bin, 'down')), null, 'a stopped daemon means no running containers, not a failure');
+});
+
+test('files are read only when they are regular and small, checked and read through one open file', () => {
+  const d = join(dir, 'files'); mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, 'small.txt'), 'abc'); writeFileSync(join(d, 'big.txt'), 'x'.repeat(2048));
+  assert.equal(readCapped(join(d, 'small.txt'), 1024).toString(), 'abc');
+  assert.equal(readCapped(join(d, 'big.txt'), 1024), null, 'over the cap');
+  assert.equal(readCapped(d, 1024), null, 'a directory');
+  assert.equal(readCapped(join(d, 'missing.txt'), 1024), null, 'missing');
+  execFileSync('mkfifo', [join(d, 'pipe')]);
+  assert.equal(readCapped(join(d, 'pipe'), 1024), null, 'a pipe returns at once instead of waiting for a writer');
+});
+
+test('WordPress: a plugin whose version cannot be read is UNKNOWN, never SAFE', () => {
+  const site = join(dir, 'www2', 'blog'); const pl = join(site, 'wp-content', 'plugins', 'updraftplus');
+  mkdirSync(join(site, 'wp-includes'), { recursive: true }); writeFileSync(join(site, 'wp-includes', 'version.php'), '<?php');
+  mkdirSync(pl, { recursive: true }); writeFileSync(join(pl, 'updraftplus.php'), '<?php\n/* Plugin Name: UpdraftPlus (no version header) */\n');
+  const f = checkSite(site, [{ plugin: 'updraftplus', mainFile: 'updraftplus.php', fixedIn: '1.26.13', fix: 'update' }]);
+  assert.equal(f.length, 1); assert.equal(f[0].status, 'UNKNOWN'); assert.match(f[0].reason, /could not be checked/);
 });

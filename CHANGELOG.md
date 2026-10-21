@@ -25,7 +25,7 @@ Everything on `main` after 0.1.2. It ships as the next release.
   `node --check` on every module, ShellCheck, the Mac fix's checksum and a run on copies of the certificate file,
   REUSE licence and DCO sign-off checks, CodeQL, OpenSSF Scorecard. A release workflow attests the source archive and
   npm package with Sigstore.
-- Tests for the command end to end, the incident data and the coding standard: 34 tests, up from 15.
+- Tests for the command end to end, the incident data and the coding standard: 36 tests, up from 15.
 - A licence and copyright header on every source file, and [REUSE.toml](REUSE.toml) for the rest.
 
 ### Changed
@@ -40,6 +40,14 @@ Everything on `main` after 0.1.2. It ships as the next release.
   containers) among the connections Wardlatch makes; they mentioned only the test hosts. The README documents every
   option, the statuses, the exit codes and the `--json` fields.
 - `package.json` links the GitHub repository, homepage and issue tracker, and adds `npm run coverage`.
+
+### Fixed
+
+- A WordPress plugin whose version header can't be read is "could not be tested" (UNKNOWN, exit code 2), not SAFE.
+- The committed-key scan and the WordPress checks check a file's size and read it through one read-only file
+  descriptor, so a file swapped in between (for a huge file, a device or a pipe) can't stall or exhaust the run. The
+  plugin version header is read under the same 2 MB cap. Found by CodeQL.
+- `npm test` runs on Node 22: it passed the `test/` folder, which Node 22's test runner reads as a file name.
 
 ## [0.1.2] - 2026-10-21
 

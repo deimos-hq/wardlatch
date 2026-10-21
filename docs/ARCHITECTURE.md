@@ -44,7 +44,8 @@ programs already on the machine:
 | `lib/binaries.mjs` | Version rules: a bad range, a fixed version, or one fixed version per release line (and "end of life" when a line gets none). | Runs `<tool> --version` (or the rule's arguments) for programs found on `PATH`. |
 | `lib/workflows.mjs` | Finds git repositories (4 levels) and lists `.github/workflows` files added since a date. | `git log` in each repository. |
 | `lib/secrets.mjs` | High-confidence key shapes in the files git tracks (up to 512 KB each, binary files skipped). A finding keeps the type, file, line and a mask, never the key. | `git ls-files`, then reads files. |
-| `lib/wordpress.mjs` | Finds WordPress installs (5 levels), reads plugin version headers, searches a plugin's files for an indicator string (up to 4,000 files of under 2 MB), lists plugin folders created since a date. | Reads files and folder dates. |
+| `lib/wordpress.mjs` | Finds WordPress installs (5 levels), reads plugin version headers (a version that can't be read is UNKNOWN), searches a plugin's files for an indicator string (up to 4,000 files of under 2 MB), lists plugin folders created since a date. | Reads files and folder dates. |
+| `lib/files.mjs` | `readCapped()`: reads a file only if it is a regular file under a size cap, checking and reading through one read-only, non-blocking file descriptor, so it can't be swapped for a huge file, a device or a pipe in between. Used by the key scan and the WordPress checks. | Opens files read-only. |
 | `fix/fix-macos.sh` | The Mac fix. See below. | `/etc/ssl/cert.pem` and a dated backup beside it. |
 
 Every child process is started with `execFile` and an argument list, never through a shell on the host, and every

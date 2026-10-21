@@ -72,8 +72,8 @@ that can't connect at all (a proxy, a firewall, a broken install) and would othe
 root can't be forced (macOS's networking stack, containers), a normal site must open first, and inside a container a
 self-signed site must be refused, or the line is UNKNOWN. UNKNOWN sets exit code 2, so CI does not pass on it.
 *Evidence:* `test/wardlatch.test.mjs` (no host up is UNKNOWN; a failed positive control is UNKNOWN; a failed system
-control is UNKNOWN; containers with no tool, or a tool that accepts a self-signed site, are UNKNOWN) against a local
-throwaway CA and canary; `test/cli.test.mjs` for the exit codes. `test/incidents.test.mjs` checks that the bundled
+control is UNKNOWN; containers with no tool, or a tool that accepts a self-signed site, are UNKNOWN; a plugin whose
+version can't be read is UNKNOWN) against a local throwaway CA and canary; `test/cli.test.mjs` for the exit codes. `test/incidents.test.mjs` checks that the bundled
 roots are exactly the advisory's, by SHA-256 fingerprint, so the positive control forces in the right keys.
 
 **R2, sends nothing: boundary B1.** Only `lib/probe.mjs` opens connections, and the containers' probe script makes
@@ -83,9 +83,9 @@ default User-Agent, which names it and its version). Responses are discarded (`-
 success or failure is read. The reachability handshake sends no request at all. There is no telemetry code. *Evidence:* `test/conventions.test.mjs`
 fails if any other shipped module imports a network module or calls `fetch`.
 
-**R3, changes nothing.** The shipped code imports no file-writing function, and the container probe only runs a
-request. *Evidence:* `test/conventions.test.mjs` fails on any import of a write, delete, rename, copy or chmod function
-in `bin/` or `lib/`.
+**R3, changes nothing.** The shipped code imports no file-writing function, opens files only read-only, and the
+container probe only runs a request. *Evidence:* `test/conventions.test.mjs` fails on any import of a write, delete,
+rename, copy or chmod function in `bin/` or `lib/`, and on any `open` without `O_RDONLY` or with a flag that writes.
 
 **R4, no secret printed.** `scanText` keeps the first four characters and the length, or a fixed marker for private
 keys and service-account files. *Evidence:* `test/wardlatch.test.mjs` and `test/cli.test.mjs` assert the key never
@@ -137,10 +137,10 @@ was tested.
 | Improper certificate validation (CWE-295) | The probes and Wardlatch's own TLS | Verification on everywhere except the reachability handshake, which sends nothing and decides only "up or not"; enforced by test |
 | Exposure of sensitive information (CWE-200, CWE-532) | Key findings, output, network | Keys masked; nothing sent; tests on text and JSON output |
 | Improper neutralization of escape sequences (CWE-150) | Names printed to a terminal | One escaping function for every printed name; test with a planted name |
-| Uncontrolled resource consumption (CWE-400) | Huge trees, huge files, hung programs | Depth limits (4 to 5 levels), file-size caps (512 KB, 2 MB), a 4,000-file cap per plugin, a timeout on every child process and connection |
+| Uncontrolled resource consumption (CWE-400) | Huge trees, huge files, pipes, hung programs | Depth limits (4 to 5 levels), file-size caps (512 KB for the key scan, 2 MB for plugin files), only regular files read and pipes opened non-blocking, a 4,000-file cap per plugin, a timeout on every child process and connection |
 | Path traversal and symlink attacks (CWE-22, CWE-59) | Writing outside a folder | Nothing is written. Directory walks don't follow symlinked folders |
 | Untrusted search path (CWE-426) | Running programs by name | By design for `PATH` (it checks what the user runs); see section 4 for virtual environments |
-| Race conditions (CWE-367) | The Mac fix's temporary and backup files | `mktemp`; the backup name is checked for existence first; the file is written in place by one `cp` after the checks |
+| Race conditions (CWE-367) | A scanned file swapped between its size check and its read; the Mac fix's temporary and backup files | The command checks and reads a file through one read-only, non-blocking descriptor (`lib/files.mjs`). The Mac fix uses `mktemp`, checks the backup name is free first, and writes the file in place with one `cp` after its checks |
 | Supply chain (CWE-1357) | Dependencies, CI | No dependencies; every GitHub Action pinned by full commit SHA; Dependabot proposes updates through review |
 
 ## 4. What is NOT defended

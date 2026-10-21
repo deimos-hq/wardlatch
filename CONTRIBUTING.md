@@ -26,7 +26,7 @@ commits on `main`, up to 21 October 2026, predate this rule and carry no sign-of
 
 ## What an acceptable contribution looks like
 
-1. **The tests pass**: `npm test` (that is, `node --test test/`) on Node 18.17 or later. CI runs it on Node 18, 20
+1. **The tests pass**: `npm test` (that is, `node --test test/*.test.mjs`) on Node 18.17 or later. CI runs it on Node 18, 20
    and 22, on Linux and macOS.
 2. **It comes with tests**: see the testing policy below.
 3. **It never says SAFE without a control.** A check may report SAFE only when a control has shown that it could have
@@ -81,7 +81,8 @@ built-in coverage, and fails below 80% of lines or functions.
 - ES modules (`.mjs`); imports are Node built-ins with the `node:` prefix, or the project's own files.
 - Child processes are started with `execFile` or `execFileSync` and an argument list; never `exec`, never
   `shell: true`, never `eval` or `new Function`.
-- The shipped code (`bin/`, `lib/`) imports no function that writes, moves or deletes files.
+- The shipped code (`bin/`, `lib/`) imports no function that writes, moves or deletes files, and opens files only with
+  `O_RDONLY`.
 - Only `lib/probe.mjs` opens network connections.
 - Certificate verification is never switched off, except the one reachability handshake in `lib/probe.mjs`, which
   sends nothing. No `--insecure`, `-k`, `NODE_TLS_REJECT_UNAUTHORIZED`, `CERT_NONE` or the like.

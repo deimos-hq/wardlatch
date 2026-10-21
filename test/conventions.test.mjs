@@ -28,7 +28,9 @@ test('every source file opens with its licence and copyright (fix/fix-macos.sh i
   assert.ok(SOURCE.length >= 12);
   for (const f of SOURCE) {
     const head = read(f).split('\n').slice(0, 4).join('\n');
+    // REUSE-IgnoreStart (a pattern, not this file's licence)
     assert.match(head, /SPDX-License-Identifier: Apache-2\.0/, f);
+    // REUSE-IgnoreEnd
     assert.match(head, /Copyright 2026 Deimos AI LLC/, f);
   }
   assert.match(read('REUSE.toml'), /path = "fix\/fix-macos\.sh"/);
@@ -50,11 +52,16 @@ test('child processes get an argument list, never a host shell', () => {
 });
 
 test('changes nothing: the shipped code imports no function that writes, moves or deletes files', () => {
-  const WRITES = /^(write|writev|writeFile|appendFile|mkdir|mkdtemp|rm|rmdir|unlink|rename|copyFile|cp|chmod|lchmod|fchmod|chown|lchown|fchown|symlink|link|truncate|ftruncate|open|utimes|lutimes|futimes)(Sync)?$|^createWriteStream$/;
+  const WRITES = /^(write|writev|writeFile|appendFile|mkdir|mkdtemp|rm|rmdir|unlink|rename|copyFile|cp|chmod|lchmod|fchmod|chown|lchown|fchown|symlink|link|truncate|ftruncate|utimes|lutimes|futimes)(Sync)?$|^createWriteStream$/;
   for (const f of SHIPPED) {
     const src = read(f);
     assert.doesNotMatch(src, /from\s*'node:fs\/promises'|from\s*'fs'|require\(\s*'fs'\s*\)\.(write|append|rm|unlink)/, f);
     for (const fn of named(src, 'node:fs')) assert.doesNotMatch(fn, WRITES, `${f} imports ${fn}`);
+    // A file may be opened, but only to read: O_RDONLY, and no flag that writes or creates.
+    for (const [, flags] of src.matchAll(/\bopen(?:Sync)?\(([^)]*)\)/g)) {
+      assert.match(flags, /O_RDONLY/, `${f}: open(${flags})`);
+      assert.doesNotMatch(flags, /O_WRONLY|O_RDWR|O_CREAT|O_TRUNC|O_APPEND|['"][^'"]*[wa+][^'"]*['"]/, `${f}: open(${flags})`);
+    }
   }
 });
 
