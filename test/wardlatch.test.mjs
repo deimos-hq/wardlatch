@@ -13,6 +13,7 @@ import { cmp, checkBinary } from '../lib/binaries.mjs';
 import { workflowsAddedSince } from '../lib/workflows.mjs';
 import { scanText } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
+import { listContainers, checkContainer } from '../lib/containers.mjs';
 
 const OPENSSL = ['/opt/homebrew/bin/openssl', '/usr/local/bin/openssl', '/usr/bin/openssl'].find(existsSync);
 let dir, server, canary, badCa, otherCa;
@@ -135,4 +136,33 @@ test('PHP-style fixes per release line: patched, unpatched, and end of life', ()
   php('8.3.40'); assert.equal(checkBinary(rule, bin).status, 'SAFE');
   php('8.3.39'); assert.match(checkBinary(rule, bin).reason, /fixed in 8\.3\.40/);
   php('7.4.33'); assert.match(checkBinary(rule, bin).reason, /end of life/);
+});
+
+test('containers: each running one is checked from inside, with a normal-site and a self-signed control', async () => {
+  const bin = join(dir, 'engine'); mkdirSync(bin, { recursive: true });
+  // A stand-in for `docker`: ps lists four containers; exec answers as the tool inside each would ($7 is the URL).
+  writeFileSync(join(bin, 'docker'), `#!/bin/sh
+if [ "$1" = ps ]; then printf 'a1\\told-bundle\\tdebian:11\\nb2\\tdistroless\\tgcr.io/app\\nc3\\tno-verify\\talpine\\nd4\\tfixed\\tdebian:13\\n'; exit 0; fi
+[ "$1" = exec ] || exit 1
+case "$2" in
+  a1) echo tool=curl; case "$7" in *self-signed*) exit 1;; *) exit 0;; esac;;
+  b2) exit 126;;
+  c3) echo tool=wget; exit 0;;
+  d4) echo tool=curl; case "$7" in *self-signed*|*-emudhra.*) exit 1;; *) exit 0;; esac;;
+esac
+exit 1
+`, { mode: 0o755 });
+  const engine = join(bin, 'docker');
+  const list = listContainers(engine);
+  assert.deepEqual(list.map((x) => x.name), ['old-bundle', 'distroless', 'no-verify', 'fixed']);
+  const canaries = [{ id: 'dv-g3b', url: 'https://dv-g3b-emudhra.we-have-a-problem.com/', up: true }];
+  const opts = { controlUrl: 'https://emudhra.we-have-a-problem.com/', timeoutMs: 2000 };
+  const [old, none, noverify, fixed] = await Promise.all(list.map((ct) => checkContainer(engine, ct, canaries, opts)));
+  assert.equal(old.status, 'EXPOSED'); assert.equal(old.tool, 'curl'); assert.deepEqual(old.trusted, ['dv-g3b']);
+  assert.equal(none.status, 'UNKNOWN'); assert.match(none.reason, /no shell, curl, python3 or wget/);
+  assert.equal(noverify.status, 'UNKNOWN'); assert.match(noverify.reason, /self-signed/);
+  assert.equal(fixed.status, 'SAFE');
+  assert.equal(await checkContainer(engine, list[0], [{ ...canaries[0], up: false }], opts).then((r) => r.status), 'UNKNOWN', 'no test host up is never SAFE');
+  writeFileSync(join(bin, 'down'), '#!/bin/sh\necho "Cannot connect to the Docker daemon" >&2; exit 1\n', { mode: 0o755 });
+  assert.equal(listContainers(join(bin, 'down')), null, 'a stopped daemon means no running containers, not a failure');
 });

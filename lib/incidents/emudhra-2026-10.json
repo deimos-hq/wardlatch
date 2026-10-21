@@ -40,7 +40,8 @@
     "node": "Node bundles its own roots; the fix is merged upstream (nodejs/node#66871) and awaiting a release. Until a fixed release: run Node with --use-openssl-ca and SSL_CERT_FILE pointing at an updated bundle (for example the cleaned /etc/ssl/cert.pem), or use a Node built on the system store (Homebrew's node).",
     "python-certifi": "Upgrade certifi in this environment to 2026.10.19 or newer: pip install -U certifi (uv: uv lock --upgrade-package certifi).",
     "python": "Upgrade the CA bundle this Python uses. python.org builds: pip install -U certifi (2026.10.19+) or run 'Install Certificates.command'.",
-    "macos-system": "Install the latest macOS update (System Settings → General → Software Update). Apple blocks the compromised certificates through its updates; Safari and Apple's apps use this layer."
+    "macos-system": "Install the latest macOS update (System Settings → General → Software Update). Apple blocks the compromised certificates through its updates; Safari and Apple's apps use this layer.",
+    "container": "This container's image has the old trust list. Rebuild it on a fixed base (docker build --pull --no-cache), or pull the maintainer's fixed image (docker compose pull && docker compose up -d). For an image nobody maintains, mount the host's fixed bundle read-only: www.deimoscore.com/wardlatch/#homelab"
   },
   "notCovered": "Compiled programs carry the roots of the toolchain that built them: rebuild Go programs with Go 1.27.3 or 1.26.10; update Electron apps to 44.9.1, 43.8.1 or 42.11.16; Rust: rustls-webpki 0.103.16, webpki-roots 1.0.10. Browsers: Chrome, Edge, Firefox and Safari block the intermediates through their own updates; check yours at the advisory's #check page.",
   "type": "trust",

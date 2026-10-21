@@ -9,7 +9,8 @@ import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { discover } from '../lib/discover.mjs';
 import { check, reachable } from '../lib/probe.mjs';
-import { checkBinary } from '../lib/binaries.mjs';
+import { checkBinary, findOnPath } from '../lib/binaries.mjs';
+import { listContainers, checkContainer } from '../lib/containers.mjs';
 import { reposUnder, workflowsAddedSince } from '../lib/workflows.mjs';
 import { scanRepo } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
@@ -27,6 +28,7 @@ if (flag('-h') || flag('--help')) {
   npx wardlatch --paths ~/code     where to look for Python environments, git repositories and WordPress sites (repeatable)
   npx wardlatch --incident <id>    one incident only (--list shows them)
   npx wardlatch --json             machine-readable output
+  npx wardlatch --no-containers    skip running Docker and Podman containers
 
 Exit code: 0 all safe · 1 something is exposed · 2 something could not be tested ("review" lines don't change it).
 Runs locally. Sends nothing anywhere except TLS handshakes to the incidents' public test hosts. Changes nothing.`);
@@ -75,6 +77,21 @@ for (const inc of chosen) {
       print(r.status, what, r.status === 'EXPOSED' ? c('31', `  trusts ${r.trusted.length}/${r.tested}`) : '');
       if (r.status === 'UNKNOWN') note('33', r.reason);
       if (row.fix) note('2', `fix: ${row.fix}`);
+    }
+    // Running containers keep their image's trust list, whatever the host has.
+    for (const engine of flag('--no-containers') ? [] : ['docker', 'podman'].filter((e) => findOnPath(e))) {
+      const list = listContainers(engine);
+      if (list === null) { note('2', `${engine}: not running, so no running containers to check`); continue; }
+      if (list.error) { results.push({ incident: inc.id, kind: 'containers', engine, status: 'UNKNOWN', reason: list.error }); print('UNKNOWN', `${engine} containers`); note('33', list.error); continue; }
+      for (const ct of list) {
+        const r = await checkContainer(engine, ct, canaries, { controlUrl: inc.advisory });
+        const row = { incident: inc.id, kind: 'container', engine, container: ct.name, image: ct.image, ...r, fix: r.status === 'EXPOSED' ? inc.fixes.container : undefined };
+        results.push(row);
+        print(r.status, `${engine} ${ct.name}  ${ct.image}${r.tool ? `  (via ${r.tool})` : ''}`, r.status === 'EXPOSED' ? c('31', `  trusts ${r.trusted.length}/${r.tested}`) : '');
+        if (r.status === 'UNKNOWN') note('33', r.reason);
+        if (row.fix) note('2', `fix: ${row.fix}`);
+      }
+      if (!list.length) note('2', `${engine}: no running containers (images that aren't running aren't checked: rebuild them before you start them)`);
     }
     const down = canaries.filter((x) => !x.up).length;
     if (down) note('33', `${down} of ${canaries.length} test hosts did not answer`);

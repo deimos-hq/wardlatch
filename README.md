@@ -39,6 +39,9 @@ Two checks keep the answer honest:
 - every `node`, `curl` and `python3` on your `PATH`, plus the operating system's own
 - Python virtual environments (and their `certifi`) under `~/Development`, `~/code`, `~/src`, `~/projects`, `~/dev`,
   `~/work`, or the folders you give with `--paths`
+- every running Docker or Podman container, checked from inside with the image's own curl, python3 or wget. Two
+  controls come first: a normal site must open, and a self-signed one must be refused, or the result is "couldn't
+  test". `--no-containers` skips them. Nothing is written into a container.
 
 Compiled programs (Go, Rust, Electron) carry the trust list of the toolchain that built them; Wardlatch prints what to
 rebuild them with. Check your browser on the advisory's own page.
