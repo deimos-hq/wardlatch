@@ -9,6 +9,10 @@ of that commit matches the published package's file count and size. The format f
 
 ## [Unreleased]
 
+### Changed
+
+- The Node.js fix now names the fixed releases: 26.12.1, 24.22.1 and 22.23.4, published on 21 October 2026.
+
 ## [0.1.3] - 2026-10-21
 
 ### Changed
