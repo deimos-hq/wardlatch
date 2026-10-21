@@ -1,5 +1,10 @@
 # Wardlatch
 
+[![CI](https://github.com/thearchitect0x-glitch/wardlatch/actions/workflows/ci.yml/badge.svg)](https://github.com/thearchitect0x-glitch/wardlatch/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/thearchitect0x-glitch/wardlatch/actions/workflows/codeql.yml/badge.svg)](https://github.com/thearchitect0x-glitch/wardlatch/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/thearchitect0x-glitch/wardlatch/badge)](https://scorecard.dev/viewer/?uri=github.com/thearchitect0x-glitch/wardlatch)
+[![npm](https://img.shields.io/npm/v/wardlatch)](https://www.npmjs.com/package/wardlatch)
+
 **Does the wrong key still turn?**
 
 When a certificate authority's keys leak, browsers update within hours. The rest of your machine doesn't. curl, Node,
@@ -57,14 +62,50 @@ script from Jamf, Kandji or Intune.
 ## Privacy
 
 Wardlatch runs on your machine. It sends nothing anywhere: no telemetry, no results, no machine details. The only
-network traffic is the TLS handshakes to the incident's public test hosts. It changes nothing on your system; each
-result comes with the fix for you to apply.
+network traffic is TLS connections to the incident's public test hosts and two control sites (the advisory's own
+page, and a self-signed test site for containers). It changes nothing on your system; each result comes with the fix
+for you to apply. What it can and can't promise, and why: [ASSURANCE_CASE.md](ASSURANCE_CASE.md).
+
+## Reference
+
+| Option | |
+|---|---|
+| *(none)* | Check this machine against every current incident. |
+| `--incident <id>` | One incident only. `--list` prints the ids. |
+| `--paths <folder>` | Where to look for Python environments, git repositories and WordPress sites; repeat it for several. Default: `~/Development`, `~/code`, `~/src`, `~/projects`, `~/Projects`, `~/dev`, `~/work`, `~/Sites` and `/var/www`. |
+| `--no-containers` | Skip running Docker and Podman containers. |
+| `--json` | Machine-readable output instead of lines (below). |
+| `--list` | The incidents it knows: id, date, title. |
+| `-h`, `--help` | Usage. |
+
+An unknown option, or `--paths` or `--incident` without a value, stops with exit code 2 before anything runs.
+
+Each line starts with a status: `SAFE`, `EXPOSED` (with the fix under it), `UNKNOWN` (could not be tested, with the
+reason) or `REVIEW` (something to look at, such as a new workflow file). The exit code is **1** if anything is
+exposed, otherwise **2** if anything could not be tested, otherwise **0**. Review lines never change it.
+
+`--json` prints one object: `{ tool, version, incidents: [{ id, title, advisory }], results: [...] }`. Each result
+has `incident`, `status` and `kind` (`node`, `curl`, `python`, `python-certifi`, `macos-system`, `container`,
+`containers` when an engine can't be asked, `binary`, `workflow`, `secret` or `wordpress`), the fields of that kind
+(such as `bin`, `version`, `trusted` and `tested` for a trust probe, or `file`, `line`, `type` and `masked` for a
+key), `reason` when it is UNKNOWN, and `fix` when there is something to do.
 
 ```
-npx wardlatch --help
-npx wardlatch --json          # for CI and scripts; exit code 0 safe · 1 exposed · 2 could not be tested
-npx wardlatch --list          # incidents it knows
+npx wardlatch --json          # for CI and scripts
+npx wardlatch --incident emudhra-2026-10 --no-containers
+npx wardlatch --paths ~/code --paths /srv/www
 ```
+
+## Feedback, contributing, security
+
+- Bugs, wrong results and ideas: [issues](https://github.com/thearchitect0x-glitch/wardlatch/issues).
+- Changes: [CONTRIBUTING.md](CONTRIBUTING.md) (pull requests, sign-off, a test with every change).
+- A vulnerability: report it privately, as [SECURITY.md](SECURITY.md) explains, not in an issue.
+- How it works inside: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). What changed: [CHANGELOG.md](CHANGELOG.md).
+  Where it is going: [ROADMAP.md](ROADMAP.md). Who decides: [GOVERNANCE.md](GOVERNANCE.md).
+  [Code of conduct](CODE_OF_CONDUCT.md).
+
+To work on it: `git clone`, then `npm test`. Nothing to install.
 
 ## Incidents
 

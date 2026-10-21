@@ -3,7 +3,7 @@
 // Copyright 2026 Deimos AI LLC
 // Wardlatch: does the wrong key still turn? Checks whether the runtimes on this machine still trust a compromised
 // certificate authority, by asking each one to connect to public test hosts signed with the compromised keys.
-// Runs locally. Sends nothing anywhere except TLS handshakes to those test hosts. Changes nothing.
+// Runs locally. Sends nothing anywhere except TLS connections to those test hosts and two control sites. Changes nothing.
 // A free tool from Deimos AI LLC · Apache-2.0
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -47,7 +47,8 @@ if (flag('-h') || flag('--help')) {
   npx wardlatch --no-containers    skip running Docker and Podman containers
 
 Exit code: 0 all safe · 1 something is exposed · 2 something could not be tested ("review" lines don't change it).
-Runs locally. Sends nothing anywhere except TLS handshakes to the incidents' public test hosts. Changes nothing.`);
+Runs locally. Sends nothing anywhere except TLS connections to the incidents' public test hosts and two control sites.
+Changes nothing.`);
   process.exit(0);
 }
 const incidents = readdirSync(join(LIB, 'incidents')).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readFileSync(join(LIB, 'incidents', f), 'utf8'))).sort((a, b) => b.date.localeCompare(a.date));
