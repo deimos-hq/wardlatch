@@ -1,0 +1,30 @@
+{
+  "id": "wordpress-plugins-2026-10",
+  "type": "wordpress",
+  "title": "WordPress: Rank Math PRO and UpdraftCentral attacks",
+  "date": "2026-10-18",
+  "summary": "Rank Math PRO 3.0.123 shipped with a backdoor (downloads 15 Oct 20:02 to 16 Oct 07:12 UTC; clean: 3.0.124). After a breach at TeamUpdraft, stolen UpdraftCentral keys were used from 18 Oct to install backdoor plugins; UpdraftPlus 1.26.13 / 2.26.13 revokes the old keys.",
+  "advisory": "https://patchstack.com/articles/updraftcentral-key-compromise-wordpress-backdoors/",
+  "addedSince": "2026-10-18T00:00:00Z",
+  "rules": [
+    {
+      "plugin": "seo-by-rank-math-pro",
+      "mainFile": "rank-math-pro.php",
+      "bad": [
+        "3.0.123"
+      ],
+      "indicator": "rank1cdn",
+      "fix": "Treat the site as compromised: restore from a clean backup made before 15 October, then install Rank Math PRO 3.0.124 or later and rotate the site's passwords and keys. Updating alone does not remove the backdoor."
+    },
+    {
+      "plugin": "updraftplus",
+      "mainFile": "updraftplus.php",
+      "fixedIn": "1.26.13",
+      "fixedInMajor": {
+        "2": "2.26.13"
+      },
+      "fix": "Update UpdraftPlus to 1.26.13 (premium: 2.26.13) or later, delete every UpdraftCentral key in its settings, and check the site for administrator accounts and plugins you don't recognise: the backdoor can add an admin that survives plugin removal."
+    }
+  ],
+  "reviewFix": "A plugin folder added on or after 18 October that nobody on your team installed may be one of the backdoors planted with stolen UpdraftCentral keys (99 names seen). Remove it, check the users list for unknown administrators, and rotate passwords."
+}

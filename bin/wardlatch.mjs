@@ -12,6 +12,7 @@ import { check, reachable } from '../lib/probe.mjs';
 import { checkBinary } from '../lib/binaries.mjs';
 import { reposUnder, workflowsAddedSince } from '../lib/workflows.mjs';
 import { scanRepo } from '../lib/secrets.mjs';
+import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
 
 const LIB = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib');
 const VERSION = JSON.parse(readFileSync(join(LIB, '..', 'package.json'), 'utf8')).version;
@@ -23,7 +24,7 @@ if (flag('-h') || flag('--help')) {
   console.log(`wardlatch ${VERSION}: does the wrong key still turn?
 
   npx wardlatch                    check this machine against every current incident
-  npx wardlatch --paths ~/code     where to look for Python environments and git repositories (repeatable)
+  npx wardlatch --paths ~/code     where to look for Python environments, git repositories and WordPress sites (repeatable)
   npx wardlatch --incident <id>    one incident only (--list shows them)
   npx wardlatch --json             machine-readable output
 
@@ -38,7 +39,7 @@ if (!chosen.length) { console.error(`unknown incident "${val('--incident')}" (tr
 
 const json = flag('--json');
 const roots = []; args.forEach((a, i) => { if (a === '--paths') roots.push(args[i + 1].replace(/^~/, homedir())); });
-if (!roots.length) for (const d of ['Development', 'code', 'src', 'projects', 'Projects', 'dev', 'work']) roots.push(join(homedir(), d));
+if (!roots.length) { for (const d of ['Development', 'code', 'src', 'projects', 'Projects', 'dev', 'work', 'Sites']) roots.push(join(homedir(), d)); roots.push('/var/www'); }
 
 const tty = process.stdout.isTTY && !json;
 const c = (code, s) => (tty ? `\x1b[${code}m${s}\x1b[0m` : s);
@@ -114,6 +115,16 @@ for (const inc of chosen) {
     }
     if (!results.length) print('SAFE', `no committed keys found in the files of ${repos} local repositor${repos === 1 ? 'y' : 'ies'} (current files; history needs gitleaks or trufflehog)`);
     else note('2', `check: ${inc.fix}`);
+  }
+  if (inc.type === 'wordpress') {
+    const sites = wordpressUnder(roots);
+    for (const site of sites) for (const f of checkSite(site, inc.rules, inc.addedSince)) {
+      results.push({ incident: inc.id, kind: 'wordpress', ...f, fix: f.fix ?? (f.status === 'REVIEW' ? inc.reviewFix : undefined) });
+      print(f.status, `${short(site)} · ${f.what}`, f.reason ? c('2', `  ${f.reason}`) : '');
+      if (f.status === 'EXPOSED') note('2', `fix: ${f.fix}`);
+    }
+    if (!sites.length) print('SAFE', 'no WordPress installs found in the folders searched (run it on the server, or pass --paths)');
+    else if (results.some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.reviewFix}`);
   }
   all.push(...results);
   if (!json) console.log(c('2', `Source: ${inc.advisory}`));

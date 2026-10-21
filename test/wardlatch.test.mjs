@@ -12,6 +12,7 @@ import { discover } from '../lib/discover.mjs';
 import { cmp, checkBinary } from '../lib/binaries.mjs';
 import { workflowsAddedSince } from '../lib/workflows.mjs';
 import { scanText } from '../lib/secrets.mjs';
+import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
 
 const OPENSSL = ['/opt/homebrew/bin/openssl', '/usr/local/bin/openssl', '/usr/bin/openssl'].find(existsSync);
 let dir, server, canary, badCa, otherCa;
@@ -106,4 +107,23 @@ test('committed keys: found by shape, never printed, reviewed lines and doc plac
   assert.ok(!JSON.stringify(hits).includes(key), 'the key itself never appears in a finding');
   const pem = '-----BEGIN ' + 'PRIVATE KEY-----';
   assert.equal(scanText(`x\n${pem}\nabc`)[0].type, 'private key');
+});
+
+test('WordPress: compromised Rank Math PRO, old UpdraftPlus, the indicator, and new plugin folders', () => {
+  const site = join(dir, 'www', 'shop'); const pl = join(site, 'wp-content', 'plugins');
+  mkdirSync(join(site, 'wp-includes'), { recursive: true }); writeFileSync(join(site, 'wp-includes', 'version.php'), '<?php $wp_version = "6.8";');
+  const plugin = (name, file, version, extra = '') => { mkdirSync(join(pl, name), { recursive: true }); writeFileSync(join(pl, name, file), `<?php\n/**\n * Plugin Name: ${name}\n * Version: ${version}\n */\n${extra}`); };
+  plugin('seo-by-rank-math-pro', 'rank-math-pro.php', '3.0.123', '$u = "https://rank1cdn.example/x";');
+  plugin('updraftplus', 'updraftplus.php', '1.26.11');
+  assert.deepEqual(wordpressUnder([join(dir, 'www')]), [site]);
+  const rules = [
+    { plugin: 'seo-by-rank-math-pro', mainFile: 'rank-math-pro.php', bad: ['3.0.123'], indicator: 'rank1cdn', fix: 'restore' },
+    { plugin: 'updraftplus', mainFile: 'updraftplus.php', fixedIn: '1.26.13', fixedInMajor: { 2: '2.26.13' }, fix: 'update' },
+  ];
+  const f = checkSite(site, rules, '2000-01-01T00:00:00Z');
+  assert.equal(f.filter((x) => x.status === 'EXPOSED' && x.what.startsWith('seo-by-rank-math-pro')).length, 2, 'the version and the indicator');
+  assert.ok(f.some((x) => x.status === 'EXPOSED' && x.what === 'updraftplus 1.26.11'));
+  assert.ok(f.some((x) => x.status === 'REVIEW' && x.what === 'plugin folder updraftplus'));
+  plugin('updraftplus', 'updraftplus.php', '2.26.13');
+  assert.ok(checkSite(site, rules).some((x) => x.status === 'SAFE' && x.what === 'updraftplus 2.26.13'), 'premium line fixed in 2.26.13');
 });
