@@ -46,6 +46,14 @@ Two checks keep the answer honest:
 Compiled programs (Go, Rust, Electron) carry the trust list of the toolchain that built them; Wardlatch prints what to
 rebuild them with. Check your browser on the advisory's own page.
 
+## The Mac fix
+
+`fix/fix-macos.sh` removes the two roots tied to the leaked eMudhra keys from `/etc/ssl/cert.pem` (the advisory's
+change) with checks around it: no change on a fixed Mac, a dated backup it never overwrites, a check of the new file
+before it replaces the old one, a re-test, and a restore on a wrong result. Download it in Safari from
+https://www.deimoscore.com/wardlatch/#mac and run `bash ~/Downloads/wardlatch-fix-macos.sh`, or deploy it as a root
+script from Jamf, Kandji or Intune.
+
 ## Privacy
 
 Wardlatch runs on your machine. It sends nothing anywhere: no telemetry, no results, no machine details. The only
