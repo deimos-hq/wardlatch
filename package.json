@@ -1,7 +1,7 @@
 {
   "name": "wardlatch",
   "version": "0.1.0",
-  "description": "Does the wrong key still turn? Checks whether the runtimes on your machine (curl, Node, Python, certifi) still trust a compromised certificate authority. Runs locally, changes nothing.",
+  "description": "Does the wrong key still turn? Checks your machine against this week's leaks: runtimes that still trust a compromised CA (eMudhra), hijacked tool versions (OVHcloud CLI), PHP awaiting a critical fix, and GitHub workflow files to review. Runs locally, changes nothing.",
   "type": "module",
   "bin": {
     "wardlatch": "bin/wardlatch.mjs"
@@ -20,13 +20,18 @@
     "test": "node --test test/"
   },
   "keywords": [
-    "tls",
-    "certificate",
     "ca",
-    "trust-store",
-    "security",
+    "certificate",
+    "cloudflared",
     "emudhra",
-    "incident-response"
+    "github-actions",
+    "incident-response",
+    "ovhcloud",
+    "php",
+    "security",
+    "supply-chain",
+    "tls",
+    "trust-store"
   ],
   "license": "Apache-2.0",
   "author": "Deimos AI LLC",

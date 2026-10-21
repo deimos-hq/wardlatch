@@ -9,6 +9,8 @@ import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { discover } from '../lib/discover.mjs';
 import { check, reachable } from '../lib/probe.mjs';
+import { checkBinary } from '../lib/binaries.mjs';
+import { reposUnder, workflowsAddedSince } from '../lib/workflows.mjs';
 
 const LIB = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib');
 const VERSION = JSON.parse(readFileSync(join(LIB, '..', 'package.json'), 'utf8')).version;
@@ -19,19 +21,19 @@ const val = (f) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : un
 if (flag('-h') || flag('--help')) {
   console.log(`wardlatch ${VERSION}: does the wrong key still turn?
 
-  npx wardlatch                    check this machine against the latest incident
-  npx wardlatch --paths ~/code     also look for Python virtual environments under these folders (repeatable)
-  npx wardlatch --incident <id>    a specific incident (--list shows them)
+  npx wardlatch                    check this machine against every current incident
+  npx wardlatch --paths ~/code     where to look for Python environments and git repositories (repeatable)
+  npx wardlatch --incident <id>    one incident only (--list shows them)
   npx wardlatch --json             machine-readable output
 
-Exit code: 0 all safe · 1 something is exposed · 2 something could not be tested.
-Runs locally. Sends nothing anywhere except TLS handshakes to the incident's public test hosts. Changes nothing.`);
+Exit code: 0 all safe · 1 something is exposed · 2 something could not be tested ("review" lines don't change it).
+Runs locally. Sends nothing anywhere except TLS handshakes to the incidents' public test hosts. Changes nothing.`);
   process.exit(0);
 }
 const incidents = readdirSync(join(LIB, 'incidents')).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readFileSync(join(LIB, 'incidents', f), 'utf8'))).sort((a, b) => b.date.localeCompare(a.date));
 if (flag('--list')) { for (const i of incidents) console.log(`${i.id}  ${i.date}  ${i.title}`); process.exit(0); }
-const inc = val('--incident') ? incidents.find((i) => i.id === val('--incident')) : incidents[0];
-if (!inc) { console.error(`unknown incident "${val('--incident')}" (try --list)`); process.exit(2); }
+const chosen = val('--incident') ? incidents.filter((i) => i.id === val('--incident')) : incidents;
+if (!chosen.length) { console.error(`unknown incident "${val('--incident')}" (try --list)`); process.exit(2); }
 
 const json = flag('--json');
 const roots = []; args.forEach((a, i) => { if (a === '--paths') roots.push(args[i + 1].replace(/^~/, homedir())); });
@@ -39,41 +41,77 @@ if (!roots.length) for (const d of ['Development', 'code', 'src', 'projects', 'P
 
 const tty = process.stdout.isTTY && !json;
 const c = (code, s) => (tty ? `\x1b[${code}m${s}\x1b[0m` : s);
-const STATUS = { SAFE: c('32', 'SAFE   '), EXPOSED: c('31;1', 'EXPOSED'), UNKNOWN: c('33', 'UNKNOWN') };
+const STATUS = { SAFE: c('32', 'SAFE   '), EXPOSED: c('31;1', 'EXPOSED'), UNKNOWN: c('33', 'UNKNOWN'), REVIEW: c('33', 'REVIEW ') };
 const short = (p) => p.replace(homedir(), '~');
-const fixFor = (rt) => {
-  const os = platform();
-  if (rt.kind === 'macos-system') return inc.fixes['macos-system'];
-  if (rt.system) return inc.fixes['curl:linux'];
-  return inc.fixes[`${rt.kind}:${rt.bin}:${os}`] ?? inc.fixes[`${rt.kind}:${os}`] ?? inc.fixes[rt.kind];
-};
+const print = (status, what, extra = '') => { if (!json) console.log(`${STATUS[status]}  ${what}${extra}`); };
+const note = (code, text) => { if (!json) console.log(c(code, `         ${text}`)); };
+const all = [];
 
 if (!json) {
-  console.log(`${c('1', 'Wardlatch')} ${VERSION} · ${inc.title} (${inc.date})`);
-  console.log(c('2', `Asks each runtime on this machine to connect to ${inc.canaries.length} test hosts signed with the compromised keys.`));
-  console.log(c('2', 'Runs locally; sends nothing except TLS handshakes to those hosts; changes nothing.\n'));
+  console.log(`${c('1', 'Wardlatch')} ${VERSION} · ${chosen.length} incident${chosen.length > 1 ? 's' : ''} · runs locally, sends nothing but test connections, changes nothing`);
 }
-const canaries = await Promise.all(inc.canaries.map(async (id) => { const host = inc.canaryHost.replace('{id}', id); return { id, host, url: `https://${host}/`, up: await reachable(host) }; }));
-const runtimes = discover({ roots });
-const rootsPem = join(LIB, 'incidents', inc.rootsPem);
-const results = [];
-for (const rt of runtimes) {
-  const r = await check(rt, canaries, { rootsPem, controlUrl: inc.advisory });
-  const row = { ...rt, ...r, fix: r.status === 'EXPOSED' ? fixFor(rt) : undefined };
-  results.push(row);
-  if (!json) {
-    const what = rt.label ? `${rt.label} ${rt.version}` : rt.kind === 'python-certifi' ? `certifi ${rt.certifi}  ${short(rt.env)}` : `${rt.kind} ${rt.version}  ${short(rt.bin)}${rt.env ? `  (${short(rt.env)})` : ''}`;
-    console.log(`${STATUS[r.status]}  ${what}${r.status === 'EXPOSED' ? c('31', `  trusts ${r.trusted.length}/${r.tested}`) : ''}`);
-    if (r.status === 'UNKNOWN') console.log(c('33', `         ${r.reason}`));
-    if (row.fix) console.log(c('2', `         fix: ${row.fix}`));
+
+for (const inc of chosen) {
+  if (!json) console.log(`\n${c('1', inc.title)} ${c('2', `(${inc.date})`)}`);
+  const results = [];
+
+  if (inc.type === 'trust') {
+    if (!json) console.log(c('2', `Asks each runtime to connect to ${inc.canaries.length} test hosts signed with the compromised keys.`));
+    const fixFor = (rt) => {
+      const os = platform();
+      if (rt.kind === 'macos-system') return inc.fixes['macos-system'];
+      if (rt.system) return inc.fixes['curl:linux'];
+      return inc.fixes[`${rt.kind}:${rt.bin}:${os}`] ?? inc.fixes[`${rt.kind}:${os}`] ?? inc.fixes[rt.kind];
+    };
+    const canaries = await Promise.all(inc.canaries.map(async (id) => { const host = inc.canaryHost.replace('{id}', id); return { id, host, url: `https://${host}/`, up: await reachable(host) }; }));
+    const rootsPem = join(LIB, 'incidents', inc.rootsPem);
+    for (const rt of discover({ roots })) {
+      const r = await check(rt, canaries, { rootsPem, controlUrl: inc.advisory });
+      const row = { incident: inc.id, ...rt, ...r, fix: r.status === 'EXPOSED' ? fixFor(rt) : undefined };
+      results.push(row);
+      const what = rt.label ? `${rt.label} ${rt.version}` : rt.kind === 'python-certifi' ? `certifi ${rt.certifi}  ${short(rt.env)}` : `${rt.kind} ${rt.version}  ${short(rt.bin)}${rt.env ? `  (${short(rt.env)})` : ''}`;
+      print(r.status, what, r.status === 'EXPOSED' ? c('31', `  trusts ${r.trusted.length}/${r.tested}`) : '');
+      if (r.status === 'UNKNOWN') note('33', r.reason);
+      if (row.fix) note('2', `fix: ${row.fix}`);
+    }
+    const down = canaries.filter((x) => !x.up).length;
+    if (down) note('33', `${down} of ${canaries.length} test hosts did not answer`);
   }
+
+  for (const rule of inc.binaries ?? []) {
+    const r = checkBinary(rule);
+    if (!r) continue;
+    const row = { incident: inc.id, kind: 'binary', binary: rule.binary, ...r, fix: r.status !== 'SAFE' ? rule.fix : undefined };
+    results.push(row);
+    print(r.status, `${rule.binary} ${r.version}  ${short(r.bin)}`);
+    if (r.reason) note(r.status === 'EXPOSED' ? '31' : '33', r.reason);
+    if (r.status === 'EXPOSED') note('2', `fix: ${rule.fix}`);
+  }
+  if (inc.type === 'binaries' && !results.length) print('SAFE', `${inc.binaries.map((b) => b.binary).join(', ')} not installed`);
+
+  if (inc.type === 'workflows') {
+    let repos = 0;
+    for (const repo of reposUnder(roots)) {
+      repos++;
+      const added = workflowsAddedSince(repo, inc.since);
+      for (const w of added) {
+        results.push({ incident: inc.id, kind: 'workflow', status: 'REVIEW', repo, ...w, fix: inc.fix });
+        print('REVIEW', `${short(repo)}/${w.file}`, c('2', `  added ${w.commit}`));
+      }
+    }
+    if (!results.length) print('SAFE', `no workflow files added since ${inc.since} in ${repos} local repositor${repos === 1 ? 'y' : 'ies'}`);
+    else note('2', `check: ${inc.fix}`);
+  }
+  all.push(...results);
+  if (!json) console.log(c('2', `Source: ${inc.advisory}`));
 }
-const n = (s) => results.filter((r) => r.status === s).length;
-const down = canaries.filter((x) => !x.up).length;
-if (json) console.log(JSON.stringify({ tool: 'wardlatch', version: VERSION, incident: { id: inc.id, title: inc.title, advisory: inc.advisory }, testHostsDown: down, results }, null, 1));
+
+const n = (s) => all.filter((r) => r.status === s).length;
+if (json) console.log(JSON.stringify({ tool: 'wardlatch', version: VERSION, incidents: chosen.map((i) => ({ id: i.id, title: i.title, advisory: i.advisory })), results: all }, null, 1));
 else {
-  console.log(`\n${n('SAFE')} safe · ${n('EXPOSED')} exposed · ${n('UNKNOWN')} could not be tested${down ? ` · ${down} of ${canaries.length} test hosts did not answer` : ''}`);
-  console.log(c('2', `Not covered here: ${inc.notCovered}`));
-  console.log(c('2', `Advisory: ${inc.advisory} · Wardlatch, a free tool from Deimos AI LLC.`));
+  console.log(`\n${n('SAFE')} safe · ${n('EXPOSED')} exposed · ${n('UNKNOWN')} could not be tested${n('REVIEW') ? ` · ${n('REVIEW')} to review` : ''}`);
+  const trust = chosen.find((i) => i.type === 'trust');
+  if (trust) console.log(c('2', `Not covered here: ${trust.notCovered}`));
+  console.log(c('2', 'Wardlatch, a free tool from Deimos AI LLC · https://www.deimoscore.com/wardlatch/'));
 }
-process.exit(n('EXPOSED') ? 1 : n('UNKNOWN') ? 2 : 0);
+process.exit(n('EXPOSED') ? 1 : n('UNKNOWN') ? 2 : 0);   // REVIEW lines inform; they don't fail a pipeline

@@ -1,0 +1,20 @@
+{
+  "id": "php-2026-10",
+  "type": "binaries",
+  "title": "PHP: two critical flaws (php2shell)",
+  "date": "2026-10-21",
+  "summary": "PHP announced fixes for two critical remote code execution flaws (CVE-2026-109618 and CVE-2026-109619, CVSS 9.2) for 21 October at 14:00 UTC, after details leaked. Affected and fixed versions come with the release.",
+  "advisory": "https://blog.qualys.com/vulnerabilities-threat-research/2026/10/20/php-announces-critical-security-release-for-two-vulnerabilities",
+  "binaries": [
+    {
+      "binary": "php",
+      "versionArgs": [
+        "-v"
+      ],
+      "versionRe": "PHP (\\d+\\.\\d+\\.\\d+)",
+      "pendingUntil": "2026-10-21T14:00:00Z",
+      "pendingNote": "PHP publishes the fixed versions on 21 Oct at 14:00 UTC. Update as soon as your branch has one; end-of-life branches may get none, so plan to move off them.",
+      "fix": "Update PHP to the fixed release for your branch."
+    }
+  ]
+}

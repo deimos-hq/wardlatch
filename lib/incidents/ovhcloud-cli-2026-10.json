@@ -1,0 +1,19 @@
+{
+  "id": "ovhcloud-cli-2026-10",
+  "type": "binaries",
+  "title": "OVHcloud CLI releases swapped for a secret-stealer",
+  "date": "2026-10-19",
+  "summary": "For up to 94 minutes on 19 October (12:47 to 14:21 UTC), the download archives of OVHcloud CLI v0.11.0 to v0.15.0 on GitHub were replaced with malware that reads secrets from disk. Only people who installed or updated in that window got it.",
+  "advisory": "https://thehackernews.com/2026/10/hackers-hijack-five-ovhcloud-cli.html",
+  "binaries": [
+    {
+      "binary": "ovhcloud",
+      "versionRe": "(\\d+\\.\\d+\\.\\d+)",
+      "bad": {
+        "from": "0.11.0",
+        "to": "0.15.0"
+      },
+      "fix": "Install v0.16.0 or later. If you installed or updated between 12:47 and 14:21 UTC on 19 October, revoke every secret this machine held (cloud keys, tokens, SSH keys) and clean the system: updating does not revoke a key that was already copied."
+    }
+  ]
+}

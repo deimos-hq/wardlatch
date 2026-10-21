@@ -4,7 +4,7 @@
 
 When a certificate authority's keys leak, browsers update within hours. The rest of your machine doesn't. curl, Node,
 Python and every project's own certificate bundle each keep their own list of who to trust, and each has to be fixed
-on its own. Wardlatch tells you which ones still trust the leaked keys.
+on its own. Wardlatch tells you which ones still trust the leaked keys, and checks this week's other leaks too.
 
 ```
 npx wardlatch
@@ -57,7 +57,12 @@ npx wardlatch --list          # incidents it knows
 
 ## Incidents
 
-- `emudhra-2026-10`: eMudhra intermediate CA compromise, 20 Oct 2026 ([advisory](https://emudhra.we-have-a-problem.com/)).
+`npx wardlatch` checks all of them; `--incident <id>` checks one.
+
+- `emudhra-2026-10`: eMudhra intermediate CA compromise, 20 Oct 2026 ([advisory](https://emudhra.we-have-a-problem.com/)). Real TLS probes per runtime, plus cloudflared (fixed in 2026.10.2) and the Go toolchain (1.27.3 / 1.26.10).
+- `ovhcloud-cli-2026-10`: OVHcloud CLI v0.11.0 to v0.15.0 swapped for a secret-stealer on 19 Oct ([report](https://thehackernews.com/2026/10/hackers-hijack-five-ovhcloud-cli.html)). Flags an installed copy in that range.
+- `php-2026-10`: two critical PHP flaws, fixes due 21 Oct 14:00 UTC ([report](https://blog.qualys.com/vulnerabilities-threat-research/2026/10/20/php-announces-critical-security-release-for-two-vulnerabilities)). Flags an installed PHP until the fixed versions are known.
+- `github-actions-2026-10`: credential-stealing workflow files planted in tens of thousands of repositories since 7 Oct ([report](https://thehackernews.com/2026/10/credential-stealing-github-actions.html)). Lists workflow files added to your local repositories since 1 Sep, to review. Review lines don't change the exit code.
 
 When the next one happens, it gets added here.
 

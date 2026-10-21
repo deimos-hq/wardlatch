@@ -1,0 +1,10 @@
+{
+  "id": "github-actions-2026-10",
+  "type": "workflows",
+  "title": "GitHub Actions workflows planted to steal CI secrets",
+  "date": "2026-10-07",
+  "summary": "Since 7 October, hijacked GitHub accounts have committed credential-stealing workflow files to tens of thousands of repositories. A workflow you didn't write can send your CI secrets (registry tokens, cloud keys) to an attacker.",
+  "advisory": "https://thehackernews.com/2026/10/credential-stealing-github-actions.html",
+  "since": "2026-09-01",
+  "fix": "Open each workflow listed and confirm someone on your team added it. If one is unknown: delete it, rotate every secret the repository's Actions could read, and review that account's recent commits."
+}

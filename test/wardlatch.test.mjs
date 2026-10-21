@@ -9,6 +9,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, reachable, nscurlOk, canForceCa } from '../lib/probe.mjs';
 import { discover } from '../lib/discover.mjs';
+import { cmp, checkBinary } from '../lib/binaries.mjs';
+import { workflowsAddedSince } from '../lib/workflows.mjs';
 
 const OPENSSL = ['/opt/homebrew/bin/openssl', '/usr/local/bin/openssl', '/usr/bin/openssl'].find(existsSync);
 let dir, server, canary, badCa, otherCa;
@@ -75,4 +77,23 @@ test('the macOS system probe reads only a refusal as a refusal', () => {
 test('a system probe that cannot open a normal site is UNKNOWN, never SAFE', async () => {
   const r = await check({ kind: 'macos-system', bin: '/usr/bin/false' }, [canary], { controlUrl: canary.url, timeoutMs: 2000 });
   assert.equal(r.status, 'UNKNOWN'); assert.match(r.reason, /control failed/);
+});
+
+test('version checks: affected range, fixed version, one fix per release line', () => {
+  assert.equal(cmp('0.15.0', '0.11.0'), 1); assert.equal(cmp('2026.10.2', '2026.10.2'), 0); assert.equal(cmp('1.26.9', '1.26.10'), -1);
+  const bin = join(dir, 'bin'); mkdirSync(bin, { recursive: true });
+  const fake = (name, out) => { writeFileSync(join(bin, name), `#!/bin/sh\necho "${out}"\n`, { mode: 0o755 }); };
+  fake('ovhcloud', 'ovhcloud CLI 0.13.0'); fake('cloudflared', 'cloudflared version 2026.9.1 (built x)'); fake('go', 'go version go1.26.10 darwin/arm64');
+  assert.equal(checkBinary({ binary: 'ovhcloud', bad: { from: '0.11.0', to: '0.15.0' } }, bin).status, 'EXPOSED');
+  assert.equal(checkBinary({ binary: 'cloudflared', versionRe: 'version (\\d+\\.\\d+\\.\\d+)', fixedIn: '2026.10.2' }, bin).status, 'EXPOSED');
+  assert.equal(checkBinary({ binary: 'go', versionArgs: ['version'], versionRe: 'go(\\d+\\.\\d+(?:\\.\\d+)?)', fixedIn: ['1.26.10', '1.27.3'] }, bin).status, 'SAFE');
+  assert.equal(checkBinary({ binary: 'not-installed-anywhere' }, bin), null);
+});
+
+test('workflow review lists each workflow file added since the date, once', () => {
+  const repo = join(dir, 'repo'); mkdirSync(join(repo, '.github', 'workflows'), { recursive: true });
+  const g = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x' } });
+  g('init', '-q'); writeFileSync(join(repo, '.github', 'workflows', 'audit.yml'), 'on: push\n'); g('add', '.'); g('commit', '-qm', 'add');
+  const found = workflowsAddedSince(repo, '2000-01-01');
+  assert.equal(found.length, 1); assert.equal(found[0].file, '.github/workflows/audit.yml');
 });

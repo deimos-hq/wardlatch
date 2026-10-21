@@ -42,5 +42,27 @@
     "python": "Upgrade the CA bundle this Python uses. python.org builds: pip install -U certifi (2026.10.19+) or run 'Install Certificates.command'.",
     "macos-system": "Install the latest macOS update (System Settings → General → Software Update). Apple blocks the compromised certificates through its updates; Safari and Apple's apps use this layer."
   },
-  "notCovered": "Compiled programs carry the roots of the toolchain that built them: rebuild Go programs with Go 1.27.3 or 1.26.10; update Electron apps to 44.9.1, 43.8.1 or 42.11.16; Rust: rustls-webpki 0.103.16, webpki-roots 1.0.10. Browsers: Chrome, Edge, Firefox and Safari block the intermediates through their own updates; check yours at the advisory's #check page."
+  "notCovered": "Compiled programs carry the roots of the toolchain that built them: rebuild Go programs with Go 1.27.3 or 1.26.10; update Electron apps to 44.9.1, 43.8.1 or 42.11.16; Rust: rustls-webpki 0.103.16, webpki-roots 1.0.10. Browsers: Chrome, Edge, Firefox and Safari block the intermediates through their own updates; check yours at the advisory's #check page.",
+  "type": "trust",
+  "binaries": [
+    {
+      "binary": "cloudflared",
+      "versionRe": "version (\\d+\\.\\d+\\.\\d+)",
+      "fixedIn": "2026.10.2",
+      "fix": "Update cloudflared to 2026.10.2 or later (Homebrew: brew upgrade cloudflared). It carries its own trust list, per Cloudflare's advisory.",
+      "source": "https://blog.cloudflare.com/emudhra-certificate-compromise"
+    },
+    {
+      "binary": "go",
+      "versionArgs": [
+        "version"
+      ],
+      "versionRe": "go(\\d+\\.\\d+(?:\\.\\d+)?)",
+      "fixedIn": [
+        "1.26.10",
+        "1.27.3"
+      ],
+      "fix": "Upgrade Go to 1.27.3 or 1.26.10, then rebuild and redeploy every program built with it: a Go program carries the roots of the Go that built it."
+    }
+  ]
 }
