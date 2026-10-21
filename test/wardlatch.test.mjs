@@ -203,3 +203,14 @@ test('WordPress: a plugin whose version cannot be read is UNKNOWN, never SAFE', 
   const f = checkSite(site, [{ plugin: 'updraftplus', mainFile: 'updraftplus.php', fixedIn: '1.26.13', fix: 'update' }]);
   assert.equal(f.length, 1); assert.equal(f[0].status, 'UNKNOWN'); assert.match(f[0].reason, /could not be checked/);
 });
+
+test('PHP 21 Oct 2026: the real fixed versions per branch, and end of life below 8.2', () => {
+  const rule = JSON.parse(readFileSync(new URL('../lib/incidents/php-2026-10.json', import.meta.url), 'utf8')).binaries[0];
+  const bin = join(dir, 'phpreal'); mkdirSync(bin, { recursive: true });
+  const php = (v) => writeFileSync(join(bin, 'php'), `#!/bin/sh\necho "PHP ${v} (cli)"\n`, { mode: 0o755 });
+  php('8.4.27'); assert.equal(checkBinary(rule, bin).status, 'SAFE');
+  php('8.5.12'); assert.equal(checkBinary(rule, bin).status, 'SAFE');
+  php('8.4.26'); assert.equal(checkBinary(rule, bin).status, 'EXPOSED');
+  php('8.2.34'); assert.match(checkBinary(rule, bin).reason, /fixed in 8\.2\.35/);
+  php('8.1.31'); assert.match(checkBinary(rule, bin).reason, /end of life/);
+});

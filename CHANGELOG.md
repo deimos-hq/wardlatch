@@ -9,7 +9,14 @@ of that commit matches the published package's file count and size. The format f
 
 ## [Unreleased]
 
-Everything on `main` after 0.1.2. It ships as the next release.
+## [0.1.3] - 2026-10-21
+
+### Changed
+
+- **PHP's fixed versions are in.** PHP released 8.5.12, 8.4.27, 8.3.36 and 8.2.35 on 21 October 2026, fixing
+  CVE-2026-109618 and CVE-2026-109619 (unauthenticated remote code execution). A `php` older than its branch's fix is
+  EXPOSED; 8.1 and older are reported as end of life (the PHP project ships them no fix; use a vendor backport or
+  move to a supported branch). The "waiting for the release" state is gone.
 
 ### Security
 
@@ -118,7 +125,8 @@ Published 05:14 UTC. npm `gitHead`: `4d4f295`. The first release.
 npm also lists `0.0.0-stage` (21 October, 05:13 UTC), a 331-byte, two-file placeholder from npm's staged publishing,
 described on npm as a "Temporary package placeholder". It is not a release and holds none of Wardlatch's code.
 
-[Unreleased]: https://github.com/thearchitect0x-glitch/wardlatch/compare/bcf739c...main
+[Unreleased]: https://github.com/thearchitect0x-glitch/wardlatch/compare/v0.1.3...main
+[0.1.3]: https://github.com/thearchitect0x-glitch/wardlatch/releases/tag/v0.1.3
 [0.1.2]: https://github.com/thearchitect0x-glitch/wardlatch/tree/bcf739c318dd60397a76360ac68e04138fd532bd
 [0.1.1]: https://github.com/thearchitect0x-glitch/wardlatch/tree/49ea20cd599c817efa4d4c9ec37cfdaca8d5b48e
 [0.1.0]: https://github.com/thearchitect0x-glitch/wardlatch/tree/4d4f2955b2a5ac39f36797ac6b8f5cfc1209034d

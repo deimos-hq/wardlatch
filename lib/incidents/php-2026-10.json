@@ -3,7 +3,7 @@
   "type": "binaries",
   "title": "PHP: two critical flaws (php2shell)",
   "date": "2026-10-21",
-  "summary": "PHP announced fixes for two critical remote code execution flaws (CVE-2026-109618 and CVE-2026-109619, CVSS 9.2) for 21 October at 14:00 UTC, after details leaked. Affected and fixed versions come with the release.",
+  "summary": "PHP released fixes for two critical remote code execution flaws (CVE-2026-109618 and CVE-2026-109619) on 21 October 2026: 8.5.12, 8.4.27, 8.3.36 and 8.2.35. PHP says there are no complete mitigations; updating is the only safe choice. 8.1 and older get no updates from the PHP project.",
   "advisory": "https://blog.qualys.com/vulnerabilities-threat-research/2026/10/20/php-announces-critical-security-release-for-two-vulnerabilities",
   "binaries": [
     {
@@ -12,9 +12,14 @@
         "-v"
       ],
       "versionRe": "PHP (\\d+\\.\\d+\\.\\d+)",
-      "pendingUntil": "2026-10-21T14:00:00Z",
-      "pendingNote": "PHP publishes the fixed versions on 21 Oct at 14:00 UTC. Update as soon as your branch has one; end-of-life branches may get none, so plan to move off them.",
-      "fix": "Update PHP to the fixed release for your branch."
+      "fix": "Update PHP to 8.5.12, 8.4.27, 8.3.36 or 8.2.35 (released 21 Oct 2026), then restart PHP-FPM, Apache or your PHP server. There are no complete mitigations. PHP 8.1 and older get no updates from the PHP project: use your distribution's or LTS vendor's backport, or move to a supported branch.",
+      "fixedIn": [
+        "8.2.35",
+        "8.3.36",
+        "8.4.27",
+        "8.5.12"
+      ],
+      "source": "https://www.php.net/"
     }
   ]
 }
