@@ -9,6 +9,27 @@ of that commit matches the published package's file count and size. The format f
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-21
+
+### Security
+
+- **The OVHcloud CLI check no longer runs the program.** 0.1.0 to 0.1.5 read its version with `ovhcloud --version`.
+  On a machine that still held one of the compromised builds, that would have run the credential stealer, which
+  OVHcloud's advisory warns against. 0.1.6 never runs it: it compares the file's MD5 with the five compromised builds
+  OVHcloud published (GHSA-862f-55f5-vmvw), and looks in `$TMPDIR`, `/tmp` and `/var/tmp` for the `envchecker-NNNNNNNNN`
+  folder the stealer leaves every time it runs, so a machine where it already ran is EXPOSED even if the binary is
+  gone. A clean copy reads SAFE whatever its version: OVHcloud says only downloads from the 94-minute window were
+  affected, so 0.1.5 flagged every copy of v0.11.0 to v0.15.0, wrongly. Found in our own review while updating to the
+  advisory. If you ran an earlier Wardlatch with a compromised `ovhcloud` installed, follow the fix it prints now.
+- Rules can now mark a program as possible malware (`noExec`, `md5Bad`, `tmpTrace`); a test plants a program that
+  would leave a marker file and fails if it ever runs.
+
+### Changed
+
+- The OVHcloud fix lists what the stealer took, from OVHcloud's advisory: cloud, SSH, Kubernetes, Docker, npm and
+  Terraform credentials, `.netrc` and git credentials, and the histories of AI coding tools.
+
+
 ## [0.1.5] - 2026-10-21
 
 ### Changed
@@ -151,7 +172,8 @@ Published 05:14 UTC. npm `gitHead`: `4d4f295`. The first release.
 npm also lists `0.0.0-stage` (21 October, 05:13 UTC), a 331-byte, two-file placeholder from npm's staged publishing,
 described on npm as a "Temporary package placeholder". It is not a release and holds none of Wardlatch's code.
 
-[Unreleased]: https://github.com/deimos-hq/wardlatch/compare/v0.1.5...main
+[Unreleased]: https://github.com/deimos-hq/wardlatch/compare/v0.1.6...main
+[0.1.6]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.6
 [0.1.5]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.5
 [0.1.4]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.4
 [0.1.3]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.3

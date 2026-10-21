@@ -113,7 +113,7 @@ To work on it: `git clone`, then `npm test`. Nothing to install.
 `npx wardlatch` checks all of them; `--incident <id>` checks one.
 
 - `emudhra-2026-10`: eMudhra intermediate CA compromise, 20 Oct 2026 ([advisory](https://emudhra.we-have-a-problem.com/)). Real TLS probes per runtime, plus cloudflared (fixed in 2026.10.2) and the Go toolchain (1.27.3 / 1.26.10).
-- `ovhcloud-cli-2026-10`: OVHcloud CLI v0.11.0 to v0.15.0 swapped for a secret-stealer on 19 Oct ([report](https://thehackernews.com/2026/10/hackers-hijack-five-ovhcloud-cli.html)). Flags an installed copy in that range.
+- `ovhcloud-cli-2026-10`: OVHcloud CLI v0.11.0 to v0.15.0 swapped for a secret-stealer on 19 Oct ([OVHcloud's advisory](https://github.com/ovh/ovhcloud-cli/security/advisories/GHSA-862f-55f5-vmvw)). Never runs the program: compares the installed file with the five compromised builds OVHcloud published, and looks for the `envchecker-` folder the stealer leaves in the temp directory.
 - `php-2026-10`: two critical PHP flaws, fixes due 21 Oct 14:00 UTC ([report](https://blog.qualys.com/vulnerabilities-threat-research/2026/10/20/php-announces-critical-security-release-for-two-vulnerabilities)). Flags an installed PHP until the fixed versions are known.
 - `github-actions-2026-10`: credential-stealing workflow files planted in tens of thousands of repositories since 7 Oct ([report](https://thehackernews.com/2026/10/credential-stealing-github-actions.html)). Lists workflow files added to your local repositories since 1 Sep, to review. Review lines don't change the exit code.
 

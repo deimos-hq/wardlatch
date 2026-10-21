@@ -155,8 +155,16 @@ tests that bundle with a curl the machine already trusts (`/usr/bin/curl`, else 
 An environment without certifi uses its base Python's trust, which is checked through `PATH`. A test plants a fake
 interpreter that would leave a marker file and fails if it ever runs.
 
-**Programs on `PATH` are trusted.** Every `node`, `curl`, `python3`, and each tool named in a version rule, is run as
-found, as your shell would. A `PATH` that includes `.` or a writable folder is outside what Wardlatch can defend.
+**Programs on `PATH` are trusted, except a program an incident says may itself be malware.** Every `node`, `curl`,
+`python3`, and each tool named in a version rule, is run as found, as your shell would. A `PATH` that includes `.` or a
+writable folder is outside what Wardlatch can defend. A rule marked `noExec` is never run: the file is hashed and
+compared with the builds the vendor published as compromised, and the temp directories are searched for the traces
+the malware leaves. Since 0.1.6 the OVHcloud CLI rule works this way, with the five MD5 hashes and the `envchecker-`
+folder from OVHcloud's advisory (GHSA-862f-55f5-vmvw); a test plants a program that would leave a marker file and
+fails if it ever runs. **Found in our own review, 21 October 2026:** 0.1.0 to 0.1.5 read the OVHcloud CLI's version by
+running `ovhcloud --version`, so on a machine that still held one of the compromised builds, running Wardlatch would
+also have run the stealer. Anyone who ran an earlier Wardlatch with a compromised `ovhcloud` installed should follow
+that rule's fix.
 
 **Git reads each repository's own configuration.** Wardlatch runs `git ls-files` and `git log` in every repository
 it finds. It runs no hooks, no pager and no `git status`, but it does not override the repository's config either.

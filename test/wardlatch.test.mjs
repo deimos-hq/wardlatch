@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, reachable, nscurlOk, canForceCa } from '../lib/probe.mjs';
 import { discover } from '../lib/discover.mjs';
-import { cmp, checkBinary } from '../lib/binaries.mjs';
+import { cmp, checkBinary, md5File } from '../lib/binaries.mjs';
 import { workflowsAddedSince } from '../lib/workflows.mjs';
 import { scanText } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
@@ -109,6 +109,30 @@ test('version checks: affected range, fixed version, one fix per release line', 
   assert.equal(checkBinary({ binary: 'cloudflared', versionRe: 'version (\\d+\\.\\d+\\.\\d+)', fixedIn: '2026.10.2' }, bin).status, 'EXPOSED');
   assert.equal(checkBinary({ binary: 'go', versionArgs: ['version'], versionRe: 'go(\\d+\\.\\d+(?:\\.\\d+)?)', fixedIn: ['1.26.10', '1.27.3'] }, bin).status, 'SAFE');
   assert.equal(checkBinary({ binary: 'not-installed-anywhere' }, bin), null);
+});
+
+test('a program an incident marks as possible malware is never run: it is checked by its hash and its temp-folder trace', () => {
+  const bin = join(dir, 'nx'), tmp = join(dir, 'nx-tmp'), ran = join(dir, 'nx-ran');
+  mkdirSync(bin, { recursive: true }); mkdirSync(tmp, { recursive: true });
+  writeFileSync(join(bin, 'ovhcloud'), `#!/bin/sh\ntouch "${ran}"\necho "ovhcloud 0.13.0"\n`, { mode: 0o755 });
+  const rule = { binary: 'ovhcloud', noExec: true, md5Bad: ['0'.repeat(32)], tmpTrace: '^envchecker-[0-9]{9,10}$' };
+  let r = checkBinary(rule, bin, { tmpDirs: [tmp] });
+  assert.equal(r.status, 'SAFE'); assert.match(r.reason, /not run/);
+  r = checkBinary({ ...rule, md5Bad: [md5File(join(bin, 'ovhcloud'))] }, bin, { tmpDirs: [tmp] });
+  assert.equal(r.status, 'EXPOSED'); assert.match(r.reason, /compromised builds/);
+  mkdirSync(join(tmp, 'envchecker-123456789'));
+  r = checkBinary(rule, join(dir, 'no-such-path'), { tmpDirs: [tmp] });
+  assert.equal(r.status, 'EXPOSED'); assert.match(r.reason, /envchecker-123456789/);
+  assert.equal(existsSync(ran), false, 'the program was run');
+});
+
+test('the OVHcloud CLI incident never runs the program and carries the five published hashes', () => {
+  const rule = JSON.parse(readFileSync(new URL('../lib/incidents/ovhcloud-cli-2026-10.json', import.meta.url), 'utf8')).binaries[0];
+  assert.equal(rule.noExec, true); assert.equal(rule.md5Bad.length, 5); assert.ok(rule.md5Bad.every((h) => /^[0-9a-f]{32}$/.test(h)));
+  const bin = join(dir, 'ovh'), ran = join(dir, 'ovh-ran'); mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'ovhcloud'), `#!/bin/sh\ntouch "${ran}"\n`, { mode: 0o755 });
+  assert.equal(checkBinary(rule, bin, { tmpDirs: [] }).status, 'SAFE');
+  assert.equal(existsSync(ran), false, 'the program was run');
 });
 
 test('workflow review lists each workflow file added since the date, once', () => {

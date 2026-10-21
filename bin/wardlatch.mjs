@@ -122,7 +122,7 @@ for (const inc of chosen) {
     const row = { incident: inc.id, kind: 'binary', binary: rule.binary, ...r, fix: r.status !== 'SAFE' ? rule.fix : undefined };
     results.push(row);
     print(r.status, `${rule.binary} ${r.version}  ${short(r.bin)}`);
-    if (r.reason) note(r.status === 'EXPOSED' ? '31' : '33', r.reason);
+    if (r.reason) note({ EXPOSED: '31', SAFE: '2' }[r.status] ?? '33', r.reason);
     if (r.status === 'EXPOSED') note('2', `fix: ${rule.fix}`);
   }
   if (inc.type === 'binaries' && !results.length) print('SAFE', `${inc.binaries.map((b) => b.binary).join(', ')} not installed`);

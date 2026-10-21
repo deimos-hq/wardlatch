@@ -3,17 +3,23 @@
   "type": "binaries",
   "title": "OVHcloud CLI releases swapped for a secret-stealer",
   "date": "2026-10-19",
-  "summary": "For up to 94 minutes on 19 October (12:47 to 14:21 UTC), the download archives of OVHcloud CLI v0.11.0 to v0.15.0 on GitHub were replaced with malware that reads secrets from disk. Only people who installed or updated in that window got it.",
-  "advisory": "https://thehackernews.com/2026/10/hackers-hijack-five-ovhcloud-cli.html",
+  "summary": "For up to 94 minutes on 19 October (12:47 to 14:21 UTC), the release binaries of OVHcloud CLI v0.11.0 to v0.15.0 on GitHub were replaced with a credential stealer (GlassWorm-linked, per OVHcloud). Only people who installed or updated in that window got it; about 250 downloads. Wardlatch never runs the program: it compares the file with the five compromised builds OVHcloud published and looks for the envchecker-NNNNNNNNN folder the stealer leaves in the temp directory every time it runs.",
+  "advisory": "https://github.com/ovh/ovhcloud-cli/security/advisories/GHSA-862f-55f5-vmvw",
   "binaries": [
     {
       "binary": "ovhcloud",
-      "versionRe": "(\\d+\\.\\d+\\.\\d+)",
-      "bad": {
-        "from": "0.11.0",
-        "to": "0.15.0"
-      },
-      "fix": "Install v0.16.0 or later. If you installed or updated between 12:47 and 14:21 UTC on 19 October, revoke every secret this machine held (cloud keys, tokens, SSH keys) and clean the system: updating does not revoke a key that was already copied."
+      "fix": "Do not run an ovhcloud binary installed on 19 October: delete it and install v0.16.0 or later. The stealer copied secrets and files from this machine, so revoke and replace them: cloud keys for AWS, Google Cloud, Azure and DigitalOcean; SSH keys; Kubernetes, Docker, npm and Terraform credentials; .netrc and git credentials. Treat the histories of the AI coding tools on it (Claude, Cursor, VS Code, Continue, Cody, OpenCode) as read. Updating does not revoke a key that was already copied. OVHcloud's advisory lists everything it took.",
+      "noExec": true,
+      "md5Bad": [
+        "6f2f086239f3d88eb2750e871901927d",
+        "347e65eb7f2d78d1c6872690272a6cc3",
+        "01f57206d37c28cf711677f612052913",
+        "301bff0b51980b9e76c93633e7cfd3bd",
+        "6a3cf153338c416169cda2fe704c8848"
+      ],
+      "tmpTrace": "^envchecker-[0-9]{9,10}$",
+      "note": "not one of the five compromised builds OVHcloud published (checked by its MD5; it was not run), and no envchecker folder in the temp directories",
+      "source": "https://github.com/ovh/ovhcloud-cli/security/advisories/GHSA-862f-55f5-vmvw"
     }
   ]
 }

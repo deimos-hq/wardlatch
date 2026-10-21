@@ -6,7 +6,7 @@
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,19 +50,33 @@ test('an unknown incident is refused with exit code 2, never a SAFE', () => {
 });
 
 test('a known-bad tool version is EXPOSED (exit 1); a missing tool is SAFE (exit 0); --json is complete', () => {
-  const bin = join(dir, 'ovh'); mkdirSync(bin, { recursive: true });
-  writeFileSync(join(bin, 'ovhcloud'), '#!/bin/sh\necho "ovhcloud 0.13.0"\n', { mode: 0o755 });
-  const bad = run(['--incident', 'ovhcloud-cli-2026-10', '--json', '--paths', dir], { PATH: bin });
+  const bin = join(dir, 'php'); mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'php'), '#!/bin/sh\necho "PHP 8.4.26 (cli)"\n', { mode: 0o755 });
+  const bad = run(['--incident', 'php-2026-10', '--json', '--paths', dir], { PATH: bin });
   assert.equal(bad.code, 1);
   const j = JSON.parse(bad.out);
   assert.equal(j.tool, 'wardlatch'); assert.equal(j.version, VERSION);
-  assert.deepEqual(j.incidents.map((i) => i.id), ['ovhcloud-cli-2026-10']);
+  assert.deepEqual(j.incidents.map((i) => i.id), ['php-2026-10']);
   assert.equal(j.results.length, 1);
-  assert.equal(j.results[0].status, 'EXPOSED'); assert.equal(j.results[0].version, '0.13.0'); assert.ok(j.results[0].fix);
-  const text = run(['--incident', 'ovhcloud-cli-2026-10', '--paths', dir], { PATH: bin });
-  assert.match(text.out, /EXPOSED {2}ovhcloud 0\.13\.0/); assert.match(text.out, /fix: Install v0\.16\.0/);
-  const none = run(['--incident', 'ovhcloud-cli-2026-10', '--paths', dir], { PATH: join(dir, 'empty-path') });
-  assert.equal(none.code, 0); assert.match(none.out, /SAFE {5}ovhcloud not installed/);
+  assert.equal(j.results[0].status, 'EXPOSED'); assert.equal(j.results[0].version, '8.4.26'); assert.ok(j.results[0].fix);
+  const text = run(['--incident', 'php-2026-10', '--paths', dir], { PATH: bin });
+  assert.match(text.out, /EXPOSED {2}php 8\.4\.26/); assert.match(text.out, /fix: Update PHP to 8\.5\.12/);
+  const none = run(['--incident', 'php-2026-10', '--paths', dir], { PATH: join(dir, 'empty-path') });
+  assert.equal(none.code, 0); assert.match(none.out, /SAFE {5}php not installed/);
+});
+
+test('the OVHcloud CLI is never run: a clean file is SAFE, the stealer\'s temp folder is EXPOSED (exit 1)', () => {
+  const bin = join(dir, 'ovh'), ran = join(dir, 'ovh-ran'), tmp = join(dir, 'ovh-tmp');
+  mkdirSync(bin, { recursive: true }); mkdirSync(tmp, { recursive: true });
+  writeFileSync(join(bin, 'ovhcloud'), `#!/bin/sh\ntouch "${ran}"\necho "ovhcloud 0.13.0"\n`, { mode: 0o755 });
+  const clean = run(['--incident', 'ovhcloud-cli-2026-10', '--json', '--paths', dir], { PATH: bin, TMPDIR: tmp });
+  const j = JSON.parse(clean.out);
+  assert.equal(j.results[0].status, 'SAFE'); assert.match(j.results[0].reason, /it was not run/);
+  mkdirSync(join(tmp, 'envchecker-1234567890'));
+  const hit = run(['--incident', 'ovhcloud-cli-2026-10', '--paths', dir], { PATH: bin, TMPDIR: tmp });
+  assert.equal(hit.code, 1);
+  assert.match(hit.out, /EXPOSED/); assert.match(hit.out, /envchecker-1234567890/); assert.match(hit.out, /fix: Do not run an ovhcloud binary/);
+  assert.equal(existsSync(ran), false, 'wardlatch ran the ovhcloud program');
 });
 
 test('workflow files added to a local repository are listed to REVIEW, and do not fail the exit code', () => {

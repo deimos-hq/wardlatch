@@ -21,7 +21,7 @@ test('every incident has the fields its check reads, named after its file', () =
     assert.ok(TYPES.includes(i.type), `${i.id}: type ${i.type}`);
     assert.match(i.date, /^\d{4}-\d{2}-\d{2}$/); assert.ok(i.title && i.summary, i.id);
     assert.ok(https(i.advisory), `${i.id}: the source is an https URL`);
-    for (const b of i.binaries ?? []) assert.ok(b.binary && b.fix && (b.bad || b.fixedIn || b.pendingUntil), `${i.id}: ${b.binary}`);
+    for (const b of i.binaries ?? []) assert.ok(b.binary && b.fix && (b.bad || b.fixedIn || b.pendingUntil || (b.noExec && b.md5Bad?.length)), `${i.id}: ${b.binary}`);
     if (i.type === 'workflows') assert.ok(!Number.isNaN(Date.parse(i.since)) && i.fix);
     if (i.type === 'secrets') assert.ok(i.fix);
     if (i.type === 'wordpress') { assert.ok(!Number.isNaN(Date.parse(i.addedSince)) && i.reviewFix); for (const r of i.rules) assert.ok(r.plugin && r.mainFile && r.fix); }
