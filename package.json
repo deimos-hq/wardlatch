@@ -3,12 +3,32 @@
   "version": "0.1.0",
   "description": "Does the wrong key still turn? Checks whether the runtimes on your machine (curl, Node, Python, certifi) still trust a compromised certificate authority. Runs locally, changes nothing.",
   "type": "module",
-  "bin": { "wardlatch": "bin/wardlatch.mjs" },
-  "files": ["bin", "lib", "README.md", "LICENSE", "NOTICE"],
-  "engines": { "node": ">=18.17" },
-  "scripts": { "test": "node --test test/" },
-  "keywords": ["tls", "certificate", "ca", "trust-store", "security", "emudhra", "incident-response"],
+  "bin": {
+    "wardlatch": "bin/wardlatch.mjs"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "keywords": [
+    "tls",
+    "certificate",
+    "ca",
+    "trust-store",
+    "security",
+    "emudhra",
+    "incident-response"
+  ],
   "license": "Apache-2.0",
   "author": "Deimos AI LLC",
-  "private": true
+  "homepage": "https://www.deimoscore.com/wardlatch/"
 }
