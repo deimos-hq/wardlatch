@@ -1,0 +1,10 @@
+Wardlatch
+Copyright 2026 Deimos AI LLC
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The eMudhra incident data (the 12 public test hosts, the affected roots and the fix guidance) comes from the
+public advisory at https://emudhra.we-have-a-problem.com/ (source: https://github.com/galadran/we-have-a-problem.com).
+Wardlatch only connects to those test hosts the way any browser visiting the advisory's #check page does.
+The two root certificates in lib/incidents/emudhra-2026-10-roots.pem are public CA certificates, included so the
+positive control can force them in.

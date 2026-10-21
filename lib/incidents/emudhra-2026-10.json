@@ -1,0 +1,30 @@
+{
+  "id": "emudhra-2026-10",
+  "title": "eMudhra intermediate CA compromise",
+  "date": "2026-10-20",
+  "summary": "Private keys of eight eMudhra intermediate certificate authorities were compromised. Anyone holding them could issue a certificate for any website. A client is exposed while it still trusts the roots those intermediates chain to.",
+  "advisory": "https://emudhra.we-have-a-problem.com/",
+  "canarySource": "The 12 test hosts are the advisory's own (emudhra.we-have-a-problem.com/#check). Each serves a certificate chained to one compromised intermediate.",
+  "distrustedRoots": [
+    { "name": "AAA Certificate Services (Comodo, via the Sectigo cross-sign)", "sha256": "D7:A7:A0:FB:5D:7E:27:31:D7:71:E9:48:4E:BC:DE:F7:1D:5F:0C:3E:0A:29:48:78:2B:C8:3E:E0:EA:69:9E:F4" },
+    { "name": "emSign ECC Root CA - G3", "sha256": "86:A1:EC:BA:08:9C:4A:8D:3B:BE:27:34:C6:12:BA:34:1D:81:3E:04:3C:F9:E8:A8:62:CD:5C:57:A3:6B:BE:6B" }
+  ],
+  "rootsPem": "emudhra-2026-10-roots.pem",
+  "canaries": [
+    "dv-g3b", "dv-g3b-aaa", "dv-g3c", "dv-g3c-aaa",
+    "ov-g3b", "ov-g3b-aaa", "ov-g3c", "ov-g3c-aaa",
+    "ev-g3b", "ev-g3b-aaa", "ev-g3c", "ev-g3c-aaa"
+  ],
+  "canaryHost": "{id}-emudhra.we-have-a-problem.com",
+  "fixes": {
+    "curl:/usr/bin/curl:darwin": "macOS's built-in curl reads /etc/ssl/cert.pem, which Apple has not updated yet. The advisory's fix (backs the file up first, asks for your Mac password): sudo cp /etc/ssl/cert.pem /etc/ssl/cert.pem.bak && awk '/^(###|===) /{skip=0} /^=== .*\\/CN=(AAA Certificate Services|emSign ECC Root CA - G3)$/{skip=1} !skip' /etc/ssl/cert.pem.bak | sudo tee /etc/ssl/cert.pem > /dev/null",
+    "python:/usr/bin/python3:darwin": "Apple's built-in Python reads /etc/ssl/cert.pem too. Apply the same fix as for macOS curl (see the curl line), or use a Python whose certifi is 2026.10.19 or newer.",
+    "curl:linux": "Update your distribution's ca-certificates package (Debian 12: 20250419~deb12u2, Debian 13: 20250419+deb13u1). Until it ships, see the advisory's Linux workaround.",
+    "python:linux": "Update your distribution's ca-certificates package; Python's default context reads the system store.",
+    "curl": "Update the CA bundle this curl uses (Homebrew: brew upgrade ca-certificates, fixed in 2026-09-25_1 and later).",
+    "node": "Node bundles its own roots; the fix is pending upstream (nodejs/node#66871). Until a fixed release: run Node with --use-openssl-ca and SSL_CERT_FILE pointing at an updated bundle (for example the cleaned /etc/ssl/cert.pem), or use a Node built on the system store (Homebrew's node).",
+    "python-certifi": "Upgrade certifi in this environment to 2026.10.19 or newer: pip install -U certifi (uv: uv lock --upgrade-package certifi).",
+    "python": "Upgrade the CA bundle this Python uses. python.org builds: pip install -U certifi (2026.10.19+) or run 'Install Certificates.command'."
+  },
+  "notCovered": "Compiled programs carry the roots of the toolchain that built them: rebuild Go programs with Go 1.27.3 or 1.26.10; update Electron apps to 44.9.1, 43.8.1 or 42.11.16; Rust: rustls-webpki 0.103.16, webpki-roots 1.0.10. Browsers: Chrome, Edge, Firefox and Safari block the intermediates through their own updates; check yours at the advisory's #check page."
+}
