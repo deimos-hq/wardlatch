@@ -9,6 +9,8 @@ of that commit matches the published package's file count and size. The format f
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-10-21
+
 ### Changed
 
 - **The repository moved to the Deimos AI organization:** [github.com/deimos-hq/wardlatch](https://github.com/deimos-hq/wardlatch).
@@ -147,7 +149,8 @@ Published 05:14 UTC. npm `gitHead`: `4d4f295`. The first release.
 npm also lists `0.0.0-stage` (21 October, 05:13 UTC), a 331-byte, two-file placeholder from npm's staged publishing,
 described on npm as a "Temporary package placeholder". It is not a release and holds none of Wardlatch's code.
 
-[Unreleased]: https://github.com/deimos-hq/wardlatch/compare/v0.1.4...main
+[Unreleased]: https://github.com/deimos-hq/wardlatch/compare/v0.1.5...main
+[0.1.5]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.5
 [0.1.4]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.4
 [0.1.3]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.3
 [0.1.2]: https://github.com/deimos-hq/wardlatch/tree/bcf739c318dd60397a76360ac68e04138fd532bd
