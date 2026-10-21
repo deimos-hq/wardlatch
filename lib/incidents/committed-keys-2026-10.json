@@ -1,0 +1,9 @@
+{
+  "id": "committed-keys-2026-10",
+  "type": "secrets",
+  "title": "Keys committed to code (the TiDB Cloud lesson)",
+  "date": "2026-10-20",
+  "summary": "PingCAP, the company behind TiDB Cloud, confirmed that stolen service-account credentials gave an attacker access to its internal systems from 9 September to 7 October. The attackers allege they used cloud keys committed to the company's own repositories. Keys in code are copied wherever the code goes.",
+  "advisory": "https://www.pingcap.com/trust-hub/security/security-update-october-2026/",
+  "fix": "If a finding is a real key: revoke or rotate it at the provider first (deleting it from the code doesn't un-leak it; it stays in git history and every clone), then remove it and load it from a secret manager or the environment. For the whole history, run a dedicated scanner such as gitleaks or trufflehog."
+}

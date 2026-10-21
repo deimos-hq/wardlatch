@@ -11,6 +11,7 @@ import { discover } from '../lib/discover.mjs';
 import { check, reachable } from '../lib/probe.mjs';
 import { checkBinary } from '../lib/binaries.mjs';
 import { reposUnder, workflowsAddedSince } from '../lib/workflows.mjs';
+import { scanRepo } from '../lib/secrets.mjs';
 
 const LIB = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib');
 const VERSION = JSON.parse(readFileSync(join(LIB, '..', 'package.json'), 'utf8')).version;
@@ -102,6 +103,18 @@ for (const inc of chosen) {
     if (!results.length) print('SAFE', `no workflow files added since ${inc.since} in ${repos} local repositor${repos === 1 ? 'y' : 'ies'}`);
     else note('2', `check: ${inc.fix}`);
   }
+  if (inc.type === 'secrets') {
+    let repos = 0;
+    for (const repo of reposUnder(roots)) {
+      repos++;
+      for (const h of scanRepo(repo)) {
+        results.push({ incident: inc.id, kind: 'secret', status: 'REVIEW', repo, file: h.file, line: h.line, type: h.type, masked: h.masked, fix: inc.fix });
+        print('REVIEW', `${short(repo)}/${h.file}:${h.line}`, c('2', `  ${h.type} ${h.masked}`));
+      }
+    }
+    if (!results.length) print('SAFE', `no committed keys found in the files of ${repos} local repositor${repos === 1 ? 'y' : 'ies'} (current files; history needs gitleaks or trufflehog)`);
+    else note('2', `check: ${inc.fix}`);
+  }
   all.push(...results);
   if (!json) console.log(c('2', `Source: ${inc.advisory}`));
 }
@@ -114,4 +127,4 @@ else {
   if (trust) console.log(c('2', `Not covered here: ${trust.notCovered}`));
   console.log(c('2', 'Wardlatch, a free tool from Deimos AI LLC · https://www.deimoscore.com/wardlatch/'));
 }
-process.exit(n('EXPOSED') ? 1 : n('UNKNOWN') ? 2 : 0);   // REVIEW lines inform; they don't fail a pipeline
+process.exitCode = n('EXPOSED') ? 1 : n('UNKNOWN') ? 2 : 0;   // REVIEW lines inform; they don't fail a pipeline. exitCode, not exit(): long output must finish writing

@@ -11,6 +11,7 @@ import { check, reachable, nscurlOk, canForceCa } from '../lib/probe.mjs';
 import { discover } from '../lib/discover.mjs';
 import { cmp, checkBinary } from '../lib/binaries.mjs';
 import { workflowsAddedSince } from '../lib/workflows.mjs';
+import { scanText } from '../lib/secrets.mjs';
 
 const OPENSSL = ['/opt/homebrew/bin/openssl', '/usr/local/bin/openssl', '/usr/bin/openssl'].find(existsSync);
 let dir, server, canary, badCa, otherCa;
@@ -96,4 +97,13 @@ test('workflow review lists each workflow file added since the date, once', () =
   g('init', '-q'); writeFileSync(join(repo, '.github', 'workflows', 'audit.yml'), 'on: push\n'); g('add', '.'); g('commit', '-qm', 'add');
   const found = workflowsAddedSince(repo, '2000-01-01');
   assert.equal(found.length, 1); assert.equal(found[0].file, '.github/workflows/audit.yml');
+});
+
+test('committed keys: found by shape, never printed, reviewed lines and doc placeholders skipped', () => {
+  const key = 'AKIA' + 'Q7RZ' + 'M2LP' + 'X9TB' + 'K4WD';            // built at runtime so this file holds no key literal
+  const hits = scanText(`const k = "${key}";\nconst e = "AKIAIOSFODNN7EXAMPLE";\nconst t = "${key}"; // secrets-ok: a made-up test value`);
+  assert.equal(hits.length, 1); assert.equal(hits[0].type, 'AWS access key'); assert.equal(hits[0].line, 1);
+  assert.ok(!JSON.stringify(hits).includes(key), 'the key itself never appears in a finding');
+  const pem = '-----BEGIN ' + 'PRIVATE KEY-----';
+  assert.equal(scanText(`x\n${pem}\nabc`)[0].type, 'private key');
 });
