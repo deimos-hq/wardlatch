@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Deimos AI LLC
+#
+# Cut a GitHub release when a v* tag is pushed, and attest what was built. It never publishes to npm: the maintainer
+# publishes the exact npm package attested here (docs/RELEASING.md), so the file on npm can be checked against this
+# run.
+#
+# Keyless, through Sigstore: the attestation binds each file to the GitHub OIDC identity of this workflow run and
+# commit. There is no signing key to store, leak, lose or hand to a successor. It answers "which workflow, at which
+# commit, built this file", not "was that commit any good"; the tests and review answer that.
+name: Release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the release
+      id-token: write        # what lets Sigstore issue a keyless certificate
+      attestations: write    # record the provenance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with: { node-version: '22' }
+
+      # Nothing ships untested.
+      - name: Tests
+        run: node --test test/
+        env:
+          NODE_OPTIONS: --throw-deprecation --pending-deprecation
+
+      # A release labelled v0.2.0 that contains 0.1.0 is a lie that is very hard to notice later.
+      - name: Tag matches package.json, and the changelog has an entry for it
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then echo "::error::tag $GITHUB_REF_NAME does not match package.json version $pkg"; exit 1; fi
+          grep -q "^## \[$pkg\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no '## [$pkg]' section"; exit 1; }
+          echo "VERSION=$pkg" >> "$GITHUB_ENV"
+
+      - name: Build the source archive and the npm package
+        run: |
+          git archive --format=tar.gz --prefix="wardlatch-$GITHUB_REF_NAME/" -o "wardlatch-$GITHUB_REF_NAME.tar.gz" "$GITHUB_REF_NAME"
+          npm pack --silent
+          test -f "wardlatch-$VERSION.tgz"
+          sha256sum "wardlatch-$GITHUB_REF_NAME.tar.gz" "wardlatch-$VERSION.tgz" | tee SHA256SUMS
+          awk -v v="$VERSION" '$0 ~ "^## \\[" v "\\]" {on=1; next} on && /^## \[/ {exit} on' CHANGELOG.md > notes.md
+
+      - name: Attest what was built
+        id: attest
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f  # v3.2.0
+        with:
+          subject-path: |
+            wardlatch-${{ github.ref_name }}.tar.gz
+            wardlatch-${{ env.VERSION }}.tgz
+
+      # The attestation is also in GitHub's attestation store; the bundle beside the files serves verifiers without
+      # GitHub, and OpenSSF Scorecard, which looks for it there.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          cp "$BUNDLE" "wardlatch-$VERSION.tgz.sigstore.json"
+          cat >> notes.md <<NOTES
+
+          ## Verifying this release
+
+          The npm package and the source archive carry a Sigstore attestation bound to the workflow run and commit
+          that built them. There is no key to import.
+
+          \`\`\`
+          npm pack wardlatch@$VERSION
+          gh attestation verify wardlatch-$VERSION.tgz --repo $GITHUB_REPOSITORY
+          \`\`\`
+
+          See docs/RELEASING.md for the offline check with the attached bundle, and for the signed tag.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" --title "wardlatch $VERSION" --notes-file notes.md \
+            "wardlatch-$GITHUB_REF_NAME.tar.gz" "wardlatch-$VERSION.tgz" SHA256SUMS "wardlatch-$VERSION.tgz.sigstore.json"
