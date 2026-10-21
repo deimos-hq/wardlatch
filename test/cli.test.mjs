@@ -111,3 +111,24 @@ test('WordPress: a compromised plugin is EXPOSED with its fix (exit 1); no site 
   const none = run(['--incident', 'wordpress-plugins-2026-10', '--paths', join(dir, 'nothing-here')]);
   assert.equal(none.code, 0); assert.match(none.out, /SAFE {5}no WordPress installs found/);
 });
+
+test('options are checked: an unknown option or a missing value is refused with exit code 2, before anything runs', () => {
+  for (const [args, msg] of [[['--jsn'], /unknown option "--jsn"/], [['--paths'], /--paths needs a value/], [['--incident', '--json'], /--incident needs a value/], [['extra'], /unknown option "extra"/]]) {
+    const r = run(args);
+    assert.equal(r.code, 2, args.join(' '));
+    assert.match(r.err, msg);
+    assert.doesNotMatch(r.err, /TypeError|at file:/, 'a message, not a stack trace');
+    assert.equal(r.out, '', 'nothing was checked');
+  }
+});
+
+test('names from the disk are printed with control characters escaped, so a planted name cannot rewrite the screen', () => {
+  // A backdoor plugin folder named to erase its own line ("\x1b[2K" clears the line, "\r" returns to its start).
+  const site = join(dir, 'wp2', 'blog'); const evil = 'cache\x1b[2K\r';
+  mkdirSync(join(site, 'wp-includes'), { recursive: true }); writeFileSync(join(site, 'wp-includes', 'version.php'), '<?php');
+  mkdirSync(join(site, 'wp-content', 'plugins', evil), { recursive: true });
+  const r = run(['--incident', 'wordpress-plugins-2026-10', '--paths', join(dir, 'wp2')]);
+  assert.match(r.out, /REVIEW {2}.*blog · plugin folder cache\\x1b\[2K\\x0d/);
+  assert.ok(!/[\x00-\x09\x0b-\x1f\x7f]/.test(r.out), 'no raw control character reaches the terminal');
+  assert.equal(JSON.parse(run(['--incident', 'wordpress-plugins-2026-10', '--json', '--paths', join(dir, 'wp2')]).out).results[0].what, `plugin folder ${evil}`, 'JSON keeps the real name, escaped by JSON itself');
+});

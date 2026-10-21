@@ -22,6 +22,20 @@ const VERSION = JSON.parse(readFileSync(join(LIB, '..', 'package.json'), 'utf8')
 const args = process.argv.slice(2);
 const flag = (f) => args.includes(f);
 const val = (f) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : undefined; };
+// Names shown come from the disk, git and container engines, and can carry terminal control characters (a planted
+// plugin folder could try to erase its own line). They are printed escaped, never interpreted.
+const clean = (s) => String(s).replace(/[\u0000-\u001f\u007f-\u009f]/g, (ch) => `\\x${ch.charCodeAt(0).toString(16).padStart(2, '0')}`);
+
+// Every option is a known one, and an option that takes a value has one: a typo is refused, not quietly ignored.
+const FLAGS = ['-h', '--help', '--list', '--json', '--no-containers'];
+const VALUED = ['--paths', '--incident'];
+for (let i = 0; i < args.length; i++) {
+  const a = args[i];
+  if (VALUED.includes(a)) {
+    if (args[i + 1] === undefined || args[i + 1].startsWith('-')) { console.error(`${a} needs a value (try --help)`); process.exit(2); }
+    i++;
+  } else if (!FLAGS.includes(a)) { console.error(`unknown option "${clean(a)}" (try --help)`); process.exit(2); }
+}
 
 if (flag('-h') || flag('--help')) {
   console.log(`wardlatch ${VERSION}: does the wrong key still turn?
@@ -39,17 +53,17 @@ Runs locally. Sends nothing anywhere except TLS handshakes to the incidents' pub
 const incidents = readdirSync(join(LIB, 'incidents')).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readFileSync(join(LIB, 'incidents', f), 'utf8'))).sort((a, b) => b.date.localeCompare(a.date));
 if (flag('--list')) { for (const i of incidents) console.log(`${i.id}  ${i.date}  ${i.title}`); process.exit(0); }
 const chosen = val('--incident') ? incidents.filter((i) => i.id === val('--incident')) : incidents;
-if (!chosen.length) { console.error(`unknown incident "${val('--incident')}" (try --list)`); process.exit(2); }
+if (!chosen.length) { console.error(`unknown incident "${clean(val('--incident'))}" (try --list)`); process.exit(2); }
 
 const json = flag('--json');
 const roots = []; args.forEach((a, i) => { if (a === '--paths') roots.push(args[i + 1].replace(/^~/, homedir())); });
 if (!roots.length) { for (const d of ['Development', 'code', 'src', 'projects', 'Projects', 'dev', 'work', 'Sites']) roots.push(join(homedir(), d)); roots.push('/var/www'); }
 
 const tty = process.stdout.isTTY && !json;
-const c = (code, s) => (tty ? `\x1b[${code}m${s}\x1b[0m` : s);
+const c = (code, s) => (tty ? `\x1b[${code}m${clean(s)}\x1b[0m` : clean(s));
 const STATUS = { SAFE: c('32', 'SAFE   '), EXPOSED: c('31;1', 'EXPOSED'), UNKNOWN: c('33', 'UNKNOWN'), REVIEW: c('33', 'REVIEW ') };
 const short = (p) => p.replace(homedir(), '~');
-const print = (status, what, extra = '') => { if (!json) console.log(`${STATUS[status]}  ${what}${extra}`); };
+const print = (status, what, extra = '') => { if (!json) console.log(`${STATUS[status]}  ${clean(what)}${extra}`); };
 const note = (code, text) => { if (!json) console.log(c(code, `         ${text}`)); };
 const all = [];
 
