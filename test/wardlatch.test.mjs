@@ -11,7 +11,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, reachable, nscurlOk, canForceCa } from '../lib/probe.mjs';
 import { discover } from '../lib/discover.mjs';
-import { cmp, checkBinary, md5File } from '../lib/binaries.mjs';
+import { cmp, checkBinary, md5File, tmpTraces } from '../lib/binaries.mjs';
+import { expand, checkVersionFiles, sitePackagesDirs, checkSitePackages, checkImages } from '../lib/installs.mjs';
+import { createHash } from 'node:crypto';
 import { workflowsAddedSince } from '../lib/workflows.mjs';
 import { scanText } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
@@ -133,6 +135,47 @@ test('the OVHcloud CLI incident never runs the program and carries the five publ
   writeFileSync(join(bin, 'ovhcloud'), `#!/bin/sh\ntouch "${ran}"\n`, { mode: 0o755 });
   assert.equal(checkBinary(rule, bin, { tmpDirs: [] }).status, 'SAFE');
   assert.equal(existsSync(ran), false, 'the program was run');
+});
+
+test('a version read from a product file is judged per release line, and the file is only read', () => {
+  const root = join(dir, 'vf');
+  mkdirSync(join(root, 'opt', 'app', 'a'), { recursive: true }); mkdirSync(join(root, 'opt', 'app', 'b'), { recursive: true });
+  writeFileSync(join(root, 'opt', 'app', 'a', 'VERSION'), '19.4.2\n', { mode: 0o755 });
+  writeFileSync(join(root, 'opt', 'app', 'b', 'VERSION'), 'garbage\n');
+  const rule = { product: 'App', files: [{ path: '/opt/app/*/VERSION', re: '^(\\d+\\.\\d+\\.\\d+)' }], fixedIn: ['19.5.1', '19.4.3', '18.11.13'] };
+  const r = checkVersionFiles(rule, { root });
+  assert.equal(r.length, 2);
+  const a = r.find((x) => x.path.includes('/a/')), b = r.find((x) => x.path.includes('/b/'));
+  assert.equal(a.status, 'EXPOSED'); assert.equal(a.version, '19.4.2'); assert.match(a.reason, /fixed in 19\.4\.3/);
+  assert.equal(b.status, 'UNKNOWN');
+  writeFileSync(join(root, 'opt', 'app', 'a', 'VERSION'), '19.4.3\n'); assert.equal(checkVersionFiles(rule, { root }).find((x) => x.path.includes('/a/')).status, 'SAFE');
+  writeFileSync(join(root, 'opt', 'app', 'a', 'VERSION'), '17.2.0\n'); assert.match(checkVersionFiles(rule, { root }).find((x) => x.path.includes('/a/')).reason, /end of life/);
+  assert.deepEqual(checkVersionFiles({ ...rule, files: [{ path: '/nowhere/VERSION', re: '(.*)' }] }, { root }), []);
+});
+
+test('site-packages: a dropped file is EXPOSED only when its hash matches; the same name otherwise is REVIEW; the bad release record is EXPOSED', () => {
+  const env = join(dir, 'proj', '.venv'); const sp = join(env, 'lib', 'python3.12', 'site-packages');
+  mkdirSync(sp, { recursive: true }); writeFileSync(join(env, 'pyvenv.cfg'), 'home = /usr/bin\n');
+  const bad = 'import cook\n', h = createHash('sha256').update(bad).digest('hex');
+  writeFileSync(join(sp, 'cook.pth'), bad); writeFileSync(join(sp, 'sitecustomize.py'), '# legit\n');
+  mkdirSync(join(sp, 'evil-9.9.9.dist-info'));
+  assert.ok(sitePackagesDirs({ roots: [join(dir, 'proj')], patterns: [] }).includes(sp), 'the venv under the root is found');
+  const rule = { iocFiles: [{ name: 'cook.pth', sha256: h }, { name: 'sitecustomize.py', sha256: 'f'.repeat(64) }], distInfo: ['evil-9.9.9.dist-info'] };
+  const r = checkSitePackages(rule, [sp]);
+  assert.equal(r.find((x) => x.what === 'cook.pth').status, 'EXPOSED');
+  assert.equal(r.find((x) => x.what === 'sitecustomize.py').status, 'REVIEW');
+  assert.equal(r.find((x) => x.what === 'evil-9.9.9.dist-info').status, 'EXPOSED');
+  assert.deepEqual(checkSitePackages(rule, [join(dir, 'nothing-here')]), []);
+});
+
+test('path patterns expand against the disk; image digests and temp markers are matched exactly', () => {
+  const base = join(dir, 'exp'); mkdirSync(join(base, 'python3.11', 'site-packages'), { recursive: true }); mkdirSync(join(base, 'python3.12', 'site-packages'), { recursive: true });
+  assert.equal(expand(`${base}/python3*/site-packages`).length, 2);
+  assert.deepEqual(expand(`${base}/python2*/site-packages`), []);
+  const d = 'sha256:' + 'a'.repeat(64);
+  assert.equal(checkImages({ dockerDigests: [d] }, { docker: [`ghcr.io/x/y@${d}`, `ghcr.io/x/z@sha256:${'b'.repeat(64)}`] }).length, 1);
+  const t = join(dir, 'tmpm'); mkdirSync(t, { recursive: true }); writeFileSync(join(t, '.pc_once_0123abcd'), '');
+  assert.equal(tmpTraces('^\\.pc_once_[0-9a-f]+$', [t]).length, 1);
 });
 
 test('workflow review lists each workflow file added since the date, once', () => {

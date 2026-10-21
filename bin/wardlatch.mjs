@@ -11,7 +11,8 @@ import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { discover } from '../lib/discover.mjs';
 import { check, reachable } from '../lib/probe.mjs';
-import { checkBinary, findOnPath } from '../lib/binaries.mjs';
+import { checkBinary, findOnPath, tmpTraces } from '../lib/binaries.mjs';
+import { checkVersionFiles, sitePackagesDirs, checkSitePackages, localImageDigests, checkImages } from '../lib/installs.mjs';
 import { listContainers, checkContainer } from '../lib/containers.mjs';
 import { reposUnder, workflowsAddedSince } from '../lib/workflows.mjs';
 import { scanRepo } from '../lib/secrets.mjs';
@@ -126,6 +127,42 @@ for (const inc of chosen) {
     if (r.status === 'EXPOSED') note('2', `fix: ${rule.fix}`);
   }
   if (inc.type === 'binaries' && !results.length) print('SAFE', `${inc.binaries.map((b) => b.binary).join(', ')} not installed`);
+
+  if (inc.type === 'installs') {
+    // Read-only: versions from the product's own files, dropped files in site-packages by hash, local image digests.
+    // Nothing found is run (lib/installs.mjs).
+    const show = (r, what, fix) => {
+      results.push({ incident: inc.id, kind: 'install', ...r, fix: r.status === 'EXPOSED' ? fix : r.status === 'REVIEW' ? inc.reviewFix ?? fix : undefined });
+      print(r.status, what);
+      if (r.reason) note({ EXPOSED: '31', SAFE: '2' }[r.status] ?? '33', r.reason);
+      if (r.status === 'EXPOSED') note('2', `fix: ${fix}`);
+    };
+    const looked = [];
+    if (inc.versionFiles) {
+      const v = inc.versionFiles;
+      for (const r of checkVersionFiles(v)) show(r, `${v.product}${r.label ? ` (${r.label})` : ''} ${r.version}  ${short(r.path)}`, v.fix);
+      looked.push(v.lookedIn);
+    }
+    if (inc.sitePackages) {
+      const dirs = sitePackagesDirs({ roots });
+      for (const r of checkSitePackages(inc.sitePackages, dirs)) show(r, `${r.what}  ${short(r.dir)}`, inc.sitePackages.fix);
+      looked.push(`${dirs.length} Python package folder${dirs.length === 1 ? '' : 's'}`);
+    }
+    if (inc.tmpTrace) {
+      for (const t of tmpTraces(inc.tmpTrace)) show({ status: 'EXPOSED', reason: 'the malware ran on this machine: it leaves this marker each time it runs' }, short(t), inc.tmpFix ?? inc.sitePackages?.fix);
+      looked.push('the temp folders');
+    }
+    if (inc.dockerDigests && !flag('--no-containers')) {
+      const byEngine = {};
+      for (const e of ['docker', 'podman'].filter((x) => findOnPath(x))) {
+        const list = localImageDigests(e);
+        if (list === null) { note('2', `${e}: not running, so its local images were not checked`); continue; }
+        byEngine[e] = list; looked.push(`${list.length} ${e} image${list.length === 1 ? '' : 's'}`);
+      }
+      for (const r of checkImages(inc, byEngine)) show(r, `${r.engine} image ${r.what}`, inc.dockerFix);
+    }
+    if (!results.length) print('SAFE', `${inc.safeText ?? 'nothing found'} (looked in ${looked.filter(Boolean).join(', ')})`);
+  }
 
   if (inc.type === 'workflows') {
     let repos = 0;
