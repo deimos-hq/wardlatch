@@ -6,14 +6,29 @@
   "advisory": "https://emudhra.we-have-a-problem.com/",
   "canarySource": "The 12 test hosts are the advisory's own (emudhra.we-have-a-problem.com/#check). Each serves a certificate chained to one compromised intermediate.",
   "distrustedRoots": [
-    { "name": "AAA Certificate Services (Comodo, via the Sectigo cross-sign)", "sha256": "D7:A7:A0:FB:5D:7E:27:31:D7:71:E9:48:4E:BC:DE:F7:1D:5F:0C:3E:0A:29:48:78:2B:C8:3E:E0:EA:69:9E:F4" },
-    { "name": "emSign ECC Root CA - G3", "sha256": "86:A1:EC:BA:08:9C:4A:8D:3B:BE:27:34:C6:12:BA:34:1D:81:3E:04:3C:F9:E8:A8:62:CD:5C:57:A3:6B:BE:6B" }
+    {
+      "name": "AAA Certificate Services (Comodo, via the Sectigo cross-sign)",
+      "sha256": "D7:A7:A0:FB:5D:7E:27:31:D7:71:E9:48:4E:BC:DE:F7:1D:5F:0C:3E:0A:29:48:78:2B:C8:3E:E0:EA:69:9E:F4"
+    },
+    {
+      "name": "emSign ECC Root CA - G3",
+      "sha256": "86:A1:EC:BA:08:9C:4A:8D:3B:BE:27:34:C6:12:BA:34:1D:81:3E:04:3C:F9:E8:A8:62:CD:5C:57:A3:6B:BE:6B"
+    }
   ],
   "rootsPem": "emudhra-2026-10-roots.pem",
   "canaries": [
-    "dv-g3b", "dv-g3b-aaa", "dv-g3c", "dv-g3c-aaa",
-    "ov-g3b", "ov-g3b-aaa", "ov-g3c", "ov-g3c-aaa",
-    "ev-g3b", "ev-g3b-aaa", "ev-g3c", "ev-g3c-aaa"
+    "dv-g3b",
+    "dv-g3b-aaa",
+    "dv-g3c",
+    "dv-g3c-aaa",
+    "ov-g3b",
+    "ov-g3b-aaa",
+    "ov-g3c",
+    "ov-g3c-aaa",
+    "ev-g3b",
+    "ev-g3b-aaa",
+    "ev-g3c",
+    "ev-g3c-aaa"
   ],
   "canaryHost": "{id}-emudhra.we-have-a-problem.com",
   "fixes": {
@@ -24,7 +39,8 @@
     "curl": "Update the CA bundle this curl uses (Homebrew: brew upgrade ca-certificates, fixed in 2026-09-25_1 and later).",
     "node": "Node bundles its own roots; the fix is pending upstream (nodejs/node#66871). Until a fixed release: run Node with --use-openssl-ca and SSL_CERT_FILE pointing at an updated bundle (for example the cleaned /etc/ssl/cert.pem), or use a Node built on the system store (Homebrew's node).",
     "python-certifi": "Upgrade certifi in this environment to 2026.10.19 or newer: pip install -U certifi (uv: uv lock --upgrade-package certifi).",
-    "python": "Upgrade the CA bundle this Python uses. python.org builds: pip install -U certifi (2026.10.19+) or run 'Install Certificates.command'."
+    "python": "Upgrade the CA bundle this Python uses. python.org builds: pip install -U certifi (2026.10.19+) or run 'Install Certificates.command'.",
+    "macos-system": "Install the latest macOS update (System Settings → General → Software Update). Apple blocks the compromised certificates through its updates; Safari and Apple's apps use this layer."
   },
   "notCovered": "Compiled programs carry the roots of the toolchain that built them: rebuild Go programs with Go 1.27.3 or 1.26.10; update Electron apps to 44.9.1, 43.8.1 or 42.11.16; Rust: rustls-webpki 0.103.16, webpki-roots 1.0.10. Browsers: Chrome, Edge, Firefox and Safari block the intermediates through their own updates; check yours at the advisory's #check page."
 }

@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { check, reachable } from '../lib/probe.mjs';
+import { check, reachable, nscurlOk, canForceCa } from '../lib/probe.mjs';
 import { discover } from '../lib/discover.mjs';
 
 const OPENSSL = ['/opt/homebrew/bin/openssl', '/usr/local/bin/openssl', '/usr/bin/openssl'].find(existsSync);
@@ -64,4 +64,15 @@ test('discovery finds node on PATH and a virtual environment, and changes nothin
   const found = discover({ roots: [root], pathEnv: join(process.execPath, '..') });
   assert.ok(found.some((r) => r.kind === 'node' && r.version));
   if (py) assert.ok(found.some((r) => r.env === join(root, 'app', '.venv')));
+});
+
+test('the macOS system probe reads only a refusal as a refusal', () => {
+  assert.equal(nscurlOk('Load failed with error: Error Domain=NSURLErrorDomain Code=-1202'), false);
+  assert.equal(nscurlOk(''), true);
+  assert.equal(canForceCa('macos-system'), false); assert.equal(canForceCa('curl'), true);
+});
+
+test('a system probe that cannot open a normal site is UNKNOWN, never SAFE', async () => {
+  const r = await check({ kind: 'macos-system', bin: '/usr/bin/false' }, [canary], { controlUrl: canary.url, timeoutMs: 2000 });
+  assert.equal(r.status, 'UNKNOWN'); assert.match(r.reason, /control failed/);
 });

@@ -43,6 +43,8 @@ const STATUS = { SAFE: c('32', 'SAFE   '), EXPOSED: c('31;1', 'EXPOSED'), UNKNOW
 const short = (p) => p.replace(homedir(), '~');
 const fixFor = (rt) => {
   const os = platform();
+  if (rt.kind === 'macos-system') return inc.fixes['macos-system'];
+  if (rt.system) return inc.fixes['curl:linux'];
   return inc.fixes[`${rt.kind}:${rt.bin}:${os}`] ?? inc.fixes[`${rt.kind}:${os}`] ?? inc.fixes[rt.kind];
 };
 
@@ -56,11 +58,11 @@ const runtimes = discover({ roots });
 const rootsPem = join(LIB, 'incidents', inc.rootsPem);
 const results = [];
 for (const rt of runtimes) {
-  const r = await check(rt, canaries, { rootsPem });
+  const r = await check(rt, canaries, { rootsPem, controlUrl: inc.advisory });
   const row = { ...rt, ...r, fix: r.status === 'EXPOSED' ? fixFor(rt) : undefined };
   results.push(row);
   if (!json) {
-    const what = rt.kind === 'python-certifi' ? `certifi ${rt.certifi}  ${short(rt.env)}` : `${rt.kind} ${rt.version}  ${short(rt.bin)}${rt.env ? `  (${short(rt.env)})` : ''}`;
+    const what = rt.label ? `${rt.label} ${rt.version}` : rt.kind === 'python-certifi' ? `certifi ${rt.certifi}  ${short(rt.env)}` : `${rt.kind} ${rt.version}  ${short(rt.bin)}${rt.env ? `  (${short(rt.env)})` : ''}`;
     console.log(`${STATUS[r.status]}  ${what}${r.status === 'EXPOSED' ? c('31', `  trusts ${r.trusted.length}/${r.tested}`) : ''}`);
     if (r.status === 'UNKNOWN') console.log(c('33', `         ${r.reason}`));
     if (row.fix) console.log(c('2', `         fix: ${row.fix}`));
