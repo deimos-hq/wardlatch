@@ -1,0 +1,16 @@
+Public CA certificates
+
+lib/incidents/emudhra-2026-10-roots.pem holds two public root certificates,
+copied unchanged:
+
+  AAA Certificate Services (Comodo CA Limited)
+  emSign ECC Root CA - G3 (eMudhra Technologies Limited)
+
+Certificate authorities publish their root certificates so that anyone can
+distribute them and use them to verify TLS connections; operating systems,
+browsers and language runtimes all ship them. Wardlatch includes these two only
+so its positive control can force them in and confirm that a probe is able to
+see exposure (see README.md and ASSURANCE_CASE.md).
+
+Deimos AI LLC claims no rights in these certificates and grants none. The
+Apache License 2.0 that covers the rest of Wardlatch does not apply to them.

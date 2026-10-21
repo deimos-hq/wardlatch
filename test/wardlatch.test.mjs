@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Deimos AI LLC
 // Against a LOCAL stand-in for a compromised CA: a throwaway root signs a cert for 127.0.0.1, an HTTPS "canary" serves
 // it, and runtimes either trust that root (exposed) or don't (safe). Nothing leaves the machine.
 import { test, before, after } from 'node:test';

@@ -1,0 +1,43 @@
+version = 1
+SPDX-PackageName = "wardlatch"
+SPDX-PackageSupplier = "Deimos AI LLC (https://www.deimoscore.com)"
+SPDX-PackageDownloadLocation = "https://github.com/thearchitect0x-glitch/wardlatch"
+
+# Bulk licensing declarations, for files that cannot carry a comment header or
+# where one would be noise.
+#
+# Source files carry their own header: every file under bin/, lib/, test/ and
+# .github/workflows/, except fix/fix-macos.sh (below). This covers the rest:
+# prose and config, where a two-line legal preamble above the first heading is
+# clutter, and JSON, which has no comment syntax to put one in. The incident
+# files in lib/incidents/ are Deimos AI LLC's own write-ups of public
+# advisories, under the same licence as the code.
+
+[[annotations]]
+path = ["**.md", "NOTICE", ".gitignore"]
+SPDX-FileCopyrightText = "2026 Deimos AI LLC"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["**.json", "**.yml", "**.yaml", "**.toml"]
+SPDX-FileCopyrightText = "2026 Deimos AI LLC"
+SPDX-License-Identifier = "Apache-2.0"
+
+# The Mac fix is the one source file without an in-file header, on purpose.
+# www.deimoscore.com serves this exact file as a download and publishes its
+# SHA-256 (22153b4a...6a86) on the page and in its changelog, so a header
+# comment would break the published checksum. CI fails if the file's hash
+# changes; a deliberate change updates the site's download, the printed hash
+# and its changelog record together.
+[[annotations]]
+path = "fix/fix-macos.sh"
+SPDX-FileCopyrightText = "2026 Deimos AI LLC"
+SPDX-License-Identifier = "Apache-2.0"
+
+# The one file that is not Deimos AI LLC's work: two public root certificates,
+# redistributed unchanged so the positive control can force them in (see
+# NOTICE). Apache-2.0 does not apply to them, and nothing here relicenses them.
+[[annotations]]
+path = "lib/incidents/emudhra-2026-10-roots.pem"
+SPDX-FileCopyrightText = ["Comodo CA Limited (AAA Certificate Services)", "eMudhra Technologies Limited (emSign ECC Root CA - G3)"]
+SPDX-License-Identifier = "LicenseRef-Public-CA-Certificate"

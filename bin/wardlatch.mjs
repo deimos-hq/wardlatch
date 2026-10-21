@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Deimos AI LLC
 // Wardlatch: does the wrong key still turn? Checks whether the runtimes on this machine still trust a compromised
 // certificate authority, by asking each one to connect to public test hosts signed with the compromised keys.
 // Runs locally. Sends nothing anywhere except TLS handshakes to those test hosts. Changes nothing.
