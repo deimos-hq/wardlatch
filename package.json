@@ -38,5 +38,12 @@
   ],
   "license": "Apache-2.0",
   "author": "Deimos AI LLC",
-  "homepage": "https://www.deimoscore.com/wardlatch/"
+  "homepage": "https://www.deimoscore.com/wardlatch/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thearchitect0x-glitch/wardlatch.git"
+  },
+  "bugs": {
+    "url": "https://github.com/thearchitect0x-glitch/wardlatch/issues"
+  }
 }
