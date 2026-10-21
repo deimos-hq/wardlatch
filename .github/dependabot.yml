@@ -2,7 +2,9 @@
 # Copyright 2026 Deimos AI LLC
 #
 # Wardlatch has no npm dependencies, so the only things to keep current are the GitHub Actions its workflows pin by
-# commit SHA. Dependabot proposes each update as a pull request, which goes through CI and review like any change.
+# commit SHA. Dependabot proposes the updates as one pull request a week, grouped so that actions released together
+# (CodeQL's init, analyze and upload-sarif) move together, and the pull request goes through CI and review like any
+# change.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -11,3 +13,6 @@ updates:
       interval: weekly
     commit-message:
       prefix: "CI"
+    groups:
+      actions:
+        patterns: ["*"]
