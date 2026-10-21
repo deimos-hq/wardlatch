@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/thearchitect0x-glitch/wardlatch/actions/workflows/ci.yml/badge.svg)](https://github.com/thearchitect0x-glitch/wardlatch/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/thearchitect0x-glitch/wardlatch/actions/workflows/codeql.yml/badge.svg)](https://github.com/thearchitect0x-glitch/wardlatch/actions/workflows/codeql.yml)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15757/badge)](https://www.bestpractices.dev/projects/15757)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/thearchitect0x-glitch/wardlatch/badge)](https://scorecard.dev/viewer/?uri=github.com/thearchitect0x-glitch/wardlatch)
 [![npm](https://img.shields.io/npm/v/wardlatch)](https://www.npmjs.com/package/wardlatch)
 
