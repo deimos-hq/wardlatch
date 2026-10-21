@@ -1,9 +1,9 @@
 # Wardlatch
 
-[![CI](https://github.com/thearchitect0x-glitch/wardlatch/actions/workflows/ci.yml/badge.svg)](https://github.com/thearchitect0x-glitch/wardlatch/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/thearchitect0x-glitch/wardlatch/actions/workflows/codeql.yml/badge.svg)](https://github.com/thearchitect0x-glitch/wardlatch/actions/workflows/codeql.yml)
+[![CI](https://github.com/deimos-hq/wardlatch/actions/workflows/ci.yml/badge.svg)](https://github.com/deimos-hq/wardlatch/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/deimos-hq/wardlatch/actions/workflows/codeql.yml/badge.svg)](https://github.com/deimos-hq/wardlatch/actions/workflows/codeql.yml)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15757/badge)](https://www.bestpractices.dev/projects/15757)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/thearchitect0x-glitch/wardlatch/badge)](https://scorecard.dev/viewer/?uri=github.com/thearchitect0x-glitch/wardlatch)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/deimos-hq/wardlatch/badge)](https://scorecard.dev/viewer/?uri=github.com/deimos-hq/wardlatch)
 [![npm](https://img.shields.io/npm/v/wardlatch)](https://www.npmjs.com/package/wardlatch)
 
 **Does the wrong key still turn?**
@@ -99,7 +99,7 @@ npx wardlatch --paths ~/code --paths /srv/www
 
 ## Feedback, contributing, security
 
-- Bugs, wrong results and ideas: [issues](https://github.com/thearchitect0x-glitch/wardlatch/issues).
+- Bugs, wrong results and ideas: [issues](https://github.com/deimos-hq/wardlatch/issues).
 - Changes: [CONTRIBUTING.md](CONTRIBUTING.md) (pull requests, sign-off, a test with every change).
 - A vulnerability: report it privately, as [SECURITY.md](SECURITY.md) explains, not in an issue.
 - How it works inside: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). What changed: [CHANGELOG.md](CHANGELOG.md).

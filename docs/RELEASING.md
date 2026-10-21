@@ -25,8 +25,8 @@ appears.** The workflow never publishes to npm.
 
 ```bash
 # 4. Publish to npm the exact package the workflow attested, so what is on npm can be verified.
-gh release download vX.Y.Z -p 'wardlatch-X.Y.Z.tgz' -R thearchitect0x-glitch/wardlatch
-gh attestation verify wardlatch-X.Y.Z.tgz --repo thearchitect0x-glitch/wardlatch
+gh release download vX.Y.Z -p 'wardlatch-X.Y.Z.tgz' -R deimos-hq/wardlatch
+gh attestation verify wardlatch-X.Y.Z.tgz --repo deimos-hq/wardlatch
 npm publish ./wardlatch-X.Y.Z.tgz
 ```
 
@@ -56,14 +56,23 @@ import.
 
 ```bash
 npm pack wardlatch@X.Y.Z                 # downloads wardlatch-X.Y.Z.tgz from npm without installing it
-gh attestation verify wardlatch-X.Y.Z.tgz --repo thearchitect0x-glitch/wardlatch
+gh attestation verify wardlatch-X.Y.Z.tgz --repo deimos-hq/wardlatch
 ```
 
 Without GitHub's attestation store, use the bundle attached to the release:
 
 ```bash
-gh attestation verify wardlatch-X.Y.Z.tgz --bundle wardlatch-X.Y.Z.tgz.sigstore.json --repo thearchitect0x-glitch/wardlatch
+gh attestation verify wardlatch-X.Y.Z.tgz --bundle wardlatch-X.Y.Z.tgz.sigstore.json --repo deimos-hq/wardlatch
 sha256sum -c SHA256SUMS                  # the files are byte for byte what was published
+```
+
+**0.1.3 and 0.1.4 verify under the repository's earlier name.** The repository moved from
+`thearchitect0x-glitch/wardlatch` to `deimos-hq/wardlatch` on 21 October 2026, after those two releases. Their
+attestations name the repository they were built in, and that cannot change, so verify them with the earlier name and the
+bundle attached to the release:
+
+```bash
+gh attestation verify wardlatch-0.1.4.tgz --bundle wardlatch-0.1.4.tgz.sigstore.json --repo thearchitect0x-glitch/wardlatch
 ```
 
 The tag is signed with the maintainer's SSH signing key, which GitHub lists for the account:

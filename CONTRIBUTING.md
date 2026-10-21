@@ -2,7 +2,7 @@
 
 Bug reports, corrections to incident data, new incidents and code are all welcome.
 
-- **A bug, a wrong fix text, or an idea**: open an [issue](https://github.com/thearchitect0x-glitch/wardlatch/issues).
+- **A bug, a wrong fix text, or an idea**: open an [issue](https://github.com/deimos-hq/wardlatch/issues).
   For a wrong result, paste what Wardlatch printed (remove anything private) and what was actually true.
 - **A new incident**: open an issue with the advisory's link. An incident needs a public source and something on a
   machine that can be checked locally; see "Incidents" below.
@@ -107,7 +107,7 @@ moves), the incident file changes with a dated line in the changelog.
 
 ## Working on it
 
-    git clone https://github.com/thearchitect0x-glitch/wardlatch.git
+    git clone https://github.com/deimos-hq/wardlatch.git
     cd wardlatch
     npm test                     # needs node 18.17+, git and openssl on the machine; nothing to install
     node bin/wardlatch.mjs       # run the command from the checkout

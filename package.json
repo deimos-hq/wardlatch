@@ -42,9 +42,9 @@
   "homepage": "https://www.deimoscore.com/wardlatch/",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/thearchitect0x-glitch/wardlatch.git"
+    "url": "git+https://github.com/deimos-hq/wardlatch.git"
   },
   "bugs": {
-    "url": "https://github.com/thearchitect0x-glitch/wardlatch/issues"
+    "url": "https://github.com/deimos-hq/wardlatch/issues"
   }
 }

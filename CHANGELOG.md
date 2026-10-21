@@ -9,6 +9,14 @@ of that commit matches the published package's file count and size. The format f
 
 ## [Unreleased]
 
+### Changed
+
+- **The repository moved to the Deimos AI organization:** [github.com/deimos-hq/wardlatch](https://github.com/deimos-hq/wardlatch).
+  Old links and `git clone` URLs redirect. 0.1.3 and 0.1.4 still verify under the earlier name
+  ([docs/RELEASING.md](docs/RELEASING.md#verifying-a-release)).
+- PHP's fix text for 8.1 and older now says the PHP project published minimal source backports for 7.4, 8.0 and 8.1, for
+  people who build PHP themselves.
+
 ## [0.1.4] - 2026-10-21
 
 ### Fixed
@@ -139,9 +147,9 @@ Published 05:14 UTC. npm `gitHead`: `4d4f295`. The first release.
 npm also lists `0.0.0-stage` (21 October, 05:13 UTC), a 331-byte, two-file placeholder from npm's staged publishing,
 described on npm as a "Temporary package placeholder". It is not a release and holds none of Wardlatch's code.
 
-[Unreleased]: https://github.com/thearchitect0x-glitch/wardlatch/compare/v0.1.4...main
-[0.1.4]: https://github.com/thearchitect0x-glitch/wardlatch/releases/tag/v0.1.4
-[0.1.3]: https://github.com/thearchitect0x-glitch/wardlatch/releases/tag/v0.1.3
-[0.1.2]: https://github.com/thearchitect0x-glitch/wardlatch/tree/bcf739c318dd60397a76360ac68e04138fd532bd
-[0.1.1]: https://github.com/thearchitect0x-glitch/wardlatch/tree/49ea20cd599c817efa4d4c9ec37cfdaca8d5b48e
-[0.1.0]: https://github.com/thearchitect0x-glitch/wardlatch/tree/4d4f2955b2a5ac39f36797ac6b8f5cfc1209034d
+[Unreleased]: https://github.com/deimos-hq/wardlatch/compare/v0.1.4...main
+[0.1.4]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.4
+[0.1.3]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.3
+[0.1.2]: https://github.com/deimos-hq/wardlatch/tree/bcf739c318dd60397a76360ac68e04138fd532bd
+[0.1.1]: https://github.com/deimos-hq/wardlatch/tree/49ea20cd599c817efa4d4c9ec37cfdaca8d5b48e
+[0.1.0]: https://github.com/deimos-hq/wardlatch/tree/4d4f2955b2a5ac39f36797ac6b8f5cfc1209034d

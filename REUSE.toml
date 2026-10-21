@@ -1,7 +1,7 @@
 version = 1
 SPDX-PackageName = "wardlatch"
 SPDX-PackageSupplier = "Deimos AI LLC (https://www.deimoscore.com)"
-SPDX-PackageDownloadLocation = "https://github.com/thearchitect0x-glitch/wardlatch"
+SPDX-PackageDownloadLocation = "https://github.com/deimos-hq/wardlatch"
 
 # Bulk licensing declarations, for files that cannot carry a comment header or
 # where one would be noise.

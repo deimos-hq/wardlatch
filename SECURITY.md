@@ -6,7 +6,7 @@ when they are not. That is the first thing in scope below.
 ## Reporting a vulnerability
 
 Report privately through
-[GitHub Security Advisories](https://github.com/thearchitect0x-glitch/wardlatch/security/advisories/new) for this
+[GitHub Security Advisories](https://github.com/deimos-hq/wardlatch/security/advisories/new) for this
 repository. Only the maintainers can see an advisory. Do not open a public issue for a suspected vulnerability.
 
 **You will hear back within 72 hours**, and get a first assessment within 7 days. If you do not, escalate by
