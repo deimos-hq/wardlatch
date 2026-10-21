@@ -214,3 +214,15 @@ test('PHP 21 Oct 2026: the real fixed versions per branch, and end of life below
   php('8.2.34'); assert.match(checkBinary(rule, bin).reason, /fixed in 8\.2\.35/);
   php('8.1.31'); assert.match(checkBinary(rule, bin).reason, /end of life/);
 });
+
+test('a runtime that refuses the compromised keys even with their roots forced in, but opens a normal site, is SAFE', async () => {
+  const bin = join(dir, 'blockcurl'); mkdirSync(bin, { recursive: true });
+  // a stand-in curl that blocks the bad keys outright: refuses with --cacert (the forced roots), opens the control site
+  writeFileSync(join(bin, 'curl'), '#!/bin/sh\nfor a in "$@"; do case "$a" in --cacert) exit 60;; esac; done\nfor a in "$@"; do last="$a"; done\ncase "$last" in *control*) exit 0;; *) exit 60;; esac\n', { mode: 0o755 });
+  const rt = { kind: 'curl', bin: join(bin, 'curl') };
+  const c1 = [{ id: 'x', url: 'https://canary.invalid/', up: true }];
+  const r = await check(rt, c1, { rootsPem: badCa, controlUrl: 'https://control.invalid/', timeoutMs: 2000 });
+  assert.equal(r.status, 'SAFE'); assert.match(r.note, /blocks the compromised keys/);
+  const r2 = await check(rt, c1, { rootsPem: badCa, timeoutMs: 2000 });
+  assert.equal(r2.status, 'UNKNOWN', 'without a control site it still cannot tell');
+});

@@ -9,6 +9,16 @@ of that commit matches the published package's file count and size. The format f
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-21
+
+### Fixed
+
+- **A runtime that blocks the compromised keys outright now reads SAFE, not UNKNOWN.** Node.js 26.12.1, 24.22.1 and
+  22.23.4 reject chains through the compromised keys even when their roots are trusted, so Wardlatch's positive control
+  (forcing those roots in) could no longer connect, and 0.1.3 reported "positive control failed". Now, when the forced
+  roots are refused, Wardlatch opens a normal site: if that works, the refusal is the runtime's own block, and the result
+  is SAFE with the note "blocks the compromised keys themselves". If the normal site fails too, it stays UNKNOWN.
+
 ### Changed
 
 - The Node.js fix now names the fixed releases: 26.12.1, 24.22.1 and 22.23.4, published on 21 October 2026.
@@ -129,7 +139,8 @@ Published 05:14 UTC. npm `gitHead`: `4d4f295`. The first release.
 npm also lists `0.0.0-stage` (21 October, 05:13 UTC), a 331-byte, two-file placeholder from npm's staged publishing,
 described on npm as a "Temporary package placeholder". It is not a release and holds none of Wardlatch's code.
 
-[Unreleased]: https://github.com/thearchitect0x-glitch/wardlatch/compare/v0.1.3...main
+[Unreleased]: https://github.com/thearchitect0x-glitch/wardlatch/compare/v0.1.4...main
+[0.1.4]: https://github.com/thearchitect0x-glitch/wardlatch/releases/tag/v0.1.4
 [0.1.3]: https://github.com/thearchitect0x-glitch/wardlatch/releases/tag/v0.1.3
 [0.1.2]: https://github.com/thearchitect0x-glitch/wardlatch/tree/bcf739c318dd60397a76360ac68e04138fd532bd
 [0.1.1]: https://github.com/thearchitect0x-glitch/wardlatch/tree/49ea20cd599c817efa4d4c9ec37cfdaca8d5b48e

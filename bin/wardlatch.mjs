@@ -94,6 +94,7 @@ for (const inc of chosen) {
       const what = rt.label ? `${rt.label} ${rt.version}` : rt.kind === 'python-certifi' ? `certifi ${rt.certifi}  ${short(rt.env)}` : `${rt.kind} ${rt.version}  ${short(rt.bin)}${rt.env ? `  (${short(rt.env)})` : ''}`;
       print(r.status, what, r.status === 'EXPOSED' ? c('31', `  trusts ${r.trusted.length}/${r.tested}`) : '');
       if (r.status === 'UNKNOWN') note('33', r.reason);
+      if (r.note) note('2', r.note);
       if (row.fix) note('2', `fix: ${row.fix}`);
     }
     // Running containers keep their image's trust list, whatever the host has.
