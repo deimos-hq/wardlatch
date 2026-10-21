@@ -37,8 +37,7 @@ reported, and what was actually true.
 
 ## What is not
 
-- **Trust assumptions the assurance case already states**, such as Wardlatch running the Python interpreter of each
-  virtual environment it finds under the folders it searches. See
+- **Trust assumptions the assurance case already states**, such as running the programs on your `PATH`. See
   [ASSURANCE_CASE.md](ASSURANCE_CASE.md#4-what-is-not-defended). A report showing a way to exploit one of them that
   the assurance case does not describe is in scope.
 - **Flaws in what Wardlatch checks**: Node, curl, Python, Docker, macOS. Report those to their projects.

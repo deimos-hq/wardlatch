@@ -64,14 +64,29 @@ test('curl is checked the same way', { skip: !existsSync('/usr/bin/curl') }, asy
   assert.equal(r.status, 'SAFE');
 });
 
-test('discovery finds node on PATH and a virtual environment, and changes nothing', () => {
-  const root = join(dir, 'proj'); mkdirSync(join(root, 'app', '.venv', 'bin'), { recursive: true });
-  writeFileSync(join(root, 'app', '.venv', 'pyvenv.cfg'), 'home = /usr/bin\n');
-  const py = ['/opt/homebrew/bin/python3', '/usr/bin/python3'].find(existsSync);
-  if (py) execFileSync('ln', ['-s', py, join(root, 'app', '.venv', 'bin', 'python')]);
+test('discovery finds node on PATH, and never runs a found environment\'s own python', () => {
+  const root = join(dir, 'proj'); const env = join(root, 'app', '.venv'); mkdirSync(join(env, 'bin'), { recursive: true });
+  writeFileSync(join(env, 'pyvenv.cfg'), 'home = /usr/bin\n');
+  // a planted interpreter, as a cloned repository could ship: running it would leave a marker file
+  const marker = join(dir, 'planted-python-ran');
+  writeFileSync(join(env, 'bin', 'python'), `#!/bin/sh\ntouch "${marker}"\necho "Python 3.12.0"\n`, { mode: 0o755 });
+  const sp = join(env, 'lib', 'python3.12', 'site-packages'); mkdirSync(join(sp, 'certifi'), { recursive: true }); mkdirSync(join(sp, 'certifi-2026.10.18.dist-info'));
+  writeFileSync(join(sp, 'certifi', 'cacert.pem'), readFileSync(badCa)); writeFileSync(join(sp, 'certifi-2026.10.18.dist-info', 'METADATA'), 'Name: certifi\nVersion: 2026.10.18\n');
   const found = discover({ roots: [root], pathEnv: join(process.execPath, '..') });
   assert.ok(found.some((r) => r.kind === 'node' && r.version));
-  if (py) assert.ok(found.some((r) => r.env === join(root, 'app', '.venv')));
+  assert.equal(existsSync(marker), false, 'the environment\'s own bin/python must never be executed');
+  const env1 = found.find((r) => r.env === env);
+  if (existsSync('/usr/bin/curl')) {
+    assert.ok(env1, 'the environment\'s certifi bundle is still checked');
+    assert.equal(env1.certifi, '2026.10.18'); assert.equal(env1.bin, '/usr/bin/curl'); assert.deepEqual(env1.args, ['--cacert', join(sp, 'certifi', 'cacert.pem')]);
+    assert.equal(env1.fixKey, 'python-certifi');
+  }
+});
+
+test('a found environment\'s certifi bundle is tested with a trusted curl: a bundle holding the bad root is EXPOSED', { skip: !existsSync('/usr/bin/curl') }, async () => {
+  const env1 = discover({ roots: [join(dir, 'proj')], pathEnv: '' }).find((r) => r.env);
+  const r = await check(env1, [canary], { rootsPem: badCa, timeoutMs: 3000 });
+  assert.equal(r.status, 'EXPOSED');
 });
 
 test('the macOS system probe reads only a refusal as a refusal', () => {

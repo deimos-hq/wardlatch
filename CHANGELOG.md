@@ -11,6 +11,14 @@ of that commit matches the published package's file count and size. The format f
 
 Everything on `main` after 0.1.2. It ships as the next release.
 
+### Security
+
+- **A found Python virtual environment's own interpreter is never run.** Up to 0.1.2, Wardlatch ran the `bin/python`
+  of each environment it found under the searched folders, so a repository cloned from a stranger could ship a fake
+  interpreter that would run as you. Now it reads the environment's certifi bundle and version as files and tests the
+  bundle with a curl the machine already trusts (`--cacert`). An environment without certifi uses its base Python's
+  trust, which is checked through `PATH`. Found by this project's own review; no report of it being exploited.
+
 ### Added
 
 - `fix/fix-macos.sh`, the Mac fix: removes the two roots tied to the leaked eMudhra keys from `/etc/ssl/cert.pem`

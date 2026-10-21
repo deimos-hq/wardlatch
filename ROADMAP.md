@@ -27,10 +27,8 @@ sent, nothing changed) and quick to act on (a fix on every line).
 - **Retiring incidents.** Decide, and write down, when an incident stops being checked by default (for example once
   the fixed versions are widely deployed) so the default run stays fast and relevant. Retired incidents stay
   available with `--incident`.
-- **Narrow the Python trust assumption.** Wardlatch runs the interpreter of each virtual environment it finds under
-  the folders it searches (see [ASSURANCE_CASE.md](ASSURANCE_CASE.md#4-what-is-not-defended)). Only running an
-  interpreter that resolves outside the project that contains it would stop a cloned repository from shipping a fake
-  one. It changes what gets checked, so it needs a decision and tests, not a quick patch.
+- ~~Narrow the Python trust assumption.~~ Done after 0.1.2: a found environment's interpreter is never run; its
+  certifi bundle is read as a file and tested with a trusted curl (see [ASSURANCE_CASE.md](ASSURANCE_CASE.md)).
 - **Signed releases and tags.** The release workflow attests the source archive and the npm package with Sigstore;
   the next release is the first to go through it, from a signed tag. Signed tags for 0.1.0 to 0.1.2 at the commits
   npm recorded.

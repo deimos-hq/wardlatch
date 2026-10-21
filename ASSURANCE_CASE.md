@@ -147,11 +147,13 @@ was tested.
 
 Read this section before relying on anything above.
 
-**Wardlatch runs each Python virtual environment's interpreter that it finds.** A folder under the searched paths
-that contains `pyvenv.cfg` and `bin/python` has that `bin/python` run (with `-I -c` and a fixed script, and `-V`).
-Git preserves the executable bit and symlinks, so a repository cloned from a stranger can ship a fake virtual
-environment whose "python" is any program in that repository, and running Wardlatch over the folder runs it as you,
-even for a project you have never opened. Passing `--paths` to the folders you trust limits it. A fix (only run an interpreter that resolves outside its own project) is on the [roadmap](ROADMAP.md).
+**Fixed after 0.1.2: a found virtual environment's interpreter is never run.** Up to 0.1.2, a folder under the
+searched paths that contained `pyvenv.cfg` and `bin/python` had that `bin/python` run, so a repository cloned from a
+stranger could ship a fake "python" that Wardlatch would execute. Since then Wardlatch only reads files in a found
+environment: its certifi bundle (`lib/python*/site-packages/certifi/cacert.pem`) and version (the dist-info), and it
+tests that bundle with a curl the machine already trusts (`/usr/bin/curl`, else the first on `PATH`) and `--cacert`.
+An environment without certifi uses its base Python's trust, which is checked through `PATH`. A test plants a fake
+interpreter that would leave a marker file and fails if it ever runs.
 
 **Programs on `PATH` are trusted.** Every `node`, `curl`, `python3`, and each tool named in a version rule, is run as
 found, as your shell would. A `PATH` that includes `.` or a writable folder is outside what Wardlatch can defend.

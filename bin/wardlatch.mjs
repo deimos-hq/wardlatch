@@ -80,6 +80,7 @@ for (const inc of chosen) {
     if (!json) console.log(c('2', `Asks each runtime to connect to ${inc.canaries.length} test hosts signed with the compromised keys.`));
     const fixFor = (rt) => {
       const os = platform();
+      if (rt.fixKey) return inc.fixes[rt.fixKey];
       if (rt.kind === 'macos-system') return inc.fixes['macos-system'];
       if (rt.system) return inc.fixes['curl:linux'];
       return inc.fixes[`${rt.kind}:${rt.bin}:${os}`] ?? inc.fixes[`${rt.kind}:${os}`] ?? inc.fixes[rt.kind];
