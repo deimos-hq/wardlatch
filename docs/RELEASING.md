@@ -1,6 +1,6 @@
 # Releasing
 
-Releases are cut by the maintainer, who is the only owner of the `wardlatch` package on npm
+Releases are cut by the maintainer or the successor, the two owners of the `wardlatch` package on npm
 ([GOVERNANCE.md](../GOVERNANCE.md)). There is no build: a release is the source in `bin/` and `lib/`, packed by npm.
 
 ## How to cut one

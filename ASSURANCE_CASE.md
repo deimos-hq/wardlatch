@@ -192,8 +192,8 @@ still trusts the test host. If the test host were also down at that moment, it w
 having been able to check. The script also trusts `/usr/bin/curl` for the re-test.
 
 **Releases 0.1.0 to 0.1.2 are not signed by the project**, and there is one maintainer and no second reviewer. A named
-successor has had admin access to the repository since 21 October 2026 but is not yet an owner of the npm package (see
-[GOVERNANCE.md](GOVERNANCE.md#continuity)).
+successor has held admin access to the repository and co-owned the npm package since 21 October 2026, but has not yet
+rehearsed a release (see [GOVERNANCE.md](GOVERNANCE.md#continuity)).
 
 ## 5. Supply chain
 

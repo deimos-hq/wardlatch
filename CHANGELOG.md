@@ -13,6 +13,8 @@ of that commit matches the published package's file count and size. The format f
 
 ### Changed
 
+- **A second maintainer with full access.** @mlimano5 is an admin of the repository and an owner of the npm package
+  ([GOVERNANCE.md](GOVERNANCE.md#continuity)).
 - **The repository moved to the Deimos AI organization:** [github.com/deimos-hq/wardlatch](https://github.com/deimos-hq/wardlatch).
   Old links and `git clone` URLs redirect. 0.1.3 and 0.1.4 still verify under the earlier name
   ([docs/RELEASING.md](docs/RELEASING.md#verifying-a-release)).
