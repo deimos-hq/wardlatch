@@ -9,7 +9,7 @@ Two independent programs, about 600 lines in all, with no dependencies beyond No
 programs already on the machine:
 
 - **The command**, `wardlatch` (`bin/wardlatch.mjs` and `lib/`): looks, reports, gives a fix per line, and changes
-  nothing. Published on npm and run with `npx wardlatch`.
+  nothing. Published on npm and run with `npx wardlatch@latest`.
 - **The Mac fix**, `fix/fix-macos.sh`: one bash script that changes one file, `/etc/ssl/cert.pem`, when a person runs
   it on purpose. Not part of the npm package; downloaded from www.deimoscore.com/wardlatch/#mac (byte-identical to
   this repository's copy) or deployed by device management.

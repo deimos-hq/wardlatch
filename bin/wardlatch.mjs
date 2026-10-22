@@ -40,11 +40,11 @@ for (let i = 0; i < args.length; i++) {
 if (flag('-h') || flag('--help')) {
   console.log(`wardlatch ${VERSION}: does the wrong key still turn?
 
-  npx wardlatch                    check this machine against every current incident
-  npx wardlatch --paths ~/code     where to look for Python environments, git repositories and WordPress sites (repeatable)
-  npx wardlatch --incident <id>    one incident only (--list shows them)
-  npx wardlatch --json             machine-readable output
-  npx wardlatch --no-containers    skip running Docker and Podman containers
+  npx wardlatch@latest             check this machine against every current incident
+  npx wardlatch@latest --paths ~/code   where to look for Python environments, git repositories and WordPress sites (repeatable)
+  npx wardlatch@latest --incident <id>  one incident only (--list shows them)
+  npx wardlatch@latest --json      machine-readable output
+  npx wardlatch@latest --no-containers  skip running Docker and Podman containers
 
 Exit code: 0 all safe · 1 something is exposed · 2 something could not be tested ("review" lines don't change it).
 Runs locally. Sends nothing anywhere except TLS connections to the incidents' public test hosts and two control sites.

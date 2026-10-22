@@ -13,13 +13,18 @@ Python and every project's own certificate bundle each keep their own list of wh
 on its own. Wardlatch tells you which ones still trust the leaked keys, and checks this week's other leaks too.
 
 ```
-npx wardlatch
+npx wardlatch@latest
 ```
+
+Use `@latest`: a bare `npx wardlatch` can run an older copy npx cached on an earlier run.
+
+Runs on macOS and Linux, tested on both in CI. **Windows is not supported yet:** some checks don't look in Windows
+locations, so a Windows run can miss what it should find.
 
 ```
 SAFE     node 26.12.0  /opt/homebrew/bin/node
 EXPOSED  node 26.12.0  /usr/local/bin/node  trusts 6/12
-         fix: Node bundles its own roots; the fix is pending upstream ...
+         fix: update Node.js to 26.12.1, 24.22.1 or 22.23.4 or later ...
 SAFE     curl 8.7.1  /usr/bin/curl
 SAFE     certifi 2026.10.19  ~/Development/app/.venv
 
@@ -92,9 +97,9 @@ has `incident`, `status` and `kind` (`node`, `curl`, `python`, `python-certifi`,
 key), `reason` when it is UNKNOWN, and `fix` when there is something to do.
 
 ```
-npx wardlatch --json          # for CI and scripts
-npx wardlatch --incident emudhra-2026-10 --no-containers
-npx wardlatch --paths ~/code --paths /srv/www
+npx wardlatch@latest --json          # for CI and scripts
+npx wardlatch@latest --incident emudhra-2026-10 --no-containers
+npx wardlatch@latest --paths ~/code --paths /srv/www
 ```
 
 ## Feedback, contributing, security
@@ -110,11 +115,11 @@ To work on it: `git clone`, then `npm test`. Nothing to install.
 
 ## Incidents
 
-`npx wardlatch` checks all of them; `--incident <id>` checks one.
+`npx wardlatch@latest` checks all of them; `--incident <id>` checks one.
 
 - `emudhra-2026-10`: eMudhra intermediate CA compromise, 20 Oct 2026 ([advisory](https://emudhra.we-have-a-problem.com/)). Real TLS probes per runtime, plus cloudflared (fixed in 2026.10.2) and the Go toolchain (1.27.3 / 1.26.10).
 - `ovhcloud-cli-2026-10`: OVHcloud CLI v0.11.0 to v0.15.0 swapped for a secret-stealer on 19 Oct ([OVHcloud's advisory](https://github.com/ovh/ovhcloud-cli/security/advisories/GHSA-862f-55f5-vmvw)). Never runs the program: compares the installed file with the five compromised builds OVHcloud published, and looks for the `envchecker-` folder the stealer leaves in the temp directory.
-- `php-2026-10`: two critical PHP flaws, fixes due 21 Oct 14:00 UTC ([report](https://blog.qualys.com/vulnerabilities-threat-research/2026/10/20/php-announces-critical-security-release-for-two-vulnerabilities)). Flags an installed PHP until the fixed versions are known.
+- `php-2026-10`: two critical PHP flaws (CVE-2026-109618 and CVE-2026-109619), fixed on 21 Oct in 8.5.12, 8.4.27, 8.3.36 and 8.2.35 ([report](https://blog.qualys.com/vulnerabilities-threat-research/2026/10/20/php-announces-critical-security-release-for-two-vulnerabilities)). Flags an installed PHP older than its line's fix, or on a line with no fix.
 - `github-actions-2026-10`: credential-stealing workflow files planted in tens of thousands of repositories since 7 Oct ([report](https://thehackernews.com/2026/10/credential-stealing-github-actions.html)). Lists workflow files added to your local repositories since 1 Sep, to review. Review lines don't change the exit code.
 
 - `committed-keys-2026-10`: keys committed to code, the lesson of the TiDB Cloud breach ([PingCAP](https://www.pingcap.com/trust-hub/security/security-update-october-2026/)). Scans the files your local git repositories track for cloud keys, private keys, service-account files and GitHub, npm, Slack and Stripe tokens. A finding shows the type, file and line, never the key. Lines marked `secrets-ok`, `gitleaks:allow` or `pragma: allowlist secret` are skipped. Current files only: for history, use gitleaks or trufflehog.

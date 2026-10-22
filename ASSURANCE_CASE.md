@@ -211,8 +211,8 @@ module, ShellCheck, the Mac fix on copies of a real `cert.pem` and its checksum,
 and CodeQL with `security-and-quality`. OpenSSF Scorecard runs on every push to `main` and weekly. Every action is
 pinned to a full commit SHA, workflows get read-only tokens unless a job needs more, and Dependabot proposes action
 updates weekly. GitHub secret scanning and push protection are on for the repository. A release cut from a tag gets a
-Sigstore attestation of its source archive and npm package ([docs/RELEASING.md](docs/RELEASING.md)); none has been
-cut that way yet.
+Sigstore attestation of its source archive and npm package ([docs/RELEASING.md](docs/RELEASING.md)); 0.1.3 and every
+release since were cut that way.
 
 ## 6. How this document stays true
 
