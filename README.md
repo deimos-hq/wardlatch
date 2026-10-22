@@ -16,7 +16,7 @@ on its own. Wardlatch tells you which ones still trust the leaked keys, and chec
 npx wardlatch@latest
 ```
 
-Use `@latest`: a bare `npx wardlatch` can run an older copy npx cached on an earlier run.
+Use `@latest`: a bare `npx wardlatch` runs any copy already installed globally or in the current project, whatever its version (and npm older than 9.6.5 also reuses a copy npx cached earlier). If you installed Wardlatch with `npm install -g`, update that copy too. `wardlatch --help` prints the version without running any check.
 
 Runs on macOS and Linux, tested on both in CI. **Windows is not supported yet:** some checks don't look in Windows
 locations, so a Windows run can miss what it should find. The trust check and the program checks say UNKNOWN there.
@@ -48,8 +48,8 @@ Two checks keep the answer honest:
 ## What it looks at
 
 - every `node`, `curl` and `python3` on your `PATH`, plus the operating system's own
-- Python virtual environments (and their `certifi`) under `~/Development`, `~/code`, `~/src`, `~/projects`, `~/dev`,
-  `~/work`, or the folders you give with `--paths`
+- Python virtual environments (and their `certifi`) under `~/Development`, `~/code`, `~/src`, `~/projects`, `~/Projects`,
+  `~/dev`, `~/work`, `~/Sites` and `/var/www`, or the folders you give with `--paths`
 - every running Docker or Podman container, checked from inside with the image's own curl, python3 or wget. Two
   controls come first: a normal site must open, and a self-signed one must be refused, or the result is "couldn't
   test". `--no-containers` skips them. Nothing is written into a container.
