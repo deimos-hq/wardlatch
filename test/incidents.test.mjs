@@ -27,7 +27,10 @@ test('every incident has the fields its check reads, named after its file', () =
     if (i.type === 'installs') {
       assert.ok(i.versionFiles || i.sitePackages || i.dockerDigests, `${i.id}: something to check`);
       assert.ok(i.safeText, `${i.id}: safeText`);
-      if (i.versionFiles) { const v = i.versionFiles; assert.ok(v.product && v.fix && v.lookedIn && (v.fixedIn || v.bad) && v.files.length); for (const f of v.files) { assert.match(f.path, /^\//); new RegExp(f.re); } }
+      if (i.versionFiles) {
+        const v = i.versionFiles; assert.ok(v.product && v.fix && v.lookedIn && (v.fixedIn || v.bad || v.minVersion) && v.files.length, `${i.id}: versionFiles`);
+        for (const f of v.files) { assert.match(f.path, /^(\/|~\/)/); assert.ok(new RegExp(f.re).source.includes('('), `${i.id}: ${f.path} re captures`); if (f.reviewWhenFixed) assert.ok(i.reviewFix, `${i.id}: reviewFix for ${f.path}`); }
+      }
       if (i.sitePackages) {
         assert.ok(i.sitePackages.fix);
         for (const f of i.sitePackages.iocFiles ?? []) {
@@ -40,6 +43,9 @@ test('every incident has the fields its check reads, named after its file', () =
       if (i.tmpTrace) new RegExp(i.tmpTrace);
       for (const d of i.dockerDigests ?? []) assert.match(d, /^sha256:[0-9a-f]{64}$/);
       if (i.dockerDigests) assert.ok(i.dockerFix);
+      for (const d of i.dockerDigestPrefixes ?? []) assert.match(d, /^sha256:[0-9a-f]{12,64}$/);
+      for (const t of i.dockerTags ?? []) assert.match(t, /^[a-z0-9./_-]+:[A-Za-z0-9._-]+$/);
+      if (i.dockerDigestPrefixes || i.dockerTags) assert.ok(i.dockerFix);
     }
     if (i.type === 'wordpress') { assert.ok(!Number.isNaN(Date.parse(i.addedSince)) && i.reviewFix); for (const r of i.rules) assert.ok(r.plugin && r.mainFile && r.fix); }
   }

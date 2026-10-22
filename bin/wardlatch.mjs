@@ -76,6 +76,13 @@ if (!json) {
 for (const inc of chosen) {
   if (!json) console.log(`\n${c('1', inc.title)} ${c('2', `(${inc.date})`)}`);
   const results = [];
+  // Windows is not supported yet: these checks look only in macOS and Linux places (no .exe names, no Windows Python
+  // folders), so on Windows they would read SAFE without having looked. Say so instead (README).
+  if (platform() === 'win32' && ['binaries', 'installs'].includes(inc.type)) {
+    results.push({ incident: inc.id, kind: inc.type === 'binaries' ? 'binary' : 'install', status: 'UNKNOWN', reason: 'not checked on Windows yet (Windows is not supported)' });
+    print('UNKNOWN', 'not checked on Windows yet'); note('33', 'this check looks only in macOS and Linux locations; Windows is not supported yet');
+    all.push(...results); if (!json) console.log(c('2', `Source: ${inc.advisory}`)); continue;
+  }
 
   if (inc.type === 'trust') {
     if (!json) console.log(c('2', `Asks each runtime to connect to ${inc.canaries.length} test hosts signed with the compromised keys.`));
@@ -148,7 +155,7 @@ for (const inc of chosen) {
       const dirs = sitePackagesDirs({ roots });
       for (const r of checkSitePackages(inc.sitePackages, dirs)) show(r, `${r.what}  ${short(r.dir)}`, inc.sitePackages.fix);
       // say where: a SAFE that only gives a count reads as "everywhere"
-      looked.push(`${dirs.length} Python package folder${dirs.length === 1 ? '' : 's'}: the system's, Homebrew, user, pyenv, conda, pipx, uv, Poetry and Pipenv installs, and virtual environments near the top of ~ and under ${roots.map(short).join(', ')}; pass --paths for one elsewhere`);
+      looked.push(`${dirs.length} Python package folder${dirs.length === 1 ? '' : 's'}: the system's, Homebrew, user, pyenv, conda, pipx, uv, Poetry and Pipenv installs, and virtual environments near the top of ~ and under ${roots.map(short).join(', ')}`);
     }
     if (inc.tmpTrace) {
       for (const t of tmpTraces(inc.tmpTrace)) show({ status: 'EXPOSED', path: t, reason: 'the malware ran on this machine: it leaves this marker each time it runs' }, short(t), inc.tmpFix ?? inc.sitePackages?.fix);
@@ -166,7 +173,9 @@ for (const inc of chosen) {
       }
       for (const r of checkImages(inc, byEngine)) show(r, `${r.engine} image ${r.what}`, inc.dockerFix);
     }
-    if (!results.length) print('SAFE', `${inc.safeText ?? 'nothing found'} (looked in ${looked.filter(Boolean).join(', ')})`);
+    // the parts that could be checked found nothing: say so, even when an engine couldn't be asked (its own UNKNOWN line
+    // stays, and keeps the exit code at 2); never when a part found something or a file couldn't be read
+    if (results.every((r) => r.status === 'UNKNOWN' && r.engine)) print('SAFE', `${inc.safeText ?? 'nothing found'} (looked in ${looked.filter(Boolean).join('; ')})${inc.sitePackages ? '. Pass --paths for a folder elsewhere' : ''}`);
   }
 
   if (inc.type === 'workflows') {
