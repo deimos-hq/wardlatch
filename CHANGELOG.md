@@ -10,6 +10,37 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-10-22
+
+### Security
+
+- **The Python probe no longer runs `.pth` files.** The eMudhra check starts each `python3` on `PATH` with `-I`, which
+  still runs `.pth` files from site-packages at startup. On a machine with LiteLLM 1.107.0 in that Python's
+  site-packages, running 0.1.0 to 0.1.6 ran its stealer (`cook.pth`), as any Python start there does. 0.1.7 adds `-S`;
+  the probe needs only the standard library's `ssl`. The container probe gets `-I -S` too. Found in our own review while
+  adding the LiteLLM incident; a test plants a marker `.pth` in a real environment and fails if the probe runs it.
+
+### Added
+
+- **GitLab CVE-2026-110264** (`gitlab-2026-10`): the version read from GitLab's own files, judged per release line;
+  18.10 and older have no patch; a fixed self-compiled install is REVIEW (it also needs GitLab's Ruby patch).
+- **LiteLLM 1.107.0** (`litellm-2026-10`): the release record and the files it drops in site-packages (`cook.pth` and
+  `cook.py` by name, `sitecustomize.py` by SHA-256) across system, Homebrew, user, pyenv, conda, pipx, uv, Poetry and
+  Pipenv installs and virtual environments; the stealer's markers in the temp folders; local images by digest, by the
+  published digest prefixes or by the `v1.107.0` tag. Python is never started for this.
+- **Plex Media Server** (`plex-2026-10`): the version from the Debian package record or the macOS app; 1.43.3.10861 and
+  later are fixed.
+
+### Fixed
+
+- A version with a suffix (`19.4.2-ee`, Plex's `1.43.3.10861-07dfddaeb`) is compared by its leading number; such a
+  part used to compare as equal, which could read a vulnerable version as SAFE.
+- A container engine that is installed but can't be asked (permission, no answer, too much output) is UNKNOWN, not
+  "not running"; a hung engine is killed.
+- On Windows, which is not supported yet, the installed-software and program checks report UNKNOWN instead of SAFE.
+- OVHcloud's temp-folder marker is matched with any number of digits.
+
+
 ## [0.1.6] - 2026-10-21
 
 ### Security

@@ -26,7 +26,7 @@ These are its security requirements: what a user can rely on.
 
 What a user **cannot** expect: a SAFE covers the runtimes Wardlatch found, for the incidents it knows, at the moment
 it ran, and nothing more. It fixes nothing (except the Mac fix, when run). It does not check browsers, compiled
-programs, container images that aren't running, other user accounts, or git history (see section 4).
+programs, files inside container images, other user accounts, or git history (see section 4).
 
 ## 2. Threat model
 
@@ -154,6 +154,18 @@ environment: its certifi bundle (`lib/python*/site-packages/certifi/cacert.pem`)
 tests that bundle with a curl the machine already trusts (`/usr/bin/curl`, else the first on `PATH`) and `--cacert`.
 An environment without certifi uses its base Python's trust, which is checked through `PATH`. A test plants a fake
 interpreter that would leave a marker file and fails if it ever runs.
+
+**Python runs with `-I -S`.** The eMudhra probe starts each `python3` on `PATH` with `-I` (no user site, no
+environment variables) and, since 0.1.7, `-S` (no `site` module), because `-I` alone still runs `.pth` files from
+site-packages at startup, and a malicious package can drop one there (LiteLLM 1.107.0's `cook.pth`). The probe needs only
+the standard library's `ssl`. A test plants a marker `.pth` in a real virtual environment, checks that an ordinary start
+runs it, and fails if the probe does. **Found 22 October 2026 while adding the LiteLLM incident:** 0.1.0 to 0.1.6 started
+that Python without `-S`, so on a machine with LiteLLM 1.107.0 in the global Python's site-packages, running Wardlatch
+also ran the stealer, as any Python start there does.
+
+**Installed software is read, never run.** The GitLab, LiteLLM and Plex checks (`lib/installs.mjs`) read version files,
+hash files in site-packages and list local container images with `docker images` / `podman images` (an argument list,
+a timeout with SIGKILL); nothing they find is executed.
 
 **Programs on `PATH` are trusted, except a program an incident says may itself be malware.** Every `node`, `curl`,
 `python3`, and each tool named in a version rule, is run as found, as your shell would. A `PATH` that includes `.` or a

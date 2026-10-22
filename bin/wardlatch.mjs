@@ -45,7 +45,7 @@ if (flag('-h') || flag('--help')) {
   npx wardlatch@latest --paths ~/code   where to look for Python environments, git repositories and WordPress sites (repeatable)
   npx wardlatch@latest --incident <id>  one incident only (--list shows them)
   npx wardlatch@latest --json      machine-readable output
-  npx wardlatch@latest --no-containers  skip running Docker and Podman containers
+  npx wardlatch@latest --no-containers  skip Docker and Podman (running containers and local images)
 
 Exit code: 0 all safe · 1 something is exposed · 2 something could not be tested ("review" lines don't change it).
 Runs locally. Sends nothing anywhere except TLS connections to the incidents' public test hosts and two control sites.

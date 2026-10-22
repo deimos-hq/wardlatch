@@ -79,7 +79,7 @@ for you to apply. What it can and can't promise, and why: [ASSURANCE_CASE.md](AS
 | *(none)* | Check this machine against every current incident. |
 | `--incident <id>` | One incident only. `--list` prints the ids. |
 | `--paths <folder>` | Where to look for Python environments, git repositories and WordPress sites; repeat it for several. Default: `~/Development`, `~/code`, `~/src`, `~/projects`, `~/Projects`, `~/dev`, `~/work`, `~/Sites` and `/var/www`. |
-| `--no-containers` | Skip running Docker and Podman containers. |
+| `--no-containers` | Skip Docker and Podman: running containers, and the local image list. |
 | `--json` | Machine-readable output instead of lines (below). |
 | `--list` | The incidents it knows: id, date, title. |
 | `-h`, `--help` | Usage. |
@@ -92,7 +92,7 @@ exposed, otherwise **2** if anything could not be tested, otherwise **0**. Revie
 
 `--json` prints one object: `{ tool, version, incidents: [{ id, title, advisory }], results: [...] }`. Each result
 has `incident`, `status` and `kind` (`node`, `curl`, `python`, `python-certifi`, `macos-system`, `container`,
-`containers` when an engine can't be asked, `binary`, `workflow`, `secret` or `wordpress`), the fields of that kind
+`containers` when an engine can't be asked, `binary`, `install`, `workflow`, `secret` or `wordpress`), the fields of that kind
 (such as `bin`, `version`, `trusted` and `tested` for a trust probe, or `file`, `line`, `type` and `masked` for a
 key), `reason` when it is UNKNOWN, and `fix` when there is something to do.
 
@@ -125,6 +125,9 @@ To work on it: `git clone`, then `npm test`. Nothing to install.
 - `committed-keys-2026-10`: keys committed to code, the lesson of the TiDB Cloud breach ([PingCAP](https://www.pingcap.com/trust-hub/security/security-update-october-2026/)). Scans the files your local git repositories track for cloud keys, private keys, service-account files and GitHub, npm, Slack and Stripe tokens. A finding shows the type, file and line, never the key. Lines marked `secrets-ok`, `gitleaks:allow` or `pragma: allowlist secret` are skipped. Current files only: for history, use gitleaks or trufflehog.
 
 - `wordpress-plugins-2026-10`: Rank Math PRO 3.0.123 shipped with a backdoor (15 to 16 Oct; clean 3.0.124) and stolen UpdraftCentral keys were used to plant backdoor plugins from 18 Oct ([Patchstack](https://patchstack.com/articles/updraftcentral-key-compromise-wordpress-backdoors/)). Finds WordPress installs under the folders searched (and `/var/www`), flags Rank Math PRO 3.0.123 and the attack's indicator, UpdraftPlus before 1.26.13 / 2.26.13, and lists plugin folders added since 18 Oct to review. Run it on the server.
+- `gitlab-2026-10`: GitLab CVE-2026-110264, unauthenticated code execution on self-managed GitLab, fixed 21 Oct in 19.5.1, 19.4.3, 19.3.6, 19.2.9, 19.1.9, 19.0.10 and 18.11.13 ([GitLab](https://docs.gitlab.com/releases/patches/patch-release-gitlab-19-5-1-released/)). Reads the version from GitLab's own version files; never runs GitLab. Docker and Kubernetes installs aren't checked yet.
+- `litellm-2026-10`: LiteLLM 1.107.0 on PyPI and Docker shipped a credential stealer on 21 Oct ([LiteLLM](https://docs.litellm.ai/blog/security-incident-oct-21-2026)). Looks in Python's site-packages for the release record and the files it drops (by SHA-256), in the temp folders for its markers, and at local image digests and tags; never starts Python for this.
+- `plex-2026-10`: Plex Media Server, four chained flaws exploited since 16 Oct, fixed in 1.43.3.10861 ([Plex](https://forums.plex.tv/t/important-security-update-for-plex-media-server-v1-43-2-and-earlier/942319)). Reads the version from the Debian package record or the macOS app; never runs Plex.
 
 When the next one happens, it gets added here.
 

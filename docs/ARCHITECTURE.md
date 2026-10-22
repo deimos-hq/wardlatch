@@ -49,7 +49,7 @@ programs already on the machine:
 | `fix/fix-macos.sh` | The Mac fix. See below. | `/etc/ssl/cert.pem` and a dated backup beside it. |
 
 Every child process is started with `execFile` and an argument list, never through a shell on the host, and every
-one has a timeout (5 to 20 seconds).
+one has a timeout (5 to 20 seconds). `lib/installs.mjs` (installed software: version files, site-packages by SHA-256, temp markers, local image digests and tags) only reads files and lists images with `docker images` / `podman images`; nothing it finds is run.
 
 ## The trust check, step by step
 
