@@ -67,16 +67,17 @@ report how you would like to be credited.
 
 ## Supported versions
 
-Only the latest release on npm. `npx wardlatch` fetches the latest release unless you pin a version, so the upgrade
-path is to run it again. Fixes are not backported.
+Only the latest release on npm. Run `npx wardlatch@latest`: a bare `npx wardlatch` can run an older copy npx cached
+earlier. Fixes are not backported.
 
 ## Verifying what you run
 
 Releases 0.1.0 to 0.1.2 were published to npm from the maintainer's machine and carry no signature of the project's
 own (npm's registry signature shows only that npm serves what was uploaded). A release cut from a tag now goes
 through the release workflow, which attaches a Sigstore attestation of its source archive and npm package to the
-GitHub release; no release has been through it yet. How to check one:
+GitHub release; 0.1.3 and every release since went through it. How to check one:
 [docs/RELEASING.md](docs/RELEASING.md#verifying-a-release).
 
 `fix/fix-macos.sh` in this repository is byte-identical to the download on www.deimoscore.com, whose page prints its
-SHA-256 (`22153b4acaaa8675f9b4a87390a06cae077f9b5c8f748945ff6b886e400f6a86`). CI fails if the two ever differ.
+SHA-256 (`22153b4acaaa8675f9b4a87390a06cae077f9b5c8f748945ff6b886e400f6a86`). CI pins that hash, so a change to the
+script fails CI until the pin, the download and the printed checksum change together.

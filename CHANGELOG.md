@@ -1,10 +1,11 @@
 # Changelog
 
 What changed in each release of the `wardlatch` package on npm, newest first, written to help you decide whether to
-update. Running `npx wardlatch` always fetches the latest release, so for most people updating means running it again.
+update. Run `npx wardlatch@latest` to get the latest release: a bare `npx wardlatch` can run an older copy npx cached
+earlier.
 
-Releases are not yet tagged in git. Each entry names the commit npm recorded when it was published (`gitHead`); a pack
-of that commit matches the published package's file count and size. The format follows
+Every release has a signed tag (`v0.1.0` onwards; 0.1.0 to 0.1.2 were tagged afterwards at the commit npm recorded as
+each one's `gitHead`), and 0.1.3 onwards were built and attested by the release workflow. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
@@ -13,6 +14,7 @@ of that commit matches the published package's file count and size. The format f
 
 ### Security
 
+- Advisory: [GHSA-23m2-fmmq-w3pr](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-23m2-fmmq-w3pr).
 - **The OVHcloud CLI check no longer runs the program.** 0.1.0 to 0.1.5 read its version with `ovhcloud --version`.
   On a machine that still held one of the compromised builds, that would have run the credential stealer, which
   OVHcloud's advisory warns against. 0.1.6 never runs it: it compares the file's MD5 with the five compromised builds
