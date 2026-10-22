@@ -1,0 +1,45 @@
+{
+  "id": "gitlab-2026-10",
+  "type": "installs",
+  "title": "GitLab: unauthenticated code execution (CVE-2026-110264)",
+  "date": "2026-10-21",
+  "summary": "GitLab released critical patches on 21 October 2026 for CVE-2026-110264 (CVSS 10.0): an unauthenticated user could run code on a self-managed GitLab server. Affected: CE and EE from 7.0 before 18.11.13, 19.0 before 19.0.10, 19.1 before 19.1.9, 19.2 before 19.2.9, 19.3 before 19.3.6, 19.4 before 19.4.3 and 19.5 before 19.5.1; 18.10 and older get no patch. GitLab.com is already patched. Wardlatch reads the installed version from GitLab's own version files and never runs GitLab.",
+  "advisory": "https://docs.gitlab.com/releases/patches/patch-release-gitlab-19-5-1-released/",
+  "versionFiles": {
+    "product": "GitLab",
+    "affectedFrom": "7.0",
+    "fixedIn": [
+      "18.11.13",
+      "19.0.10",
+      "19.1.9",
+      "19.2.9",
+      "19.3.6",
+      "19.4.3",
+      "19.5.1"
+    ],
+    "files": [
+      {
+        "path": "/opt/gitlab/version-manifest.txt",
+        "re": "^gitlab-(?:ce|ee|fips|jh) (\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.]+)?)",
+        "label": "Linux package",
+        "group": "linux-package"
+      },
+      {
+        "path": "/opt/gitlab/embedded/service/gitlab-rails/VERSION",
+        "re": "^(\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.]+)?)",
+        "label": "Linux package",
+        "group": "linux-package"
+      },
+      {
+        "path": "/home/git/gitlab/VERSION",
+        "re": "^(\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.]+)?)",
+        "label": "self-compiled",
+        "reviewWhenFixed": "this version has GitLab's fix, but the fix also patches Ruby's regular-expression engine (Onigmo), which the Linux package bundles and a self-compiled install brings itself: check that your Ruby carries GitLab's patch"
+      }
+    ],
+    "fix": "Upgrade GitLab to 19.5.1, 19.4.3, 19.3.6, 19.2.9, 19.1.9, 19.0.10 or 18.11.13 (or later on the same line). 18.10 and older get no patch: upgrade to a supported line. GitLab strongly recommends upgrading immediately; its patch page has the upgrade notes.",
+    "lookedIn": "GitLab's version files under /opt/gitlab and /home/git/gitlab"
+  },
+  "reviewFix": "Check that the Ruby your self-compiled GitLab runs on includes GitLab's Onigmo patch (see GitLab's patch release notes).",
+  "safeText": "no self-managed GitLab install found on this machine (GitLab in Docker or Kubernetes isn't checked yet)"
+}

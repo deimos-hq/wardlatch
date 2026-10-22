@@ -1,0 +1,34 @@
+{
+  "id": "plex-2026-10",
+  "type": "installs",
+  "title": "Plex Media Server: four chained flaws, exploited (Plex2Shell)",
+  "date": "2026-10-20",
+  "summary": "Four flaws in Plex Media Server (CVE-2026-96652, CVE-2026-96654, CVE-2026-96655 and CVE-2026-96656) chain into code execution by an unauthenticated remote attacker. Plex says they are being actively exploited since a public proof of concept on 16 October; CISA added all four to its Known Exploited Vulnerabilities catalog on 20 October. Plex Media Server 1.43.3.10861 and later are not affected. Wardlatch reads the installed version from files and never runs Plex.",
+  "advisory": "https://forums.plex.tv/t/important-security-update-for-plex-media-server-v1-43-2-and-earlier/942319",
+  "versionFiles": {
+    "product": "Plex Media Server",
+    "minVersion": "1.43.3.10861",
+    "files": [
+      {
+        "path": "/var/lib/dpkg/status",
+        "re": "^Package: plexmediaserver\\nStatus: install ok installed\\n(?:[^\\n]+\\n)*?Version: (\\d+\\.\\d+\\.\\d+\\.\\d+)",
+        "label": "Debian or Ubuntu package",
+        "maxBytes": 134217728,
+        "presentRe": "^Package: plexmediaserver\\nStatus: install ok installed$"
+      },
+      {
+        "path": "/Applications/Plex Media Server.app/Contents/Info.plist",
+        "re": "<key>CFBundle(?:ShortVersionString|Version)</key>\\s*<string>(\\d+\\.\\d+\\.\\d+\\.\\d+)",
+        "label": "macOS app"
+      },
+      {
+        "path": "~/Applications/Plex Media Server.app/Contents/Info.plist",
+        "re": "<key>CFBundle(?:ShortVersionString|Version)</key>\\s*<string>(\\d+\\.\\d+\\.\\d+\\.\\d+)",
+        "label": "macOS app"
+      }
+    ],
+    "fix": "Update Plex Media Server to 1.43.3.10861 or later. Plex says a server that was reachable from the internet while unpatched should be assumed compromised: follow Plex's notice to check for and remove what attackers left (unfamiliar codec files, transcoder settings, miner or proxy processes).",
+    "lookedIn": "the Debian package record and the macOS app"
+  },
+  "safeText": "no Plex Media Server install found by its package record or macOS app (rpm, Snap, NAS and Docker installs aren't checked yet)"
+}

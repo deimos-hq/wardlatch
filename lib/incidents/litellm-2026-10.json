@@ -1,0 +1,51 @@
+{
+  "id": "litellm-2026-10",
+  "type": "installs",
+  "title": "LiteLLM 1.107.0 (PyPI and Docker) shipped a credential stealer",
+  "date": "2026-10-21",
+  "summary": "LiteLLM's release pipeline was hijacked on 21 October 2026. litellm==1.107.0 on PyPI (all seven wheels, 11:39 to 13:23 UTC) and the Docker images v1.107.0, latest, main-latest and main-stable (from 11:46 UTC; until 13:51 on GHCR and 14:20 on Docker Hub) carried a credential stealer that runs on every Python start. Earlier versions are not affected, per LiteLLM. Wardlatch never starts Python for this check: it looks for the litellm-1.107.0.dist-info folder and the files the wheels drop into site-packages (cook.pth, cook.py, and sitecustomize.py by SHA-256), the stealer's markers in /tmp, and the compromised image digests and tags.",
+  "advisory": "https://docs.litellm.ai/blog/security-incident-oct-21-2026",
+  "sitePackages": {
+    "iocFiles": [
+      {
+        "name": "cook.pth",
+        "sha256": "7f191632e7320705d154b85204f1ae546b543acbd7e8861229b76f5042b92bdb",
+        "nameAlone": "EXPOSED"
+      },
+      {
+        "name": "cook.py",
+        "sha256": "9dd0a3926f96a37eb86cf1ee2310d9be93139cc4ebef3ef9e2efe9531390be25",
+        "nameAlone": "EXPOSED"
+      },
+      {
+        "name": "sitecustomize.py",
+        "sha256": "34bef04fe88ac9d0aae0475630b1738681d15b94f233ac8aa46eacf5968305fa",
+        "reviewIfOther": false
+      }
+    ],
+    "distInfo": [
+      "litellm-1.107.0.dist-info"
+    ],
+    "fix": "Don't start with pip install: any Python start in that environment runs the stealer again, pip included (LiteLLM). From the shell, delete cook.pth, cook.py and sitecustomize.py and any __pycache__/cook*.pyc and sitecustomize*.pyc from that site-packages, kill the detached python process that holds /tmp/remote_code_loader.lock, then rebuild the environment from scratch pinned to litellm==1.106.2. If 1.107.0 was ever installed on a machine with internet access, assume the theft succeeded: rotate every secret the machine could reach, including cloud credentials and roles, every provider key in the LiteLLM proxy database, the master and virtual keys, and the database password. LiteLLM's post lists the rest."
+  },
+  "tmpTrace": "^(\\.pc_once_72129118c59f5636c0bb|remote_code_loader\\.lock|\\.pc_sq_[a-z0-9_]{8}|\\.pc_e_[a-z0-9_]{8})$",
+  "tmpFix": "The stealer ran on this machine. Follow LiteLLM's remediation: don't start Python first; remove the dropped files, kill the detached python process, rebuild pinned to litellm==1.106.2, and rotate every secret the machine could reach.",
+  "dockerDigests": [
+    "sha256:1bbcb1443bc962e45f5aad53fe3d2c30600e0379715fb6c664cdd3ac126c339e",
+    "sha256:bd1aeee419ea36da9aa2b657288da4101887be468f020ac63d22ba6ed84a3ea5",
+    "sha256:56b74573eed6e4aafe4b50603dbe7853e0345f188c8e44a09f1098caf1f4bcdf"
+  ],
+  "dockerDigestPrefixes": [
+    "sha256:1bbcb1443bc9",
+    "sha256:c00f9d92c427",
+    "sha256:7b00e91cd2fe"
+  ],
+  "dockerTags": [
+    "ghcr.io/berriai/litellm:v1.107.0",
+    "ghcr.io/berriai/litellm-database:v1.107.0",
+    "ghcr.io/berriai/litellm-non_root:v1.107.0",
+    "litellm/litellm:v1.107.0"
+  ],
+  "dockerFix": "Stop and remove containers from this image and delete the image, then pull an explicit earlier version by digest (LiteLLM: pin v1.106.2) or a release after the fix. Treat every secret those containers could reach as stolen and rotate it, including the provider keys in the proxy database, the master and virtual keys, and DATABASE_URL.",
+  "safeText": "no LiteLLM 1.107.0 files or markers found, and no compromised image among those checked"
+}

@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { discover } from '../lib/discover.mjs';
 import { check, reachable } from '../lib/probe.mjs';
 import { checkBinary, findOnPath, tmpTraces } from '../lib/binaries.mjs';
+import { checkVersionFiles, sitePackagesDirs, checkSitePackages, localImageDigests, checkImages } from '../lib/installs.mjs';
 import { listContainers, checkContainer } from '../lib/containers.mjs';
 import { reposUnder, workflowsAddedSince } from '../lib/workflows.mjs';
 import { scanRepo } from '../lib/secrets.mjs';
@@ -62,7 +63,7 @@ if (flag('-h') || flag('--help')) {
   npx wardlatch@latest --paths ~/code   where to look for Python environments, git repositories and WordPress sites (repeatable)
   npx wardlatch@latest --incident <id>  one incident only (--list shows them)
   npx wardlatch@latest --json      machine-readable output
-  npx wardlatch@latest --no-containers  skip running Docker and Podman containers
+  npx wardlatch@latest --no-containers  skip Docker and Podman (running containers and local images)
 
 Run it from your home folder, not inside a project: npx also starts Wardlatch with the project's own
 node_modules/.bin/node if it has one, and applies its .npmrc; Wardlatch can't undo either.
@@ -112,6 +113,12 @@ for (const inc of chosen) {
       results.push({ incident: inc.id, kind: 'binary', status: 'UNKNOWN', reason: 'not checked on Windows yet (Windows is not supported)' });
       print('UNKNOWN', 'not checked on Windows yet'); note('33', 'this check looks only in macOS and Linux locations; Windows is not supported yet');
     }
+    all.push(...results); if (!json) console.log(c('2', `Source: ${inc.advisory}`)); continue;
+  }
+  // installed software is looked for only in macOS and Linux places (no Windows Python folders or install paths)
+  if (platform() === 'win32' && inc.type === 'installs') {
+    results.push({ incident: inc.id, kind: 'install', status: 'UNKNOWN', reason: 'not checked on Windows yet (Windows is not supported)' });
+    print('UNKNOWN', 'not checked on Windows yet'); note('33', 'this check looks only in macOS and Linux locations; Windows is not supported yet');
     all.push(...results); if (!json) console.log(c('2', `Source: ${inc.advisory}`)); continue;
   }
 
@@ -182,6 +189,50 @@ for (const inc of chosen) {
     print('UNKNOWN', short(repo)); note('33', `git could not read it: ${error}`);
   };
   const repoCount = (n) => `${n} local repositor${n === 1 ? 'y' : 'ies'}`;
+
+  if (inc.type === 'installs') {
+    // Read-only: versions from the product's own files, dropped files in site-packages by hash, local image digests.
+    // Nothing found is run (lib/installs.mjs).
+    const show = (r, what, fix) => {
+      results.push({ incident: inc.id, kind: 'install', ...r, fix: r.status === 'EXPOSED' ? fix : r.status === 'REVIEW' ? inc.reviewFix : undefined });
+      print(r.status, what);
+      if (r.reason) note({ EXPOSED: '31', SAFE: '2' }[r.status] ?? '33', r.reason);
+      if (r.status === 'EXPOSED') note('2', `fix: ${fix}`);
+      else if (r.status === 'REVIEW' && inc.reviewFix) note('2', `check: ${inc.reviewFix}`);
+    };
+    const looked = [];
+    if (inc.versionFiles) {
+      const v = inc.versionFiles;
+      for (const r of checkVersionFiles(v)) show(r, `${v.product}${r.label ? ` (${r.label})` : ''} ${r.version}  ${short(r.path)}`, v.fix);
+      looked.push(v.lookedIn);
+    }
+    if (inc.sitePackages) {
+      const dirs = sitePackagesDirs({ roots });
+      for (const r of checkSitePackages(inc.sitePackages, dirs)) show(r, `${r.what}  ${short(r.dir)}`, inc.sitePackages.fix);
+      // say where: a SAFE that only gives a count reads as "everywhere"
+      looked.push(`${dirs.length} Python package folder${dirs.length === 1 ? '' : 's'}: the system's, Homebrew, user, pyenv, conda, pipx, uv, Poetry and Pipenv installs, and virtual environments near the top of ~ and under ${roots.map(short).join(', ')}`);
+    }
+    if (inc.tmpTrace) {
+      for (const t of tmpTraces(inc.tmpTrace)) show({ status: 'EXPOSED', path: t, reason: 'the malware ran on this machine: it leaves this marker each time it runs' }, short(t), inc.tmpFix ?? inc.sitePackages?.fix);
+      looked.push('the temp folders');
+    }
+    if (inc.dockerDigests && flag('--no-containers')) looked.push('no container images (--no-containers)');
+    if (inc.dockerDigests && !flag('--no-containers')) {
+      const byEngine = {};
+      for (const e of ['docker', 'podman'].filter((x) => findOnPath(x))) {
+        const list = localImageDigests(e);
+        if (list === null) { note('2', `${e}: not running, so its local images were not checked`); looked.push(`no ${e} images (not running)`); continue; }
+        // permission denied, no answer, too much output: the images exist but weren't seen, which is not SAFE
+        if (list.error) { show({ status: 'UNKNOWN', engine: e, reason: `${list.error}, so its local images were not checked` }, `${e} images`); continue; }
+        byEngine[e] = list; looked.push(`${list.length} ${e} image${list.length === 1 ? '' : 's'}`);
+      }
+      for (const r of checkImages(inc, byEngine)) show(r, `${r.engine} image ${r.what}`, inc.dockerFix);
+    }
+    // the parts that could be checked found nothing: say so, even when an engine couldn't be asked (its own UNKNOWN line
+    // stays, and keeps the exit code at 2); never when a part found something or a file couldn't be read
+    if (results.every((r) => r.status === 'UNKNOWN' && r.engine)) print('SAFE', `${inc.safeText ?? 'nothing found'} (looked in ${looked.filter(Boolean).join('; ')})${inc.sitePackages ? '. Pass --paths for a folder elsewhere' : ''}`);
+  }
+
   if (inc.type === 'workflows') {
     let repos = 0;
     for (const repo of reposUnder(roots)) {

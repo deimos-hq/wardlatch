@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 const DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'incidents');
 const incidents = readdirSync(DIR).filter((f) => f.endsWith('.json')).map((f) => ({ file: f, ...JSON.parse(readFileSync(join(DIR, f), 'utf8')) }));
-const TYPES = ['trust', 'binaries', 'workflows', 'secrets', 'wordpress'];
+const TYPES = ['trust', 'binaries', 'workflows', 'secrets', 'wordpress', 'installs'];
 const https = (u) => typeof u === 'string' && new URL(u).protocol === 'https:';
 
 test('every incident has the fields its check reads, named after its file', () => {
@@ -24,6 +24,29 @@ test('every incident has the fields its check reads, named after its file', () =
     for (const b of i.binaries ?? []) assert.ok(b.binary && b.fix && (b.bad || b.fixedIn || b.pendingUntil || (b.noExec && b.md5Bad?.length)), `${i.id}: ${b.binary}`);
     if (i.type === 'workflows') assert.ok(!Number.isNaN(Date.parse(i.since)) && i.fix);
     if (i.type === 'secrets') assert.ok(i.fix);
+    if (i.type === 'installs') {
+      assert.ok(i.versionFiles || i.sitePackages || i.dockerDigests, `${i.id}: something to check`);
+      assert.ok(i.safeText, `${i.id}: safeText`);
+      if (i.versionFiles) {
+        const v = i.versionFiles; assert.ok(v.product && v.fix && v.lookedIn && (v.fixedIn || v.bad || v.minVersion) && v.files.length, `${i.id}: versionFiles`);
+        for (const f of v.files) { assert.match(f.path, /^(\/|~\/)/); assert.ok(new RegExp(f.re).source.includes('('), `${i.id}: ${f.path} re captures`); if (f.reviewWhenFixed) assert.ok(i.reviewFix, `${i.id}: reviewFix for ${f.path}`); }
+      }
+      if (i.sitePackages) {
+        assert.ok(i.sitePackages.fix);
+        for (const f of i.sitePackages.iocFiles ?? []) {
+          assert.ok(f.name && !f.name.includes('/') && [].concat(f.sha256).every((h) => /^[0-9a-f]{64}$/.test(h)), `${i.id}: ${f.name}`);
+          assert.ok([undefined, 'EXPOSED'].includes(f.nameAlone), `${i.id}: ${f.name} nameAlone`);
+          // a review line needs its own advice: the EXPOSED fix ("rotate every credential") is wrong for a legitimate file
+          if (f.nameAlone !== 'EXPOSED' && f.reviewIfOther !== false) assert.ok(i.reviewFix, `${i.id}: reviewFix for ${f.name}`);
+        }
+      }
+      if (i.tmpTrace) new RegExp(i.tmpTrace);
+      for (const d of i.dockerDigests ?? []) assert.match(d, /^sha256:[0-9a-f]{64}$/);
+      if (i.dockerDigests) assert.ok(i.dockerFix);
+      for (const d of i.dockerDigestPrefixes ?? []) assert.match(d, /^sha256:[0-9a-f]{12,64}$/);
+      for (const t of i.dockerTags ?? []) assert.match(t, /^[a-z0-9./_-]+:[A-Za-z0-9._-]+$/);
+      if (i.dockerDigestPrefixes || i.dockerTags) assert.ok(i.dockerFix);
+    }
     if (i.type === 'wordpress') { assert.ok(!Number.isNaN(Date.parse(i.addedSince)) && i.reviewFix); for (const r of i.rules) assert.ok(r.plugin && r.mainFile && r.fix); }
   }
   assert.equal(new Set(incidents.map((i) => i.id)).size, incidents.length, 'ids are unique');

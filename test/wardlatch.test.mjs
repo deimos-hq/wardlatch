@@ -6,12 +6,14 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:https';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, symlinkSync, readdirSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, reachable, nscurlOk, canForceCa } from '../lib/probe.mjs';
 import { discover } from '../lib/discover.mjs';
-import { cmp, checkBinary, md5File } from '../lib/binaries.mjs';
+import { cmp, checkBinary, md5File, tmpTraces, judgeVersion } from '../lib/binaries.mjs';
+import { expand, checkVersionFiles, sitePackagesDirs, checkSitePackages, checkImages, localImageDigests } from '../lib/installs.mjs';
+import { createHash } from 'node:crypto';
 import { workflowsAddedSince } from '../lib/workflows.mjs';
 import { scanText } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
@@ -168,6 +170,150 @@ test('the OVHcloud CLI incident never runs the program and carries the five publ
   writeFileSync(join(bin, 'ovhcloud'), `#!/bin/sh\ntouch "${ran}"\n`, { mode: 0o755 });
   assert.equal(checkBinary(rule, bin, { tmpDirs: [] }).status, 'SAFE');
   assert.equal(existsSync(ran), false, 'the program was run');
+});
+
+test('a version read from a product file is judged per release line, and the file is only read', () => {
+  const root = join(dir, 'vf');
+  mkdirSync(join(root, 'opt', 'app', 'a'), { recursive: true }); mkdirSync(join(root, 'opt', 'app', 'b'), { recursive: true });
+  writeFileSync(join(root, 'opt', 'app', 'a', 'VERSION'), '19.4.2\n', { mode: 0o755 });
+  writeFileSync(join(root, 'opt', 'app', 'b', 'VERSION'), 'garbage\n');
+  const rule = { product: 'App', files: [{ path: '/opt/app/*/VERSION', re: '^(\\d+\\.\\d+\\.\\d+)' }], fixedIn: ['19.5.1', '19.4.3', '18.11.13'] };
+  const r = checkVersionFiles(rule, { root });
+  assert.equal(r.length, 2);
+  const a = r.find((x) => x.path.includes('/a/')), b = r.find((x) => x.path.includes('/b/'));
+  assert.equal(a.status, 'EXPOSED'); assert.equal(a.version, '19.4.2'); assert.match(a.reason, /fixed in 19\.4\.3/);
+  assert.equal(b.status, 'UNKNOWN');
+  writeFileSync(join(root, 'opt', 'app', 'a', 'VERSION'), '19.4.3\n'); assert.equal(checkVersionFiles(rule, { root }).find((x) => x.path.includes('/a/')).status, 'SAFE');
+  writeFileSync(join(root, 'opt', 'app', 'a', 'VERSION'), '17.2.0\n'); assert.match(checkVersionFiles(rule, { root }).find((x) => x.path.includes('/a/')).reason, /end of life/);
+  assert.deepEqual(checkVersionFiles({ ...rule, files: [{ path: '/nowhere/VERSION', re: '(.*)' }] }, { root }), []);
+});
+
+test('site-packages: a dropped file is EXPOSED only when its hash matches; the same name otherwise is REVIEW; the bad release record is EXPOSED', () => {
+  const env = join(dir, 'proj', '.venv'); const sp = join(env, 'lib', 'python3.12', 'site-packages');
+  mkdirSync(sp, { recursive: true }); writeFileSync(join(env, 'pyvenv.cfg'), 'home = /usr/bin\n');
+  const bad = 'import cook\n', h = createHash('sha256').update(bad).digest('hex');
+  writeFileSync(join(sp, 'cook.pth'), bad); writeFileSync(join(sp, 'sitecustomize.py'), '# legit\n');
+  mkdirSync(join(sp, 'evil-9.9.9.dist-info'));
+  assert.ok(sitePackagesDirs({ roots: [join(dir, 'proj')], patterns: [], home: '' }).includes(sp), 'the venv under the root is found');
+  const rule = { iocFiles: [{ name: 'cook.pth', sha256: h }, { name: 'sitecustomize.py', sha256: 'f'.repeat(64) }], distInfo: ['evil-9.9.9.dist-info'] };
+  const r = checkSitePackages(rule, [sp]);
+  assert.equal(r.find((x) => x.what === 'cook.pth').status, 'EXPOSED');
+  assert.equal(r.find((x) => x.what === 'sitecustomize.py').status, 'REVIEW');
+  assert.equal(r.find((x) => x.what === 'evil-9.9.9.dist-info').status, 'EXPOSED');
+  assert.deepEqual(checkSitePackages(rule, [join(dir, 'nothing-here')]), []);
+});
+
+test('path patterns expand against the disk; image digests and temp markers are matched exactly', () => {
+  const base = join(dir, 'exp'); mkdirSync(join(base, 'python3.11', 'site-packages'), { recursive: true }); mkdirSync(join(base, 'python3.12', 'site-packages'), { recursive: true });
+  assert.equal(expand(`${base}/python3*/site-packages`).length, 2);
+  assert.deepEqual(expand(`${base}/python2*/site-packages`), []);
+  const d = 'sha256:' + 'a'.repeat(64);
+  assert.equal(checkImages({ dockerDigests: [d] }, { docker: [`ghcr.io/x/y@${d}`, `ghcr.io/x/z@sha256:${'b'.repeat(64)}`] }).length, 1);
+  const t = join(dir, 'tmpm'); mkdirSync(t, { recursive: true }); writeFileSync(join(t, '.pc_once_0123abcd'), '');
+  assert.equal(tmpTraces('^\\.pc_once_[0-9a-f]+$', [t]).length, 1);
+});
+
+test('regression: a suffix never hides a version part (NaN compared as equal and read 19.4.2-ee as fixed)', () => {
+  assert.equal(cmp('19.4.2-ee', '19.4.3'), -1); assert.equal(cmp('19.5.1-ee', '19.5.1'), 0); assert.equal(cmp('19.5.0-ce.0', '19.5.1'), -1);
+  assert.equal(cmp('1.41.3.9313-c6bbc1b53', '1.41.3.9314'), -1); assert.equal(cmp('1.41.2.9200-c6bbc1b53', '1.41.2.9200'), 0);
+  const g = { fixedIn: ['19.5.1', '19.4.3', '19.3.5'] };
+  assert.equal(judgeVersion('19.4.2-ee', g).status, 'EXPOSED'); assert.equal(judgeVersion('19.4.3-ee', g).status, 'SAFE');
+  assert.equal(judgeVersion('19.5.1-rc1-ee', g).status, 'EXPOSED', 'a pre-release of the fix is older than the fix');
+  assert.equal(judgeVersion('v19.4.2', g).status, 'EXPOSED'); assert.equal(judgeVersion('unknown', g).status, 'UNKNOWN');
+  assert.equal(judgeVersion('1.41.3.9313-xxx', { fixedIn: '1.41.3.9314' }).status, 'EXPOSED');
+});
+
+test('container images: an engine that refuses, hangs or floods is UNKNOWN, never "not running"; a stopped daemon is null', () => {
+  const eng = (name, body) => { const p = join(dir, `eng-${name}`); writeFileSync(p, `#!/bin/sh\n${body}\n`); chmodSync(p, 0o755); return p; };
+  const d = 'a'.repeat(64);
+  assert.deepEqual(localImageDigests(eng('ok', `echo "x/y@sha256:${d}"; echo "<none>@<none>"`)), [`x/y@sha256:${d}`]);
+  assert.equal(localImageDigests(eng('down', "echo 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?' >&2; exit 1")), null);
+  assert.match(localImageDigests(eng('perm', "echo 'permission denied while trying to connect to the Docker daemon socket' >&2; exit 1")).error, /permission denied/);
+  assert.match(localImageDigests(eng('odd', "echo 'error: something else' >&2; exit 125")).error, /something else/);
+  const big = localImageDigests(eng('big', `awk 'BEGIN{for(i=0;i<20000;i++) printf "r%07d@sha256:%064d\\n", i, 0}'; echo "x/y@sha256:${d}"`));
+  assert.ok(Array.isArray(big) && big.includes(`x/y@sha256:${d}`), 'more than 1 MB of images is still read to the end');
+  assert.deepEqual(localImageDigests(join(dir, 'no-such-engine')), []);
+});
+
+test('site-packages: a name nothing legitimate installs is EXPOSED by name alone; links are looked at once, never walked', () => {
+  const root = join(dir, 'sp2'); const env = join(root, 'a', '.venv'); const sp = join(env, 'lib', 'python3.12', 'site-packages');
+  mkdirSync(sp, { recursive: true }); writeFileSync(join(env, 'pyvenv.cfg'), 'x\n'); symlinkSync('lib', join(env, 'lib64'));
+  writeFileSync(join(sp, 'cook.pth'), 'import cook  # a variant\n');
+  const away = join(dir, 'sp2-away', 'env'); mkdirSync(join(away, 'lib', 'python3.12', 'site-packages'), { recursive: true }); writeFileSync(join(away, 'pyvenv.cfg'), 'x\n');
+  symlinkSync(away, join(root, '.venv-link')); symlinkSync('.', join(root, 'loop'));
+  const dirs = sitePackagesDirs({ roots: [root], patterns: [], home: '' });
+  assert.equal(dirs.length, 2, 'lib64 -> lib is one folder; the linked venv is found; the loop is not followed');
+  const r = checkSitePackages({ iocFiles: [{ name: 'cook.pth', sha256: ['0'.repeat(64), '1'.repeat(64)], nameAlone: 'EXPOSED' }] }, dirs);
+  assert.equal(r.length, 1); assert.equal(r[0].status, 'EXPOSED'); assert.match(r[0].reason, /variant/);
+});
+
+test('the Python probe never runs .pth files from site-packages: a marker .pth planted in a real environment stays silent', async (t) => {
+  let venvPy;
+  const venv = join(dir, 'pthvenv'), marker = join(dir, 'pth-ran');
+  try { execFileSync('python3', ['-m', 'venv', '--without-pip', venv], { stdio: 'ignore', timeout: 60000 }); venvPy = join(venv, 'bin', 'python3'); } catch { return t.skip('python3 -m venv is not available here'); }
+  const sp = join(venv, 'lib', readdirSync(join(venv, 'lib')).find((n) => /^python3/.test(n)), 'site-packages');
+  writeFileSync(join(sp, 'zz-marker.pth'), `import os; open(${JSON.stringify(marker)}, 'w').write('ran')\n`);
+  // the test means something: an ordinary start of this Python does run the .pth (as LiteLLM 1.107.0's cook.pth ran)
+  execFileSync(venvPy, ['-I', '-c', 'pass'], { stdio: 'ignore' });
+  assert.ok(existsSync(marker), 'a normal start runs the .pth, even with -I'); unlinkSync(marker);
+  await check({ kind: 'python', bin: venvPy, version: '' }, [canary], { controlUrl: canary.url, timeoutMs: 3000 });
+  assert.equal(existsSync(marker), false, 'the probe ran a .pth from site-packages');
+});
+
+const incident = (id) => JSON.parse(readFileSync(new URL(`../lib/incidents/${id}.json`, import.meta.url), 'utf8'));
+
+test('GitLab (real incident data): read from GitLab\'s own files, one answer per install, per release line', () => {
+  const rule = incident('gitlab-2026-10').versionFiles;
+  const root = join(dir, 'gl'); const mf = join(root, 'opt', 'gitlab'); const rails = join(mf, 'embedded', 'service', 'gitlab-rails');
+  mkdirSync(rails, { recursive: true });
+  const at = (manifest, version) => { writeFileSync(join(mf, 'version-manifest.txt'), `${manifest}\nruby 3.3.7\n`); writeFileSync(join(rails, 'VERSION'), version); return checkVersionFiles(rule, { root }); };
+  let r = at('gitlab-ee 19.4.2', '19.4.2-ee');
+  assert.equal(r.length, 1, 'one answer for one Linux-package install'); assert.equal(r[0].status, 'EXPOSED'); assert.match(r[0].reason, /fixed in 19\.4\.3/);
+  assert.equal(at('gitlab-ee 19.5.1', '19.5.1-ee')[0].status, 'SAFE');
+  assert.equal(at('gitlab-ce 18.11.13', '18.11.13')[0].status, 'SAFE');
+  assert.match(at('gitlab-ee 18.10.5', '18.10.5-ee')[0].reason, /end of life/);
+  assert.equal(at('gitlab-ee 6.9.0', '6.9.0')[0].status, 'SAFE', 'older than the affected range');
+  writeFileSync(join(mf, 'version-manifest.txt'), 'garbage\n'); writeFileSync(join(rails, 'VERSION'), '19.4.2-ee');
+  r = checkVersionFiles(rule, { root }); assert.equal(r.length, 1); assert.equal(r[0].status, 'EXPOSED', 'the VERSION file answers when the manifest can\'t');
+  const src = join(root, 'home', 'git', 'gitlab'); mkdirSync(src, { recursive: true }); writeFileSync(join(src, 'VERSION'), '19.5.1-ee');
+  assert.equal(checkVersionFiles(rule, { root }).find((x) => x.path.includes('/home/git/')).status, 'REVIEW', 'a fixed self-compiled install still needs its Ruby patch');
+});
+
+test('Plex (real incident data): the dpkg record speaks only for an installed plexmediaserver', () => {
+  const rule = incident('plex-2026-10').versionFiles;
+  const root = join(dir, 'px'); mkdirSync(join(root, 'var', 'lib', 'dpkg'), { recursive: true });
+  const status = (plex) => { writeFileSync(join(root, 'var', 'lib', 'dpkg', 'status'), `Package: bash\nStatus: install ok installed\nVersion: 5.2.21-2\n\n${plex}Package: zlib1g\nStatus: install ok installed\nVersion: 1:1.3\n`); return checkVersionFiles(rule, { root }); };
+  assert.deepEqual(status(''), [], 'no Plex: nothing reported, not UNKNOWN');
+  assert.deepEqual(status('Package: plexmediaserver\nStatus: deinstall ok config-files\nVersion: 1.40.0.1000-aaaaaaaaa\n\n'), [], 'removed, config left: not installed');
+  let r = status('Package: plexmediaserver\nStatus: install ok installed\nPriority: optional\nVersion: 1.43.2.10500-0123456ab\n\n');
+  assert.equal(r[0].status, 'EXPOSED'); assert.match(r[0].reason, /fixed in 1\.43\.3\.10861/);
+  assert.equal(status('Package: plexmediaserver\nStatus: install ok installed\nVersion: 1.43.3.10861-07dfddaeb\n\n')[0].status, 'SAFE');
+  assert.equal(status('Package: plexmediaserver\nStatus: install ok installed\nVersion: 1.44.0.11000-07dfddaeb\n\n')[0].status, 'SAFE');
+  assert.equal(status('Package: plexmediaserver\nStatus: install ok installed\nVersion: 1.42.9.10000-07dfddaeb\n\n')[0].status, 'EXPOSED', 'an older line is exposed too');
+});
+
+test('LiteLLM (real incident data): the exact dropped files, a variant by name, the release record, markers and images', () => {
+  const inc = incident('litellm-2026-10'); const sp = join(dir, 'll', 'site-packages'); mkdirSync(sp, { recursive: true });
+  writeFileSync(join(sp, 'cook.pth'), 'import cook\n');                 // the real 12-byte file
+  writeFileSync(join(sp, 'cook.py'), '# a variant, not the published bytes\n');
+  writeFileSync(join(sp, 'sitecustomize.py'), '# a legitimate one\n');
+  mkdirSync(join(sp, 'litellm-1.107.0.dist-info'));
+  const r = checkSitePackages(inc.sitePackages, [sp]);
+  assert.match(r.find((x) => x.what === 'cook.pth').reason, /is the malicious file/);
+  assert.equal(r.find((x) => x.what === 'cook.py').status, 'EXPOSED', 'nothing legitimate installs cook.py');
+  assert.equal(r.find((x) => x.what === 'sitecustomize.py'), undefined, 'a sitecustomize.py that isn\'t the stealer is not reported');
+  assert.equal(r.find((x) => x.what === 'litellm-1.107.0.dist-info').status, 'EXPOSED');
+  const clean = join(dir, 'll', 'clean'); mkdirSync(join(clean, 'litellm-1.106.2.dist-info'), { recursive: true });
+  assert.deepEqual(checkSitePackages(inc.sitePackages, [clean]), [], '1.106.2 is clean');
+  const t = join(dir, 'll', 'tmp'); mkdirSync(t, { recursive: true }); writeFileSync(join(t, '.pc_once_72129118c59f5636c0bb'), '1'); writeFileSync(join(t, '.pc_once_other'), '');
+  assert.equal(tmpTraces(inc.tmpTrace, [t]).length, 1, 'the exact marker, not a lookalike');
+  const imgs = { docker: [
+    `litellm/litellm:latest@${inc.dockerDigests[0]}`,
+    `ghcr.io/berriai/litellm-database:main-stable@sha256:c00f9d92c427${'0'.repeat(52)}`,
+    `ghcr.io/berriai/litellm:v1.107.0@sha256:${'e'.repeat(64)}`,
+    `litellm/litellm:v1.106.2@sha256:${'f'.repeat(64)}`] };
+  const hits = checkImages(inc, imgs).map((x) => x.what.split('@')[0]);
+  assert.deepEqual(hits, ['litellm/litellm:latest', 'ghcr.io/berriai/litellm-database:main-stable', 'ghcr.io/berriai/litellm:v1.107.0']);
 });
 
 test('workflow review lists each workflow file added since the date, once', () => {

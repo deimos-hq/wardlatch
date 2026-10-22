@@ -17,7 +17,7 @@
         "301bff0b51980b9e76c93633e7cfd3bd",
         "6a3cf153338c416169cda2fe704c8848"
       ],
-      "tmpTrace": "^envchecker-[0-9]{9,10}$",
+      "tmpTrace": "^envchecker-[0-9]+$",
       "note": "not one of the five compromised builds OVHcloud published (checked by its MD5; it was not run), and no envchecker folder in the temp directories",
       "source": "https://github.com/ovh/ovhcloud-cli/security/advisories/GHSA-862f-55f5-vmvw"
     }
