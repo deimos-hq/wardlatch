@@ -68,7 +68,8 @@ asks each runtime to make the connection itself.
    macOS's networking stack (`nscurl`) can't be pointed at a CA file, so it gets a normal-site control instead: it
    must open the advisory's own page, or the line is UNKNOWN.
 3. **The probe**: the runtime connects to each reachable host with its own defaults and the user's environment, the
-   way the user's code would. Any host it reaches makes the line EXPOSED, naming the hosts; none makes it SAFE.
+   way the user's code would, run from `/`. Python is the exception: it starts with `-I -S`, so its start-up files
+   (`.pth`, `sitecustomize.py`) and anything they change about trust are left out. Any host it reaches makes the line EXPOSED, naming the hosts; none makes it SAFE.
 
 Probes per runtime:
 
@@ -107,7 +108,8 @@ when the file and its folder are writable by the user (as in the tests, which po
   changes only when an incident needs a new kind of check.
 - **Run the real thing.** The probes use the runtimes themselves, with the user's environment, so a result reflects
   what the user's code would do, including `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS` and a virtual environment's own
-  `certifi`.
+  `certifi`. Except for what would mean running what is being checked: Python's start-up files are skipped (`-I -S`),
+  every program runs from `/` with `GOTOOLCHAIN=local`, and `node_modules/.bin` folders are dropped from `PATH`.
 - **Controls before verdicts.** Every SAFE is preceded by evidence that the check could have said EXPOSED.
 - **Read-only command, separate fix.** Applying a fix is the person's decision. The one fix that ships is a separate
   script with its own safety checks, run on purpose.

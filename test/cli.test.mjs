@@ -18,8 +18,8 @@ const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).ver
 let dir;
 
 /** Run the CLI → { code, out, err }. Output is piped, as in CI, so stdout is not a TTY and carries no colour. */
-const run = (args, env = {}, nodeArgs = []) => {
-  const r = spawnSync(process.execPath, [...nodeArgs, BIN, ...args], { encoding: 'utf8', env: { ...process.env, ...env }, maxBuffer: 64 * 1024 * 1024 });
+const run = (args, env = {}, nodeArgs = [], cwd = undefined) => {
+  const r = spawnSync(process.execPath, [...nodeArgs, BIN, ...args], { encoding: 'utf8', env: { ...process.env, ...env }, maxBuffer: 64 * 1024 * 1024, cwd });
   return { code: r.status, out: r.stdout, err: r.stderr };
 };
 const gitRepo = (path) => {
@@ -199,8 +199,59 @@ test('a partial clone is never fetched from: git log would run the program its c
   // the test means something: git log as 0.1.6 ran it fetches the older trees, and runs the program to do it
   try { execFileSync('git', ['-C', clone, 'log', '--all', '--since=2026-09-01', '--diff-filter=A', '--name-only', '--format=@@%h', '--', '.github/workflows'], { stdio: 'ignore' }); } catch { /* the fetch fails; the marker is what counts */ }
   assert.ok(existsSync(marker), 'git log fetches missing objects through the configured program'); rmSync(marker);
-  run(['--incident', 'github-actions-2026-10', '--paths', root]);
+  const r = run(['--incident', 'github-actions-2026-10', '--json', '--paths', root]);
   assert.equal(existsSync(marker), false, 'wardlatch made git fetch from the partial clone\'s remote');
+  // what git can't read without fetching is UNKNOWN, never a clean result (exit 2), and the repository is named
+  assert.equal(r.code, 2, r.err);
+  assert.deepEqual(JSON.parse(r.out).results.map((x) => [x.kind, x.status, x.repo]), [['workflow', 'UNKNOWN', clone]]);
+  assert.match(JSON.parse(r.out).results[0].reason, /^git could not read this repository \(/);
+  assert.doesNotMatch(run(['--incident', 'github-actions-2026-10', '--paths', root]).out, /SAFE/);
+});
+
+test('a blobless partial clone is read without fetching, and a workflow renamed within the folder is listed', () => {
+  // Rename detection compares file contents, which a blobless clone lacks, so with lazy fetching off git log would fail
+  // on a workflow renamed and edited in .github/workflows. With --no-renames nothing has to be fetched, and the renamed
+  // file is listed as added.
+  const srv = join(dir, 'blobless-srv'), root = join(dir, 'blobless'), clone = join(root, 'bc');
+  const s = gitRepo(srv), wf = join(srv, '.github', 'workflows');
+  mkdirSync(wf, { recursive: true }); writeFileSync(join(wf, 'old.yml'), `on: push\n${'# filler line\n'.repeat(40)}`); s.commit();
+  execFileSync('git', ['-C', srv, 'mv', '.github/workflows/old.yml', '.github/workflows/new.yml']);
+  writeFileSync(join(wf, 'new.yml'), `on: [push, pull_request]\n${'# filler line\n'.repeat(40)}`); s.commit();
+  execFileSync('git', ['-C', srv, 'config', 'uploadpack.allowFilter', 'true']);
+  execFileSync('git', ['-c', 'protocol.file.allow=always', 'clone', '-q', '--no-local', '--filter=blob:none', '--no-checkout', `file://${srv}`, clone], { stdio: 'ignore' });
+  const r = run(['--incident', 'github-actions-2026-10', '--json', '--paths', root]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(JSON.parse(r.out).results.map((x) => [x.status, x.file]).sort(), [['REVIEW', '.github/workflows/new.yml'], ['REVIEW', '.github/workflows/old.yml']]);
+});
+
+test('npx\'s project folders are dropped from PATH: a project\'s node_modules/.bin git or python3 never runs', () => {
+  // npx puts the current project's node_modules/.bin first on PATH; a hostile project could ship its own git.
+  const nm = join(dir, 'npxproj', 'node_modules', '.bin'), marker = join(dir, 'npx-ran'); mkdirSync(nm, { recursive: true });
+  for (const b of ['git', 'python3', 'node', 'curl']) writeFileSync(join(nm, b), `#!/bin/sh\ntouch "${marker}-${b}"\nexit 1\n`, { mode: 0o755 });
+  const root = join(dir, 'npxpath'); const repo = gitRepo(join(root, 'app'));
+  mkdirSync(join(root, 'app', '.github', 'workflows'), { recursive: true }); writeFileSync(join(root, 'app', '.github', 'workflows', 'ci.yml'), 'on: push\n'); repo.commit();
+  const r = run(['--incident', 'github-actions-2026-10', '--json', '--paths', root], { PATH: `${nm}:relative/bin:${process.env.PATH}` });
+  assert.deepEqual(JSON.parse(r.out).results.map((x) => [x.status, x.file]), [['REVIEW', '.github/workflows/ci.yml']], 'the real git ran');
+  const { offline } = preloads();
+  run(['--incident', 'emudhra-2026-10', '--no-containers', '--paths', join(dir, 'nothing-here')], { PATH: `${nm}:${join(dir, 'empty-path')}` }, ['--require', offline]);
+  assert.deepEqual(readdirSync(dir).filter((f) => f.startsWith('npx-ran')), [], 'a program from node_modules/.bin ran');
+});
+
+test('programs are run from /, with Go\'s toolchain switching off, and PHP without its php.ini or extensions', () => {
+  // From a project folder, `go version` reads go.mod and can download and run the newer Go it names; `php -v` loads
+  // every extension its php.ini lists. A project folder is where npx usually starts.
+  const bin = join(dir, 'recorders'), log = join(dir, 'recorded'); mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'go'), `#!/bin/sh\necho "go cwd=$(pwd) toolchain=$GOTOOLCHAIN args=$*" >> "${log}"\necho 'go version go1.27.3 darwin/arm64'\n`, { mode: 0o755 });
+  writeFileSync(join(bin, 'php'), `#!/bin/sh\necho "php cwd=$(pwd) args=$*" >> "${log}"\necho 'PHP 8.4.27 (cli)'\n`, { mode: 0o755 });
+  const project = join(dir, 'a-project'); mkdirSync(project, { recursive: true }); writeFileSync(join(project, 'go.mod'), 'module x\n\ngo 1.99\n\ntoolchain go1.99.0\n');
+  const { offline } = preloads();
+  run(['--incident', 'emudhra-2026-10', '--no-containers', '--paths', join(dir, 'nothing-here')], { PATH: bin }, ['--require', offline], project);
+  run(['--incident', 'php-2026-10', '--paths', join(dir, 'nothing-here')], { PATH: bin }, [], project);
+  const lines = readFileSync(log, 'utf8').trim().split('\n');
+  assert.ok(lines.some((l) => l.startsWith('go ')), 'go was asked its version'); assert.ok(lines.some((l) => l.startsWith('php ')), 'php was asked its version');
+  for (const l of lines) assert.match(l, /^\S+ cwd=\/ /, l);
+  for (const l of lines.filter((x) => x.startsWith('go '))) assert.match(l, /toolchain=local /, l);
+  for (const l of lines.filter((x) => x.startsWith('php '))) assert.match(l, /args=-n -v$/, l);
 });
 
 /**
@@ -237,6 +288,19 @@ test('Windows (not supported): the trust check is UNKNOWN, never a silent all-cl
     const r = run(['--incident', id, '--json', ...where], env, ['--require', win32]);
     assert.equal(r.code, 2, id); assert.deepEqual(JSON.parse(r.out).results.map((x) => [x.status, x.reason]), [['UNKNOWN', 'not checked on Windows yet (Windows is not supported)']], id);
   }
+  // a container found on Windows must not hide that the machine's own runtimes were not checked
+  const eng = join(dir, 'win-engine'); mkdirSync(eng, { recursive: true });
+  writeFileSync(join(eng, 'docker'), '#!/bin/sh\nif [ "$1" = ps ]; then printf "abc123\\tweb\\tnginx:latest\\n"; exit 0; fi\nexit 3\n', { mode: 0o755 });
+  const withC = run(['--incident', 'emudhra-2026-10', '--json', '--paths', join(dir, 'nothing-here')], { PATH: eng }, ['--require', win32]);
+  assert.equal(withC.code, 2, withC.err);
+  const wr = JSON.parse(withC.out).results;
+  assert.ok(wr.some((x) => x.kind === 'container'), 'the container was checked');
+  assert.deepEqual(wr.filter((x) => x.kind === 'runtimes').map((x) => [x.status, x.reason]), [['UNKNOWN', 'the runtimes on this machine were not checked: Windows is not supported yet']]);
+  // the OVHcloud stealer's temp folder still reads EXPOSED on Windows: the temp directory is read there too
+  const tmpd = join(dir, 'wintmp'); mkdirSync(join(tmpd, 'envchecker-1760900000'), { recursive: true });
+  const traced = run(['--incident', 'ovhcloud-cli-2026-10', '--json', ...where], { ...env, TMPDIR: tmpd, TMP: tmpd, TEMP: tmpd }, ['--require', win32]);
+  assert.equal(traced.code, 1, traced.err);
+  assert.deepEqual(JSON.parse(traced.out).results.map((x) => x.status), ['EXPOSED']);
   // elsewhere, finding no runtime at all is UNKNOWN too, with its own reason
   const none = run(['--incident', 'emudhra-2026-10', '--json', ...where], env, ['--require', offline]);
   assert.equal(none.code, 2, none.err);
@@ -251,7 +315,7 @@ test('a container engine that hangs or fails is UNKNOWN (exit 2), never "not run
   const trust = (path, json = true) => run(['--incident', 'emudhra-2026-10', ...(json ? ['--json'] : []), '--paths', join(dir, 'nothing-here')], { PATH: path }, ['--require', offline]);
   const rows = (r) => JSON.parse(r.out).results.filter((x) => x.kind === 'containers').map((x) => [x.engine, x.status, x.reason]);
   const hung = trust(engine('hung', 'exec /bin/sleep 30'));
-  assert.equal(hung.code, 2); assert.deepEqual(rows(hung), [['docker', 'UNKNOWN', 'did not answer within 10 seconds']]);
+  assert.equal(hung.code, 2); assert.deepEqual(rows(hung), [['docker', 'UNKNOWN', 'did not answer within 10 seconds: restart it and run again, or pass --no-containers to skip running containers']]);
   const failing = trust(engine('failing', 'echo \'error during connect: Get "http://%2F%2F.%2Fpipe%2Fdocker_engine/v1.47/containers/json": EOF\' >&2; exit 1'));
   assert.equal(failing.code, 2); assert.match(rows(failing)[0]?.[2] ?? '', /^could not list its containers \(error during connect: Get /);
   const stopped = engine('stopped', "echo 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?' >&2; exit 1");
