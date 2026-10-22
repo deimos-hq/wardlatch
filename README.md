@@ -51,10 +51,10 @@ Two checks keep the answer honest:
 
 ## What it looks at
 
-- every `node`, `curl` and `python3` on your `PATH` (except in `node_modules/.bin` folders and relative entries, which
-  are dropped so a project can't have Wardlatch run its programs), plus the operating system's own
+- the first `node`, `curl` and `python3` on your `PATH`, the ones your shell runs (`node_modules/.bin` folders and
+  relative entries are dropped first, so a project can't have Wardlatch run its programs), plus the operating system's own
 - Python virtual environments (and their `certifi`) under `~/Development`, `~/code`, `~/src`, `~/projects`, `~/Projects`,
-  `~/dev`, `~/work`, `~/Sites` and `/var/www`, or the folders you give with `--paths`
+  `~/dev`, `~/work`, `~/Sites`, `/var/www`, `/srv/www` and `/Library/WebServer/Documents`, or the folders you give with `--paths`
 - every running Docker or Podman container, checked from inside with the image's own curl, python3 or wget. Two
   controls come first: a normal site must open, and a self-signed one must be refused, or the result is "couldn't
   test". `--no-containers` skips them. Nothing is written into a container.
@@ -84,7 +84,7 @@ for you to apply. What it can and can't promise, and why: [ASSURANCE_CASE.md](AS
 |---|---|
 | *(none)* | Check this machine against every current incident. |
 | `--incident <id>` | One incident only. `--list` prints the ids. |
-| `--paths <folder>` | Where to look for Python environments, git repositories and WordPress sites; repeat it for several. Default: `~/Development`, `~/code`, `~/src`, `~/projects`, `~/Projects`, `~/dev`, `~/work`, `~/Sites` and `/var/www`. |
+| `--paths <folder>` | Where to look for Python environments, git repositories and WordPress sites; repeat it for several. Default: `~/Development`, `~/code`, `~/src`, `~/projects`, `~/Projects`, `~/dev`, `~/work`, `~/Sites`, `/var/www`, `/srv/www` and `/Library/WebServer/Documents`. A folder given here that isn't there, or isn't a folder, is an UNKNOWN line. |
 | `--no-containers` | Skip Docker and Podman: running containers, and the local image list. |
 | `--json` | Machine-readable output instead of lines (below). |
 | `--list` | The incidents it knows: id, date, title. |

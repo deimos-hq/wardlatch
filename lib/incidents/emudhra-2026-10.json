@@ -30,6 +30,30 @@
     "ev-g3c",
     "ev-g3c-aaa"
   ],
+  "canaryRoots": [
+    {
+      "root": "AAA Certificate Services",
+      "canaries": [
+        "dv-g3b-aaa",
+        "dv-g3c-aaa",
+        "ov-g3b-aaa",
+        "ov-g3c-aaa",
+        "ev-g3b-aaa",
+        "ev-g3c-aaa"
+      ]
+    },
+    {
+      "root": "emSign ECC Root CA - G3",
+      "canaries": [
+        "dv-g3b",
+        "dv-g3c",
+        "ov-g3b",
+        "ov-g3c",
+        "ev-g3b",
+        "ev-g3c"
+      ]
+    }
+  ],
   "canaryHost": "{id}-emudhra.we-have-a-problem.com",
   "canaryIssuer": "^EM (DV|OV|EV) TLS CA - G3[BC]$",
   "canaryNotAfter": "2027-05-03",

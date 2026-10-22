@@ -35,7 +35,16 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
 - **Environment allowlist.** Every program Wardlatch runs gets an environment built for its purpose from an allowlist
   (`lib/run.mjs`), not the caller's environment: `DEVELOPER_DIR` still redirected macOS's `/usr/bin/git` shim after
   0.1.8's `GIT_*` fix, and `NODE_OPTIONS --require` ran inside the trust probes. `DOCKER_HOST` is no longer followed (a
-  run where it is set and no local engine answers is UNKNOWN, never "not running").
+  run where it is set and no local engine answers is UNKNOWN, never "not running"). Since the second review a trust
+  probe's environment is an allowlist too: the first cut still dropped a list of names, and `OPENSSL_CONF` loaded a
+  module into the probe, and `SHELLOPTS` with `PS4` ran a command inside a version manager's bash shim.
+- **A container that stopped mid-check read SAFE.** `docker exec` itself exits 1 when the container has stopped, the
+  code the probe used for a refusal. The result is now read from a line the probe prints, never the exit code.
+- **A runtime that trusted only one of the two roots read SAFE when that root's test hosts were down.** Each test host
+  now names the root its chain ends at, the forced-roots control runs on a host for each root, and a runtime or
+  container is SAFE only when every root had a host that answered.
+- **`DOCKER_HOST` set while a local engine answered read SAFE in the LiteLLM image check**, which never looked at the
+  engine `DOCKER_HOST` named. It is UNKNOWN there too.
 
 ### Fixed
 
@@ -51,7 +60,26 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
 - Bounded work: hand-written parsers instead of patterns that backtracked (a planted line took 22 s), a capped JSON walk
   and a 1 MB cap on a repository's config files (a planted 16 MB `.mcp.json` took 1.4 GB), every file read through one
   reader that never blocks on a FIFO, and every program killed with SIGKILL at its timeout.
-- Every SAFE line is a result row in `--json` too, with the list of what it searched (`searched`).
+- Every SAFE line is a result row in `--json` too, with the list of what it searched (`searched`). A SAFE row without one
+  is printed as UNKNOWN, however it was made.
+- The header check: a missing `--paths` folder, a folder it couldn't open, or a config nested deeper than it reads is
+  UNKNOWN, not SAFE. A `--paths` entry that is a file is UNKNOWN in every check.
+- A virtual environment whose `lib` folder couldn't be opened is an UNKNOWN row, not dropped.
+- The WordPress indicator search says what its caps left unsearched (files over 2 MB, past 4,000 files, deeper than 12
+  levels): UNKNOWN, not SAFE.
+- Under sudo, git keeps `SUDO_UID`, so the person's own repositories aren't refused as "dubious ownership"; a sudo user
+  whose home folder isn't found is an UNKNOWN row, not a silent search of root's home.
+- A crash inside Wardlatch exits 2 (could not be tested), not 1 (exposed).
+- File reads are capped by what is read, not only by the size reported at open.
+
+### Known limits
+
+- The issuer check compares the issuer's common name, not a fingerprint: something on the network that copies the name
+  gets past it (the forced-roots control still catches it for curl, Node and Python, not for macOS's own stack or
+  containers).
+- The workflow review can't tell a backdated commit with no parent (the first commit of an orphan branch).
+- The engine is the one the person's own docker or podman configuration selects (their home folder's config), which can
+  name a remote host; `DOCKER_HOST` and the like are not followed.
 
 ### Changed (rules the tests now enforce)
 

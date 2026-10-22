@@ -5,11 +5,13 @@
 // certificate authority, by asking each one to connect to public test hosts signed with the compromised keys.
 // Runs locally. Sends nothing anywhere except TLS connections to those test hosts and two control sites. Changes nothing.
 // A free tool from Deimos AI LLC · Apache-2.0
+import '../lib/crash.mjs';
 import { join, dirname, delimiter, isAbsolute, resolve } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { discover } from '../lib/discover.mjs';
 import { check, reachable } from '../lib/probe.mjs';
+import { droppedNodeOptions } from '../lib/run.mjs';
 import { checkBinaryAll, findOnPath, tmpTraces, tempDirs } from '../lib/binaries.mjs';
 import { checkVersionFiles, sitePackagesDirs, checkSitePackages, localImageDigests, checkImages } from '../lib/installs.mjs';
 import { listContainers, checkContainer } from '../lib/containers.mjs';
@@ -83,11 +85,14 @@ const json = flag('--json');
 // absolute before anything runs: programs run from /, where a relative folder would mean something else
 // Whose files to look at: under sudo (which Wardlatch's own messages suggest for folders it can't open), the person who
 // ran sudo, not root. $HOME is root's there, and every default folder below pointed at root's empty home.
+// A sudo user whose home isn't in the usual place leaves root's home searched: said in an UNKNOWN row per incident.
+let sudoHomeMissing = '';
 const HOME = (() => {
   const u = process.env.SUDO_USER;
   if (u && process.getuid?.() === 0 && /^[\w.-]+$/.test(u)) {
     const h = platform() === 'darwin' ? `/Users/${u}` : `/home/${u}`;
     if (pathState(h) === 'dir') return h;
+    sudoHomeMissing = `run under sudo by ${u}, whose home folder was not found at ${h}: root's home (${homedir()}) was searched instead. Run Wardlatch without sudo, or pass --paths`;
   }
   return homedir();
 })();
@@ -99,8 +104,9 @@ if (!roots.length) { for (const d of ['Development', 'code', 'src', 'projects', 
 // which of them exist and can be searched; one that exists but can't be opened is a gap, reported per check
 const searchable = roots.filter((r) => pathState(r) === 'dir');
 const lockedRoots = roots.filter((r) => pathState(r) === 'denied');
-// a folder given with --paths that isn't there was not searched: an UNKNOWN row of its own, even beside others that are
-const missingRoots = explicitPaths ? roots.filter((r) => pathState(r) === 'gone') : [];
+// a folder given with --paths that isn't there, or isn't a folder (a file, a FIFO), was not searched: an UNKNOWN row of
+// its own, even beside others that are
+const missingRoots = explicitPaths ? roots.filter((r) => ['gone', 'file', 'other'].includes(pathState(r))) : [];
 
 const tty = process.stdout.isTTY && !json;
 const c = (code, s) => (tty ? `\x1b[${code}m${clean(s)}\x1b[0m` : clean(s));
@@ -124,13 +130,24 @@ const hostRowsOf = (results) => results.filter((r) => !['container', 'containers
 
 function gaps(results, inc, kind, dirs) {
   for (const d of missingRoots) {
-    results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason: 'given with --paths, but not there, so it was not searched' });
-    print('UNKNOWN', short(d)); note('33', 'given with --paths, but not there, so it was not searched');
+    const reason = `given with --paths, but ${pathState(d) === 'gone' ? 'not there' : 'not a folder'}, so it was not searched`;
+    results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason });
+    print('UNKNOWN', short(d)); note('33', reason);
   }
   for (const d of dirs) {
     results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason: 'could not be opened, so it was not searched: run Wardlatch with sudo to include it' });
     print('UNKNOWN', short(d)); note('33', 'could not be opened, so it was not searched: run Wardlatch with sudo to include it');
   }
+}
+
+// DOCKER_HOST and the like are not followed (lib/run.mjs): the engine they name was not checked, whatever answers
+// locally. Every check that asks an engine (running containers, local images) says so in an UNKNOWN row.
+const hostVars = ['DOCKER_HOST', 'CONTAINER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG', 'CONTAINER_CONNECTION'].filter((k) => process.env[k]);
+function hostVarsRow(results, inc, what) {
+  if (!hostVars.length || flag('--no-containers')) return;
+  const reason = `${hostVars.join(', ')} ${hostVars.length === 1 ? 'is' : 'are'} set, and not followed (whoever starts Wardlatch can point ${hostVars.length === 1 ? 'it' : 'them'} at any host): the ${what} there were not checked. Select the engine with \`docker context use\` instead, or pass --no-containers`;
+  results.push({ incident: inc.id, kind: 'containers', engine: hostVars.join(','), status: 'UNKNOWN', reason });
+  print('UNKNOWN', `${what} named by the environment`); note('33', reason);
 }
 
 if (!json) {
@@ -140,6 +157,7 @@ if (!json) {
 for (const inc of chosen) {
   if (!json) console.log(`\n${c('1', inc.title)} ${c('2', `(${inc.date})`)}`);
   const results = [];
+  if (sudoHomeMissing) { results.push({ incident: inc.id, kind: 'home', status: 'UNKNOWN', reason: sudoHomeMissing }); print('UNKNOWN', 'home folder'); note('33', sudoHomeMissing); }
   // Windows is not supported yet: the program checks look only for macOS and Linux names (no .exe), so on Windows they
   // would read SAFE without having looked. Say so instead (README). A malware's temp-folder trace still counts: the
   // temp directory is read on Windows too.
@@ -180,8 +198,15 @@ for (const inc of chosen) {
     const canaries = await Promise.all(inc.canaries.map(async (id) => {
       const host = inc.canaryHost.replace('{id}', id);
       const r = await reachable(host);
-      return { id, host, url: `https://${host}/`, up: r.up && issuerOk(r.issuer), impostor: r.up && !issuerOk(r.issuer) ? r.issuer : '' };
+      // which distrusted root this host's chain ends at: a runtime is only SAFE when each root had a host to test
+      const root = inc.canaryRoots?.find((g) => g.canaries.includes(id))?.root;
+      return { id, host, url: `https://${host}/`, root, up: r.up && issuerOk(r.issuer), impostor: r.up && !issuerOk(r.issuer) ? r.issuer : '' };
     }));
+    // the probes get only what changes trust or the route to a host (lib/run.mjs); say what of the person's own
+    // settings they did not get, since a probe without it can measure less trust than the person's programs have
+    const dropped = droppedNodeOptions();
+    if (dropped.length) note('33', `NODE_OPTIONS options other than trust flags are not passed to the probes (${dropped.join(' ').slice(0, 120)}): a CA added that way was not tested`);
+    if (process.env.OPENSSL_CONF) note('33', 'OPENSSL_CONF is set and not passed to the probes (it can load code): trust it adds was not tested');
     const impostors = canaries.filter((x) => x.impostor);
     if (impostors.length) note('33', `${impostors.length} test host${impostors.length === 1 ? '' : 's'} answered with a certificate from "${impostors[0].impostor}", not the compromised chain: something on this network (a TLS-inspecting firewall, a DNS filter) is in the way, and those hosts were not used`);
     const rootsPem = join(LIB, 'incidents', inc.rootsPem);
@@ -201,13 +226,7 @@ for (const inc of chosen) {
     // refusal as SAFE, so containers are UNKNOWN once the incident's notAfter has passed
     const expired = inc.canaryNotAfter && Date.now() > Date.parse(inc.canaryNotAfter);
     if (expired) note('33', `the test hosts' certificates expired on ${inc.canaryNotAfter}: containers can't be tested against them`);
-    // DOCKER_HOST and the like are not followed (lib/run.mjs): the engine they name was not checked, whatever answers locally
-    const hostVars = ['DOCKER_HOST', 'CONTAINER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG', 'CONTAINER_CONNECTION'].filter((k) => process.env[k]);
-    if (hostVars.length && !flag('--no-containers')) {
-      const reason = `${hostVars.join(', ')} ${hostVars.length === 1 ? 'is' : 'are'} set, and not followed (whoever starts Wardlatch can point ${hostVars.length === 1 ? 'it' : 'them'} at any host): the containers there were not checked. Select the engine with \`docker context use\` instead, or pass --no-containers`;
-      results.push({ incident: inc.id, kind: 'containers', status: 'UNKNOWN', reason });
-      print('UNKNOWN', 'containers named by the environment'); note('33', reason);
-    }
+    hostVarsRow(results, inc, 'containers');
     // Running containers keep their image's trust list, whatever the host has.
     for (const engine of flag('--no-containers') ? [] : ['docker', 'podman'].filter((e) => findOnPath(e))) {
       const list = listContainers(engine);
@@ -292,6 +311,7 @@ for (const inc of chosen) {
       searched.push(...temps);
     }
     if (inc.dockerDigests && !flag('--no-containers')) {
+      hostVarsRow(results, inc, 'images');
       const byEngine = {};
       for (const e of ['docker', 'podman'].filter((x) => findOnPath(x))) {
         const list = localImageDigests(e);
@@ -365,8 +385,9 @@ for (const inc of chosen) {
       results.push({ incident: inc.id, kind: 'header', status: f.status, file: f.file, where: f.where, carries: f.carries, to: f.to, fix: inc.fix });
       print(f.status, `${short(f.file)} · ${f.where}`, c('2', `  carries ${f.carries}, ${f.to}`));
     }
+    gaps(results, inc, 'header', [...lockedRoots, ...h.denied]);
     if (h.findings.length) note('2', `fix: ${inc.fix}`);
-    else if (!h.unread.length) allClear(results, inc, 'header', `no name or email in the ${h.settings} header setting${h.settings === 1 ? '' : 's'} found in ${h.read} file${h.read === 1 ? '' : 's'} and the environment`, [...h.files, 'the environment']);
+    else if (!results.length) allClear(results, inc, 'header', `no name or email in the ${h.settings} header setting${h.settings === 1 ? '' : 's'} found in ${h.read} file${h.read === 1 ? '' : 's'} and the environment`, [...h.files, 'the environment']);
     if (!h.id.name && !h.id.email) note('2', 'no git name or email is set, so only email-shaped values were looked for');
     note('2', `not covered: ${inc.notCovered}`);
   }
@@ -374,6 +395,9 @@ for (const inc of chosen) {
   if (!json) console.log(c('2', `Source: ${inc.advisory}`));
 }
 
+// The receipt rule, enforced once more on the way out: a SAFE row that can't say what it looked at is not printed as one,
+// however it was made (lib/report.mjs's safe() is the only intended way; this catches any other)
+for (const r of all) if (r.status === 'SAFE' && !(Array.isArray(r.searched) && r.searched.some((s) => String(s).trim()))) Object.assign(r, { status: 'UNKNOWN', reason: `internal error: a SAFE result without a receipt (${r.reason ?? r.kind}): please report this` });
 const count = { SAFE: 0, EXPOSED: 0, UNKNOWN: 0, REVIEW: 0 };
 for (const r of all) if (r.status in count) count[r.status]++;
 const n = (s) => count[s];

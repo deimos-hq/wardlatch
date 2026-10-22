@@ -363,15 +363,15 @@ test('PHP-style fixes per release line: patched, unpatched, and end of life', ()
 
 test('containers: each running one is checked from inside, with a normal-site and a self-signed control', async () => {
   const bin = join(dir, 'engine'); mkdirSync(bin, { recursive: true });
-  // A stand-in for `docker`: ps lists four containers; exec answers as the tool inside each would ($7 is the URL).
+  // A stand-in for `docker`: ps lists four containers; exec answers as the probe script inside each would ($7 is the URL).
   writeFileSync(join(bin, 'docker'), `#!/bin/sh
 if [ "$1" = ps ]; then printf 'a1\\told-bundle\\tdebian:11\\nb2\\tdistroless\\tgcr.io/app\\nc3\\tno-verify\\talpine\\nd4\\tfixed\\tdebian:13\\n'; exit 0; fi
 [ "$1" = exec ] || exit 1
 case "$2" in
-  a1) echo tool=curl; case "$7" in *self-signed*) exit 1;; *) exit 0;; esac;;
+  a1) case "$7" in *self-signed*) echo tool=curl wardlatch-result=refused;; *) echo tool=curl wardlatch-result=ok;; esac; exit 0;;
   b2) exit 126;;
-  c3) echo tool=wget; exit 0;;
-  d4) echo tool=curl; case "$7" in *self-signed*|*-emudhra.*) exit 1;; *) exit 0;; esac;;
+  c3) echo tool=wget wardlatch-result=ok; exit 0;;
+  d4) case "$7" in *self-signed*|*-emudhra.*) echo tool=curl wardlatch-result=refused;; *) echo tool=curl wardlatch-result=ok;; esac; exit 0;;
 esac
 exit 1
 `, { mode: 0o755 });

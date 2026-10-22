@@ -22,8 +22,8 @@ reported, and what was actually true.
   REVIEW or EXPOSED line disappear) when the thing checked is exposed, including a control that fails without the
   result turning into "could not be tested".
 - **Anything that sends data about the user.** Wardlatch's only network traffic is TLS connections to the incident's
-  public test hosts and its two control sites (and what your own container engine sends, wherever `DOCKER_HOST` or the
-  current docker context points; `--no-containers` skips it), carrying nothing beyond what any request from the runtime being tested
+  public test hosts and its two control sites (and what your own container engine sends, wherever the current docker
+  context points; `DOCKER_HOST` is not followed; `--no-containers` skips it), carrying nothing beyond what any request from the runtime being tested
   carries (the machine's address and the runtime's default User-Agent). Telemetry, results, paths, names, environment
   variables, keys or any other detail of the machine leaving it, by any route, is a vulnerability.
 - **Anything that modifies the system outside `fix/fix-macos.sh`.** The command changes nothing: no file, setting,

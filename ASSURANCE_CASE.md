@@ -144,7 +144,7 @@ was tested.
 | Improper certificate validation (CWE-295) | The probes and Wardlatch's own TLS | Verification on everywhere except the reachability handshake, which sends nothing and decides only "up or not"; enforced by test |
 | Exposure of sensitive information (CWE-200, CWE-532) | Key findings, output, network | Keys masked; nothing sent; tests on text and JSON output |
 | Improper neutralization of escape sequences (CWE-150) | Names printed to a terminal | One escaping function for every printed name; test with a planted name |
-| Uncontrolled resource consumption (CWE-400) | Huge trees, huge files, pipes, hung programs | Depth limits (4 to 5 levels), file-size caps (512 KB for the key scan, 2 MB for plugin files), only regular files read and pipes opened non-blocking, a 4,000-file cap per plugin, a timeout on every child process and connection |
+| Uncontrolled resource consumption (CWE-400) | Huge trees, huge files, pipes, hung programs | Depth limits (4 to 5 levels), file-size caps (8 MB for the key scan, 2 MB for plugin files; what a cap leaves unread is UNKNOWN), only regular files read and pipes opened non-blocking, a 4,000-file cap per plugin, a timeout on every child process and connection |
 | Path traversal and symlink attacks (CWE-22, CWE-59) | Writing outside a folder | Nothing is written. Directory walks don't follow symlinked folders |
 | Untrusted search path (CWE-426) | Running programs by name | By design for `PATH` (it checks what the user runs); see section 4 for virtual environments |
 | Race conditions (CWE-367) | A scanned file swapped between its size check and its read; the Mac fix's temporary and backup files | The command checks and reads a file through one read-only, non-blocking descriptor (`lib/files.mjs`). The Mac fix uses `mktemp`, checks the backup name is free first, and writes the file in place with one `cp` after its checks |
@@ -157,8 +157,9 @@ a single gateway, and `test/contract-0.1.9.test.mjs` fails if any code goes arou
 
 - **One way to run a program** (`lib/run.mjs`): an absolute path, an argument list, the folder `/`, a timeout that
   kills with SIGKILL, and an environment built from an allowlist for its purpose (version read, git, container engine,
-  trust probe). The caller's environment is passed only to trust probes, which measure what the person's own programs
-  trust, and never with code-loading options (`NODE_OPTIONS --require`).
+  trust probe). A trust probe gets what changes a runtime's trust or its route to a host (CA files and folders,
+  proxies, `NODE_OPTIONS`' trust flags) and nothing else: no code-loading settings (`NODE_OPTIONS --require`,
+  `OPENSSL_CONF`, `LD_PRELOAD`, `SHELLOPTS`). What it leaves out of the person's own settings is said on screen.
 - **One way to look at the disk** (`lib/files.mjs`): it tells "not there" from "couldn't look", reads only regular files
   under a size cap, and never blocks on a FIFO.
 - **One way to say SAFE** (`lib/report.mjs`): a SAFE result can't be made without a list of what was looked at; with

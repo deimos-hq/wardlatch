@@ -638,7 +638,8 @@ test('R10 environment: NODE_OPTIONS from the caller never reaches a trust probe 
   process.env.NODE_OPTIONS = `--require ${marker}`;
   try {
     const dead = { id: 'dead', url: 'https://127.0.0.1:1/', up: true };
-    await check({ kind: 'node', bin: process.execPath, version: '' }, [dead], { rootsPem: join(dir, 'no-such.pem'), controlUrl: dead.url, timeoutMs: 2000 });
+    // the real roots file: a missing one returns before any child starts, and the test passed with NODE_OPTIONS unfiltered
+    await check({ kind: 'node', bin: process.execPath, version: '' }, [dead], { rootsPem: join(LIB, 'incidents', 'emudhra-2026-10-roots.pem'), controlUrl: dead.url, timeoutMs: 2000 });
   } finally { if (saved === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = saved; }
   assert.equal(existsSync(markLog), false, 'the caller\'s NODE_OPTIONS --require ran inside a probe');
 });

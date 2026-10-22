@@ -80,7 +80,8 @@ test('the command: EXPOSED exits 1, names the file and header, and never prints 
 });
 
 test('a home with no header settings is SAFE and says what it could not cover', () => {
-  const r = spawnSync(process.execPath, [BIN, '--incident', 'identity-headers-2026-10', '--paths', '/nonexistent'], { encoding: 'utf8', env: { ...CLEAN, HOME: mkdtempSync(join(tmpdir(), 'wardlatch-none-')) } });
+  // --paths names an empty folder: one that isn't there is UNKNOWN (test/review2-0.1.9.test.mjs, M3)
+  const r = spawnSync(process.execPath, [BIN, '--incident', 'identity-headers-2026-10', '--paths', mkdtempSync(join(tmpdir(), 'wardlatch-none-root-'))], { encoding: 'utf8', env: { ...CLEAN, HOME: mkdtempSync(join(tmpdir(), 'wardlatch-none-')) } });
   assert.equal(r.status, 0);
   assert.match(r.stdout, /SAFE     no name or email in the 0 header settings/);
   assert.match(r.stdout, /no git name or email is set/);
