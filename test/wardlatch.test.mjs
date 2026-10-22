@@ -6,7 +6,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:https';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, symlinkSync, readdirSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, symlinkSync, readdirSync, unlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, reachable, nscurlOk, canForceCa } from '../lib/probe.mjs';
@@ -38,7 +38,7 @@ before(async () => {
   const port = server.address().port;
   canary = { id: 'local', url: `https://127.0.0.1:${port}/`, up: (await reachable('127.0.0.1', port, 2000)).up };
 });
-after(() => server.close());
+after(() => { server.close(); rmSync(dir, { recursive: true, force: true }); });
 
 test('the canary is reachable (control for the control)', () => assert.equal(canary.up, true));
 

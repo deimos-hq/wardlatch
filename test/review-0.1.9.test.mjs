@@ -104,13 +104,14 @@ test('a locked folder under --paths in the trust check is an UNKNOWN row, never 
   assert.ok(r.rows.some((x) => x.status === 'UNKNOWN' && x.path === vault), JSON.stringify(r.rows));
 });
 
-test('a tracked file the key scan can\'t read, or one too big to scan, is UNKNOWN, not a silent skip', { skip: AS_ROOT && 'root reads every file' }, () => {
+test('a tracked file the key scan can\'t read is UNKNOWN, not a silent skip; a big text file is scanned through, not refused', { skip: AS_ROOT && 'root reads every file' }, () => {
   const root = fresh('keys-root'), repo = join(root, 'app'); const commit = gitRepo(repo);
-  put(join(repo, 'locked.py'), `k = "AKIA${'Q'.repeat(16)}"\n`); put(join(repo, 'big.txt'), 'x'.repeat(9 * 1024 * 1024)); commit();
+  // the big file: 9 MB of lines, a key on line 200,001 (past the 8 MB whole-file read, so found by the piece scan)
+  put(join(repo, 'locked.py'), `k = "AKIA${'Q'.repeat(16)}"\n`); put(join(repo, 'big.txt'), `${'x'.repeat(46)}\n`.repeat(200000) + `k = "AKIA${'R'.repeat(16)}"\n`); commit();
   lock(join(repo, 'locked.py'));
   const r = run(['--incident', 'committed-keys-2026-10', '--paths', root], { PATH: '/usr/bin:/bin' });
-  const unknown = r.rows.filter((x) => x.status === 'UNKNOWN').map((x) => x.file).sort();
-  assert.deepEqual(unknown, ['big.txt', 'locked.py'], JSON.stringify(r.rows));
+  assert.deepEqual(r.rows.filter((x) => x.status === 'UNKNOWN').map((x) => x.file), ['locked.py'], JSON.stringify(r.rows));
+  assert.deepEqual(r.rows.filter((x) => x.status === 'REVIEW').map((x) => `${x.file}:${x.line}`), ['big.txt:200001'], JSON.stringify(r.rows));
   assert.equal(r.code, 2);
 });
 
@@ -135,7 +136,10 @@ test('DOCKER_HOST (or a docker context or config) set while a local engine answe
 test('only NODE_OPTIONS\' trust flags reach a trust probe, and nothing that loads code or points at caller-chosen files', () => {
   const env = envFor('probe', {}, { NODE_OPTIONS: '--use-openssl-ca --snapshot-blob x.blob -r y.js --require=z.js --import w --experimental-loader v --use-system-ca', LD_PRELOAD: '/x.so', DYLD_INSERT_LIBRARIES: '/x.dylib', CURL_HOME: '/x', PYTHONPATH: '/x', SSL_CERT_FILE: '/ca.pem' });
   assert.equal(env.NODE_OPTIONS, '--use-openssl-ca --use-system-ca');
-  for (const k of ['LD_PRELOAD', 'DYLD_INSERT_LIBRARIES', 'CURL_HOME', 'PYTHONPATH']) assert.equal(env[k], undefined, k);
+  // CURL_HOME is passed since the fifth review: the probe's curl reads the start-up file the person's curl reads (which
+  // can change what it trusts); whoever can set it can set HOME, which every child gets
+  for (const k of ['LD_PRELOAD', 'DYLD_INSERT_LIBRARIES', 'PYTHONPATH']) assert.equal(env[k], undefined, k);
+  assert.equal(env.CURL_HOME, '/x');
   assert.equal(env.SSL_CERT_FILE, '/ca.pem', 'the person\'s CA settings still reach the probe');
   const engineEnv = envFor('engine', {}, { DOCKER_HOST: 'x', DOCKER_CONTEXT: 'x', DOCKER_CONFIG: 'x', CONTAINER_HOST: 'x', HOME: '/h', PATH: '/p' });
   assert.deepEqual(Object.keys(engineEnv).filter((k) => /DOCKER|CONTAINER/.test(k)), []);

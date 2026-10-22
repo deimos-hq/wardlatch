@@ -137,23 +137,19 @@ function gaps(results, inc, kind, dirs) {
     results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason });
     print('UNKNOWN', short(d)); note('33', reason);
   }
+  // on macOS a folder can be closed by privacy protection (Desktop, Documents, Downloads, iCloud), which sudo doesn't open
+  const how = platform() === 'darwin' ? 'run Wardlatch with sudo if it belongs to another user, or allow your terminal Full Disk Access (System Settings → Privacy & Security) if macOS is protecting it' : 'run Wardlatch with sudo to include it';
   for (const d of dirs) {
-    results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason: 'could not be opened, so it was not searched: run Wardlatch with sudo to include it' });
-    print('UNKNOWN', short(d)); note('33', 'could not be opened, so it was not searched: run Wardlatch with sudo to include it');
+    const reason = `could not be opened, so it was not searched: ${how}`;
+    results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason });
+    print('UNKNOWN', short(d)); note('33', reason);
   }
 }
 
 // NODE_OPTIONS words a probe doesn't need to measure trust, and that change no trust: memory, warnings, traces
 // (Node takes either spelling of a name, --max_old_space_size too)
-const BENIGN_NODE_OPTION_RE = /^--(?:max-old-space-size|max-semi-space-size|max-http-header-size|stack-size|stack-trace-limit|no-warnings|no-deprecation|enable-source-maps|trace-warnings|trace-deprecation|trace-uncaught|unhandled-rejections|dns-result-order|openssl-legacy-provider)(?:=[\w.-]*)?$/;
+const BENIGN_NODE_OPTION_RE = /^--(?:max-old-space-size|max-semi-space-size|max-http-header-size|stack-size|stack-trace-limit|no-warnings|no-deprecation|enable-source-maps|trace-warnings|trace-deprecation|trace-uncaught|unhandled-rejections|dns-result-order|openssl-legacy-provider|disable-warning|experimental-vm-modules)(?:=[\w.-]*)?$/;
 const benignNodeOption = (w) => { const i = w.indexOf('='); return BENIGN_NODE_OPTION_RE.test((i < 0 ? w : w.slice(0, i)).replace(/_/g, '-') + (i < 0 ? '' : w.slice(i))); };
-// curl's start-up file: the probe's curl gets only HOME, so it reads ~/.curlrc or ~/.config/curlrc. A file the person's
-// curl would read through CURL_HOME or XDG_CONFIG_HOME, and the probe's would not, is trust (or `insecure`) not tested.
-const curlrcsNotRead = (env = process.env) => {
-  const probeReads = new Set([join(HOME, '.curlrc'), join(HOME, '.config', 'curlrc')]);
-  return [env.CURL_HOME, env.XDG_CONFIG_HOME].filter(Boolean).flatMap((b) => [join(b, '.curlrc'), join(b, 'curlrc'), join(b, '.config', 'curlrc')])
-    .filter((f, i, all) => all.indexOf(f) === i && !probeReads.has(f) && pathState(f) === 'file');
-};
 // DOCKER_HOST and the like are not followed (lib/run.mjs): the engine they name was not checked, whatever answers
 // locally. Every check that asks an engine (running containers, local images) says so in an UNKNOWN row.
 const hostVars = ['DOCKER_HOST', 'CONTAINER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG', 'CONTAINER_CONNECTION'].filter((k) => process.env[k]);
@@ -223,7 +219,6 @@ for (const inc of chosen) {
     const notPassed = [
       ...(droppedNodeOptions().filter((w) => !benignNodeOption(w)).length ? [`NODE_OPTIONS (${droppedNodeOptions().join(' ').slice(0, 120)})`] : []),
       ...(process.env.OPENSSL_CONF ? ['OPENSSL_CONF'] : []),
-      ...curlrcsNotRead().map((f) => `curl's start-up file ${short(f)}`),
     ];
     if (notPassed.length) {
       const reason = `${notPassed.join(', ')}: set in this environment and not given to the probes, since ${notPassed.length === 1 ? 'it' : 'they'} can load code or point a program at files the caller chose. Trust added that way was not tested`;

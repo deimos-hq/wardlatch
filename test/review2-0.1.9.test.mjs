@@ -167,12 +167,12 @@ test('M7 a trust probe gets an allowlisted environment: trust and proxy settings
     PATH: '/bin', HOME: '/h', SSL_CERT_FILE: '/ca.pem', SSL_CERT_DIR: '/certs', NODE_EXTRA_CA_CERTS: '/extra.pem', HTTPS_PROXY: 'http://proxy:3128', no_proxy: 'localhost',
     NODE_OPTIONS: '--use_openssl_ca --require /evil.js --use-system-ca',
     OPENSSL_CONF: '/evil.cnf', OPENSSL_MODULES: '/evil', SHELLOPTS: 'xtrace', PS4: '$(touch /tmp/x)', 'BASH_FUNC_curl%%': '() { :; }', GCONV_PATH: '/evil',
-    RUBYOPT: '-r/evil', PERL5OPT: '-M/evil', JAVA_TOOL_OPTIONS: '-javaagent:/evil', SSLKEYLOGFILE: '/keys', XDG_CONFIG_HOME: '/evil-config', LD_PRELOAD: '/evil.so', DYLD_INSERT_LIBRARIES: '/evil.dylib',
+    RUBYOPT: '-r/evil', PERL5OPT: '-M/evil', JAVA_TOOL_OPTIONS: '-javaagent:/evil', SSLKEYLOGFILE: '/keys', LD_PRELOAD: '/evil.so', DYLD_INSERT_LIBRARIES: '/evil.dylib',
   };
   const e = envFor('probe', {}, caller);
   for (const k of ['SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS', 'HTTPS_PROXY', 'no_proxy', 'PATH', 'HOME']) assert.equal(e[k], caller[k], `${k} kept`);
   assert.equal(e.NODE_OPTIONS, '--use_openssl_ca --use-system-ca', 'only trust flags, in either spelling');
-  for (const k of ['OPENSSL_CONF', 'OPENSSL_MODULES', 'SHELLOPTS', 'PS4', 'BASH_FUNC_curl%%', 'GCONV_PATH', 'RUBYOPT', 'PERL5OPT', 'JAVA_TOOL_OPTIONS', 'SSLKEYLOGFILE', 'XDG_CONFIG_HOME', 'LD_PRELOAD', 'DYLD_INSERT_LIBRARIES'])
+  for (const k of ['OPENSSL_CONF', 'OPENSSL_MODULES', 'SHELLOPTS', 'PS4', 'BASH_FUNC_curl%%', 'GCONV_PATH', 'RUBYOPT', 'PERL5OPT', 'JAVA_TOOL_OPTIONS', 'SSLKEYLOGFILE', 'LD_PRELOAD', 'DYLD_INSERT_LIBRARIES'])
     assert.equal(e[k], undefined, `${k} dropped`);
 });
 

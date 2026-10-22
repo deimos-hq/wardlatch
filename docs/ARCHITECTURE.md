@@ -5,7 +5,7 @@ in [ASSURANCE_CASE.md](../ASSURANCE_CASE.md).
 
 ## The shape
 
-Two independent programs, about 700 lines in all, with no dependencies beyond Node's built-in modules and the
+Two independent programs, about 2,000 lines in all, with no dependencies beyond Node's built-in modules and the
 programs already on the machine:
 
 - **The command**, `wardlatch` (`bin/wardlatch.mjs` and `lib/`): looks, reports, gives a fix per line, and changes

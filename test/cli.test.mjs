@@ -4,7 +4,7 @@
 // folder (fake programs on a private PATH, throwaway git repositories, a fake WordPress site). The eMudhra trust
 // check runs here only with an offline stand-in (no test host answers), for what it says when it can't test; its
 // probes need the advisory's public test hosts, so they are covered in wardlatch.test.mjs against a local one.
-import { test, before } from 'node:test';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, realpathSync } from 'node:fs';
@@ -30,6 +30,7 @@ const gitRepo = (path) => {
 };
 
 before(() => { dir = mkdtempSync(join(tmpdir(), 'wardlatch-cli-')); });
+after(() => rmSync(dir, { recursive: true, force: true }));
 
 test('--help and --list answer without checking anything', () => {
   const help = run(['--help']);

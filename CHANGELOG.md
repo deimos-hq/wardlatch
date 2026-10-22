@@ -45,9 +45,9 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   forced in (with both, a chain could finish at the other root), and a runtime or container is SAFE only when every
   root had a host that answered.
 - **A trust setting the probe doesn't get could leave a SAFE that wasn't tested.** A CA added through `NODE_OPTIONS
-  --require` (mac-ca, syswide-cas), `OPENSSL_CONF`, or a curl start-up file the person's curl reads through `CURL_HOME`
-  or `XDG_CONFIG_HOME` and the probe's would not, is now an UNKNOWN row (options that add no trust, such as
-  `--max-old-space-size` in either spelling, don't count). A trust probe also gets `NIX_SSL_CERT_FILE`.
+  --require` (mac-ca, syswide-cas) or `OPENSSL_CONF` is now an UNKNOWN row (options that add no trust, such as
+  `--max-old-space-size` in either spelling, don't count). A trust probe also gets `NIX_SSL_CERT_FILE`, and the
+  person's `CURL_HOME` and `XDG_CONFIG_HOME`, so the probe's curl reads the start-up file the person's curl reads.
   The person's own `NODE_TLS_REJECT_UNAUTHORIZED` reaches the Node probe, so a Node run with checking off reads
   EXPOSED.
 - **`DOCKER_HOST` set while a local engine answered read SAFE in the LiteLLM image check**, which never looked at the
@@ -62,7 +62,7 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
 - The workflow review lists workflows added by merge commits and by backdated commits, and ignores grafts and the
   commit-graph file.
 - The trust check runs only the first `node`, `python3` and `curl` on `PATH`, never a shadowed copy.
-- The header check reads the files curl and git really read: CRLF files, `$CURL_HOME/.curlrc`, `~/.config/curlrc`, the
+- The header check reads the files curl and git really read: CRLF files, `$CURL_HOME/.curlrc`, `$CURL_HOME/.config/curlrc`, `~/.config/curlrc`, the
   file `GIT_CONFIG_GLOBAL` names, `WGETRC`, `NPM_CONFIG_USERCONFIG`.
 - Bounded work: hand-written parsers instead of patterns that backtracked (a planted line took 22 s), a capped JSON walk
   and a 1 MB cap on a repository's config files (a planted 16 MB `.mcp.json` took 1.4 GB), every file read through one

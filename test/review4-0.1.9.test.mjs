@@ -88,26 +88,31 @@ const trust = (name, env, extra = {}) => run(['--incident', 'emudhra-2026-10', '
 const envRow = (r) => r.rows.find((x) => x.kind === 'environment');
 
 test('1 NODE_OPTIONS that add no trust, in either spelling, are not an UNKNOWN row: a clean machine exits 0', () => {
-  for (const o of ['--max_old_space_size=4096', '--max-old-space-size=4096', '--openssl-legacy-provider', '--dns-result-order=ipv4first', '--no_warnings']) {
+  for (const o of ['--max_old_space_size=4096', '--max-old-space-size=4096', '--openssl-legacy-provider', '--dns-result-order=ipv4first', '--no_warnings', '--disable-warning=ExperimentalWarning', '--experimental-vm-modules']) {
     const r = trust(`n${o.replace(/\W/g, '')}`, { NODE_OPTIONS: o });
     assert.equal(envRow(r), undefined, `${o}: ${JSON.stringify(envRow(r))}`);
     assert.equal(r.code, 0, `${o}: ${JSON.stringify(r.rows)}`);
   }
 });
 
-test('2 a curl start-up file the person\'s curl reads through CURL_HOME or XDG_CONFIG_HOME, and the probe\'s doesn\'t: an UNKNOWN row', () => {
-  const h = fresh('c2-home');
-  for (const [k, rel] of [['CURL_HOME', '.curlrc'], ['CURL_HOME', join('.config', 'curlrc')], ['XDG_CONFIG_HOME', 'curlrc']]) {
+test('2 the probe\'s curl reads the start-up file the person\'s curl reads (CURL_HOME, XDG_CONFIG_HOME): one that turns checking off reads EXPOSED', () => {
+  // a curl stand-in that reads its start-up file the way curl 8.7.1 does: $CURL_HOME/.curlrc, $CURL_HOME/.config/curlrc,
+  // $XDG_CONFIG_HOME/.curlrc, then ~/.curlrc; `insecure` there makes every connection succeed
+  const d = fresh('c2-path');
+  exe(join(d, 'curl'), `[ "$1" = --version ] && { echo "curl 8.7.1"; exit 0; }
+for f in "\${CURL_HOME:+$CURL_HOME/.curlrc}" "\${CURL_HOME:+$CURL_HOME/.config/curlrc}" "\${XDG_CONFIG_HOME:+$XDG_CONFIG_HOME/.curlrc}" "$HOME/.curlrc"; do
+  [ -n "$f" ] && [ -f "$f" ] && { /usr/bin/grep -q insecure "$f" && exit 0; break; }
+done
+for a in "$@"; do case "$a" in http*://*) u="$a";; esac; done
+case "$u" in https://emudhra.we-have-a-problem.com*) exit 0;; esac
+for a in "$@"; do [ "$a" = --cacert ] && exit 0; done
+exit 60`);
+  for (const [k, rel] of [['CURL_HOME', '.curlrc'], ['CURL_HOME', join('.config', 'curlrc')], ['XDG_CONFIG_HOME', '.curlrc']]) {
     const base = fresh(`c2-${k}-${rel.replace(/\W/g, '')}`);
     put(join(base, rel), 'insecure\n');
-    const r = trust(`c2${k}${rel.replace(/\W/g, '')}`, { HOME: h, [k]: base });
-    assert.ok(envRow(r)?.reason.includes('curl'), `${k}/${rel}: ${JSON.stringify(r.rows)}`);
-    assert.equal(r.code, 2);
+    const r = run(['--incident', 'emudhra-2026-10', '--no-containers', '--paths', fresh(`c2-${k}-${rel.replace(/\W/g, '')}-root`)], { PATH: d, HOME: fresh(`c2-${k}-${rel.replace(/\W/g, '')}-home`), [k]: base }, ['--require', preload('c2-online', { online: true })]);
+    assert.deepEqual(r.rows.filter((x) => x.kind === 'curl').map((x) => x.status), ['EXPOSED'], `${k}/${rel}: ${JSON.stringify(r.rows)}`);
   }
-  // the same file the probe reads anyway (XDG_CONFIG_HOME=~/.config) is no row
-  const h2 = fresh('c2-home2'); put(join(h2, '.config', 'curlrc'), 'insecure\n');
-  const same = trust('c2same', { HOME: h2, XDG_CONFIG_HOME: join(h2, '.config') });
-  assert.equal(envRow(same), undefined, JSON.stringify(envRow(same)));
 });
 
 test('3 OPENSSL_CONF in the environment: an UNKNOWN row, exit 2', () => {
@@ -131,4 +136,33 @@ test('6 root running sudo (SUDO_USER=root) searches root\'s own home: no "home n
   const r = run(['--incident', 'github-actions-2026-10', '--paths', fresh('s6-root')], { HOME: fresh('s6-home'), SUDO_USER: 'root' }, ['--require', sudo]);
   assert.ok(!r.rows.some((x) => x.kind === 'home'), JSON.stringify(r.rows));
   assert.equal(r.code, 0, JSON.stringify(r.rows));
+});
+
+test('7 a relative CA file in the person\'s environment is made absolute before a probe runs from /', () => {
+  // the probe runs from /: a relative NODE_EXTRA_CA_CERTS, CURL_CA_BUNDLE or REQUESTS_CA_BUNDLE would name another file
+  const d = fresh('ca7-path'), log = join(dir, 'ca7.log');
+  exe(join(d, 'node'), `[ "$1" = -v ] && { echo v20.0.0; exit 0; }
+echo "$NODE_EXTRA_CA_CERTS|$CURL_CA_BUNDLE|$REQUESTS_CA_BUNDLE" >> ${JSON.stringify(log)}
+exit 1`);
+  run(['--incident', 'emudhra-2026-10', '--no-containers', '--paths', fresh('ca7-root')], { PATH: d, NODE_EXTRA_CA_CERTS: 'ca/extra.pem', CURL_CA_BUNDLE: 'ca/curl.pem', REQUESTS_CA_BUNDLE: 'ca/req.pem' }, ['--require', preload('ca7-online', { online: true })]);
+  const seen = readFileSync(log, 'utf8').trim().split('\n').at(-1).split('|');
+  assert.deepEqual(seen, [join(dir, 'ca/extra.pem'), join(dir, 'ca/curl.pem'), join(dir, 'ca/req.pem')]);
+});
+
+test('8 macOS\'s own folders (the Trash, the Photos library) are never searched, so --paths ~ doesn\'t end in UNKNOWN for them', { skip: AS_ROOT && 'root opens every folder' }, () => {
+  const h = fresh('m8-home');
+  for (const p of [join(h, '.Trash', 'x'), join(h, 'Pictures', 'Photos Library.photoslibrary', 'x'), join(h, 'Pictures', 'Photo Booth Library', 'x')]) { put(join(p, 'f'), ''); lock(dirname(join(p, 'f'))); }
+  for (const id of ['github-actions-2026-10', 'committed-keys-2026-10', 'wordpress-plugins-2026-10']) {
+    const r = run(['--incident', id, '--paths', h], { HOME: h, PATH: '/usr/bin:/bin' });
+    assert.ok(!r.rows.some((x) => x.status === 'UNKNOWN'), `${id}: ${JSON.stringify(r.rows)}`);
+    assert.equal(r.code, 0, id);
+  }
+});
+
+test('9 the header check reads $CURL_HOME/.config/curlrc, which curl reads too', () => {
+  const h = fresh('h9-home'), ch = fresh('h9-curlhome');
+  put(join(h, '.gitconfig'), '[user]\n\temail = ada.lovelace@example.org\n');
+  put(join(ch, '.config', 'curlrc'), '-H "From: ada.lovelace@example.org"\n');
+  const r = run(['--incident', 'identity-headers-2026-10', '--paths', fresh('h9-root')], { HOME: h, CURL_HOME: ch });
+  assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && x.file === join(ch, '.config', 'curlrc')), JSON.stringify(r.rows));
 });

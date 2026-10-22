@@ -124,7 +124,7 @@ was tested.
 
 | Principle | How it applies |
 |---|---|
-| Economy of mechanism | About 700 lines, no dependencies, no build step, no server, no configuration file. |
+| Economy of mechanism | About 2,000 lines, no dependencies, no build step, no server, no configuration file. |
 | Fail-safe defaults | Any doubt is UNKNOWN and exit 2, never SAFE; an unknown option stops the run; the Mac fix's every check failing means "nothing changed". |
 | Complete mediation | Every trust result passes through the controls in `check()` / `checkContainer()`; there is no path from a probe to SAFE that skips them. |
 | Open design | All of it is public, including the test hosts; nothing depends on an attacker not knowing how it works. There are no secrets in it. |
@@ -160,7 +160,7 @@ a single gateway, and `test/contract-0.1.9.test.mjs` fails if any code goes arou
   trust probe). A trust probe gets what changes a runtime's trust or its route to a host (CA files and folders,
   proxies, `NODE_OPTIONS`' trust flags) and nothing else: no code-loading settings (`NODE_OPTIONS --require`,
   `OPENSSL_CONF`, `LD_PRELOAD`, `SHELLOPTS`). When the person's environment has settings like that which could add
-  trust (`NODE_OPTIONS --require mac-ca`, `OPENSSL_CONF`, a curl start-up file named by `CURL_HOME`), the run has an
+  trust (`NODE_OPTIONS --require mac-ca`, `OPENSSL_CONF`), the run has an
   UNKNOWN row naming them, so it can't end all SAFE without having tested them.
 - **One way to look at the disk** (`lib/files.mjs`): it tells "not there" from "couldn't look", reads only regular files
   under a size cap, and never blocks on a FIFO.
@@ -188,7 +188,7 @@ a timeout with SIGKILL); nothing they find is executed.
 
 **git gets a clean environment, not the caller's.** Since 0.1.8 git runs without the caller's `GIT_*` variables (except `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM` and `GIT_CONFIG_NOSYSTEM`, which only choose your own config files, and `GIT_TEST_ASSUME_DIFFERENT_OWNER`, which can only make git refuse a repository): `GIT_DIR` or `GIT_WORK_TREE` from a hook or a CI step had pointed every scan at one other repository, and the git checks read SAFE without having looked (0.1.0 to 0.1.7). A test sets both kinds and expects the found repository to be read and nothing planted to run.
 
-**Programs on `PATH` are trusted, except a program an incident says may itself be malware.** Every `node`, `curl`
+**Programs on `PATH` are trusted, except a program an incident says may itself be malware.** The first `node`, `curl`
 and `python3` on `PATH`, `/usr/bin/curl`, `/usr/bin/python3`, and each tool named in a version rule, is run from the
 place it was found, the one your shell would pick. Each is run once for its version (`node -v`, `curl --version`,
 `python3 -V`, or the rule's arguments), and each runtime once more per test connection, with the arguments in
@@ -274,7 +274,7 @@ prevented.
 **A probe sees what its tool sees, and nothing else.** Inside a container, the result is for the image's `curl`,
 `python3` or `wget`, not for the application, which may carry its own trust list (a Java truststore, a bundled CA
 file). On the host, a program that passes its own CA bundle, or runs under a different environment (a `launchd` or
-`systemd` service, another user), may trust differently from the probe, which uses the current shell's environment.
+`systemd` service, another user), may trust differently from the probe, which uses the current shell's trust settings (an allowlist in `lib/run.mjs`).
 
 **What is not covered at all:** browsers (the README sends you to the advisory's check page), compiled programs (Go,
 Rust, Electron; the output says what to rebuild with), container images that aren't running, runtimes not on `PATH`

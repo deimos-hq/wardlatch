@@ -2,10 +2,14 @@
 // Copyright 2026 Deimos AI LLC
 // Agents that tell websites who you are: header settings that carry your name or email are found, by file and header
 // name, and the value is never printed. Everything runs against a made-up home folder; nothing is sent.
-import { test, before } from 'node:test';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync as mkdtempRaw, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+// every temp folder this file makes is removed when it ends
+const made = [];
+const mkdtempSync = (p) => { const d = mkdtempRaw(p); made.push(d); return d; };
+after(() => { for (const d of made) rmSync(d, { recursive: true, force: true }); });
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
