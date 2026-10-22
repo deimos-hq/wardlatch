@@ -51,6 +51,9 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   settings are read in any spelling (`useragent`, `user-agent`), Codex's `[..._headers]` tables are read, curl's `-a`
   and `-h` are no longer taken for headers, and only a value's own key or the key right above it makes it a header; a
   local image without a repository digest is still matched by its tag. Each has a regression test.
+- From the red-team audit (also in 0.1.7 and earlier): a planted FIFO as a virtual environment's certifi `METADATA`
+  or `__init__.py` hung the run (those two files are now read like every other, regular files under a size cap only);
+  `--json` now escapes DEL and C1 control characters from names on disk, as the text output already did.
 - OVHcloud's temp-folder marker is matched with any number of digits.
 - Release: the workflow checks the attestation bundle (present, one bundle, and `gh attestation verify` for both files,
   bound to this workflow) before it publishes a release, so a change in the attest action can't ship a release without it.

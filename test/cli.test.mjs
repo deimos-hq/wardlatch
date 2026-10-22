@@ -490,3 +490,24 @@ test('core.fsmonitor set through include.path, includeIf or config.worktree neve
   assert.match(keys.out, /no committed keys found in the files of 1 local repository/);
   assert.deepEqual(JSON.parse(wf.out).results.map((x) => [x.status, x.file]), [['REVIEW', '.github/workflows/ci.yml']], 'GIT_DIR redirected the scan');
 });
+
+// ---- from the 0.1.8 red-team audit (22 Oct 2026) ---------------------------------------------------------------------
+
+test('a planted FIFO as a venv\'s certifi METADATA can\'t hang the run', () => {
+  const { offline } = preloads();
+  const proj = join(dir, 'fifo-proj'), v = join(proj, '.venv'), sp = join(v, 'lib', 'python3.11', 'site-packages');
+  mkdirSync(join(v, 'bin'), { recursive: true }); mkdirSync(join(sp, 'certifi'), { recursive: true }); mkdirSync(join(sp, 'certifi-9.9.9.dist-info'), { recursive: true });
+  writeFileSync(join(v, 'pyvenv.cfg'), 'home = /x\n'); writeFileSync(join(sp, 'certifi', 'cacert.pem'), '-----BEGIN CERTIFICATE-----\n'); writeFileSync(join(v, 'bin', 'python'), '');
+  execFileSync('mkfifo', [join(sp, 'certifi-9.9.9.dist-info', 'METADATA')]);
+  const r = spawnSync(process.execPath, ['--require', offline, BIN, '--incident', 'emudhra-2026-10', '--json', '--no-containers', '--paths', proj], { encoding: 'utf8', timeout: 60000, env: { ...process.env, PATH: join(dir, 'empty-path') } });
+  assert.notEqual(r.signal, 'SIGTERM', 'the run hung on the FIFO');
+  assert.ok(JSON.parse(r.stdout).results.length >= 0);
+});
+
+test('--json escapes DEL and C1 control characters from names on disk', () => {
+  const root = join(dir, 'c1'), path = join(root, 'a\u007f\u009bb'); const repo = gitRepo(path);
+  mkdirSync(join(path, '.github', 'workflows'), { recursive: true }); writeFileSync(join(path, '.github', 'workflows', 'ci.yml'), 'on: push\n'); repo.commit();
+  const r = run(['--incident', 'github-actions-2026-10', '--json', '--paths', root]);
+  assert.doesNotMatch(r.out, /[\u007f-\u009f]/, 'a raw control character reached the JSON');
+  assert.equal(JSON.parse(r.out).results[0].repo, path, 'the value round-trips');
+});
