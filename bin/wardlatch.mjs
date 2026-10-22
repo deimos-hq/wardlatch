@@ -29,7 +29,10 @@ process.env.PATH = kept.length ? kept.join(delimiter) : ['/usr/bin', '/bin'].joi
 // Programs run from /, so a relative CA file or folder in the person's own environment is made absolute first, against
 // the folder Wardlatch was started from, as their own programs would read it.
 for (const k of ['SSL_CERT_FILE', 'SSL_CERT_DIR', 'CURL_CA_BUNDLE', 'NODE_EXTRA_CA_CERTS', 'REQUESTS_CA_BUNDLE']) {
-  if (process.env[k] && !isAbsolute(process.env[k])) process.env[k] = resolve(process.env[k]);
+  if (!process.env[k]) continue;
+  // SSL_CERT_DIR may be a list of folders
+  process.env[k] = k === 'SSL_CERT_DIR' ? process.env[k].split(delimiter).map((d) => (d && !isAbsolute(d) ? resolve(d) : d)).join(delimiter)
+    : isAbsolute(process.env[k]) ? process.env[k] : resolve(process.env[k]);
 }
 
 const LIB = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib');

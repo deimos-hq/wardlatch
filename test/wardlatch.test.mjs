@@ -109,6 +109,27 @@ test('the macOS system probe reads only a refusal as a refusal', () => {
   assert.equal(canForceCa('macos-system'), false); assert.equal(canForceCa('curl'), true);
 });
 
+test('the macOS system probe counts only a certificate error as a refusal: a dropped connection is UNKNOWN', async () => {
+  // nscurl exits 0 either way; -1202 (untrusted) is a refusal, -1004 (could not connect) is not
+  const fake = (code) => { const f = join(dir, `nscurl-${code}`); writeFileSync(f, `#!/bin/sh\ncase "$1" in *control*) exit 0;; esac\necho "Load failed with error: Error Domain=NSURLErrorDomain Code=${code}" >&2\nexit 0\n`, { mode: 0o755 }); return f; };
+  const host = { id: 'h', url: 'https://example.invalid/', up: true };
+  const opts = { controlUrl: 'https://control.invalid/', timeoutMs: 2000 };
+  assert.equal((await check({ kind: 'macos-system', bin: fake('-1004') }, [host], opts)).status, 'UNKNOWN');
+  assert.equal((await check({ kind: 'macos-system', bin: fake('-1202') }, [host], opts)).status, 'SAFE');
+});
+
+test('a server\'s certificate-related TLS alert is not a refusal: a Node that trusts the root is never SAFE', async () => {
+  // the server demands a client certificate and sends an alert (ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED and the like)
+  // after the client has already accepted its certificate
+  const mtls = createServer({ key: readFileSync(join(dir, 'leaf.key')), cert: readFileSync(join(dir, 'leaf.pem')), requestCert: true, rejectUnauthorized: true, ca: readFileSync(badCa) }, (_q, s) => s.end('x'));
+  await new Promise((r) => mtls.listen(0, '127.0.0.1', r));
+  try {
+    const host = { id: 'mtls', url: `https://127.0.0.1:${mtls.address().port}/`, up: true };
+    const r = await check(node({ NODE_EXTRA_CA_CERTS: badCa }), [host], { rootsPem: badCa, controlUrl: canary.url, timeoutMs: 3000 });
+    assert.notEqual(r.status, 'SAFE');
+  } finally { mtls.close(); }
+});
+
 test('a system probe that cannot open a normal site is UNKNOWN, never SAFE', async () => {
   const r = await check({ kind: 'macos-system', bin: '/usr/bin/false' }, [canary], { controlUrl: canary.url, timeoutMs: 2000 });
   assert.equal(r.status, 'UNKNOWN'); assert.match(r.reason, /control failed/);

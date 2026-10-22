@@ -23,7 +23,7 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   site-packages held a malicious `.pth` (in an activated virtual environment, a conda environment, a pyenv version or
   Homebrew's Python, for example), running Wardlatch ran it. 0.1.0 to 0.1.2 also started the `bin/python` of each
   virtual environment found under the searched folders, which ran that environment's `.pth` files. That `bin/python` did not have to be
-  Python: any program a cloned repository put there was run (fixed in 0.1.3). 0.1.2 to 0.1.6 ran
+  Python: any program a cloned repository put there was run (fixed in 0.1.3; [GHSA-383w-hfwc-vx2h](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-383w-hfwc-vx2h)). 0.1.2 to 0.1.6 ran
   `python3` without `-I` inside running containers that had no `curl`, which ran the `.pth` files of the image's
   Python, its user site-packages included; a running container from LiteLLM's own images (pulled on 21 October
   between 11:46 and 14:20 UTC) would be such a case if it had no `curl`. On the host, a copy installed with `pip install --user` was not run, because `-I` leaves out
@@ -57,12 +57,13 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   `GIT_ALLOW_PROTOCOL` for older git). Tests plant
   programs for `core.fsmonitor`, `gpg.program`, diff drivers, filters, the pager and hooks, and a partial clone whose
   fetch would run one, and fail if any of them runs.
+- Advisory: [GHSA-x4qj-7j53-r4cv](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-x4qj-7j53-r4cv) (this item and the `log.showRoot` one under Fixed).
 - **A Node.js older than 18 is tested, and only a certificate refusal reads as "does not trust".** 0.1.0 to 0.1.6
   reported any Node.js older than 18 on `PATH` as SAFE without testing it: the probe used `fetch()`, which Node 17 and
   older lack, so it failed, and every failure counted as a refusal once the forced-roots control (which used
-  `https.get`) had passed. Node's bundled roots include Comodo's AAA Certificate Services, so such a Node really is
-  exposed. 0.1.7 probes with `https.get`, and on the host counts a failure as a refusal only when it is a
-  certificate-verification error (curl exit 60, a Node certificate error code, Python's `SSLCertVerificationError`);
+  `https.get`) had passed. Node's bundled roots include Comodo's AAA Certificate Services (Node 10 to 17; 12 to 17 also emSign ECC Root CA - G3),
+  so such a Node really is exposed. 0.1.7 probes with `https.get`, and on the host counts a failure as a refusal only when it is a
+  certificate-verification error (curl exit 60, a Node certificate error code, Python's `SSLCertVerificationError`, macOS's NSURLErrorDomain -1201 to -1204);
   any other failure, when no test host connected, is UNKNOWN. Found by the critic of the 0.1.7 review; a test runs a
   Node with `fetch` removed against a trusting local test host and expects EXPOSED.
 - **Hardening: programs found from the place you started Wardlatch.** From 0.1.0 to 0.1.6, run with npx from inside a
@@ -103,7 +104,7 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   workflow file renamed into place is listed as added, and a blobless partial clone needs nothing fetched.
 - **A workflow added in a repository's first commit is listed, whatever `log.showRoot` says.** Up to 0.1.6, with
   `log.showRoot=false` in the repository's config or your own, `git log` showed no files for a root commit, so a
-  workflow added there was missed and the review could read SAFE. git now runs with `-c log.showRoot=true`, and with
+  workflow added there was missed and the review could read SAFE ([GHSA-x4qj-7j53-r4cv](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-x4qj-7j53-r4cv)). git now runs with `-c log.showRoot=true`, and with
   `GIT_NO_REPLACE_OBJECTS=1`, so `refs/replace/` can't swap one commit for another. Found in an independent review.
 - **A Python environment found through a relative `--paths` folder is tested.** Since every program runs from `/`, a
   relative folder would have given curl a bundle path it couldn't open, and the environment would have read SAFE.
@@ -173,7 +174,7 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 - **A found Python virtual environment's own interpreter is never run.** Up to 0.1.2, Wardlatch ran the `bin/python`
   of each environment it found under the searched folders, so a repository cloned from a stranger could ship a fake
-  interpreter that would run as you. Now it reads the environment's certifi bundle and version as files and tests the
+  interpreter that would run as you ([GHSA-383w-hfwc-vx2h](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-383w-hfwc-vx2h), recorded on 22 October). Now it reads the environment's certifi bundle and version as files and tests the
   bundle with a curl the machine already trusts (`--cacert`). An environment without certifi uses its base Python's
   trust, which is checked through `PATH`. Found by this project's own review; no report of it being exploited.
 
