@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 const DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'incidents');
 const incidents = readdirSync(DIR).filter((f) => f.endsWith('.json')).map((f) => ({ file: f, ...JSON.parse(readFileSync(join(DIR, f), 'utf8')) }));
-const TYPES = ['trust', 'binaries', 'workflows', 'secrets', 'wordpress', 'installs'];
+const TYPES = ['trust', 'binaries', 'workflows', 'secrets', 'wordpress', 'installs', 'headers'];
 const https = (u) => typeof u === 'string' && new URL(u).protocol === 'https:';
 
 test('every incident has the fields its check reads, named after its file', () => {
@@ -47,6 +47,7 @@ test('every incident has the fields its check reads, named after its file', () =
       for (const t of i.dockerTags ?? []) assert.match(t, /^[a-z0-9./_-]+:[A-Za-z0-9._-]+$/);
       if (i.dockerDigestPrefixes || i.dockerTags) assert.ok(i.dockerFix);
     }
+    if (i.type === 'headers') assert.ok(i.fix && i.notCovered);
     if (i.type === 'wordpress') { assert.ok(!Number.isNaN(Date.parse(i.addedSince)) && i.reviewFix); for (const r of i.rules) assert.ok(r.plugin && r.mainFile && r.fix); }
   }
   assert.equal(new Set(incidents.map((i) => i.id)).size, incidents.length, 'ids are unique');

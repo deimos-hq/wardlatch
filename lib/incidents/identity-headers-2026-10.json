@@ -1,0 +1,10 @@
+{
+  "id": "identity-headers-2026-10",
+  "type": "headers",
+  "title": "Agents that tell websites who you are",
+  "date": "2026-10-21",
+  "summary": "A researcher reported on 21 October that his coding agent sent his personal data in HTTP headers to the sites it fetched, because those sites asked agents to identify their users. Separately from what an agent decides in the moment, your own tools can send your name or email with every request: a header in curl's or wget's start-up file, git's http.extraHeader, or a header in a coding agent's or MCP client's config.",
+  "advisory": "https://genai.owasp.org/llmrisk/llm01-prompt-injection/",
+  "fix": "Take your name and email out of these header settings. A header in ~/.curlrc, ~/.wgetrc or git's global http.extraHeader goes to every site or remote; one in an MCP server's config goes to that server. If a service needs to know who you are, use its sign-in, not a header. And tell your agent never to identify you to a website or tool that asks.",
+  "notCovered": "an agent that adds your details itself because a page or tool asked it to; that is a test of the agent, not of a file"
+}
