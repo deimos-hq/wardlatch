@@ -38,7 +38,7 @@ programs already on the machine:
 | `bin/wardlatch.mjs` | Checks the options against the known list, loads the incidents, runs each one's checks, prints a line per result (control characters in names escaped), sets the exit code: 1 if anything is EXPOSED, else 2 if anything is UNKNOWN, else 0. REVIEW lines never change it. | Reads `lib/incidents/` and `package.json`. |
 | `lib/incidents/*.json` | One incident each: `id`, `type`, `title`, `date`, `advisory` (the public source), and the type's data: test hosts and fix texts (trust), version rules (binaries), a date (workflows), plugin rules (WordPress). | Data only. Checked by `test/incidents.test.mjs`. |
 | `lib/incidents/emudhra-2026-10-roots.pem` | The two public root certificates the compromised intermediates chain to, used only by the positive control. | Data only; fingerprints checked against the incident file. |
-| `lib/discover.mjs` | Finds what to probe: every `node`, `curl` and `python3` on `PATH` (deduplicated by real path), `/usr/bin/curl` and `/usr/bin/python3`, macOS's `nscurl`, the Linux distribution's CA bundle, and Python virtual environments (a folder with `pyvenv.cfg` and `bin/python`) under the folders searched, noting each one's `certifi`. | Lists directories (5 levels; skips `node_modules`, `.git`, `Library`; does not follow symlinked folders). Runs each program once for its version. |
+| `lib/discover.mjs` | Finds what to probe: every `node`, `curl` and `python3` on `PATH` (deduplicated by real path), `/usr/bin/curl` and `/usr/bin/python3`, macOS's `nscurl`, the Linux distribution's CA bundle, and Python virtual environments (a folder with `pyvenv.cfg` and `bin/python`) under the folders searched, noting each one's `certifi`. | Lists directories (5 levels; skips `node_modules`, `.git`, `Library`; does not follow symlinked folders). Runs each program on `PATH` once for its version (`python3 -V` exits before Python's start-up code). Never runs a found environment's own `bin/python`. |
 | `lib/probe.mjs` | The trust check. `reachable()` does a TLS handshake with verification off and sends nothing, to learn whether a test host is up. `probe()` makes the runtime itself open a verified connection, with the user's environment. `check()` runs the controls, then the probes. | The only module that opens network connections. |
 | `lib/containers.mjs` | Lists running containers (`docker ps` / `podman ps`) and runs a small `sh` script inside each with `exec`: it uses whichever of `curl`, `python3` or `wget` the image has, and prints only which tool it used. | Runs the engine's `ps` and `exec`. Writes nothing into a container. |
 | `lib/binaries.mjs` | Version rules: a bad range, a fixed version, or one fixed version per release line (and "end of life" when a line gets none). | Runs `<tool> --version` (or the rule's arguments) for programs found on `PATH`. |
@@ -75,9 +75,9 @@ Probes per runtime:
 |---|---|
 | `curl` | `curl -s -o /dev/null --max-time N [--cacert roots] URL` (the Linux system store adds `--cacert <bundle>`) |
 | `node` | `node -e <script>`: `fetch()` for the probe, `https.get` with `ca:` for the control |
-| `python`, `python-certifi` | `python -I -c <script>`: `ssl.create_default_context()` (or `certifi.where()`) and `urllib` |
+| `python`, `python-certifi` | `python3 -I -S -c <script>`: `ssl.create_default_context()` (or `certifi.where()`) and `urllib`. `-S` skips the `site` module, so no `.pth` file or `sitecustomize.py` runs (since 0.1.7); `-I` leaves out the user's site-packages, the `PYTHON*` variables and the current folder |
 | macOS system | `nscurl URL`, read from its output, since it exits 0 even when the load fails |
-| a container | `sh -c <script>` inside it via `docker exec` / `podman exec`; first a normal site must open, then `self-signed.badssl.com` must be refused, or the tool doesn't check certificates and the line is UNKNOWN |
+| a container | `sh -c <script>` inside it via `docker exec` / `podman exec`, using `curl`, else `python3 -I -S`, else `wget`; first a normal site must open, then `self-signed.badssl.com` must be refused, or the tool doesn't check certificates and the line is UNKNOWN |
 
 ## The Mac fix
 

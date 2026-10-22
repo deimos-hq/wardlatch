@@ -6,7 +6,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:https';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, reachable, nscurlOk, canForceCa } from '../lib/probe.mjs';
@@ -87,6 +87,19 @@ test('a found environment\'s certifi bundle is tested with a trusted curl: a bun
   const env1 = discover({ roots: [join(dir, 'proj')], pathEnv: '' }).find((r) => r.env);
   const r = await check(env1, [canary], { rootsPem: badCa, timeoutMs: 3000 });
   assert.equal(r.status, 'EXPOSED');
+});
+
+test('the Python probe never runs .pth files from site-packages: a marker .pth planted in a real environment stays silent', async (t) => {
+  let venvPy;
+  const venv = join(dir, 'pthvenv'), marker = join(dir, 'pth-ran');
+  try { execFileSync('python3', ['-m', 'venv', '--without-pip', venv], { stdio: 'ignore', timeout: 60000 }); venvPy = join(venv, 'bin', 'python3'); } catch { return t.skip('python3 -m venv is not available here'); }
+  const sp = join(venv, 'lib', readdirSync(join(venv, 'lib')).find((n) => /^python3/.test(n)), 'site-packages');
+  writeFileSync(join(sp, 'zz-marker.pth'), `import os; open(${JSON.stringify(marker)}, 'w').write('ran')\n`);
+  // the test means something: an ordinary start of this Python does run the .pth (as LiteLLM 1.107.0's cook.pth ran)
+  execFileSync(venvPy, ['-I', '-c', 'pass'], { stdio: 'ignore' });
+  assert.ok(existsSync(marker), 'a normal start runs the .pth, even with -I'); unlinkSync(marker);
+  await check({ kind: 'python', bin: venvPy, version: '' }, [canary], { controlUrl: canary.url, timeoutMs: 3000 });
+  assert.equal(existsSync(marker), false, 'the probe ran a .pth from site-packages');
 });
 
 test('the macOS system probe reads only a refusal as a refusal', () => {
@@ -207,6 +220,19 @@ exit 1
   assert.equal(await checkContainer(engine, list[0], [{ ...canaries[0], up: false }], opts).then((r) => r.status), 'UNKNOWN', 'no test host up is never SAFE');
   writeFileSync(join(bin, 'down'), '#!/bin/sh\necho "Cannot connect to the Docker daemon" >&2; exit 1\n', { mode: 0o755 });
   assert.equal(listContainers(join(bin, 'down')), null, 'a stopped daemon means no running containers, not a failure');
+});
+
+test('containers: a python3 too old for -I (Python 3.3 and older) is UNKNOWN, never SAFE', async () => {
+  // The real probe script runs here, in a stand-in container whose only tool is a python3 that rejects -I, as Python 3.3
+  // does. Run without -I it would check certificates properly: open the normal site, refuse the rest, and read SAFE.
+  const box = join(dir, 'oldpy-box'), bin = join(dir, 'oldpy-engine'); mkdirSync(box, { recursive: true }); mkdirSync(bin, { recursive: true });
+  writeFileSync(join(box, 'python3'), '#!/bin/sh\nfor a in "$@"; do [ "$a" = -I ] && { echo "Unknown option: -I" >&2; exit 2; }; done\ncase "$3" in *self-signed*|*-emudhra.*) exit 1;; *) exit 0;; esac\n', { mode: 0o755 });
+  assert.equal(execFileSync(join(box, 'python3'), ['-c', 'x', 'https://emudhra.we-have-a-problem.com/', '5']).length, 0, 'without -I the stand-in opens a normal site');
+  // `docker exec <id> sh -c <script> wardlatch <url> <t>` runs the script with nothing but that python3 on PATH
+  writeFileSync(join(bin, 'docker'), `#!/bin/sh\n[ "$1" = exec ] || exit 1\nshift 3\nPATH=${JSON.stringify(box)} exec /bin/sh "$@"\n`, { mode: 0o755 });
+  const canaries = [{ id: 'dv-g3b', url: 'https://dv-g3b-emudhra.we-have-a-problem.com/', up: true }];
+  const r = await checkContainer(join(bin, 'docker'), { id: 'p3', name: 'py33', image: 'python:3.3' }, canaries, { controlUrl: 'https://emudhra.we-have-a-problem.com/', timeoutMs: 2000 });
+  assert.equal(r.status, 'UNKNOWN'); assert.equal(r.tool, 'python3'); assert.match(r.reason, /control failed/);
 });
 
 test('files are read only when they are regular and small, checked and read through one open file', () => {
