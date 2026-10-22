@@ -28,6 +28,7 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ### Security
 
+- Advisory: [GHSA-84hq-29mv-c9fj](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-84hq-29mv-c9fj).
 - **A git environment variable could point the git checks at another repository, and they read SAFE.** Run where
   `GIT_DIR` or `GIT_WORK_TREE` is set (inside a git hook, or a CI step that sets them), 0.1.0 to 0.1.7 ran every
   `git log` and `git ls-files` against that one repository instead of each repository found, so the GitHub Actions
