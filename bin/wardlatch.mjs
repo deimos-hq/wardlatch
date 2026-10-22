@@ -366,8 +366,9 @@ for (const inc of chosen) {
   if (inc.type === 'secrets') {
     let repos = 0;
     const denied = [...lockedRoots];
+    const seenFiles = new Set();
     for (const repo of reposUnder(searchable, 4, denied)) {
-      const hits = scanRepo(repo);
+      const hits = scanRepo(repo, { seen: seenFiles });
       if (hits.error) { unread('secret', repo, hits.error); continue; }
       repos++;
       for (const h of hits) {

@@ -217,3 +217,57 @@ test('13 a repository inside another one is scanned too: a gitignored checkout, 
   const r2 = keys(root);
   assert.deepEqual(r2.rows.filter((x) => x.status === 'REVIEW').map((x) => `${x.repo.slice(root.length + 1)}/${x.file}`).sort(), ['outer/tools/inner/k.py', 'outer/vendor/lib/s.py']);
 });
+
+// ---- from the narrow check (10f4cbc) -----------------------------------------------------------------------------------
+test('14 a folder inside a repository that can\'t be opened (a database\'s gitignored data folder) is not a gap: clean machines stay SAFE, exit 0', { skip: AS_ROOT && 'root opens every folder' }, () => {
+  const root = fresh('k14-root'), repo = gitRepo(join(root, 'proj'));
+  put(join(root, 'proj', '.gitignore'), 'pgdata/\n'); put(join(root, 'proj', 'app.py'), 'print(1)\n'); repo.commit();
+  put(join(root, 'proj', 'pgdata', 'PG_VERSION'), '16\n'); lock(join(root, 'proj', 'pgdata'));
+  for (const id of ['committed-keys-2026-10', 'github-actions-2026-10', 'identity-headers-2026-10']) {
+    const r = run(['--incident', id, '--paths', root], { PATH: '/usr/bin:/bin', HOME: fresh(`k14-home-${id}`) });
+    assert.ok(!r.rows.some((x) => x.status === 'UNKNOWN'), `${id}: ${JSON.stringify(r.rows)}`);
+    assert.equal(r.code, 0, id);
+  }
+});
+
+test('15 a nested repository the outer one also tracks as a submodule is scanned once, whatever kind of .git it has', () => {
+  const root = fresh('k15-root'), outer = gitRepo(join(root, 'outer'));
+  put(join(root, 'outer', 'a.py'), 'print(1)\n'); outer.commit();
+  const lib = gitRepo(join(root, 'outer', 'vendor', 'lib')); put(join(root, 'outer', 'vendor', 'lib', 's.py'), `s = "${AWS}"\n`); lib.commit();
+  // "Adding existing repo at 'vendor/lib'": the submodule keeps its own .git folder
+  outer.g('-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', join(root, 'outer', 'vendor', 'lib'), 'vendor/lib'); outer.commit();
+  const r = keys(root);
+  assert.equal(r.rows.filter((x) => x.status === 'REVIEW').length, 1, JSON.stringify(r.rows.filter((x) => x.status === 'REVIEW')));
+});
+
+test('16 a service-account file inside a giant one-line file is reported once', () => {
+  // built in parts, so this file holds no literal key header (a key scan of Wardlatch's own repository stays clean)
+  const begin = ['-----BEGIN', 'PRIVATE', 'KEY-----'].join(' '), end = ['-----END', 'PRIVATE', 'KEY-----'].join(' ');
+  const sa = `{"type": "${['service', 'account'].join('_')}", "private_key": "${begin}\\nMIIE\\n${end}\\n"}`;
+  for (let at = 860; at < 1180; at += 13) {
+    const hits = pieceScan(`p16-${at}.txt`, `${'x'.repeat(at)}${sa}${'y'.repeat(2000 - at)}`);
+    assert.equal(hits.filter((h) => h.type === 'Google service-account key file').length, 1, `at ${at}: ${JSON.stringify(hits)}`);
+  }
+});
+
+test('17 macOS\'s own Library is recognised under every spelling of the home folder (case, /System/Volumes/Data)', { skip: process.platform !== 'darwin' && 'macOS' }, async () => {
+  const { isSystemFolder } = await import('../lib/files.mjs');
+  const h = homedir();
+  for (const p of [h, `${h}/`, h.toLowerCase(), `/System/Volumes/Data${h}`, '/', '/System']) assert.equal(isSystemFolder('Library', p), true, p);
+});
+
+test('18 a git worktree inside a repository is scanned (its .git file points to the outer repository\'s worktrees, not a submodule)', () => {
+  const root = fresh('k18-root'), repo = gitRepo(join(root, 'app'));
+  put(join(root, 'app', '.gitignore'), 'wt/\n'); put(join(root, 'app', 'a.py'), 'print(1)\n'); repo.commit();
+  repo.g('branch', 'feat'); repo.g('worktree', 'add', '-q', 'wt', 'feat');
+  put(join(root, 'app', 'wt', 'k.py'), `k = "${AWS}"\n`);
+  execFileSync('git', ['-C', join(root, 'app', 'wt'), 'add', 'k.py'], { stdio: 'pipe' });
+  execFileSync('git', ['-C', join(root, 'app', 'wt'), '-c', 'user.name=t', '-c', 'user.email=t@x', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'k'], { stdio: 'pipe' });
+  assert.deepEqual(review(keys(root)), ['k.py:1']);
+});
+
+test('19 a line that runs on across pieces counts a reviewed-line marker only near the key, as on any long line', () => {
+  // the line's last piece is short, but the line is long: a marker more than 200 characters away doesn't count
+  const hits = pieceScan('p19.txt', `${'x'.repeat(1100)} gitleaks:allow ${'x'.repeat(300)} "${AWS}"`);
+  assert.equal(hits.length, 1, JSON.stringify(hits));
+});

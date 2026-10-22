@@ -83,7 +83,8 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
 - The key scan reads every tracked text file up to 512 MB (0.1.8 skipped files over 512 KB, and unreadable ones, without
   a word): past 8 MB in overlapping pieces that end at line breaks, so a key is never cut in two and each match is
   counted in exactly one piece. It scans checked-out submodules too (0.1.8 never did), and a repository nested inside
-  another one (a gitignored checkout, an embedded repository), which the workflow review now reads as well, and a placeholder word (`example`, `fake`) counts only right next to a key, never
+  another one (a gitignored checkout, an embedded repository, a git worktree), which the workflow review now reads as
+  well; a file reached both ways is scanned once, and a placeholder word (`example`, `fake`) counts only right next to a key, never
   anywhere on its line (one `example.com` on a minified line hid every key on it).
 - macOS's own folders (its Library at `/`, in `/System` and in a home folder, the Trash, the Photos libraries) are never
   searched; any other folder named Library is (0.1.8 skipped every Library folder). A trust probe also gets `CURL_SSL_BACKEND`, which picks macOS
@@ -96,6 +97,9 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   containers).
 - The workflow review can't tell a backdated commit with no parent (the first commit of an orphan branch).
 - A file of Wardlatch's own that fails to load (a broken install) exits 1, before anything of Wardlatch's runs.
+- A repository inside a folder of another repository that can't be opened is not found (such folders, a database's
+  gitignored data folder for one, are passed over rather than reported, so clean machines don't read UNKNOWN; files the
+  outer repository tracks there are still listed, and reported if unreadable).
 - Runtimes are run from `/` with the person's default selection: a version chosen per shell or per project
   (`PYENV_VERSION`, `.nvmrc`, `.tool-versions`) is not followed, so the runtime tested can differ from the one a project
   uses.
