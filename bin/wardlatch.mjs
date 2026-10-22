@@ -6,7 +6,7 @@
 // Runs locally. Sends nothing anywhere except TLS connections to those test hosts and two control sites. Changes nothing.
 // A free tool from Deimos AI LLC · Apache-2.0
 import { readFileSync, readdirSync } from 'node:fs';
-import { join, dirname, delimiter, isAbsolute } from 'node:path';
+import { join, dirname, delimiter, isAbsolute, resolve } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { discover } from '../lib/discover.mjs';
@@ -20,9 +20,17 @@ import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
 // npx puts the current project's node_modules/.bin, and each parent folder's, first on PATH. Wardlatch finds git,
 // python3, node, curl, php, go and the container engines on PATH and runs some of them, so a project could otherwise
 // have it run the project's own programs. Those folders, and any relative entry, are dropped before anything runs.
-// npx also applies the project's .npmrc before Wardlatch starts, which nothing here can undo: run it from your home
-// folder, as the README says.
-process.env.PATH = (process.env.PATH ?? '').split(delimiter).filter((d) => d && isAbsolute(d) && !/[\\/]node_modules[\\/]\.bin[\\/]?$/.test(d)).join(delimiter);
+// npx also starts Wardlatch with the project's own node_modules/.bin/node if it has one, and applies the project's
+// .npmrc, before any of this runs; nothing here can undo either: run it from your home folder, as the README says.
+// When nothing is left (PATH unset, or made only of dropped entries), PATH is /usr/bin:/bin, as Node itself assumes for
+// an unset PATH. An empty PATH would make a bare program name resolve in the current folder.
+const kept = (process.env.PATH ?? '').split(delimiter).filter((d) => d && isAbsolute(d) && !/[\\/]node_modules[\\/]\.bin[\\/]?$/.test(d));
+process.env.PATH = kept.length ? kept.join(delimiter) : ['/usr/bin', '/bin'].join(delimiter);
+// Programs run from /, so a relative CA file or folder in the person's own environment is made absolute first, against
+// the folder Wardlatch was started from, as their own programs would read it.
+for (const k of ['SSL_CERT_FILE', 'SSL_CERT_DIR', 'CURL_CA_BUNDLE', 'NODE_EXTRA_CA_CERTS', 'REQUESTS_CA_BUNDLE']) {
+  if (process.env[k] && !isAbsolute(process.env[k])) process.env[k] = resolve(process.env[k]);
+}
 
 const LIB = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib');
 const VERSION = JSON.parse(readFileSync(join(LIB, '..', 'package.json'), 'utf8')).version;
@@ -53,10 +61,11 @@ if (flag('-h') || flag('--help')) {
   npx wardlatch@latest --json      machine-readable output
   npx wardlatch@latest --no-containers  skip running Docker and Podman containers
 
-Run it from your home folder, not inside a project: npx applies the project's .npmrc before Wardlatch starts.
+Run it from your home folder, not inside a project: npx also starts Wardlatch with the project's own
+node_modules/.bin/node if it has one, and applies its .npmrc; Wardlatch can't undo either.
 Exit code: 0 all safe · 1 something is exposed · 2 something could not be tested ("review" lines don't change it).
-Runs locally. Sends nothing anywhere except TLS connections to the incidents' public test hosts and two control sites.
-Changes nothing.`);
+Runs locally. Sends nothing anywhere except TLS connections to the incidents' public test hosts and two control sites
+(and what your container engine sends, if DOCKER_HOST or the docker context points at a remote one). Changes nothing.`);
   process.exit(0);
 }
 const incidents = readdirSync(join(LIB, 'incidents')).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readFileSync(join(LIB, 'incidents', f), 'utf8'))).sort((a, b) => b.date.localeCompare(a.date));
@@ -65,7 +74,8 @@ const chosen = val('--incident') ? incidents.filter((i) => i.id === val('--incid
 if (!chosen.length) { console.error(`unknown incident "${clean(val('--incident'))}" (try --list)`); process.exit(2); }
 
 const json = flag('--json');
-const roots = []; args.forEach((a, i) => { if (a === '--paths') roots.push(args[i + 1].replace(/^~/, homedir())); });
+// absolute before anything runs: programs run from /, where a relative folder would mean something else
+const roots = []; args.forEach((a, i) => { if (a === '--paths') roots.push(resolve(args[i + 1].replace(/^~/, homedir()))); });
 if (!roots.length) { for (const d of ['Development', 'code', 'src', 'projects', 'Projects', 'dev', 'work', 'Sites']) roots.push(join(homedir(), d)); roots.push('/var/www'); }
 
 const tty = process.stdout.isTTY && !json;

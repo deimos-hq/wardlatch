@@ -7,7 +7,7 @@
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -321,4 +321,102 @@ test('a container engine that hangs or fails is UNKNOWN (exit 2), never "not run
   const stopped = engine('stopped', "echo 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?' >&2; exit 1");
   assert.deepEqual(rows(trust(stopped)), [], 'a daemon that is not running has no containers to check');
   assert.match(trust(stopped, false).out, /docker: not running, so no running containers to check/);
+});
+
+test('with PATH unset, git is never looked up in the current folder: a git planted there does not run', () => {
+  // 0.1.7's PATH filter turned an unset PATH into an empty one, and a bare `git` then resolved in the current folder (a
+  // project, when started with npx). PATH is now /usr/bin:/bin when nothing is left, and git runs by its absolute path.
+  const cwd = join(dir, 'nopath-cwd'), marker = join(dir, 'nopath-ran'); mkdirSync(cwd, { recursive: true });
+  writeFileSync(join(cwd, 'git'), `#!/bin/sh\necho ran > "${marker}"\nexit 1\n`, { mode: 0o755 });
+  const root = join(dir, 'nopath'); const repo = gitRepo(join(root, 'app'));
+  mkdirSync(join(root, 'app', '.github', 'workflows'), { recursive: true }); writeFileSync(join(root, 'app', '.github', 'workflows', 'ci.yml'), 'on: push\n'); repo.commit();
+  const nm = join(dir, 'nopath-proj', 'node_modules', '.bin'); mkdirSync(nm, { recursive: true });
+  for (const PATH of [undefined, nm]) {
+    const env = { HOME: dir, ...(PATH ? { PATH } : {}) };
+    const r = spawnSync(process.execPath, [BIN, '--incident', 'github-actions-2026-10', '--json', '--paths', root], { encoding: 'utf8', env, cwd });
+    assert.equal(existsSync(marker), false, `the git in the current folder ran (PATH ${PATH ?? 'unset'})`);
+    if (['/usr/bin/git', '/bin/git'].some(existsSync)) assert.deepEqual(JSON.parse(r.stdout).results.map((x) => [x.status, x.file]), [['REVIEW', '.github/workflows/ci.yml']], r.stderr);
+  }
+});
+
+test('relative --paths and relative CA settings are made absolute before anything runs from /', () => {
+  // Programs run from /. A relative root made a found environment's bundle `--cacert rel/.venv/...`, which curl could not
+  // open from /, so every test host looked refused and the environment read SAFE (wardlatch.test.mjs probes that case).
+  const { offline } = preloads();
+  const work = join(dir, 'relwork'), env = join(work, 'rel', 'app', '.venv'), sp = join(env, 'lib', 'python3.12', 'site-packages');
+  mkdirSync(join(env, 'bin'), { recursive: true }); mkdirSync(join(sp, 'certifi'), { recursive: true });
+  writeFileSync(join(env, 'pyvenv.cfg'), 'home = /usr/bin\n'); writeFileSync(join(env, 'bin', 'python'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  writeFileSync(join(sp, 'certifi', 'cacert.pem'), 'not a real bundle\n');
+  // a curl the offline stand-in lets discover() see (it hides /usr/bin), and a node that records the CA setting it got
+  const bin = join(dir, 'relbin'), log = join(dir, 'rel-node-env'); mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'curl'), '#!/bin/sh\necho "curl 8.7.1"\nexit 1\n', { mode: 0o755 });
+  writeFileSync(join(bin, 'node'), `#!/bin/sh\necho "SSL_CERT_FILE=$SSL_CERT_FILE" >> "${log}"\necho v26.12.1\n`, { mode: 0o755 });
+  const r = run(['--incident', 'emudhra-2026-10', '--json', '--no-containers', '--paths', 'rel'], { PATH: bin, SSL_CERT_FILE: 'certs/mine.pem' }, ['--require', offline], work);
+  const row = JSON.parse(r.out).results.find((x) => x.env);
+  const real = realpathSync(work);   // the folder as the started process sees it (macOS: /private/var/...)
+  assert.ok(row, r.err);
+  assert.equal(row.env, join(real, 'rel', 'app', '.venv'));
+  assert.deepEqual(row.args, ['--cacert', join(real, 'rel', 'app', '.venv', 'lib', 'python3.12', 'site-packages', 'certifi', 'cacert.pem')]);
+  assert.notEqual(row.status, 'SAFE');
+  assert.match(readFileSync(log, 'utf8'), new RegExp(`^SSL_CERT_FILE=${join(real, 'certs', 'mine.pem').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
+});
+
+test('a Go toolchain pinned with GOTOOLCHAIN is checked too: an old pinned Go is EXPOSED even when the installed go is fixed', () => {
+  // GOTOOLCHAIN=go1.26.5 makes every go command run go1.26.5. Wardlatch asks go its version with GOTOOLCHAIN=local, so
+  // it reads the setting itself, from the environment or from the file `go env -w` writes.
+  const { offline } = preloads();
+  const bin = join(dir, 'gopin'); mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'go'), '#!/bin/sh\necho "go version go1.27.3 darwin/arm64"\n', { mode: 0o755 });
+  const goenv = join(dir, 'gopin-env'); writeFileSync(goenv, 'GOPROXY=direct\nGOTOOLCHAIN=go1.26.5+auto\n');
+  const goRow = (env) => {
+    const r = run(['--incident', 'emudhra-2026-10', '--json', '--no-containers', '--paths', join(dir, 'nothing-here')], { PATH: bin, GOENV: join(dir, 'no-goenv'), GOTOOLCHAIN: '', ...env }, ['--require', offline]);
+    return JSON.parse(r.out).results.find((x) => x.binary === 'go');
+  };
+  assert.equal(goRow({}).status, 'SAFE', 'the installed go 1.27.3 alone is fixed');
+  for (const env of [{ GOTOOLCHAIN: 'go1.26.5' }, { GOENV: goenv }]) {
+    const row = goRow(env);
+    assert.equal(row.status, 'EXPOSED', JSON.stringify(env));
+    assert.match(row.reason, /^GOTOOLCHAIN selects go1\.26\.5(\+auto)?, which every go command runs instead of this go 1\.27\.3: fixed in 1\.26\.10$/);
+  }
+  assert.equal(goRow({ GOTOOLCHAIN: 'go1.27.4' }).status, 'SAFE');
+  assert.equal(goRow({ GOTOOLCHAIN: 'local' }).status, 'SAFE');
+  const odd = goRow({ GOTOOLCHAIN: 'mygo' });
+  assert.equal(odd.status, 'UNKNOWN'); assert.match(odd.reason, /GOTOOLCHAIN selects mygo.*that toolchain was not checked/);
+});
+
+test('log.showRoot=false in a repository\'s config does not hide a workflow added in its first commit', () => {
+  const root = join(dir, 'showroot'), path = join(root, 'app'); const repo = gitRepo(path);
+  mkdirSync(join(path, '.github', 'workflows'), { recursive: true }); writeFileSync(join(path, '.github', 'workflows', 'ci.yml'), 'on: push\n'); repo.commit();
+  execFileSync('git', ['-C', path, 'config', 'log.showRoot', 'false']);
+  const r = run(['--incident', 'github-actions-2026-10', '--json', '--paths', root]);
+  assert.deepEqual(JSON.parse(r.out).results.map((x) => [x.status, x.file]), [['REVIEW', '.github/workflows/ci.yml']]);
+});
+
+test('git and the container engine run from / too', () => {
+  const bin = join(dir, 'cwd-recorders'), log = join(dir, 'cwd-recorded'); mkdirSync(bin, { recursive: true });
+  for (const p of ['git', 'docker']) writeFileSync(join(bin, p), `#!/bin/sh\necho "${p} cwd=$(pwd)" >> "${log}"\nexit 0\n`, { mode: 0o755 });
+  const root = join(dir, 'cwd-root'); mkdirSync(join(root, 'app', '.git'), { recursive: true });
+  const project = join(dir, 'cwd-project'); mkdirSync(project, { recursive: true });
+  const { offline } = preloads();
+  run(['--incident', 'github-actions-2026-10', '--paths', root], { PATH: bin }, [], project);
+  run(['--incident', 'emudhra-2026-10', '--paths', join(dir, 'nothing-here')], { PATH: bin }, ['--require', offline], project);
+  const lines = readFileSync(log, 'utf8').trim().split('\n');
+  assert.ok(lines.some((l) => l.startsWith('git ')) && lines.some((l) => l.startsWith('docker ')), lines.join('\n'));
+  for (const l of lines) assert.match(l, /^\S+ cwd=\/$/, l);
+});
+
+test('a repository git refuses to open (another user\'s) is UNKNOWN for both git checks (exit 2); an empty repository is clean', () => {
+  const root = join(dir, 'owner'), path = join(root, 'app'); const repo = gitRepo(path);
+  mkdirSync(join(path, '.github', 'workflows'), { recursive: true }); writeFileSync(join(path, '.github', 'workflows', 'ci.yml'), 'on: push\n'); repo.commit();
+  for (const [id, kind] of [['github-actions-2026-10', 'workflow'], ['committed-keys-2026-10', 'secret']]) {
+    const r = run(['--incident', id, '--json', '--paths', root], { GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' });
+    assert.equal(r.code, 2, id);
+    assert.deepEqual(JSON.parse(r.out).results.map((x) => [x.kind, x.status, x.repo]), [[kind, 'UNKNOWN', path]], id);
+    assert.doesNotMatch(run(['--incident', id, '--paths', root], { GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' }).out, /SAFE/, id);
+  }
+  const empty = join(dir, 'empty'); gitRepo(join(empty, 'fresh'));
+  const wf = run(['--incident', 'github-actions-2026-10', '--paths', empty]);
+  assert.equal(wf.code, 0, wf.out); assert.match(wf.out, /SAFE {5}no workflow files added since 2026-09-01 in 1 local repository\n/);
+  const keys = run(['--incident', 'committed-keys-2026-10', '--paths', empty]);
+  assert.equal(keys.code, 0, keys.out); assert.match(keys.out, /SAFE {5}no committed keys found in the files of 1 local repository /);
 });
