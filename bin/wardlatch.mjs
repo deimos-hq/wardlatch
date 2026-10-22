@@ -91,12 +91,16 @@ const HOME = (() => {
   }
   return homedir();
 })();
+// every module that resolves ~ (os.homedir() reads $HOME) then searches the same home: under sudo, the person's
+process.env.HOME = HOME;
 const explicitPaths = args.includes('--paths');
 const roots = []; args.forEach((a, i) => { if (a === '--paths') roots.push(resolve(args[i + 1].replace(/^~/, HOME))); });
 if (!roots.length) { for (const d of ['Development', 'code', 'src', 'projects', 'Projects', 'dev', 'work', 'Sites']) roots.push(join(HOME, d)); roots.push('/var/www', '/srv/www', '/Library/WebServer/Documents'); }
 // which of them exist and can be searched; one that exists but can't be opened is a gap, reported per check
 const searchable = roots.filter((r) => pathState(r) === 'dir');
 const lockedRoots = roots.filter((r) => pathState(r) === 'denied');
+// a folder given with --paths that isn't there was not searched: an UNKNOWN row of its own, even beside others that are
+const missingRoots = explicitPaths ? roots.filter((r) => pathState(r) === 'gone') : [];
 
 const tty = process.stdout.isTTY && !json;
 const c = (code, s) => (tty ? `\x1b[${code}m${clean(s)}\x1b[0m` : clean(s));
@@ -116,7 +120,13 @@ function allClear(results, inc, kind, text, searched) {
   print('UNKNOWN', reason);
 }
 // A folder that exists but couldn't be opened is UNKNOWN, never "nothing here".
+const hostRowsOf = (results) => results.filter((r) => !['container', 'containers', 'search', 'binary'].includes(r.kind)).length;
+
 function gaps(results, inc, kind, dirs) {
+  for (const d of missingRoots) {
+    results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason: 'given with --paths, but not there, so it was not searched' });
+    print('UNKNOWN', short(d)); note('33', 'given with --paths, but not there, so it was not searched');
+  }
   for (const d of dirs) {
     results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason: 'could not be opened, so it was not searched: run Wardlatch with sudo to include it' });
     print('UNKNOWN', short(d)); note('33', 'could not be opened, so it was not searched: run Wardlatch with sudo to include it');
@@ -175,7 +185,8 @@ for (const inc of chosen) {
     const impostors = canaries.filter((x) => x.impostor);
     if (impostors.length) note('33', `${impostors.length} test host${impostors.length === 1 ? '' : 's'} answered with a certificate from "${impostors[0].impostor}", not the compromised chain: something on this network (a TLS-inspecting firewall, a DNS filter) is in the way, and those hosts were not used`);
     const rootsPem = join(LIB, 'incidents', inc.rootsPem);
-    for (const rt of discover({ roots })) {
+    const deniedVenvs = [...lockedRoots];
+    for (const rt of discover({ roots: searchable, denied: deniedVenvs })) {
       const r = await check(rt, canaries, { rootsPem, controlUrl: inc.advisory });
       const row = { incident: inc.id, ...rt, ...r, fix: r.status === 'EXPOSED' ? fixFor(rt) : undefined };
       results.push(row);
@@ -185,13 +196,25 @@ for (const inc of chosen) {
       if (r.note) note('2', r.note);
       if (row.fix) note('2', `fix: ${row.fix}`);
     }
+    gaps(results, inc, 'search', deniedVenvs);
+    // the test hosts' certificates expire: after that a container (which has no forced-roots control) would read every
+    // refusal as SAFE, so containers are UNKNOWN once the incident's notAfter has passed
+    const expired = inc.canaryNotAfter && Date.now() > Date.parse(inc.canaryNotAfter);
+    if (expired) note('33', `the test hosts' certificates expired on ${inc.canaryNotAfter}: containers can't be tested against them`);
+    // DOCKER_HOST and the like are not followed (lib/run.mjs): the engine they name was not checked, whatever answers locally
+    const hostVars = ['DOCKER_HOST', 'CONTAINER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG', 'CONTAINER_CONNECTION'].filter((k) => process.env[k]);
+    if (hostVars.length && !flag('--no-containers')) {
+      const reason = `${hostVars.join(', ')} ${hostVars.length === 1 ? 'is' : 'are'} set, and not followed (whoever starts Wardlatch can point ${hostVars.length === 1 ? 'it' : 'them'} at any host): the containers there were not checked. Select the engine with \`docker context use\` instead, or pass --no-containers`;
+      results.push({ incident: inc.id, kind: 'containers', status: 'UNKNOWN', reason });
+      print('UNKNOWN', 'containers named by the environment'); note('33', reason);
+    }
     // Running containers keep their image's trust list, whatever the host has.
     for (const engine of flag('--no-containers') ? [] : ['docker', 'podman'].filter((e) => findOnPath(e))) {
       const list = listContainers(engine);
       if (list === null) { note('2', `${engine}: not running, so no running containers to check`); continue; }
       if (list.error) { results.push({ incident: inc.id, kind: 'containers', engine, status: 'UNKNOWN', reason: list.error }); print('UNKNOWN', `${engine} containers`); note('33', list.error); continue; }
       for (const ct of list) {
-        const r = await checkContainer(engine, ct, canaries, { controlUrl: inc.advisory });
+        const r = expired ? { status: 'UNKNOWN', trusted: [], tested: 0, reason: `the test hosts' certificates expired on ${inc.canaryNotAfter}, so a refusal here would prove nothing` } : await checkContainer(engine, ct, canaries, { controlUrl: inc.advisory });
         const row = { incident: inc.id, kind: 'container', engine, container: ct.name, image: ct.image, ...r, fix: r.status === 'EXPOSED' ? inc.fixes.container : undefined };
         results.push(row);
         print(r.status, `${engine} ${ct.name}  ${ct.image}${r.tool ? `  (via ${r.tool})` : ''}`, r.status === 'EXPOSED' ? c('31', `  trusts ${r.trusted.length}/${r.tested}`) : '');
@@ -206,25 +229,29 @@ for (const inc of chosen) {
   // A trust check that found nothing to test is not an all-clear: possible anywhere, and always so for the machine itself
   // on Windows, whose program names discover() doesn't look for (a container row must not hide that). Up to 0.1.6
   // nothing was printed here, and the exit code could be 0.
-  if (inc.type === 'trust' && (platform() === 'win32' || !results.length)) {
+  // Counted from the host's own runtime rows: a container row used to stand in for them (0.1.8: one container SAFE,
+  // nothing tested on the machine, exit 0).
+  if (inc.type === 'trust' && (platform() === 'win32' || !hostRowsOf(results))) {
     const reason = platform() !== 'win32' ? 'no runtime was found to test'
-      : results.length ? 'the runtimes on this machine were not checked: Windows is not supported yet' : 'not checked on Windows yet (Windows is not supported)';
+      : results.some((r) => r.kind === 'container') ? 'the runtimes on this machine were not checked: Windows is not supported yet' : 'not checked on Windows yet (Windows is not supported)';
     results.push({ incident: inc.id, kind: 'runtimes', status: 'UNKNOWN', reason });
     print('UNKNOWN', reason);
   }
 
-  // every copy of each program on PATH (a fixed one first used to hide a vulnerable one behind it)
-  for (const rule of inc.binaries ?? []) {
-    for (const r of checkBinaryAll(rule)) {
+  // every copy of each program on PATH (a fixed one first used to hide a vulnerable one behind it); a program that
+  // isn't there gets its own receipt row naming PATH (go and cloudflared in the trust incident used to get none)
+  // on Windows (not supported) program checks look in macOS and Linux places only: not checked, never "not found"
+  for (const rule of platform() === 'win32' ? [] : inc.binaries ?? []) {
+    const rows = checkBinaryAll(rule);
+    for (const r of rows) {
       const row = { incident: inc.id, kind: 'binary', binary: rule.binary, ...r, fix: r.status !== 'SAFE' ? rule.fix : undefined };
       results.push(row);
       print(r.status, `${rule.binary} ${r.version}  ${short(r.bin)}`);
       if (r.reason) note({ EXPOSED: '31', SAFE: '2' }[r.status] ?? '33', r.reason);
       if (r.status === 'EXPOSED') note('2', `fix: ${rule.fix}`);
     }
+    if (!rows.length) allClear(results, inc, 'binary', `${rule.binary} not found on PATH (searched: ${short(process.env.PATH ?? '')})`, [`PATH: ${process.env.PATH ?? ''}`, ...(rule.tmpTrace ? tempDirs() : [])]);
   }
-  // only PATH was searched: "not installed" claimed more than that
-  if (inc.type === 'binaries' && !results.length) allClear(results, inc, 'binary', `${inc.binaries.map((b) => b.binary).join(', ')} not found on PATH (searched: ${short(process.env.PATH ?? '')})`, [`PATH: ${process.env.PATH ?? ''}`, ...inc.binaries.filter((b) => b.tmpTrace).flatMap(() => tempDirs())]);
 
   // A repository git could not read (a partial clone missing what git would have to fetch, an ownership refusal, a
   // timeout) is UNKNOWN with git's reason, and is left out of the count in the SAFE line: it was not looked at.
@@ -306,6 +333,7 @@ for (const inc of chosen) {
       if (hits.error) { unread('secret', repo, hits.error); continue; }
       repos++;
       for (const h of hits) {
+        if (h.unread) { results.push({ incident: inc.id, kind: 'secret', status: 'UNKNOWN', repo, file: h.file, reason: h.unread }); print('UNKNOWN', `${short(repo)}/${h.file}`); note('33', h.unread); continue; }
         results.push({ incident: inc.id, kind: 'secret', status: 'REVIEW', repo, file: h.file, line: h.line, type: h.type, masked: h.masked, fix: inc.fix });
         print('REVIEW', `${short(repo)}/${h.file}:${h.line}`, c('2', `  ${h.type} ${h.masked}`));
       }
@@ -323,7 +351,7 @@ for (const inc of chosen) {
       if (f.status === 'EXPOSED') note('2', `fix: ${f.fix}`);
     }
     gaps(results, inc, 'wordpress', denied);
-    if (!sites.length && !denied.length) allClear(results, inc, 'wordpress', `no WordPress installs found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched (run it on the server, or pass --paths)`, searchable);
+    if (!results.length) allClear(results, inc, 'wordpress', `no WordPress installs found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched (run it on the server, or pass --paths)`, searchable);
     else if (results.some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.reviewFix}`);
   }
   if (inc.type === 'headers') {

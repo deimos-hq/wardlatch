@@ -93,7 +93,7 @@ test('workflow files added to a local repository are listed to REVIEW, and do no
   const clean = run(['--incident', 'github-actions-2026-10', '--paths', join(dir, 'wf-empty')]);
   assert.equal(clean.code, 0); assert.match(clean.out, /SAFE {5}no workflow files added since 2026-09-01 in 0 local repositories/);
   const missing = run(['--incident', 'github-actions-2026-10', '--paths', join(dir, 'nothing-here')]);
-  assert.equal(missing.code, 2); assert.match(missing.out, /UNKNOWN {2}none of the folders given with --paths exist/); assert.doesNotMatch(missing.out, /^SAFE/m);
+  assert.equal(missing.code, 2); assert.match(missing.out, /given with --paths, but not there, so it was not searched/); assert.doesNotMatch(missing.out, /^SAFE/m);
 });
 
 test('a committed key is reported by type, file and line, and the key itself is never printed', () => {
@@ -278,8 +278,19 @@ require('node:module').syncBuiltinESMExports();
 `);
   // online: every test host "answers" the reachability handshake with the compromised chain's issuer (no real
   // connection), so the probes run, against the stand-in runtimes on the test's own PATH
-  writeFileSync(online, `const fs = require('node:fs'), tls = require('node:tls'), { EventEmitter } = require('node:events');
+  writeFileSync(online, `const fs = require('node:fs'), tls = require('node:tls'), net = require('node:net'), http = require('node:http'), https = require('node:https');
+const cp = require('node:child_process'), path = require('node:path'), { EventEmitter } = require('node:events');
+// hide the system's own runtimes from every way of looking, and refuse every real connection and every network program
+// outside this test's folder: these tests never reach the internet
+const SYS = /^\\/(usr|etc|opt|bin|System|Library)\\//;
 const exists = fs.existsSync;
+fs.existsSync = (p) => !SYS.test(String(p)) && exists(p);
+for (const k of ['statSync', 'lstatSync', 'realpathSync', 'readdirSync', 'openSync']) { const o = fs[k]; fs[k] = (p, ...a) => { if (SYS.test(String(p))) throw Object.assign(new Error('hidden by the test'), { code: 'ENOENT' }); return o(p, ...a); }; }
+net.connect = net.createConnection = () => { throw new Error('no network in these tests'); };
+http.request = http.get = https.request = https.get = () => { throw new Error('no network in these tests'); };
+const DIR = ${JSON.stringify(dir)};
+const guard = (orig) => function (file, ...rest) { if (String(file) !== process.execPath && !String(file).startsWith(DIR + '/')) throw new Error('not run in these tests: ' + file); return orig.call(this, file, ...rest); };
+for (const k of ['execFile', 'execFileSync', 'spawn', 'spawnSync']) cp[k] = guard(cp[k]);
 tls.connect = (...a) => { const cb = a.find((x) => typeof x === 'function'), s = new EventEmitter(); s.end = s.destroy = () => s; s.getPeerCertificate = () => ({ issuer: { CN: 'EM DV TLS CA - G3B' } }); process.nextTick(() => cb && cb()); return s; };
 require('node:module').syncBuiltinESMExports();
 `);
@@ -298,11 +309,12 @@ test('Windows (not supported): the trust check is UNKNOWN, never a silent all-cl
   const env = { PATH: join(dir, 'empty-path') }, where = ['--no-containers', '--paths', join(dir, 'nothing-here')];
   const trust = run(['--incident', 'emudhra-2026-10', '--json', ...where], env, ['--require', win32]);
   assert.equal(trust.code, 2, trust.err);
-  assert.deepEqual(JSON.parse(trust.out).results, [{ incident: 'emudhra-2026-10', kind: 'runtimes', status: 'UNKNOWN', reason: 'not checked on Windows yet (Windows is not supported)' }]);
+  assert.deepEqual(JSON.parse(trust.out).results.filter((x) => x.kind === 'runtimes'), [{ incident: 'emudhra-2026-10', kind: 'runtimes', status: 'UNKNOWN', reason: 'not checked on Windows yet (Windows is not supported)' }]);
+  assert.ok(!JSON.parse(trust.out).results.some((x) => x.status === 'SAFE'), 'nothing reads SAFE on Windows');
   assert.match(run(['--incident', 'emudhra-2026-10', ...where], env, ['--require', win32]).out, /UNKNOWN {2}not checked on Windows yet \(Windows is not supported\)/);
   for (const id of ['php-2026-10', 'ovhcloud-cli-2026-10']) {
     const r = run(['--incident', id, '--json', ...where], env, ['--require', win32]);
-    assert.equal(r.code, 2, id); assert.deepEqual(JSON.parse(r.out).results.map((x) => [x.status, x.reason]), [['UNKNOWN', 'not checked on Windows yet (Windows is not supported)']], id);
+    assert.equal(r.code, 2, id); assert.deepEqual(JSON.parse(r.out).results.filter((x) => x.kind !== 'search').map((x) => [x.status, x.reason]), [['UNKNOWN', 'not checked on Windows yet (Windows is not supported)']], id);
   }
   // a container found on Windows must not hide that the machine's own runtimes were not checked
   const eng = join(dir, 'win-engine'); mkdirSync(eng, { recursive: true });
@@ -316,11 +328,11 @@ test('Windows (not supported): the trust check is UNKNOWN, never a silent all-cl
   const tmpd = join(dir, 'wintmp'); mkdirSync(join(tmpd, 'envchecker-1760900000'), { recursive: true });
   const traced = run(['--incident', 'ovhcloud-cli-2026-10', '--json', ...where], { ...env, TMPDIR: tmpd, TMP: tmpd, TEMP: tmpd }, ['--require', win32]);
   assert.equal(traced.code, 1, traced.err);
-  assert.deepEqual(JSON.parse(traced.out).results.map((x) => x.status), ['EXPOSED']);
+  assert.deepEqual(JSON.parse(traced.out).results.filter((x) => x.kind !== 'search').map((x) => x.status), ['EXPOSED']);
   // elsewhere, finding no runtime at all is UNKNOWN too, with its own reason
   const none = run(['--incident', 'emudhra-2026-10', '--json', ...where], env, ['--require', offline]);
   assert.equal(none.code, 2, none.err);
-  assert.deepEqual(JSON.parse(none.out).results.map((x) => [x.kind, x.status, x.reason]), [['runtimes', 'UNKNOWN', 'no runtime was found to test']]);
+  assert.deepEqual(JSON.parse(none.out).results.filter((x) => x.kind === 'runtimes').map((x) => [x.kind, x.status, x.reason]), [['runtimes', 'UNKNOWN', 'no runtime was found to test']]);
 });
 
 test('a container engine that hangs or fails is UNKNOWN (exit 2), never "not running"; a stopped daemon stays a note', () => {
