@@ -47,9 +47,9 @@ Two checks keep the answer honest:
 
 - **Is the test host up?** Each host is first reached with verification off. If none answers, the result is
   *could not be tested*, never *safe*.
-- **Could this check have failed?** Each runtime is first run once with the compromised roots forced in. If it can't
-  connect even then, the probe can't see exposure on that runtime, and the result is *could not be tested*, never
-  *safe*.
+- **Could this check have failed?** Each runtime is first run once per compromised root, with only that root forced in,
+  against a test host chained to it. If it can't connect even then, the probe can't see exposure on that runtime, and
+  the result is *could not be tested*, never *safe*. So is a root none of whose test hosts answered.
 
 ## What it looks at
 

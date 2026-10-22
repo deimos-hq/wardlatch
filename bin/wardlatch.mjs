@@ -89,7 +89,8 @@ const json = flag('--json');
 let sudoHomeMissing = '';
 const HOME = (() => {
   const u = process.env.SUDO_USER;
-  if (u && process.getuid?.() === 0) {
+  // root running sudo (SUDO_USER=root) is root's own home
+  if (u && u !== 'root' && process.getuid?.() === 0) {
     // a name with a slash or .. can't be a home folder's name (a directory user can be ada@corp.example)
     const h = /^[\w.@-]+$/.test(u) && !u.includes('..') ? (platform() === 'darwin' ? `/Users/${u}` : `/home/${u}`) : '';
     if (h && pathState(h) === 'dir') return h;
@@ -143,7 +144,16 @@ function gaps(results, inc, kind, dirs) {
 }
 
 // NODE_OPTIONS words a probe doesn't need to measure trust, and that change no trust: memory, warnings, traces
-const BENIGN_NODE_OPTION = /^--(?:max-old-space-size|max-semi-space-size|max-http-header-size|stack-size|stack-trace-limit|no-warnings|no-deprecation|enable-source-maps|trace-warnings|trace-deprecation|trace-uncaught|unhandled-rejections)(?:=[\w.-]*)?$/;
+// (Node takes either spelling of a name, --max_old_space_size too)
+const BENIGN_NODE_OPTION_RE = /^--(?:max-old-space-size|max-semi-space-size|max-http-header-size|stack-size|stack-trace-limit|no-warnings|no-deprecation|enable-source-maps|trace-warnings|trace-deprecation|trace-uncaught|unhandled-rejections|dns-result-order|openssl-legacy-provider)(?:=[\w.-]*)?$/;
+const benignNodeOption = (w) => { const i = w.indexOf('='); return BENIGN_NODE_OPTION_RE.test((i < 0 ? w : w.slice(0, i)).replace(/_/g, '-') + (i < 0 ? '' : w.slice(i))); };
+// curl's start-up file: the probe's curl gets only HOME, so it reads ~/.curlrc or ~/.config/curlrc. A file the person's
+// curl would read through CURL_HOME or XDG_CONFIG_HOME, and the probe's would not, is trust (or `insecure`) not tested.
+const curlrcsNotRead = (env = process.env) => {
+  const probeReads = new Set([join(HOME, '.curlrc'), join(HOME, '.config', 'curlrc')]);
+  return [env.CURL_HOME, env.XDG_CONFIG_HOME].filter(Boolean).flatMap((b) => [join(b, '.curlrc'), join(b, 'curlrc'), join(b, '.config', 'curlrc')])
+    .filter((f, i, all) => all.indexOf(f) === i && !probeReads.has(f) && pathState(f) === 'file');
+};
 // DOCKER_HOST and the like are not followed (lib/run.mjs): the engine they name was not checked, whatever answers
 // locally. Every check that asks an engine (running containers, local images) says so in an UNKNOWN row.
 const hostVars = ['DOCKER_HOST', 'CONTAINER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG', 'CONTAINER_CONNECTION'].filter((k) => process.env[k]);
@@ -211,10 +221,9 @@ for (const inc of chosen) {
     // An UNKNOWN row (in --json too), not only a note: a CA added through NODE_OPTIONS --require (mac-ca, syswide-cas)
     // is trust the person's Node has and the probe doesn't, and d59e114 read SAFE, exit 0 with one in place.
     const notPassed = [
-      ...(droppedNodeOptions().filter((w) => !BENIGN_NODE_OPTION.test(w)).length ? [`NODE_OPTIONS (${droppedNodeOptions().join(' ').slice(0, 120)})`] : []),
+      ...(droppedNodeOptions().filter((w) => !benignNodeOption(w)).length ? [`NODE_OPTIONS (${droppedNodeOptions().join(' ').slice(0, 120)})`] : []),
       ...(process.env.OPENSSL_CONF ? ['OPENSSL_CONF'] : []),
-      ...[process.env.CURL_HOME && join(process.env.CURL_HOME, '.curlrc'), process.env.XDG_CONFIG_HOME && join(process.env.XDG_CONFIG_HOME, 'curlrc'), process.env.XDG_CONFIG_HOME && join(process.env.XDG_CONFIG_HOME, '.curlrc')]
-        .filter((f) => f && pathState(f) === 'file' && f !== join(HOME, '.curlrc')).map((f) => `curl's start-up file ${short(f)}`),
+      ...curlrcsNotRead().map((f) => `curl's start-up file ${short(f)}`),
     ];
     if (notPassed.length) {
       const reason = `${notPassed.join(', ')}: set in this environment and not given to the probes, since ${notPassed.length === 1 ? 'it' : 'they'} can load code or point a program at files the caller chose. Trust added that way was not tested`;

@@ -45,7 +45,9 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   forced in (with both, a chain could finish at the other root), and a runtime or container is SAFE only when every
   root had a host that answered.
 - **A trust setting the probe doesn't get could leave a SAFE that wasn't tested.** A CA added through `NODE_OPTIONS
-  --require` (mac-ca, syswide-cas), `OPENSSL_CONF` or a curl start-up file named by `CURL_HOME` is now an UNKNOWN row.
+  --require` (mac-ca, syswide-cas), `OPENSSL_CONF`, or a curl start-up file the person's curl reads through `CURL_HOME`
+  or `XDG_CONFIG_HOME` and the probe's would not, is now an UNKNOWN row (options that add no trust, such as
+  `--max-old-space-size` in either spelling, don't count). A trust probe also gets `NIX_SSL_CERT_FILE`.
   The person's own `NODE_TLS_REJECT_UNAUTHORIZED` reaches the Node probe, so a Node run with checking off reads
   EXPOSED.
 - **`DOCKER_HOST` set while a local engine answered read SAFE in the LiteLLM image check**, which never looked at the
