@@ -77,7 +77,7 @@ test('certificate checking is never switched off, except the one reachability ha
   const all = SHIPPED.map((f) => [f, read(f)]);
   const off = all.flatMap(([f, src]) => (src.match(/rejectUnauthorized\s*:\s*false/g) ?? []).map(() => f));
   assert.deepEqual(off, ['lib/probe.mjs'], 'exactly one: reachable() in lib/probe.mjs');
-  assert.match(read('lib/probe.mjs'), /export function reachable[\s\S]*?rejectUnauthorized: false[\s\S]*?s\.end\(\); res\(true\)/);
+  assert.match(read('lib/probe.mjs'), /export function reachable[\s\S]*?rejectUnauthorized: false[\s\S]*?s\.end\(\); res\(\{ up: true/);
   for (const [f, src] of all) {
     assert.doesNotMatch(src, /NODE_TLS_REJECT_UNAUTHORIZED|--insecure|['"\s]-k['"\s]|--no-check-certificate|CERT_NONE|_create_unverified_context|verify\s*=\s*False|check_hostname\s*=\s*False/, f);
   }

@@ -74,8 +74,8 @@ script from Jamf, Kandji or Intune.
 
 Wardlatch runs on your machine. It sends nothing anywhere: no telemetry, no results, no machine details. The only
 network traffic is TLS connections to the incident's public test hosts and two control sites (the advisory's own
-page, and a self-signed test site for containers), and your own container engine, wherever `DOCKER_HOST` or the
-current docker context points (`--no-containers` skips it). It changes nothing on your system; each result comes with the fix
+page, and a self-signed test site for containers), and your own container engine, wherever the current docker context points (`--no-containers` skips it; `DOCKER_HOST` is
+not followed, since whoever starts Wardlatch can set it to any host). It changes nothing on your system; each result comes with the fix
 for you to apply. What it can and can't promise, and why: [ASSURANCE_CASE.md](ASSURANCE_CASE.md).
 
 ## Reference

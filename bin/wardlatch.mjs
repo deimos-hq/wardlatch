@@ -5,19 +5,20 @@
 // certificate authority, by asking each one to connect to public test hosts signed with the compromised keys.
 // Runs locally. Sends nothing anywhere except TLS connections to those test hosts and two control sites. Changes nothing.
 // A free tool from Deimos AI LLC · Apache-2.0
-import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname, delimiter, isAbsolute, resolve } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { discover } from '../lib/discover.mjs';
 import { check, reachable } from '../lib/probe.mjs';
-import { checkBinary, findOnPath, tmpTraces } from '../lib/binaries.mjs';
+import { checkBinaryAll, findOnPath, tmpTraces, tempDirs } from '../lib/binaries.mjs';
 import { checkVersionFiles, sitePackagesDirs, checkSitePackages, localImageDigests, checkImages } from '../lib/installs.mjs';
 import { listContainers, checkContainer } from '../lib/containers.mjs';
 import { reposUnder, workflowsAddedSince } from '../lib/workflows.mjs';
 import { scanRepo } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
 import { scanHeaders } from '../lib/headers.mjs';
+import { pathState, readText, listDir } from '../lib/files.mjs';
+import { safe } from '../lib/report.mjs';
 
 // npx puts the current project's node_modules/.bin, and each parent folder's, first on PATH. Wardlatch finds git,
 // python3, node, curl, php, go and the container engines on PATH and runs some of them, so a project could otherwise
@@ -38,7 +39,7 @@ for (const k of ['SSL_CERT_FILE', 'SSL_CERT_DIR', 'CURL_CA_BUNDLE', 'NODE_EXTRA_
 }
 
 const LIB = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib');
-const VERSION = JSON.parse(readFileSync(join(LIB, '..', 'package.json'), 'utf8')).version;
+const VERSION = JSON.parse(readText(join(LIB, '..', 'package.json'), 1024 * 1024)).version;
 const args = process.argv.slice(2);
 const flag = (f) => args.includes(f);
 const val = (f) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : undefined; };
@@ -70,26 +71,57 @@ Run it from your home folder, not inside a project: npx also starts Wardlatch wi
 node_modules/.bin/node if it has one, and applies its .npmrc; Wardlatch can't undo either.
 Exit code: 0 all safe · 1 something is exposed · 2 something could not be tested ("review" lines don't change it).
 Runs locally. Sends nothing anywhere except TLS connections to the incidents' public test hosts and two control sites
-(and what your container engine sends, if DOCKER_HOST or the docker context points at a remote one). Changes nothing.`);
+(and what your container engine sends, if your docker context points at a remote one; DOCKER_HOST is not followed). Changes nothing.`);
   process.exit(0);
 }
-const incidents = readdirSync(join(LIB, 'incidents')).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readFileSync(join(LIB, 'incidents', f), 'utf8'))).sort((a, b) => b.date.localeCompare(a.date));
+const incidents = (listDir(join(LIB, 'incidents')).entries ?? []).map((e) => e.name).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readText(join(LIB, 'incidents', f), 4 * 1024 * 1024))).sort((a, b) => b.date.localeCompare(a.date));
 if (flag('--list')) { for (const i of incidents) console.log(`${i.id}  ${i.date}  ${i.title}`); process.exit(0); }
 const chosen = val('--incident') ? incidents.filter((i) => i.id === val('--incident')) : incidents;
 if (!chosen.length) { console.error(`unknown incident "${clean(val('--incident'))}" (try --list)`); process.exit(2); }
 
 const json = flag('--json');
 // absolute before anything runs: programs run from /, where a relative folder would mean something else
-const roots = []; args.forEach((a, i) => { if (a === '--paths') roots.push(resolve(args[i + 1].replace(/^~/, homedir()))); });
-if (!roots.length) { for (const d of ['Development', 'code', 'src', 'projects', 'Projects', 'dev', 'work', 'Sites']) roots.push(join(homedir(), d)); roots.push('/var/www'); }
+// Whose files to look at: under sudo (which Wardlatch's own messages suggest for folders it can't open), the person who
+// ran sudo, not root. $HOME is root's there, and every default folder below pointed at root's empty home.
+const HOME = (() => {
+  const u = process.env.SUDO_USER;
+  if (u && process.getuid?.() === 0 && /^[\w.-]+$/.test(u)) {
+    const h = platform() === 'darwin' ? `/Users/${u}` : `/home/${u}`;
+    if (pathState(h) === 'dir') return h;
+  }
+  return homedir();
+})();
+const explicitPaths = args.includes('--paths');
+const roots = []; args.forEach((a, i) => { if (a === '--paths') roots.push(resolve(args[i + 1].replace(/^~/, HOME))); });
+if (!roots.length) { for (const d of ['Development', 'code', 'src', 'projects', 'Projects', 'dev', 'work', 'Sites']) roots.push(join(HOME, d)); roots.push('/var/www', '/srv/www', '/Library/WebServer/Documents'); }
+// which of them exist and can be searched; one that exists but can't be opened is a gap, reported per check
+const searchable = roots.filter((r) => pathState(r) === 'dir');
+const lockedRoots = roots.filter((r) => pathState(r) === 'denied');
 
 const tty = process.stdout.isTTY && !json;
 const c = (code, s) => (tty ? `\x1b[${code}m${clean(s)}\x1b[0m` : clean(s));
 const STATUS = { SAFE: c('32', 'SAFE   '), EXPOSED: c('31;1', 'EXPOSED'), UNKNOWN: c('33', 'UNKNOWN'), REVIEW: c('33', 'REVIEW ') };
-const short = (p) => p.replace(homedir(), '~');
+const short = (p) => p.replace(HOME, '~');
 const print = (status, what, extra = '') => { if (!json) console.log(`${STATUS[status]}  ${clean(what)}${extra}`); };
 const note = (code, text) => { if (!json) console.log(c(code, `         ${text}`)); };
 const all = [];
+// SAFE needs a receipt (lib/report.mjs). Every summary all-clear goes through here: it is a result row too (0.1.8
+// printed it but left it out of --json, so a reader couldn't tell "clean" from "not checked"), it names what it
+// searched, and when nothing could be searched it is UNKNOWN instead (a typo in --paths, a different HOME under sudo).
+function allClear(results, inc, kind, text, searched) {
+  if (searched.length) { const row = { incident: inc.id, kind, ...safe(searched), reason: text }; results.push(row); print(row.status, text); return; }
+  const reason = explicitPaths ? `none of the folders given with --paths exist (${roots.map(short).join(', ')}), so nothing was searched`
+    : `none of the usual folders exist here (${roots.map(short).join(', ')}), so nothing was searched: pass --paths`;
+  results.push({ incident: inc.id, kind, status: 'UNKNOWN', reason });
+  print('UNKNOWN', reason);
+}
+// A folder that exists but couldn't be opened is UNKNOWN, never "nothing here".
+function gaps(results, inc, kind, dirs) {
+  for (const d of dirs) {
+    results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason: 'could not be opened, so it was not searched: run Wardlatch with sudo to include it' });
+    print('UNKNOWN', short(d)); note('33', 'could not be opened, so it was not searched: run Wardlatch with sudo to include it');
+  }
+}
 
 if (!json) {
   console.log(`${c('1', 'Wardlatch')} ${VERSION} · ${chosen.length} incident${chosen.length > 1 ? 's' : ''} · runs locally, sends nothing but test connections, changes nothing`);
@@ -132,7 +164,16 @@ for (const inc of chosen) {
       if (rt.system) return inc.fixes['curl:linux'];
       return inc.fixes[`${rt.kind}:${rt.bin}:${os}`] ?? inc.fixes[`${rt.kind}:${os}`] ?? inc.fixes[rt.kind];
     };
-    const canaries = await Promise.all(inc.canaries.map(async (id) => { const host = inc.canaryHost.replace('{id}', id); return { id, host, url: `https://${host}/`, up: await reachable(host) }; }));
+    // a test host counts as up only when it presents the compromised chain's issuer: a TLS-inspecting firewall or a DNS
+    // filter answering in its place would otherwise make every refusal look like the runtime's own (0.1.4 to 0.1.8)
+    const issuerOk = (issuer) => !inc.canaryIssuer || new RegExp(inc.canaryIssuer).test(issuer);
+    const canaries = await Promise.all(inc.canaries.map(async (id) => {
+      const host = inc.canaryHost.replace('{id}', id);
+      const r = await reachable(host);
+      return { id, host, url: `https://${host}/`, up: r.up && issuerOk(r.issuer), impostor: r.up && !issuerOk(r.issuer) ? r.issuer : '' };
+    }));
+    const impostors = canaries.filter((x) => x.impostor);
+    if (impostors.length) note('33', `${impostors.length} test host${impostors.length === 1 ? '' : 's'} answered with a certificate from "${impostors[0].impostor}", not the compromised chain: something on this network (a TLS-inspecting firewall, a DNS filter) is in the way, and those hosts were not used`);
     const rootsPem = join(LIB, 'incidents', inc.rootsPem);
     for (const rt of discover({ roots })) {
       const r = await check(rt, canaries, { rootsPem, controlUrl: inc.advisory });
@@ -172,16 +213,18 @@ for (const inc of chosen) {
     print('UNKNOWN', reason);
   }
 
+  // every copy of each program on PATH (a fixed one first used to hide a vulnerable one behind it)
   for (const rule of inc.binaries ?? []) {
-    const r = checkBinary(rule);
-    if (!r) continue;
-    const row = { incident: inc.id, kind: 'binary', binary: rule.binary, ...r, fix: r.status !== 'SAFE' ? rule.fix : undefined };
-    results.push(row);
-    print(r.status, `${rule.binary} ${r.version}  ${short(r.bin)}`);
-    if (r.reason) note({ EXPOSED: '31', SAFE: '2' }[r.status] ?? '33', r.reason);
-    if (r.status === 'EXPOSED') note('2', `fix: ${rule.fix}`);
+    for (const r of checkBinaryAll(rule)) {
+      const row = { incident: inc.id, kind: 'binary', binary: rule.binary, ...r, fix: r.status !== 'SAFE' ? rule.fix : undefined };
+      results.push(row);
+      print(r.status, `${rule.binary} ${r.version}  ${short(r.bin)}`);
+      if (r.reason) note({ EXPOSED: '31', SAFE: '2' }[r.status] ?? '33', r.reason);
+      if (r.status === 'EXPOSED') note('2', `fix: ${rule.fix}`);
+    }
   }
-  if (inc.type === 'binaries' && !results.length) print('SAFE', `${inc.binaries.map((b) => b.binary).join(', ')} not installed`);
+  // only PATH was searched: "not installed" claimed more than that
+  if (inc.type === 'binaries' && !results.length) allClear(results, inc, 'binary', `${inc.binaries.map((b) => b.binary).join(', ')} not found on PATH (searched: ${short(process.env.PATH ?? '')})`, [`PATH: ${process.env.PATH ?? ''}`, ...inc.binaries.filter((b) => b.tmpTrace).flatMap(() => tempDirs())]);
 
   // A repository git could not read (a partial clone missing what git would have to fetch, an ownership refusal, a
   // timeout) is UNKNOWN with git's reason, and is left out of the count in the SAFE line: it was not looked at.
@@ -201,45 +244,48 @@ for (const inc of chosen) {
       if (r.status === 'EXPOSED') note('2', `fix: ${fix}`);
       else if (r.status === 'REVIEW' && inc.reviewFix) note('2', `check: ${inc.reviewFix}`);
     };
-    const looked = [];
+    // what was looked at, for the all-clear's receipt; folders that couldn't be opened, for UNKNOWN rows
+    const searched = [], denied = [];
     if (inc.versionFiles) {
       const v = inc.versionFiles;
       for (const r of checkVersionFiles(v)) show(r, `${v.product}${r.label ? ` (${r.label})` : ''} ${r.version}  ${short(r.path)}`, v.fix);
-      looked.push(v.lookedIn);
+      searched.push(v.lookedIn);
     }
     if (inc.sitePackages) {
-      const denied = [];   // folders on the known paths that are there but can't be opened: UNKNOWN, never "nothing here"
-      const dirs = sitePackagesDirs({ roots, denied });
-      for (const r of checkSitePackages(inc.sitePackages, dirs, denied)) show(r, `${r.what}  ${short(r.dir)}`, inc.sitePackages.fix);
-      // say where: a SAFE that only gives a count reads as "everywhere"
-      looked.push(`${dirs.length} Python package folder${dirs.length === 1 ? '' : 's'}: the system's, Homebrew, user, pyenv, conda, pipx, uv, Poetry and Pipenv installs, and virtual environments near the top of ~ and under ${roots.map(short).join(', ')}`);
+      // an explicit --paths that doesn't exist is a search of nothing: UNKNOWN, not an all-clear for that part
+      if (explicitPaths && !searchable.length) show({ status: 'UNKNOWN', reason: `none of the folders given with --paths exist (${roots.map(short).join(', ')}), so no virtual environment there was searched` }, 'folders given with --paths');
+      denied.push(...lockedRoots);
+      const dirs = sitePackagesDirs({ roots: searchable, denied });
+      for (const r of checkSitePackages(inc.sitePackages, dirs)) show(r, `${r.what}  ${short(r.dir)}`, inc.sitePackages.fix);
+      searched.push(...dirs);
     }
     if (inc.tmpTrace) {
-      for (const t of tmpTraces(inc.tmpTrace)) show({ status: 'EXPOSED', path: t, reason: 'the malware ran on this machine: it leaves this marker each time it runs' }, short(t), inc.tmpFix ?? inc.sitePackages?.fix);
-      looked.push('the temp folders');
+      const temps = tempDirs();
+      for (const t of tmpTraces(inc.tmpTrace, temps, denied)) show({ status: 'EXPOSED', path: t, reason: 'the malware ran on this machine: it leaves this marker each time it runs' }, short(t), inc.tmpFix ?? inc.sitePackages?.fix);
+      searched.push(...temps);
     }
-    if (inc.dockerDigests && flag('--no-containers')) looked.push('no container images (--no-containers)');
     if (inc.dockerDigests && !flag('--no-containers')) {
       const byEngine = {};
       for (const e of ['docker', 'podman'].filter((x) => findOnPath(x))) {
         const list = localImageDigests(e);
-        if (list === null) { note('2', `${e}: not running, so its local images were not checked`); looked.push(`no ${e} images (not running)`); continue; }
+        if (list === null) { note('2', `${e}: not running, so its local images were not checked`); continue; }
         // permission denied, no answer, too much output: the images exist but weren't seen, which is not SAFE
         if (list.error) { show({ status: 'UNKNOWN', engine: e, reason: `${list.error}, so its local images were not checked` }, `${e} images`); continue; }
-        byEngine[e] = list; looked.push(`${list.length} ${e} image${list.length === 1 ? '' : 's'}`);
+        byEngine[e] = list; searched.push(`${list.length} ${e} image${list.length === 1 ? '' : 's'}`);
       }
       for (const r of checkImages(inc, byEngine)) show(r, `${r.engine} image ${r.what}`, inc.dockerFix);
     }
-    // the parts that could be checked found nothing: say so, even when an engine couldn't be asked (its own UNKNOWN line
-    // stays, and keeps the exit code at 2); never when a part found something or a file couldn't be read
-    // true for an empty list too: nothing found anywhere it looked
+    gaps(results, inc, 'install', [...new Set(denied)]);
+    // nothing found in any part that could be looked at: the all-clear names every folder it searched. An engine that
+    // couldn't be asked keeps its own UNKNOWN row (and the exit code at 2) beside it; a finding or another gap doesn't.
     const onlyEngineGaps = results.every((r) => r.status === 'UNKNOWN' && r.engine);
-    if (onlyEngineGaps) print('SAFE', `${inc.safeText ?? 'nothing found'} (looked in ${looked.filter(Boolean).join('; ')})${inc.sitePackages ? '. Pass --paths for a folder elsewhere' : ''}`);
+    if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean));
   }
 
   if (inc.type === 'workflows') {
     let repos = 0;
-    for (const repo of reposUnder(roots)) {
+    const denied = [...lockedRoots];
+    for (const repo of reposUnder(searchable, 4, denied)) {
       const added = workflowsAddedSince(repo, inc.since);
       if (added.error) { unread('workflow', repo, added.error); continue; }
       repos++;
@@ -248,12 +294,14 @@ for (const inc of chosen) {
         print('REVIEW', `${short(repo)}/${w.file}`, c('2', `  added ${w.commit}`));
       }
     }
+    gaps(results, inc, 'workflow', denied);
     if (results.some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.fix}`);
-    else if (repos || !results.length) print('SAFE', `no workflow files added since ${inc.since} in ${repoCount(repos)}${results.length ? ' that git could read' : ''}`);
+    else if (!results.length) allClear(results, inc, 'workflow', `no workflow files added since ${inc.since} in ${repoCount(repos)}`, searchable);
   }
   if (inc.type === 'secrets') {
     let repos = 0;
-    for (const repo of reposUnder(roots)) {
+    const denied = [...lockedRoots];
+    for (const repo of reposUnder(searchable, 4, denied)) {
       const hits = scanRepo(repo);
       if (hits.error) { unread('secret', repo, hits.error); continue; }
       repos++;
@@ -262,22 +310,25 @@ for (const inc of chosen) {
         print('REVIEW', `${short(repo)}/${h.file}:${h.line}`, c('2', `  ${h.type} ${h.masked}`));
       }
     }
+    gaps(results, inc, 'secret', denied);
     if (results.some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.fix}`);
-    else if (repos || !results.length) print('SAFE', `no committed keys found in the files of ${repoCount(repos)}${results.length ? ' that git could read' : ''} (current files; history needs gitleaks or trufflehog)`);
+    else if (!results.length) allClear(results, inc, 'secret', `no committed keys found in the files of ${repoCount(repos)} (current files; history needs gitleaks or trufflehog)`, searchable);
   }
   if (inc.type === 'wordpress') {
-    const sites = wordpressUnder(roots);
+    const denied = [...lockedRoots];
+    const sites = wordpressUnder(searchable, 5, denied);
     for (const site of sites) for (const f of checkSite(site, inc.rules, inc.addedSince)) {
       results.push({ incident: inc.id, kind: 'wordpress', ...f, fix: f.fix ?? (f.status === 'REVIEW' ? inc.reviewFix : undefined) });
       print(f.status, `${short(site)} · ${f.what}`, f.reason ? c('2', `  ${f.reason}`) : '');
       if (f.status === 'EXPOSED') note('2', `fix: ${f.fix}`);
     }
-    if (!sites.length) print('SAFE', 'no WordPress installs found in the folders searched (run it on the server, or pass --paths)');
+    gaps(results, inc, 'wordpress', denied);
+    if (!sites.length && !denied.length) allClear(results, inc, 'wordpress', `no WordPress installs found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched (run it on the server, or pass --paths)`, searchable);
     else if (results.some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.reviewFix}`);
   }
   if (inc.type === 'headers') {
     // your name and email are read from this machine to compare against; they are never printed or sent
-    const h = scanHeaders({ home: homedir(), roots });
+    const h = scanHeaders({ home: HOME, roots: searchable });
     for (const u of h.unread) {
       results.push({ incident: inc.id, kind: 'header', status: 'UNKNOWN', file: u.file, reason: u.reason });
       print('UNKNOWN', short(u.file)); note('33', `could not read it: ${u.reason}`);
@@ -287,7 +338,7 @@ for (const inc of chosen) {
       print(f.status, `${short(f.file)} · ${f.where}`, c('2', `  carries ${f.carries}, ${f.to}`));
     }
     if (h.findings.length) note('2', `fix: ${inc.fix}`);
-    else print('SAFE', `no name or email in the ${h.settings} header setting${h.settings === 1 ? '' : 's'} found in ${h.read} file${h.read === 1 ? '' : 's'} and the environment`);
+    else if (!h.unread.length) allClear(results, inc, 'header', `no name or email in the ${h.settings} header setting${h.settings === 1 ? '' : 's'} found in ${h.read} file${h.read === 1 ? '' : 's'} and the environment`, [...h.files, 'the environment']);
     if (!h.id.name && !h.id.email) note('2', 'no git name or email is set, so only email-shaped values were looked for');
     note('2', `not covered: ${inc.notCovered}`);
   }
@@ -295,13 +346,15 @@ for (const inc of chosen) {
   if (!json) console.log(c('2', `Source: ${inc.advisory}`));
 }
 
-const n = (s) => all.filter((r) => r.status === s).length;
+const count = { SAFE: 0, EXPOSED: 0, UNKNOWN: 0, REVIEW: 0 };
+for (const r of all) if (r.status in count) count[r.status]++;
+const n = (s) => count[s];
 // JSON.stringify escapes control characters below 0x20 but passes DEL and C1 (0x7f-0x9f) through; names from the disk can
 // carry them, so they are escaped too, as the text output does
 if (json) console.log(JSON.stringify({ tool: 'wardlatch', version: VERSION, incidents: chosen.map((i) => ({ id: i.id, title: i.title, advisory: i.advisory })), results: all }, null, 1)
   .replace(/[\u007f-\u009f]/g, (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`));
 else {
-  console.log(`\n${n('SAFE')} safe · ${n('EXPOSED')} exposed · ${n('UNKNOWN')} could not be tested${n('REVIEW') ? ` · ${n('REVIEW')} to review` : ''}`);
+  console.log(`\n${count.SAFE} safe · ${n('EXPOSED')} exposed · ${n('UNKNOWN')} could not be tested${n('REVIEW') ? ` · ${n('REVIEW')} to review` : ''}`);
   const trust = chosen.find((i) => i.type === 'trust');
   if (trust) console.log(c('2', `Not covered here: ${trust.notCovered}`));
   console.log(c('2', 'Wardlatch, a free tool from Deimos AI LLC · https://www.deimoscore.com/wardlatch/'));

@@ -63,7 +63,7 @@ test('a known-bad tool version is EXPOSED (exit 1); a missing tool is SAFE (exit
   const text = run(['--incident', 'php-2026-10', '--paths', dir], { PATH: bin });
   assert.match(text.out, /EXPOSED {2}php 8\.4\.26/); assert.match(text.out, /fix: Update PHP to 8\.5\.12/);
   const none = run(['--incident', 'php-2026-10', '--paths', dir], { PATH: join(dir, 'empty-path') });
-  assert.equal(none.code, 0); assert.match(none.out, /SAFE {5}php not installed/);
+  assert.equal(none.code, 0); assert.match(none.out, /SAFE {5}php not found on PATH \(searched: /);
 });
 
 test('the OVHcloud CLI is never run: a clean file is SAFE, the stealer\'s temp folder is EXPOSED (exit 1)', () => {
@@ -88,8 +88,12 @@ test('workflow files added to a local repository are listed to REVIEW, and do no
   assert.equal(r.code, 0);
   assert.match(r.out, /REVIEW {2}.*app\/\.github\/workflows\/build\.yml/);
   assert.match(r.out, /1 to review/);
-  const clean = run(['--incident', 'github-actions-2026-10', '--paths', join(dir, 'nothing-here')]);
+  // a folder that exists but holds no repository is clean; one that doesn't exist was not searched (UNKNOWN, exit 2)
+  mkdirSync(join(dir, 'wf-empty'), { recursive: true });
+  const clean = run(['--incident', 'github-actions-2026-10', '--paths', join(dir, 'wf-empty')]);
   assert.equal(clean.code, 0); assert.match(clean.out, /SAFE {5}no workflow files added since 2026-09-01 in 0 local repositories/);
+  const missing = run(['--incident', 'github-actions-2026-10', '--paths', join(dir, 'nothing-here')]);
+  assert.equal(missing.code, 2); assert.match(missing.out, /UNKNOWN {2}none of the folders given with --paths exist/); assert.doesNotMatch(missing.out, /^SAFE/m);
 });
 
 test('a committed key is reported by type, file and line, and the key itself is never printed', () => {
@@ -116,7 +120,7 @@ test('regression: long --json output arrives complete through a pipe (0.1.1 fixe
   assert.equal(JSON.parse(r.out).results.length, 300);
 });
 
-test('WordPress: a compromised plugin is EXPOSED with its fix (exit 1); no site found is SAFE', () => {
+test('WordPress: a compromised plugin is EXPOSED with its fix (exit 1); no site in an existing folder is SAFE, a missing folder UNKNOWN', () => {
   const site = join(dir, 'wp', 'shop'); const pl = join(site, 'wp-content', 'plugins', 'seo-by-rank-math-pro');
   mkdirSync(join(site, 'wp-includes'), { recursive: true }); writeFileSync(join(site, 'wp-includes', 'version.php'), '<?php $wp_version = "6.8";');
   mkdirSync(pl, { recursive: true }); writeFileSync(join(pl, 'rank-math-pro.php'), '<?php\n/**\n * Plugin Name: Rank Math PRO\n * Version: 3.0.123\n */\n');
@@ -124,8 +128,11 @@ test('WordPress: a compromised plugin is EXPOSED with its fix (exit 1); no site 
   assert.equal(r.code, 1);
   assert.match(r.out, /EXPOSED {2}.*shop · seo-by-rank-math-pro 3\.0\.123/);
   assert.match(r.out, /fix: /);
-  const none = run(['--incident', 'wordpress-plugins-2026-10', '--paths', join(dir, 'nothing-here')]);
+  mkdirSync(join(dir, 'wp-empty'), { recursive: true });
+  const none = run(['--incident', 'wordpress-plugins-2026-10', '--paths', join(dir, 'wp-empty')]);
   assert.equal(none.code, 0); assert.match(none.out, /SAFE {5}no WordPress installs found/);
+  const missing = run(['--incident', 'wordpress-plugins-2026-10', '--paths', join(dir, 'nothing-here')]);
+  assert.equal(missing.code, 2); assert.doesNotMatch(missing.out, /^SAFE/m);
 });
 
 test('options are checked: an unknown option or a missing value is refused with exit code 2, before anything runs', () => {
@@ -260,11 +267,20 @@ test('programs are run from /, with Go\'s toolchain switching off, and PHP witho
  * leaves the machine. win32: offline, on a platform that says win32.
  */
 const preloads = () => {
-  const offline = join(dir, 'offline.cjs'), win32 = join(dir, 'win32.cjs');
+  const offline = join(dir, 'offline.cjs'), win32 = join(dir, 'win32.cjs'), online = join(dir, 'online.cjs');
   writeFileSync(offline, `const fs = require('node:fs'), tls = require('node:tls'), { EventEmitter } = require('node:events');
 const exists = fs.existsSync;
 fs.existsSync = (p) => !/^\\/(usr|etc|opt|bin)\\//.test(String(p)) && exists(p);
+const stat = fs.statSync;
+fs.statSync = (p, ...o) => { if (/^\\/(usr|etc|opt|bin)\\//.test(String(p))) throw Object.assign(new Error('hidden by the test'), { code: 'ENOENT' }); return stat(p, ...o); };
 tls.connect = () => { const s = new EventEmitter(); s.end = s.destroy = () => {}; process.nextTick(() => s.emit('error', new Error('offline'))); return s; };
+require('node:module').syncBuiltinESMExports();
+`);
+  // online: every test host "answers" the reachability handshake with the compromised chain's issuer (no real
+  // connection), so the probes run, against the stand-in runtimes on the test's own PATH
+  writeFileSync(online, `const fs = require('node:fs'), tls = require('node:tls'), { EventEmitter } = require('node:events');
+const exists = fs.existsSync;
+tls.connect = (...a) => { const cb = a.find((x) => typeof x === 'function'), s = new EventEmitter(); s.end = s.destroy = () => s; s.getPeerCertificate = () => ({ issuer: { CN: 'EM DV TLS CA - G3B' } }); process.nextTick(() => cb && cb()); return s; };
 require('node:module').syncBuiltinESMExports();
 `);
   writeFileSync(win32, `require(${JSON.stringify(offline)});
@@ -272,7 +288,7 @@ Object.defineProperty(process, 'platform', { value: 'win32' });
 require('node:os').platform = () => 'win32';
 require('node:module').syncBuiltinESMExports();
 `);
-  return { offline, win32 };
+  return { offline, win32, online };
 };
 
 test('Windows (not supported): the trust check is UNKNOWN, never a silent all-clear, and so are the program checks (exit 2)', () => {
@@ -342,7 +358,7 @@ test('with PATH unset, git is never looked up in the current folder: a git plant
 test('relative --paths and relative CA settings are made absolute before anything runs from /', () => {
   // Programs run from /. A relative root made a found environment's bundle `--cacert rel/.venv/...`, which curl could not
   // open from /, so every test host looked refused and the environment read SAFE (wardlatch.test.mjs probes that case).
-  const { offline } = preloads();
+  const { online } = preloads();
   const work = join(dir, 'relwork'), env = join(work, 'rel', 'app', '.venv'), sp = join(env, 'lib', 'python3.12', 'site-packages');
   mkdirSync(join(env, 'bin'), { recursive: true }); mkdirSync(join(sp, 'certifi'), { recursive: true });
   writeFileSync(join(env, 'pyvenv.cfg'), 'home = /usr/bin\n'); writeFileSync(join(env, 'bin', 'python'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
@@ -350,8 +366,10 @@ test('relative --paths and relative CA settings are made absolute before anythin
   // a curl the offline stand-in lets discover() see (it hides /usr/bin), and a node that records the CA setting it got
   const bin = join(dir, 'relbin'), log = join(dir, 'rel-node-env'); mkdirSync(bin, { recursive: true });
   writeFileSync(join(bin, 'curl'), '#!/bin/sh\necho "curl 8.7.1"\nexit 1\n', { mode: 0o755 });
-  writeFileSync(join(bin, 'node'), `#!/bin/sh\necho "SSL_CERT_FILE=$SSL_CERT_FILE" >> "${log}"\necho v26.12.1\n`, { mode: 0o755 });
-  const r = run(['--incident', 'emudhra-2026-10', '--json', '--no-containers', '--paths', 'rel'], { PATH: bin, SSL_CERT_FILE: 'certs/mine.pem' }, ['--require', offline], work);
+  // the CA setting matters to the trust probe (a version read gets no CA settings at all, lib/run.mjs): the stand-in
+  // node records it when it is asked to connect, and fails that connection so nothing is judged SAFE
+  writeFileSync(join(bin, 'node'), `#!/bin/sh\ncase "$1" in -v) echo v26.12.1;; *) echo "SSL_CERT_FILE=$SSL_CERT_FILE" >> "${log}"; exit 3;; esac\n`, { mode: 0o755 });
+  const r = run(['--incident', 'emudhra-2026-10', '--json', '--no-containers', '--paths', 'rel'], { PATH: bin, SSL_CERT_FILE: 'certs/mine.pem' }, ['--require', online], work);
   const row = JSON.parse(r.out).results.find((x) => x.env);
   const real = realpathSync(work);   // the folder as the started process sees it (macOS: /private/var/...)
   assert.ok(row, r.err);
@@ -445,11 +463,11 @@ test('GOTOOLCHAIN in Go\'s env file: the last line wins, as Go reads it, and GOE
 });
 
 test('SSL_CERT_DIR is a list: each relative folder in it is made absolute, an absolute one is left alone', () => {
-  const { offline } = preloads();
+  const { online } = preloads();
   const work = join(dir, 'certdir-work'); mkdirSync(work, { recursive: true });
   const bin = join(dir, 'certdir-bin'), log = join(dir, 'certdir-env'); mkdirSync(bin, { recursive: true });
-  writeFileSync(join(bin, 'node'), `#!/bin/sh\necho "SSL_CERT_DIR=$SSL_CERT_DIR" >> "${log}"\necho v26.12.1\n`, { mode: 0o755 });
-  run(['--incident', 'emudhra-2026-10', '--json', '--no-containers', '--paths', join(dir, 'nothing-here')], { PATH: bin, SSL_CERT_DIR: 'rel/a:/abs/b' }, ['--require', offline], work);
+  writeFileSync(join(bin, 'node'), `#!/bin/sh\ncase "$1" in -v) echo v26.12.1;; *) echo "SSL_CERT_DIR=$SSL_CERT_DIR" >> "${log}"; exit 3;; esac\n`, { mode: 0o755 });
+  run(['--incident', 'emudhra-2026-10', '--json', '--no-containers', '--paths', join(dir, 'nothing-here')], { PATH: bin, SSL_CERT_DIR: 'rel/a:/abs/b' }, ['--require', online], work);
   const real = realpathSync(work);
   assert.match(readFileSync(log, 'utf8'), new RegExp(`^SSL_CERT_DIR=${join(real, 'rel', 'a').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:/abs/b$`, 'm'));
 });

@@ -150,6 +150,20 @@ was tested.
 | Race conditions (CWE-367) | A scanned file swapped between its size check and its read; the Mac fix's temporary and backup files | The command checks and reads a file through one read-only, non-blocking descriptor (`lib/files.mjs`). The Mac fix uses `mktemp`, checks the backup name is free first, and writes the file in place with one `cp` after its checks |
 | Supply chain (CWE-1357) | Dependencies, CI | No dependencies; every GitHub Action pinned by full commit SHA; Dependabot proposes updates through review |
 
+### Three rules the tests enforce (0.1.9)
+
+Most of the advisories so far were the same few mistakes found again in new places. Since 0.1.9 each is held back by
+a single gateway, and `test/contract-0.1.9.test.mjs` fails if any code goes around it:
+
+- **One way to run a program** (`lib/run.mjs`): an absolute path, an argument list, the folder `/`, a timeout that
+  kills with SIGKILL, and an environment built from an allowlist for its purpose (version read, git, container engine,
+  trust probe). The caller's environment is passed only to trust probes, which measure what the person's own programs
+  trust, and never with code-loading options (`NODE_OPTIONS --require`).
+- **One way to look at the disk** (`lib/files.mjs`): it tells "not there" from "couldn't look", reads only regular files
+  under a size cap, and never blocks on a FIFO.
+- **One way to say SAFE** (`lib/report.mjs`): a SAFE result can't be made without a list of what was looked at; with
+  nothing looked at, the answer is UNKNOWN.
+
 ## 4. What is NOT defended
 
 Read this section before relying on anything above.

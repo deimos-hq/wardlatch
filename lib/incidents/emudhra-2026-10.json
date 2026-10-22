@@ -31,6 +31,8 @@
     "ev-g3c-aaa"
   ],
   "canaryHost": "{id}-emudhra.we-have-a-problem.com",
+  "canaryIssuer": "^EM (DV|OV|EV) TLS CA - G3[BC]$",
+  "canaryNotAfter": "2027-05-03",
   "fixes": {
     "curl:/usr/bin/curl:darwin": "macOS's built-in curl, git, python3 and openssl read /etc/ssl/cert.pem, which no macOS release has updated yet (the newest, 27.0.1, 26.7.1 and 15.8.1, shipped on 28 Sep 2026); updating macOS does not fix it. Easiest: download Wardlatch's Mac fix in Safari (www.deimoscore.com/wardlatch/#mac), which checks its own work and keeps a backup. Or the advisory's fix (backs the file up first, asks for your Mac password): sudo cp /etc/ssl/cert.pem /etc/ssl/cert.pem.bak && sudo awk '/^(###|===) /{skip=0} /^=== .*\\/CN=(AAA Certificate Services|emSign ECC Root CA - G3)$/{skip=1} !skip' /etc/ssl/cert.pem.bak | sudo tee /etc/ssl/cert.pem > /dev/null",
     "python:/usr/bin/python3:darwin": "Apple's built-in Python reads /etc/ssl/cert.pem too, as do the built-in git and openssl. Apply the same fix as for macOS curl (see the curl line), or use a Python whose certifi is 2026.10.19 or newer.",

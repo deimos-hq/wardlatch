@@ -36,7 +36,7 @@ before(async () => {
   server = createServer({ key: readFileSync(join(dir, 'leaf.key')), cert: readFileSync(join(dir, 'leaf.pem')) }, (_q, s) => s.end('canary'));
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const port = server.address().port;
-  canary = { id: 'local', url: `https://127.0.0.1:${port}/`, up: await reachable('127.0.0.1', port, 2000) };
+  canary = { id: 'local', url: `https://127.0.0.1:${port}/`, up: (await reachable('127.0.0.1', port, 2000)).up };
 });
 after(() => server.close());
 
@@ -433,16 +433,20 @@ test('PHP 21 Oct 2026: the real fixed versions per branch, and end of life below
   php('8.1.31'); assert.match(checkBinary(rule, bin).reason, /end of life/);
 });
 
-test('a runtime that refuses the compromised keys even with their roots forced in, but opens a normal site, is SAFE', async () => {
-  const bin = join(dir, 'blockcurl'); mkdirSync(bin, { recursive: true });
-  // a stand-in curl that blocks the bad keys outright: refuses with --cacert (the forced roots), opens the control site
-  writeFileSync(join(bin, 'curl'), '#!/bin/sh\nfor a in "$@"; do case "$a" in --cacert) exit 60;; esac; done\nfor a in "$@"; do last="$a"; done\ncase "$last" in *control*) exit 0;; *) exit 60;; esac\n', { mode: 0o755 });
-  const rt = { kind: 'curl', bin: join(bin, 'curl') };
-  const c1 = [{ id: 'x', url: 'https://canary.invalid/', up: true }];
-  const r = await check(rt, c1, { rootsPem: badCa, controlUrl: 'https://control.invalid/', timeoutMs: 2000 });
-  assert.equal(r.status, 'SAFE'); assert.match(r.note, /blocks the compromised keys/);
-  const r2 = await check(rt, c1, { rootsPem: badCa, timeoutMs: 2000 });
+test('only Node\'s own block (CERT_REVOKED) with the roots forced in reads as "blocks the keys"; a curl refusal never does', async () => {
+  const bin = join(dir, 'blockstand'); mkdirSync(bin, { recursive: true });
+  // a stand-in node that blocks the keys as Node 26.12.1 does: exit 4 (CERT_REVOKED) whenever the forced roots are
+  // given, the control site opens, and a test host is refused
+  writeFileSync(join(bin, 'node'), '#!/bin/sh\n[ -n "$WARDLATCH_CA" ] && exit 4\nfor a in "$@"; do last="$a"; done\ncase "$last" in *control*) exit 0;; *) exit 1;; esac\n', { mode: 0o755 });
+  const c1 = [{ id: 'x', host: 'canary.invalid', url: 'https://canary.invalid/', up: true }];
+  const r = await check({ kind: 'node', bin: join(bin, 'node') }, c1, { rootsPem: badCa, controlUrl: 'https://control.invalid/', timeoutMs: 2000 });
+  assert.equal(r.status, 'SAFE'); assert.match(r.note, /blocks the compromised keys/); assert.ok(r.searched.length);
+  const r2 = await check({ kind: 'node', bin: join(bin, 'node') }, c1, { rootsPem: badCa, timeoutMs: 2000 });
   assert.equal(r2.status, 'UNKNOWN', 'without a control site it still cannot tell');
+  // curl has no block of its own: a refusal with the roots forced in proves nothing (0.1.4 to 0.1.8 read it as SAFE)
+  writeFileSync(join(bin, 'curl'), '#!/bin/sh\nfor a in "$@"; do case "$a" in --cacert) exit 60;; esac; done\nfor a in "$@"; do last="$a"; done\ncase "$last" in *control*) exit 0;; *) exit 60;; esac\n', { mode: 0o755 });
+  const r3 = await check({ kind: 'curl', bin: join(bin, 'curl') }, c1, { rootsPem: badCa, controlUrl: 'https://control.invalid/', timeoutMs: 2000 });
+  assert.equal(r3.status, 'UNKNOWN'); assert.match(r3.reason, /positive control failed/);
 });
 
 test('a found environment\'s bundle reached through a relative root is still EXPOSED, though curl runs from /', { skip: !existsSync('/usr/bin/curl') }, async () => {

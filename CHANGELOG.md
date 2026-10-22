@@ -11,6 +11,53 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
+## [0.1.9] - unreleased
+
+A fixes-only release: no new incident checks. Every item below was found by a root-cause audit of all releases from
+0.1.0 to 0.1.8, and each kind of mistake is now held back by a rule the test suite enforces, not just by the fix.
+
+### Security
+
+- **A forced-roots refusal for any reason read as the runtime's own block, the strongest SAFE.** Since 0.1.4 a runtime
+  that couldn't connect with the compromised roots forced in, but could open a normal site, was reported as blocking the
+  compromised keys itself. A TLS-inspecting firewall, a DNS filter answering for the test hosts, a hostname mismatch or
+  an expired test certificate made every runtime read SAFE. Now only Node's own block (`CERT_REVOKED`, which Node
+  26.12.1, 24.22.1 and 22.23.4 give for these keys) counts; any other failure is UNKNOWN, and curl, which has no block
+  of its own, never counts. The test hosts must also present the compromised chain's issuer (`EM DV/OV/EV TLS CA -
+  G3B/G3C`), so something answering in their place is reported, not tested. macOS's own stack: a certificate date error
+  (-1201, -1204) is no longer read as a refusal.
+- **Inside containers, any failure counted as a refusal.** The probe script exited 1 for a timeout or a DNS failure as
+  for a certificate refusal, so a container that couldn't reach the test hosts read SAFE (the host probe stopped doing
+  this in 0.1.7). Now only curl 60, Python's certificate error and wget 5 are refusals; anything else is UNKNOWN.
+- **Folders Wardlatch couldn't open were skipped silently, and nothing searched still read SAFE.** A repository,
+  WordPress site, virtual environment or temp folder behind a folder it couldn't open is now an UNKNOWN row naming it;
+  an explicit `--paths` that doesn't exist is UNKNOWN (exit 2), not "SAFE, 0 repositories".
+- **Environment allowlist.** Every program Wardlatch runs gets an environment built for its purpose from an allowlist
+  (`lib/run.mjs`), not the caller's environment: `DEVELOPER_DIR` still redirected macOS's `/usr/bin/git` shim after
+  0.1.8's `GIT_*` fix, and `NODE_OPTIONS --require` ran inside the trust probes. `DOCKER_HOST` is no longer followed (a
+  run where it is set and no local engine answers is UNKNOWN, never "not running").
+
+### Fixed
+
+- Temp markers: the macOS per-user temp folder is searched even when `TMPDIR` is unset (sudo, cron, launchd), and under
+  sudo the person's own home folder is searched, not root's.
+- Every copy of a version-checked program on `PATH` is judged (a fixed php first no longer hides a vulnerable one), and
+  "not installed" now says it searched `PATH`.
+- The workflow review lists workflows added by merge commits and by backdated commits, and ignores grafts and the
+  commit-graph file.
+- The trust check runs only the first `node`, `python3` and `curl` on `PATH`, never a shadowed copy.
+- The header check reads the files curl and git really read: CRLF files, `$CURL_HOME/.curlrc`, `~/.config/curlrc`, the
+  file `GIT_CONFIG_GLOBAL` names, `WGETRC`, `NPM_CONFIG_USERCONFIG`.
+- Bounded work: hand-written parsers instead of patterns that backtracked (a planted line took 22 s), a capped JSON walk
+  and a 1 MB cap on a repository's config files (a planted 16 MB `.mcp.json` took 1.4 GB), every file read through one
+  reader that never blocks on a FIFO, and every program killed with SIGKILL at its timeout.
+- Every SAFE line is a result row in `--json` too, with the list of what it searched (`searched`).
+
+### Changed (rules the tests now enforce)
+
+- Only `lib/run.mjs` starts programs; only `lib/files.mjs` touches the file system; only `lib/report.mjs` makes a SAFE,
+  and only with a receipt. `test/contract-0.1.9.test.mjs` (written before the fixes, independently) holds all three.
+
 ## [0.1.8] - 2026-10-22
 
 ### Added
