@@ -12,8 +12,8 @@ sent, nothing changed) and quick to act on (a fix on every line).
 - Trust probes for a compromised certificate authority (eMudhra, October 2026): every `node`, `curl` and `python3` on
   `PATH`, Python virtual environments and their `certifi`, the macOS networking stack, the Linux distribution's trust
   store, and running Docker and Podman containers, each behind a reachability control and a positive control.
-- Version rules for tools with a bad range or a fixed version (OVHcloud CLI, cloudflared, Go, PHP, one fix per
-  release line), file checks for committed keys and WordPress plugins, and a review list of new GitHub workflow files.
+- Version rules for tools with a bad range or a fixed version (cloudflared, Go, PHP, one fix per release line), a
+  never-run check of the OVHcloud CLI by its MD5 and the stealer's temp folder, file checks for committed keys and WordPress plugins, and a review list of new GitHub workflow files.
 - `--json` and exit codes for CI; a fix text on every exposed line.
 - `fix/fix-macos.sh`, the Mac fix with checks around the advisory's change.
 

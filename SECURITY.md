@@ -67,8 +67,9 @@ report how you would like to be credited.
 
 ## Supported versions
 
-Only the latest release on npm. Run `npx wardlatch@latest`: a bare `npx wardlatch` can run an older copy npx cached
-earlier. Fixes are not backported.
+Only the latest release on npm. Run `npx wardlatch@latest`: a bare `npx wardlatch` runs any copy already installed
+globally or in the current project, whatever its version (and npm older than 9.6.5 also reuses a copy npx cached
+earlier). Fixes are not backported.
 
 ## Verifying what you run
 

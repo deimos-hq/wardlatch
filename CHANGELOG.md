@@ -1,8 +1,9 @@
 # Changelog
 
 What changed in each release of the `wardlatch` package on npm, newest first, written to help you decide whether to
-update. Run `npx wardlatch@latest` to get the latest release: a bare `npx wardlatch` can run an older copy npx cached
-earlier.
+update. Run `npx wardlatch@latest` to get the latest release: a bare `npx wardlatch` runs any copy already installed
+globally or in the current project, whatever its version (and npm older than 9.6.5 also reuses a copy npx cached
+earlier).
 
 Every release has a signed tag (`v0.1.0` onwards; 0.1.0 to 0.1.2 were tagged afterwards at the commit npm recorded as
 each one's `gitHead`), and 0.1.3 onwards were built and attested by the release workflow. The format follows
@@ -10,7 +11,7 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
-## [0.1.7] - 2026-10-21
+## [0.1.7] - 2026-10-22
 
 ### Security
 
@@ -68,9 +69,11 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   OVHcloud's advisory warns against. 0.1.6 never runs it: it compares the file's MD5 with the five compromised builds
   OVHcloud published (GHSA-862f-55f5-vmvw), and looks in `$TMPDIR`, `/tmp` and `/var/tmp` for the `envchecker-NNNNNNNNN`
   folder the stealer leaves every time it runs, so a machine where it already ran is EXPOSED even if the binary is
-  gone. A clean copy reads SAFE whatever its version: OVHcloud says only downloads from the 94-minute window were
-  affected, so 0.1.5 flagged every copy of v0.11.0 to v0.15.0, wrongly. Found in our own review while updating to the
-  advisory. If you ran an earlier Wardlatch with a compromised `ovhcloud` installed, follow the fix it prints now.
+  gone, while that folder is still in the temp directory (a reboot or temp cleanup can remove it; a SAFE result does
+  not clear a machine that installed or updated the CLI in the window). A clean copy reads SAFE whatever its version: OVHcloud says only downloads from the 94-minute window were
+  affected, so 0.1.0 to 0.1.5 flagged every copy of v0.11.0 to v0.15.0, wrongly. Found in our own review while updating to the
+  advisory. If you ran an earlier Wardlatch with a compromised `ovhcloud` installed, treat every secret the machine held then as
+  exposed and replace it, whatever Wardlatch reports now (the advisory has the details).
 - Rules can now mark a program as possible malware (`noExec`, `md5Bad`, `tmpTrace`); a test plants a program that
   would leave a marker file and fails if it ever runs.
 
