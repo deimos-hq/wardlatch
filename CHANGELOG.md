@@ -41,8 +41,13 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
 - **A container that stopped mid-check read SAFE.** `docker exec` itself exits 1 when the container has stopped, the
   code the probe used for a refusal. The result is now read from a line the probe prints, never the exit code.
 - **A runtime that trusted only one of the two roots read SAFE when that root's test hosts were down.** Each test host
-  now names the root its chain ends at, the forced-roots control runs on a host for each root, and a runtime or
-  container is SAFE only when every root had a host that answered.
+  now names the root its chain ends at, the forced-roots control runs on a host for each root with only that root
+  forced in (with both, a chain could finish at the other root), and a runtime or container is SAFE only when every
+  root had a host that answered.
+- **A trust setting the probe doesn't get could leave a SAFE that wasn't tested.** A CA added through `NODE_OPTIONS
+  --require` (mac-ca, syswide-cas), `OPENSSL_CONF` or a curl start-up file named by `CURL_HOME` is now an UNKNOWN row.
+  The person's own `NODE_TLS_REJECT_UNAUTHORIZED` reaches the Node probe, so a Node run with checking off reads
+  EXPOSED.
 - **`DOCKER_HOST` set while a local engine answered read SAFE in the LiteLLM image check**, which never looked at the
   engine `DOCKER_HOST` named. It is UNKNOWN there too.
 
@@ -61,15 +66,17 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   and a 1 MB cap on a repository's config files (a planted 16 MB `.mcp.json` took 1.4 GB), every file read through one
   reader that never blocks on a FIFO, and every program killed with SIGKILL at its timeout.
 - Every SAFE line is a result row in `--json` too, with the list of what it searched (`searched`). A SAFE row without one
-  is printed as UNKNOWN, however it was made.
+  becomes UNKNOWN in `--json` and the exit code, however it was made, and a line under the output withdraws it.
 - The header check: a missing `--paths` folder, a folder it couldn't open, or a config nested deeper than it reads is
   UNKNOWN, not SAFE. A `--paths` entry that is a file is UNKNOWN in every check.
 - A virtual environment whose `lib` folder couldn't be opened is an UNKNOWN row, not dropped.
 - The WordPress indicator search says what its caps left unsearched (files over 2 MB, past 4,000 files, deeper than 12
   levels): UNKNOWN, not SAFE.
 - Under sudo, git keeps `SUDO_UID`, so the person's own repositories aren't refused as "dubious ownership"; a sudo user
-  whose home folder isn't found is an UNKNOWN row, not a silent search of root's home.
-- A crash inside Wardlatch exits 2 (could not be tested), not 1 (exposed).
+  whose home folder isn't found (including a directory name such as `ada@corp.example`) is an UNKNOWN row, not a silent
+  search of root's home.
+- A crash inside Wardlatch exits 2 (could not be tested), not 1 (exposed), unless an EXPOSED line was already printed.
+  A container's probe output counts only with exactly one result line.
 - File reads are capped by what is read, not only by the size reported at open.
 
 ### Known limits
@@ -78,6 +85,7 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   gets past it (the forced-roots control still catches it for curl, Node and Python, not for macOS's own stack or
   containers).
 - The workflow review can't tell a backdated commit with no parent (the first commit of an orphan branch).
+- A file of Wardlatch's own that fails to load (a broken install) exits 1, before anything of Wardlatch's runs.
 - The engine is the one the person's own docker or podman configuration selects (their home folder's config), which can
   name a remote host; `DOCKER_HOST` and the like are not followed.
 

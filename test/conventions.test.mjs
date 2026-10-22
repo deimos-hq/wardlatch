@@ -78,7 +78,13 @@ test('certificate checking is never switched off, except the one reachability ha
   const off = all.flatMap(([f, src]) => (src.match(/rejectUnauthorized\s*:\s*false/g) ?? []).map(() => f));
   assert.deepEqual(off, ['lib/probe.mjs'], 'exactly one: reachable() in lib/probe.mjs');
   assert.match(read('lib/probe.mjs'), /export function reachable[\s\S]*?rejectUnauthorized: false[\s\S]*?s\.end\(\); res\(\{ up: true/);
-  for (const [f, src] of all) {
+  // one exception, held exactly: lib/run.mjs passes the person's own NODE_TLS_REJECT_UNAUTHORIZED to a trust probe (in
+  // its probe allowlist, once), so a Node they run with checking off reads EXPOSED; nothing sets it
+  const run = read('lib/run.mjs');
+  assert.equal(run.match(/'NODE_TLS_REJECT_UNAUTHORIZED'/g)?.length, 1, 'lib/run.mjs names it once, quoted, in the probe allowlist');
+  assert.match(run, /\n {2}probe: \[[^\]\n]*'NODE_TLS_REJECT_UNAUTHORIZED'/, 'inside KEEP.probe');
+  for (const [f, raw] of all) {
+    const src = f === 'lib/run.mjs' ? raw.replace(/\n {2}probe: \[[^\]\n]*\n/, '\n').replace(/^ *\/\/.*NODE_TLS_REJECT_UNAUTHORIZED.*$/m, '') : raw;
     assert.doesNotMatch(src, /NODE_TLS_REJECT_UNAUTHORIZED|--insecure|['"\s]-k['"\s]|--no-check-certificate|CERT_NONE|_create_unverified_context|verify\s*=\s*False|check_hostname\s*=\s*False/, f);
   }
 });

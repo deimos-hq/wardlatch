@@ -61,6 +61,15 @@ test('the trust incident: unique test hosts, and the bundled roots are exactly t
     // The positive control forces these roots in, so they must be the ones the advisory names, by fingerprint.
     const pems = readFileSync(join(DIR, i.rootsPem), 'utf8').match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g);
     assert.deepEqual(pems.map((p) => new X509Certificate(p).fingerprint256).sort(), i.distrustedRoots.map((r) => r.sha256).sort());
+    // each root's own file (its group's forced-roots control) holds exactly that root, named after the group
+    const own = (i.canaryRoots ?? []).map((g) => {
+      const list = readFileSync(join(DIR, g.pem), 'utf8').match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g);
+      assert.equal(list.length, 1, g.pem);
+      const x = new X509Certificate(list[0]);
+      assert.match(x.subject, new RegExp(`^CN=${g.root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'), g.pem);
+      return x.fingerprint256;
+    });
+    assert.deepEqual(own.sort(), i.distrustedRoots.map((r) => r.sha256).sort(), 'one file per distrusted root');
   }
 });
 

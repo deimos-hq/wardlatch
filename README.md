@@ -35,7 +35,9 @@ SAFE     certifi 2026.10.19  ~/Development/app/.venv
 ## How it works
 
 It doesn't compare version numbers. It asks each runtime to open a real, verified TLS connection to public test hosts
-whose certificates are signed with the compromised keys, the way your own code would, with your own environment.
+whose certificates are signed with the compromised keys, the way your own code would, with your own trust settings
+(CA files, proxies; a setting that would load code into the test, such as `NODE_OPTIONS --require`, is not passed, and
+the run says so in an UNKNOWN line).
 If a runtime connects, it still trusts them. Two exceptions keep it from running what it checks: Python is started
 with `-I -S`, so a `.pth` file or `sitecustomize.py` that changes its trust (pip-system-certs, for example) is not
 applied, and, as before, the `certifi` in the own site-packages of a Python on your `PATH` is not tested yet (a

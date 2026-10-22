@@ -73,7 +73,7 @@ root can't be forced (macOS's networking stack, containers), a normal site must 
 self-signed site must be refused, or the line is UNKNOWN. A trust check that finds nothing to test is UNKNOWN (always
 so on Windows), and so is a container engine that is installed but can't be asked: one that hangs, refuses or fails
 for any reason other than "not running". (4) Since 0.1.7, on the host, only a certificate-verification refusal (curl
-exit 60, a Node certificate error code, Python's `SSLCertVerificationError`, macOS's NSURLErrorDomain -1201 to -1204) counts as "does not trust"; when no test
+exit 60, a Node certificate error code, Python's `SSLCertVerificationError`, macOS's NSURLErrorDomain -1202 and -1203) counts as "does not trust"; when no test
 host connected and any probe failed for another reason (a reset, a timeout, a bundle that can't be opened, a missing
 API), the line is UNKNOWN. Up to 0.1.6 every failure counted as a refusal, and a Node.js older than 18, which has no
 `fetch()`, read SAFE without being tested. UNKNOWN sets exit code 2, so CI does not pass on it.
@@ -159,7 +159,9 @@ a single gateway, and `test/contract-0.1.9.test.mjs` fails if any code goes arou
   kills with SIGKILL, and an environment built from an allowlist for its purpose (version read, git, container engine,
   trust probe). A trust probe gets what changes a runtime's trust or its route to a host (CA files and folders,
   proxies, `NODE_OPTIONS`' trust flags) and nothing else: no code-loading settings (`NODE_OPTIONS --require`,
-  `OPENSSL_CONF`, `LD_PRELOAD`, `SHELLOPTS`). What it leaves out of the person's own settings is said on screen.
+  `OPENSSL_CONF`, `LD_PRELOAD`, `SHELLOPTS`). When the person's environment has settings like that which could add
+  trust (`NODE_OPTIONS --require mac-ca`, `OPENSSL_CONF`, a curl start-up file named by `CURL_HOME`), the run has an
+  UNKNOWN row naming them, so it can't end all SAFE without having tested them.
 - **One way to look at the disk** (`lib/files.mjs`): it tells "not there" from "couldn't look", reads only regular files
   under a size cap, and never blocks on a FIFO.
 - **One way to say SAFE** (`lib/report.mjs`): a SAFE result can't be made without a list of what was looked at; with

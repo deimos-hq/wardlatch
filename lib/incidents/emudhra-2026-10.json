@@ -33,6 +33,7 @@
   "canaryRoots": [
     {
       "root": "AAA Certificate Services",
+      "pem": "emudhra-2026-10-root-aaa.pem",
       "canaries": [
         "dv-g3b-aaa",
         "dv-g3c-aaa",
@@ -44,6 +45,7 @@
     },
     {
       "root": "emSign ECC Root CA - G3",
+      "pem": "emudhra-2026-10-root-emsign.pem",
       "canaries": [
         "dv-g3b",
         "dv-g3c",

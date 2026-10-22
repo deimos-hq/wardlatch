@@ -41,3 +41,14 @@ SPDX-License-Identifier = "Apache-2.0"
 path = "lib/incidents/emudhra-2026-10-roots.pem"
 SPDX-FileCopyrightText = ["Comodo CA Limited (AAA Certificate Services)", "eMudhra Technologies Limited (emSign ECC Root CA - G3)"]
 SPDX-License-Identifier = "LicenseRef-Public-CA-Certificate"
+
+# the same two certificates, one per file: each root's control forces only its own root
+[[annotations]]
+path = "lib/incidents/emudhra-2026-10-root-aaa.pem"
+SPDX-FileCopyrightText = "Comodo CA Limited (AAA Certificate Services)"
+SPDX-License-Identifier = "LicenseRef-Public-CA-Certificate"
+
+[[annotations]]
+path = "lib/incidents/emudhra-2026-10-root-emsign.pem"
+SPDX-FileCopyrightText = "eMudhra Technologies Limited (emSign ECC Root CA - G3)"
+SPDX-License-Identifier = "LicenseRef-Public-CA-Certificate"

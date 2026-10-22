@@ -20,7 +20,7 @@ import { scanRepo } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
 import { scanHeaders } from '../lib/headers.mjs';
 import { pathState, readText, listDir } from '../lib/files.mjs';
-import { safe } from '../lib/report.mjs';
+import { safe, withdrawUnreceipted } from '../lib/report.mjs';
 
 // npx puts the current project's node_modules/.bin, and each parent folder's, first on PATH. Wardlatch finds git,
 // python3, node, curl, php, go and the container engines on PATH and runs some of them, so a project could otherwise
@@ -89,10 +89,11 @@ const json = flag('--json');
 let sudoHomeMissing = '';
 const HOME = (() => {
   const u = process.env.SUDO_USER;
-  if (u && process.getuid?.() === 0 && /^[\w.-]+$/.test(u)) {
-    const h = platform() === 'darwin' ? `/Users/${u}` : `/home/${u}`;
-    if (pathState(h) === 'dir') return h;
-    sudoHomeMissing = `run under sudo by ${u}, whose home folder was not found at ${h}: root's home (${homedir()}) was searched instead. Run Wardlatch without sudo, or pass --paths`;
+  if (u && process.getuid?.() === 0) {
+    // a name with a slash or .. can't be a home folder's name (a directory user can be ada@corp.example)
+    const h = /^[\w.@-]+$/.test(u) && !u.includes('..') ? (platform() === 'darwin' ? `/Users/${u}` : `/home/${u}`) : '';
+    if (h && pathState(h) === 'dir') return h;
+    sudoHomeMissing = `run under sudo by ${clean(u)}, whose home folder was not found${h ? ` at ${h}` : ''}: root's home (${homedir()}) was searched instead. Run Wardlatch without sudo, or pass --paths`;
   }
   return homedir();
 })();
@@ -112,7 +113,8 @@ const tty = process.stdout.isTTY && !json;
 const c = (code, s) => (tty ? `\x1b[${code}m${clean(s)}\x1b[0m` : clean(s));
 const STATUS = { SAFE: c('32', 'SAFE   '), EXPOSED: c('31;1', 'EXPOSED'), UNKNOWN: c('33', 'UNKNOWN'), REVIEW: c('33', 'REVIEW ') };
 const short = (p) => p.replace(HOME, '~');
-const print = (status, what, extra = '') => { if (!json) console.log(`${STATUS[status]}  ${clean(what)}${extra}`); };
+// an EXPOSED line sets the exit code as it is printed, so a crash after it can't turn it into "could not be tested"
+const print = (status, what, extra = '') => { if (status === 'EXPOSED') process.exitCode = 1; if (!json) console.log(`${STATUS[status]}  ${clean(what)}${extra}`); };
 const note = (code, text) => { if (!json) console.log(c(code, `         ${text}`)); };
 const all = [];
 // SAFE needs a receipt (lib/report.mjs). Every summary all-clear goes through here: it is a result row too (0.1.8
@@ -126,7 +128,7 @@ function allClear(results, inc, kind, text, searched) {
   print('UNKNOWN', reason);
 }
 // A folder that exists but couldn't be opened is UNKNOWN, never "nothing here".
-const hostRowsOf = (results) => results.filter((r) => !['container', 'containers', 'search', 'binary'].includes(r.kind)).length;
+const hostRowsOf = (results) => results.filter((r) => !['container', 'containers', 'search', 'binary', 'home', 'environment'].includes(r.kind)).length;
 
 function gaps(results, inc, kind, dirs) {
   for (const d of missingRoots) {
@@ -140,6 +142,8 @@ function gaps(results, inc, kind, dirs) {
   }
 }
 
+// NODE_OPTIONS words a probe doesn't need to measure trust, and that change no trust: memory, warnings, traces
+const BENIGN_NODE_OPTION = /^--(?:max-old-space-size|max-semi-space-size|max-http-header-size|stack-size|stack-trace-limit|no-warnings|no-deprecation|enable-source-maps|trace-warnings|trace-deprecation|trace-uncaught|unhandled-rejections)(?:=[\w.-]*)?$/;
 // DOCKER_HOST and the like are not followed (lib/run.mjs): the engine they name was not checked, whatever answers
 // locally. Every check that asks an engine (running containers, local images) says so in an UNKNOWN row.
 const hostVars = ['DOCKER_HOST', 'CONTAINER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG', 'CONTAINER_CONNECTION'].filter((k) => process.env[k]);
@@ -199,14 +203,24 @@ for (const inc of chosen) {
       const host = inc.canaryHost.replace('{id}', id);
       const r = await reachable(host);
       // which distrusted root this host's chain ends at: a runtime is only SAFE when each root had a host to test
-      const root = inc.canaryRoots?.find((g) => g.canaries.includes(id))?.root;
-      return { id, host, url: `https://${host}/`, root, up: r.up && issuerOk(r.issuer), impostor: r.up && !issuerOk(r.issuer) ? r.issuer : '' };
+      const g = inc.canaryRoots?.find((x) => x.canaries.includes(id));
+      return { id, host, url: `https://${host}/`, root: g?.root, pem: g?.pem ? join(LIB, 'incidents', g.pem) : undefined, up: r.up && issuerOk(r.issuer), impostor: r.up && !issuerOk(r.issuer) ? r.issuer : '' };
     }));
     // the probes get only what changes trust or the route to a host (lib/run.mjs); say what of the person's own
     // settings they did not get, since a probe without it can measure less trust than the person's programs have
-    const dropped = droppedNodeOptions();
-    if (dropped.length) note('33', `NODE_OPTIONS options other than trust flags are not passed to the probes (${dropped.join(' ').slice(0, 120)}): a CA added that way was not tested`);
-    if (process.env.OPENSSL_CONF) note('33', 'OPENSSL_CONF is set and not passed to the probes (it can load code): trust it adds was not tested');
+    // An UNKNOWN row (in --json too), not only a note: a CA added through NODE_OPTIONS --require (mac-ca, syswide-cas)
+    // is trust the person's Node has and the probe doesn't, and d59e114 read SAFE, exit 0 with one in place.
+    const notPassed = [
+      ...(droppedNodeOptions().filter((w) => !BENIGN_NODE_OPTION.test(w)).length ? [`NODE_OPTIONS (${droppedNodeOptions().join(' ').slice(0, 120)})`] : []),
+      ...(process.env.OPENSSL_CONF ? ['OPENSSL_CONF'] : []),
+      ...[process.env.CURL_HOME && join(process.env.CURL_HOME, '.curlrc'), process.env.XDG_CONFIG_HOME && join(process.env.XDG_CONFIG_HOME, 'curlrc'), process.env.XDG_CONFIG_HOME && join(process.env.XDG_CONFIG_HOME, '.curlrc')]
+        .filter((f) => f && pathState(f) === 'file' && f !== join(HOME, '.curlrc')).map((f) => `curl's start-up file ${short(f)}`),
+    ];
+    if (notPassed.length) {
+      const reason = `${notPassed.join(', ')}: set in this environment and not given to the probes, since ${notPassed.length === 1 ? 'it' : 'they'} can load code or point a program at files the caller chose. Trust added that way was not tested`;
+      results.push({ incident: inc.id, kind: 'environment', status: 'UNKNOWN', reason });
+      print('UNKNOWN', 'settings not given to the probes'); note('33', reason);
+    }
     const impostors = canaries.filter((x) => x.impostor);
     if (impostors.length) note('33', `${impostors.length} test host${impostors.length === 1 ? '' : 's'} answered with a certificate from "${impostors[0].impostor}", not the compromised chain: something on this network (a TLS-inspecting firewall, a DNS filter) is in the way, and those hosts were not used`);
     const rootsPem = join(LIB, 'incidents', inc.rootsPem);
@@ -397,7 +411,8 @@ for (const inc of chosen) {
 
 // The receipt rule, enforced once more on the way out: a SAFE row that can't say what it looked at is not printed as one,
 // however it was made (lib/report.mjs's safe() is the only intended way; this catches any other)
-for (const r of all) if (r.status === 'SAFE' && !(Array.isArray(r.searched) && r.searched.some((s) => String(s).trim()))) Object.assign(r, { status: 'UNKNOWN', reason: `internal error: a SAFE result without a receipt (${r.reason ?? r.kind}): please report this` });
+// (the text line was printed already: a correction line follows it)
+for (const r of withdrawUnreceipted(all)) { print('UNKNOWN', `the SAFE line for ${r.kind} above is withdrawn`); note('33', r.reason); }
 const count = { SAFE: 0, EXPOSED: 0, UNKNOWN: 0, REVIEW: 0 };
 for (const r of all) if (r.status in count) count[r.status]++;
 const n = (s) => count[s];

@@ -42,7 +42,7 @@ programs already on the machine:
 | `lib/incidents/emudhra-2026-10-roots.pem` | The two public root certificates the compromised intermediates chain to, used only by the positive control. | Data only; fingerprints checked against the incident file. |
 | `lib/discover.mjs` | Finds what to probe: the first `node`, `curl` and `python3` on `PATH` (the ones the shell runs), `/usr/bin/curl` and `/usr/bin/python3`, macOS's `nscurl`, the Linux distribution's CA bundle, and Python virtual environments (a folder with `pyvenv.cfg` and `bin/python`) under the folders searched, noting each one's `certifi`. | Lists directories (5 levels; skips `node_modules`, `.git`, `Library`; does not follow symlinked folders). Runs each program on `PATH` once for its version (`python3 -V` exits before Python's start-up code). Never runs a found environment's own `bin/python`. |
 | `lib/probe.mjs` | The trust check. `reachable()` does a TLS handshake with verification off and sends nothing, to learn whether a test host is up. `probe()` makes the runtime itself open a verified connection, with the user's trust settings (CA files and folders, proxies, `NODE_OPTIONS`' trust flags: an allowlist in `lib/run.mjs`). `check()` runs the controls, then the probes. | The only module that opens network connections. |
-| `lib/containers.mjs` | Lists running containers (`docker ps` / `podman ps`) and runs a small `sh` script inside each with `exec`: it uses whichever of `curl`, `python3` or `wget` the image has, and prints only which tool it used. An engine that is installed but can't be asked (it hangs past 10 seconds, refuses, or fails for any reason other than "not running") is UNKNOWN, not "no containers". | Runs the engine's `ps` and `exec`, each killed if it outlives its timeout. Writes nothing into a container. |
+| `lib/containers.mjs` | Lists running containers (`docker ps` / `podman ps`) and runs a small `sh` script inside each with `exec`: it uses whichever of `curl`, `python3` or `wget` the image has, and prints one line: which tool it used and the result (`ok`, `refused` or `error`), read from that line alone, never from `docker exec`'s exit code (which is 1 when the container has stopped). An engine that is installed but can't be asked (it hangs past 10 seconds, refuses, or fails for any reason other than "not running") is UNKNOWN, not "no containers". | Runs the engine's `ps` and `exec`, each killed if it outlives its timeout. Writes nothing into a container. |
 | `lib/binaries.mjs` | Version rules: a bad range, a fixed version, or one fixed version per release line (and "end of life" when a line gets none). | Runs `<tool> --version` (or the rule's arguments) for programs found on `PATH`, except a rule marked `noExec` (the OVHcloud CLI): that program is never run; its file is hashed and `$TMPDIR`, `/tmp`, `/var/tmp` and every macOS per-user temp folder (`/private/var/folders/*/*/T`) are listed for the malware's folder. |
 | `lib/workflows.mjs` | Finds git repositories (4 levels) and lists `.github/workflows` files added since a date. | `git log --no-show-signature --no-ext-diff --no-textconv --no-renames` in each repository, through `lib/git.mjs`. |
 | `lib/secrets.mjs` | High-confidence key shapes in the files git tracks (up to 8 MB each; a larger or unreadable text file is UNKNOWN; binary files skipped). A finding keeps the type, file, line and a mask, never the key. | `git ls-files`, through `lib/git.mjs`, then reads files. |
@@ -68,9 +68,11 @@ asks each runtime to make the connection itself.
 1. **Reachability** (`reachable`, once per test host): a TLS handshake with certificate verification off. If it
    completes, the host is up. Nothing is sent over it; it is closed at once. Hosts that don't answer are left out; if
    none answers, every line is UNKNOWN.
-2. **Positive control** (`check`, once per runtime): the runtime connects to the first reachable host while trusting
-   *only* the two compromised roots (`--cacert` for curl, `ca:` for Node, `cafile=` for Python). If it can't connect
-   even then, the probe can't see exposure on this runtime, and the line is UNKNOWN.
+2. **Positive control** (`check`, once per runtime, per distrusted root): the runtime connects to one answering host
+   of each root while trusting *only that root* (the incident's `canaryRoots`: `--cacert` for curl, `ca:` for Node,
+   `cafile=` for Python). If it can't connect even then, the probe can't see exposure on this runtime, and the line is
+   UNKNOWN. A root with no answering host makes the line UNKNOWN too, unless some host connected: a runtime that trusts
+   only that root would refuse every host that did answer.
    macOS's networking stack (`nscurl`) can't be pointed at a CA file, so it gets a normal-site control instead: it
    must open the advisory's own page, or the line is UNKNOWN.
 3. **The probe**: the runtime connects to each reachable host with its own defaults and the user's trust settings, the
@@ -84,7 +86,7 @@ Probes per runtime:
 | `curl` | `curl -s -o /dev/null --max-time N [--cacert roots] URL` (the Linux system store and a virtual environment's certifi add `--cacert <bundle>`; a bundle that can't be found is UNKNOWN) |
 | `node` | `node -e <script>`: `https.get` for the probe, and with `ca:` for the control (since 0.1.7; `fetch()` before, which Node 17 and older lack) |
 | `python` | `python3 -I -S -c <script>`: `ssl.create_default_context()` and `urllib`. A virtual environment's certifi is not run through Python: it is a `curl` row with `--cacert <bundle>`. `-S` skips the `site` module, so no `.pth` file or `sitecustomize.py` runs (since 0.1.7); `-I` leaves out the user's site-packages, the `PYTHON*` variables and the current folder |
-| macOS system | `nscurl URL`, read from its output, since it exits 0 even when the load fails; only NSURLErrorDomain -1201 to -1204 (a certificate error) is a refusal |
+| macOS system | `nscurl URL`, read from its output, since it exits 0 even when the load fails; only NSURLErrorDomain -1202 and -1203 (an untrusted or unknown root) is a refusal; a date error (-1201, -1204) is an error |
 | a container | `sh -c <script>` inside it via `docker exec` / `podman exec`, using `curl`, else `python3 -I -S`, else `wget`; first a normal site must open, then `self-signed.badssl.com` must be refused, or the tool doesn't check certificates and the line is UNKNOWN |
 
 ## The Mac fix
