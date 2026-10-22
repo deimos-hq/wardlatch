@@ -1,6 +1,6 @@
 {
   "name": "wardlatch",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Does the wrong key still turn? Checks your machine against this week's leaks: runtimes that still trust a compromised CA (eMudhra), OVHcloud CLI builds swapped for a stealer (checked by hash, never run), PHP older than its critical fix, compromised WordPress plugins (Rank Math PRO, UpdraftPlus keys), GitHub workflow files to review, and keys committed to your code. Runs locally, changes nothing.",
   "type": "module",
   "bin": {
