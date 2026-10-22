@@ -490,3 +490,53 @@ test('the Python probe tells a certificate refusal (SAFE) from a connection that
   assert.equal(exposed.status, 'EXPOSED');
   assert.equal((await check(rt(), [canary], { rootsPem: badCa, timeoutMs: 3000 })).status, 'SAFE');
 });
+
+// ---- gaps found in the 0.1.7 audit (22 Oct 2026): branches the suite did not reach ----------------------------------
+
+test('Python: a refused TCP connection and a server\'s TLS alert are UNKNOWN or EXPOSED, never SAFE', async (t) => {
+  let py; try { py = execFileSync('python3', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).trim(); } catch { return t.skip('python3 is not available here'); }
+  const rt = (env = {}) => ({ kind: 'python', bin: py, version: '', env: { SSL_CERT_FILE: otherCa, SSL_CERT_DIR: dir, ...env } });
+  const dead = { id: 'dead', url: 'https://127.0.0.1:1/', up: true };
+  const r = await check(rt(), [dead], { rootsPem: badCa, controlUrl: canary.url, timeoutMs: 3000 });
+  assert.notEqual(r.status, 'SAFE', 'nothing was refused for its certificate');
+  const mtls = createServer({ key: readFileSync(join(dir, 'leaf.key')), cert: readFileSync(join(dir, 'leaf.pem')), requestCert: true, rejectUnauthorized: true, ca: readFileSync(badCa) }, (_q, s) => s.end('x'));
+  await new Promise((res) => mtls.listen(0, '127.0.0.1', res));
+  try {
+    const host = { id: 'mtls', url: `https://127.0.0.1:${mtls.address().port}/`, up: true };
+    assert.notEqual((await check(rt({ SSL_CERT_FILE: badCa }), [host], { rootsPem: badCa, controlUrl: canary.url, timeoutMs: 3000 })).status, 'SAFE');
+  } finally { mtls.close(); }
+});
+
+test('curl: a server\'s TLS alert (curl exit 35 or 56, not 60) is never SAFE', { skip: !existsSync('/usr/bin/curl') }, async () => {
+  const mtls = createServer({ key: readFileSync(join(dir, 'leaf.key')), cert: readFileSync(join(dir, 'leaf.pem')), requestCert: true, rejectUnauthorized: true, ca: readFileSync(badCa) }, (_q, s) => s.end('x'));
+  await new Promise((res) => mtls.listen(0, '127.0.0.1', res));
+  try {
+    const host = { id: 'mtls', url: `https://127.0.0.1:${mtls.address().port}/`, up: true };
+    const r = await check({ kind: 'curl', bin: '/usr/bin/curl', args: ['--cacert', badCa] }, [host], { rootsPem: badCa, timeoutMs: 3000 });
+    assert.notEqual(r.status, 'SAFE');
+  } finally { mtls.close(); }
+});
+
+test('the Python probe runs no sitecustomize.py or usercustomize.py either, and the container probe keeps -I -S', async (t) => {
+  let venvPy;
+  const venv = join(dir, 'custvenv'), marker = join(dir, 'cust-ran');
+  try { execFileSync('python3', ['-m', 'venv', '--without-pip', venv], { stdio: 'ignore', timeout: 60000 }); venvPy = join(venv, 'bin', 'python3'); } catch { return t.skip('python3 -m venv is not available here'); }
+  const sp = join(venv, 'lib', readdirSync(join(venv, 'lib')).find((n) => /^python3/.test(n)), 'site-packages');
+  for (const m of ['sitecustomize', 'usercustomize']) writeFileSync(join(sp, `${m}.py`), `open(${JSON.stringify(marker)}, 'a').write('${m}\\n')\n`);
+  execFileSync(venvPy, ['-c', 'pass'], { stdio: 'ignore' });
+  assert.ok(existsSync(marker), 'a normal start runs sitecustomize.py'); unlinkSync(marker);
+  await check({ kind: 'python', bin: venvPy, version: '' }, [canary], { controlUrl: canary.url, timeoutMs: 3000 });
+  assert.equal(existsSync(marker), false, 'the probe ran a customize module');
+  assert.match(readFileSync(new URL('../lib/containers.mjs', import.meta.url), 'utf8'), /python3 -I -S -c /, 'the container script starts python3 with -I -S');
+});
+
+test('a program whose version can\'t be read, and a never-run file that can\'t be read, are UNKNOWN with their reason', () => {
+  const bin = join(dir, 'unread-bin'); mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'php'), '#!/bin/sh\necho nothing useful\n', { mode: 0o755 });
+  const v = checkBinary({ binary: 'php', fixedIn: ['8.4.27'] }, bin);
+  assert.equal(v.status, 'UNKNOWN'); assert.match(v.reason, /version could not be read/);
+  writeFileSync(join(bin, 'ovhcloud'), 'x', { mode: 0o111 });   // executable, but not readable: it can't be hashed
+  const h = checkBinary({ binary: 'ovhcloud', noExec: true, md5Bad: ['0'.repeat(32)] }, bin, { tmpDirs: [join(dir, 'no-tmp')] });
+  if (process.getuid?.() === 0) return;   // root reads it anyway
+  assert.equal(h.status, 'UNKNOWN'); assert.match(h.reason, /could not be read.*it was not run/);
+});

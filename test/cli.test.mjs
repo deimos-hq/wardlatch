@@ -424,3 +424,69 @@ test('a repository git refuses to open (another user\'s) is UNKNOWN for both git
   const keys = run(['--incident', 'committed-keys-2026-10', '--paths', fresh]);
   assert.equal(keys.code, 0, keys.out); assert.match(keys.out, /SAFE {5}no committed keys found in the files of 1 local repository /);
 });
+
+// ---- gaps found in the 0.1.7 audit (22 Oct 2026) ---------------------------------------------------------------------
+
+test('GOTOOLCHAIN in Go\'s env file: the last line wins, as Go reads it, and GOENV=off ignores the file', async () => {
+  const { goToolchain } = await import('../lib/binaries.mjs');
+  const f = join(dir, 'goenv-two'); writeFileSync(f, 'GOTOOLCHAIN=go1.26.5\nGOPROXY=direct\nGOTOOLCHAIN=go1.27.4\n');
+  assert.equal(goToolchain({ GOENV: f }), 'go1.27.4');
+  writeFileSync(f, 'GOTOOLCHAIN=go1.27.4\nGOTOOLCHAIN=go1.26.5\n');
+  assert.equal(goToolchain({ GOENV: f }), 'go1.26.5');
+  assert.equal(goToolchain({ GOENV: 'off' }), '');
+  assert.equal(goToolchain({ GOENV: f, GOTOOLCHAIN: 'local' }), 'local', 'the environment wins over the file');
+  // and judged that way: the fixed toolchain last is SAFE, the old one last is EXPOSED
+  const { offline } = preloads();
+  const bin = join(dir, 'golast'); mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'go'), '#!/bin/sh\necho "go version go1.27.3 darwin/arm64"\n', { mode: 0o755 });
+  const row = (text) => { writeFileSync(f, text); return JSON.parse(run(['--incident', 'emudhra-2026-10', '--json', '--no-containers', '--paths', join(dir, 'nothing-here')], { PATH: bin, GOENV: f, GOTOOLCHAIN: '' }, ['--require', offline]).out).results.find((x) => x.binary === 'go').status; };
+  assert.equal(row('GOTOOLCHAIN=go1.26.5\nGOTOOLCHAIN=go1.27.4\n'), 'SAFE');
+  assert.equal(row('GOTOOLCHAIN=go1.27.4\nGOTOOLCHAIN=go1.26.5\n'), 'EXPOSED');
+});
+
+test('SSL_CERT_DIR is a list: each relative folder in it is made absolute, an absolute one is left alone', () => {
+  const { offline } = preloads();
+  const work = join(dir, 'certdir-work'); mkdirSync(work, { recursive: true });
+  const bin = join(dir, 'certdir-bin'), log = join(dir, 'certdir-env'); mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'node'), `#!/bin/sh\necho "SSL_CERT_DIR=$SSL_CERT_DIR" >> "${log}"\necho v26.12.1\n`, { mode: 0o755 });
+  run(['--incident', 'emudhra-2026-10', '--json', '--no-containers', '--paths', join(dir, 'nothing-here')], { PATH: bin, SSL_CERT_DIR: 'rel/a:/abs/b' }, ['--require', offline], work);
+  const real = realpathSync(work);
+  assert.match(readFileSync(log, 'utf8'), new RegExp(`^SSL_CERT_DIR=${join(real, 'rel', 'a').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:/abs/b$`, 'm'));
+});
+
+test('PATH holding "." or an empty entry never runs a program from the current folder', () => {
+  const cwd = join(dir, 'dot-cwd'), marker = join(dir, 'dot-ran'); mkdirSync(cwd, { recursive: true });
+  for (const b of ['git', 'python3', 'node', 'curl']) writeFileSync(join(cwd, b), `#!/bin/sh\ntouch "${marker}-${b}"\nexit 1\n`, { mode: 0o755 });
+  const root = join(dir, 'dotpath'); const repo = gitRepo(join(root, 'app'));
+  mkdirSync(join(root, 'app', '.github', 'workflows'), { recursive: true }); writeFileSync(join(root, 'app', '.github', 'workflows', 'ci.yml'), 'on: push\n'); repo.commit();
+  const { offline } = preloads();
+  for (const PATH of [`.:${process.env.PATH}`, `::${process.env.PATH}`, `${process.env.PATH}:`]) {
+    run(['--incident', 'github-actions-2026-10', '--json', '--paths', root], { PATH }, [], cwd);
+    run(['--incident', 'emudhra-2026-10', '--no-containers', '--paths', join(dir, 'nothing-here')], { PATH }, ['--require', offline], cwd);
+  }
+  assert.deepEqual(readdirSync(dir).filter((f) => f.startsWith('dot-ran')), [], 'a program in the current folder ran');
+});
+
+test('core.fsmonitor set through include.path, includeIf or config.worktree never runs; GIT_DIR and GIT_CONFIG_PARAMETERS in the caller\'s environment don\'t redirect or reconfigure the scan', () => {
+  const root = join(dir, 'gitinc'), path = join(root, 'app'), ran = join(dir, 'gitinc-ran'); mkdirSync(ran, { recursive: true });
+  const repo = gitRepo(path);
+  mkdirSync(join(path, '.github', 'workflows'), { recursive: true }); writeFileSync(join(path, '.github', 'workflows', 'ci.yml'), 'on: push\n'); repo.commit();
+  const prog = (n) => { const p = join(dir, `gitinc-${n}`); writeFileSync(p, `#!/bin/sh\ntouch "${join(ran, n)}"\nexit 1\n`, { mode: 0o755 }); return p; };
+  const g = (...a) => execFileSync('git', ['-C', path, ...a], { stdio: 'pipe' });
+  writeFileSync(join(dir, 'gitinc-included'), `[core]\n\tfsmonitor = ${prog('include')}\n`);
+  g('config', 'include.path', join(dir, 'gitinc-included'));
+  writeFileSync(join(dir, 'gitinc-cond'), `[core]\n\tfsmonitor = ${prog('includeif')}\n`);
+  g('config', `includeIf.gitdir:${path}/.git.path`, join(dir, 'gitinc-cond'));
+  g('config', 'extensions.worktreeConfig', 'true'); g('config', '--worktree', 'core.fsmonitor', prog('worktree'));
+  // the test means something: plain git does run what these name
+  try { execFileSync('git', ['-C', path, 'ls-files'], { stdio: 'ignore' }); } catch { /* the markers count */ }
+  assert.ok(readdirSync(ran).length >= 1, 'git ls-files runs an fsmonitor set this way');
+  for (const m of readdirSync(ran)) rmSync(join(ran, m));
+  const other = join(dir, 'gitinc-other'); gitRepo(other);
+  const env = { GIT_DIR: join(other, '.git'), GIT_CONFIG_PARAMETERS: `'core.fsmonitor=${prog('params')}'` };
+  const keys = run(['--incident', 'committed-keys-2026-10', '--paths', root], env);
+  const wf = run(['--incident', 'github-actions-2026-10', '--json', '--paths', root], env);
+  assert.deepEqual(readdirSync(ran), [], 'a program set through config includes, the worktree config or the environment ran');
+  assert.match(keys.out, /no committed keys found in the files of 1 local repository/);
+  assert.deepEqual(JSON.parse(wf.out).results.map((x) => [x.status, x.file]), [['REVIEW', '.github/workflows/ci.yml']], 'GIT_DIR redirected the scan');
+});

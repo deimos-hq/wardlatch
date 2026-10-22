@@ -60,6 +60,19 @@ jobs:
             wardlatch-${{ github.ref_name }}.tar.gz
             wardlatch-${{ env.VERSION }}.tgz
 
+      # Nothing goes out unless the bundle is there and verifies: an attest action that changed its outputs (v4 moved
+      # them once) would otherwise publish a release without its bundle, or with an empty file.
+      - name: Check the attestation before publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          test -n "$BUNDLE" && test -s "$BUNDLE" || { echo "no attestation bundle from the attest step"; exit 1; }
+          node -e 'const l=require("fs").readFileSync(process.argv[1],"utf8").trim().split("\n"); if(l.length!==1) throw new Error("expected one bundle, got "+l.length); JSON.parse(l[0])' "$BUNDLE"
+          for f in "wardlatch-$GITHUB_REF_NAME.tar.gz" "wardlatch-$VERSION.tgz"; do
+            gh attestation verify "$f" --bundle "$BUNDLE" --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+          done
+
       # The attestation is also in GitHub's attestation store; the bundle beside the files serves verifiers without
       # GitHub, and OpenSSF Scorecard, which looks for it there.
       - name: Publish the release
