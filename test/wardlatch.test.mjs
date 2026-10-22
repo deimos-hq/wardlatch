@@ -517,17 +517,23 @@ test('curl: a server\'s TLS alert (curl exit 35 or 56, not 60) is never SAFE', {
   } finally { mtls.close(); }
 });
 
-test('the Python probe runs no sitecustomize.py or usercustomize.py either, and the container probe keeps -I -S', async (t) => {
+test('the Python probe runs no sitecustomize.py from site-packages', async (t) => {
   let venvPy;
   const venv = join(dir, 'custvenv'), marker = join(dir, 'cust-ran');
   try { execFileSync('python3', ['-m', 'venv', '--without-pip', venv], { stdio: 'ignore', timeout: 60000 }); venvPy = join(venv, 'bin', 'python3'); } catch { return t.skip('python3 -m venv is not available here'); }
   const sp = join(venv, 'lib', readdirSync(join(venv, 'lib')).find((n) => /^python3/.test(n)), 'site-packages');
-  for (const m of ['sitecustomize', 'usercustomize']) writeFileSync(join(sp, `${m}.py`), `open(${JSON.stringify(marker)}, 'a').write('${m}\\n')\n`);
+  writeFileSync(join(sp, 'sitecustomize.py'), `open(${JSON.stringify(marker)}, 'a').write('sitecustomize\\n')\n`);
+  // the test means something only where an ordinary start runs it: a distribution's own sitecustomize earlier on the
+  // path (Debian and Ubuntu ship one) is imported instead, and then there is nothing to show
   execFileSync(venvPy, ['-c', 'pass'], { stdio: 'ignore' });
-  assert.ok(existsSync(marker), 'a normal start runs sitecustomize.py'); unlinkSync(marker);
+  if (!existsSync(marker)) return t.skip('this Python imports another sitecustomize first');
+  unlinkSync(marker);
   await check({ kind: 'python', bin: venvPy, version: '' }, [canary], { controlUrl: canary.url, timeoutMs: 3000 });
-  assert.equal(existsSync(marker), false, 'the probe ran a customize module');
-  assert.match(readFileSync(new URL('../lib/containers.mjs', import.meta.url), 'utf8'), /python3 -I -S -c /, 'the container script starts python3 with -I -S');
+  assert.equal(existsSync(marker), false, 'the probe ran sitecustomize.py');
+});
+
+test('the container probe starts python3 with -I -S, as the host probe does', () => {
+  assert.match(readFileSync(new URL('../lib/containers.mjs', import.meta.url), 'utf8'), /python3 -I -S -c /);
 });
 
 test('a program whose version can\'t be read, and a never-run file that can\'t be read, are UNKNOWN with their reason', () => {
