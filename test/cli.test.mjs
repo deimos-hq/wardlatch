@@ -6,7 +6,7 @@
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -146,4 +146,58 @@ test('names from the disk are printed with control characters escaped, so a plan
   assert.match(r.out, /REVIEW {2}.*blog · plugin folder cache\\x1b\[2K\\x0d/);
   assert.ok(!/[\x00-\x09\x0b-\x1f\x7f]/.test(r.out), 'no raw control character reaches the terminal');
   assert.equal(JSON.parse(run(['--incident', 'wordpress-plugins-2026-10', '--json', '--paths', join(dir, 'wp2')]).out).results[0].what, `plugin folder ${evil}`, 'JSON keeps the real name, escaped by JSON itself');
+});
+
+test('a repository\'s own .git/config never makes git run a program: fsmonitor, signature checks, diff drivers, filters, hooks', () => {
+  // A repository unpacked from an archive or copied from elsewhere keeps its .git/config. This one names a program for
+  // every setting that could run one, and each program leaves a marker named after its setting if it ever runs.
+  const root = join(dir, 'hostile'), path = join(root, 'repo'), ran = join(dir, 'hostile-ran');
+  mkdirSync(ran, { recursive: true }); mkdirSync(join(path, '.github', 'workflows'), { recursive: true });
+  const prog = (name) => { const p = join(dir, `hostile-${name}`); writeFileSync(p, `#!/bin/sh\ntouch "${join(ran, name)}"\nexit 1\n`, { mode: 0o755 }); return p; };
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x' };
+  const g = (args, input) => execFileSync('git', ['-C', path, ...args], { env, input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+  const repo = gitRepo(path);
+  writeFileSync(join(path, '.gitattributes'), '* diff=planted filter=planted\n');
+  writeFileSync(join(path, '.github', 'workflows', 'build.yml'), 'on: push\n'); writeFileSync(join(path, 'app.js'), 'x = 1\n'); repo.commit();
+  // a commit carrying a gpgsig header that adds a workflow file, so `git log` shows it and, with log.showSignature,
+  // would check its signature with gpg.program
+  writeFileSync(join(path, '.github', 'workflows', 'signed.yml'), 'on: push\n'); g(['add', '-A']);
+  const now = Math.floor(Date.now() / 1000);
+  const body = `tree ${g(['write-tree'])}\nparent ${g(['rev-parse', 'HEAD'])}\nauthor t <t@x> ${now} +0000\ncommitter t <t@x> ${now} +0000\n`
+    + 'gpgsig -----BEGIN PGP SIGNATURE-----\n \n iQEzBAABCAAdFiEE\n -----END PGP SIGNATURE-----\n\nsigned\n';
+  g(['update-ref', 'HEAD', g(['hash-object', '-t', 'commit', '-w', '--stdin'], body)]);
+  for (const [key, name] of [['core.fsmonitor', 'fsmonitor'], ['gpg.program', 'gpg'], ['gpg.ssh.program', 'gpg-ssh'], ['gpg.x509.program', 'gpg-x509'],
+    ['diff.external', 'diff-external'], ['diff.planted.command', 'diff-command'], ['diff.planted.textconv', 'textconv'],
+    ['filter.planted.clean', 'filter-clean'], ['filter.planted.smudge', 'filter-smudge'], ['core.pager', 'pager']]) g(['config', key, prog(name)]);
+  g(['config', 'log.showSignature', 'true']);
+  for (const h of ['post-index-change', 'reference-transaction', 'post-checkout', 'pre-auto-gc', 'post-rewrite', 'fsmonitor-watchman']) writeFileSync(join(path, '.git', 'hooks', h), `#!/bin/sh\ntouch "${join(ran, `hook-${h}`)}"\n`, { mode: 0o755 });
+  // the test means something: git as 0.1.6 ran it does start the planted programs
+  try { execFileSync('git', ['-C', path, 'ls-files', '-z'], { stdio: 'ignore' }); } catch { /* the marker is what counts */ }
+  try { execFileSync('git', ['-C', path, 'log', '--all', '--since=2026-09-01', '--diff-filter=A', '--name-only', '--format=@@%h %as %an', '--', '.github/workflows'], { stdio: 'ignore' }); } catch { /* as above */ }
+  assert.ok(existsSync(join(ran, 'fsmonitor')), 'ls-files runs core.fsmonitor unless told not to');
+  assert.ok(existsSync(join(ran, 'gpg')), 'log runs gpg.program on a signed commit with log.showSignature, unless told not to');
+  for (const m of readdirSync(ran)) rmSync(join(ran, m));
+  // the real checks over it: they still work, and nothing the config names runs
+  const wf = run(['--incident', 'github-actions-2026-10', '--json', '--paths', root]);
+  assert.deepEqual(JSON.parse(wf.out).results.map((x) => x.file).sort(), ['.github/workflows/build.yml', '.github/workflows/signed.yml']);
+  const keys = run(['--incident', 'committed-keys-2026-10', '--paths', root]);
+  assert.match(keys.out, /SAFE {5}no committed keys found in the files of 1 local repository/);
+  assert.deepEqual(readdirSync(ran), [], 'a program named in the repository\'s config was run');
+});
+
+test('a partial clone is never fetched from: git log would run the program its config names to fetch with', () => {
+  // A partial clone fetches missing objects from the remote in its config when a command needs them. A config can make
+  // that fetch run a program (remote.<name>.uploadpack here; core.sshCommand for ssh), and any fetch sends a request.
+  const srv = join(dir, 'lazy-srv'), root = join(dir, 'lazy'), clone = join(root, 'pc'), marker = join(dir, 'lazy-ran');
+  const s = gitRepo(srv);
+  for (const n of [1, 2, 3]) { mkdirSync(join(srv, '.github', 'workflows'), { recursive: true }); writeFileSync(join(srv, '.github', 'workflows', `w${n}.yml`), `on: push # ${n}\n`); mkdirSync(join(srv, `d${n}`), { recursive: true }); writeFileSync(join(srv, `d${n}`, 'f'), `${n}\n`); s.commit(); }
+  execFileSync('git', ['-C', srv, 'config', 'uploadpack.allowFilter', 'true']);
+  execFileSync('git', ['-c', 'protocol.file.allow=always', 'clone', '-q', '--no-local', '--filter=tree:0', `file://${srv}`, clone], { stdio: 'ignore' });
+  writeFileSync(join(dir, 'lazy-uploadpack'), `#!/bin/sh\ntouch "${marker}"\nexit 1\n`, { mode: 0o755 });
+  execFileSync('git', ['-C', clone, 'config', 'remote.origin.uploadpack', join(dir, 'lazy-uploadpack')]);
+  // the test means something: git log as 0.1.6 ran it fetches the older trees, and runs the program to do it
+  try { execFileSync('git', ['-C', clone, 'log', '--all', '--since=2026-09-01', '--diff-filter=A', '--name-only', '--format=@@%h', '--', '.github/workflows'], { stdio: 'ignore' }); } catch { /* the fetch fails; the marker is what counts */ }
+  assert.ok(existsSync(marker), 'git log fetches missing objects through the configured program'); rmSync(marker);
+  run(['--incident', 'github-actions-2026-10', '--paths', root]);
+  assert.equal(existsSync(marker), false, 'wardlatch made git fetch from the partial clone\'s remote');
 });
