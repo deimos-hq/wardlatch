@@ -80,6 +80,13 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
 - A crash inside Wardlatch exits 2 (could not be tested), not 1 (exposed), unless an EXPOSED line was already printed.
   A container's probe output counts only with exactly one result line.
 - File reads are capped by what is read, not only by the size reported at open.
+- The key scan reads every tracked text file up to 512 MB (0.1.8 skipped files over 512 KB, and unreadable ones, without
+  a word): past 8 MB in overlapping pieces that end at line breaks, so a key is never cut in two. It scans checked-out
+  submodules too (0.1.8 never did), and a placeholder word (`example`, `fake`) counts only right next to a key, never
+  anywhere on its line (one `example.com` on a minified line hid every key on it).
+- macOS's own folders (its Library, the Trash, the Photos libraries) are never searched; a project folder that is only
+  named Library is (0.1.8 skipped every Library folder). A trust probe also gets `CURL_SSL_BACKEND`, which picks macOS
+  curl's trust store.
 
 ### Known limits
 
@@ -88,6 +95,9 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   containers).
 - The workflow review can't tell a backdated commit with no parent (the first commit of an orphan branch).
 - A file of Wardlatch's own that fails to load (a broken install) exits 1, before anything of Wardlatch's runs.
+- Runtimes are run from `/` with the person's default selection: a version chosen per shell or per project
+  (`PYENV_VERSION`, `.nvmrc`, `.tool-versions`) is not followed, so the runtime tested can differ from the one a project
+  uses.
 - The engine is the one the person's own docker or podman configuration selects (their home folder's config), which can
   name a remote host; `DOCKER_HOST` and the like are not followed.
 
