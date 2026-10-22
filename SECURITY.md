@@ -22,7 +22,8 @@ reported, and what was actually true.
   REVIEW or EXPOSED line disappear) when the thing checked is exposed, including a control that fails without the
   result turning into "could not be tested".
 - **Anything that sends data about the user.** Wardlatch's only network traffic is TLS connections to the incident's
-  public test hosts and its two control sites, carrying nothing beyond what any request from the runtime being tested
+  public test hosts and its two control sites (and what your own container engine sends, wherever `DOCKER_HOST` or the
+  current docker context points; `--no-containers` skips it), carrying nothing beyond what any request from the runtime being tested
   carries (the machine's address and the runtime's default User-Agent). Telemetry, results, paths, names, environment
   variables, keys or any other detail of the machine leaving it, by any route, is a vulnerability.
 - **Anything that modifies the system outside `fix/fix-macos.sh`.** The command changes nothing: no file, setting,
@@ -67,8 +68,8 @@ report how you would like to be credited.
 
 ## Supported versions
 
-Only the latest release on npm. Run `npx wardlatch@latest` from your home folder (npx applies the current project's
-`.npmrc` before Wardlatch starts): a bare `npx wardlatch` runs any copy already installed
+Only the latest release on npm. Run `npx wardlatch@latest` from your home folder (npx also starts Wardlatch with the
+current project's own `node_modules/.bin/node` if it has one, and applies its `.npmrc`; Wardlatch can't undo either): a bare `npx wardlatch` runs any copy already installed
 globally or in the current project, whatever its version (and npm older than 9.6.5 also reuses a copy npx cached
 earlier). Fixes are not backported.
 

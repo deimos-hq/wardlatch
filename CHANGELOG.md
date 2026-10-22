@@ -22,49 +22,68 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   and `/usr/bin/python3` with `-I`, which does not stop this. So with 0.1.0 to 0.1.6, if that interpreter's own
   site-packages held a malicious `.pth` (in an activated virtual environment, a conda environment, a pyenv version or
   Homebrew's Python, for example), running Wardlatch ran it. 0.1.0 to 0.1.2 also started the `bin/python` of each
-  virtual environment found under the searched folders, which ran that environment's `.pth` files. 0.1.2 to 0.1.6 ran
+  virtual environment found under the searched folders, which ran that environment's `.pth` files. That `bin/python` did not have to be
+  Python: any program a cloned repository put there was run (fixed in 0.1.3). 0.1.2 to 0.1.6 ran
   `python3` without `-I` inside running containers that had no `curl`, which ran the `.pth` files of the image's
-  Python, its user site-packages included; LiteLLM's own Docker images (pulled on 21 October between 11:46 and 14:20
-  UTC) are such a case. On the host, a copy installed with `pip install --user` was not run, because `-I` leaves out
+  Python, its user site-packages included; a running container from LiteLLM's own images (pulled on 21 October
+  between 11:46 and 14:20 UTC) would be such a case if it had no `curl`. On the host, a copy installed with `pip install --user` was not run, because `-I` leaves out
   the user's site-packages. 0.1.7 runs `python3 -I -S`, on the host and in containers: `-S` skips the `site` module,
   and with it every `.pth` file and `sitecustomize.py`. A container's `python3` older than 3.4, which has no `-I`, is
   UNKNOWN. Found in our own review; a test plants a marker `.pth` in a real virtual environment and fails if the probe
   runs it. If one of those Pythons held LiteLLM 1.107.0, every start of it ran the stealer, Wardlatch's included:
   follow LiteLLM's advisory.
   The trade-off: a `.pth` file or `sitecustomize.py` that changes how Python trusts certificates (pip-system-certs, for
-  example) no longer applies to the probe, and the `certifi` in the own site-packages of a Python on `PATH` is not
-  tested yet (a virtual environment's is). A Python whose code uses an old `certifi` that way can read SAFE here; the
+  example) no longer applies to the probe, and, as before, the `certifi` in the own site-packages of a Python on `PATH` is
+  not tested yet (a virtual environment's is). A Python whose code uses an old `certifi` that way can read SAFE here; the
   certifi check for those is planned.
 - Advisory: [GHSA-x8rh-w6q6-4r3h](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-x8rh-w6q6-4r3h).
 - **A repository's own git config can no longer make Wardlatch run a program, and git never fetches.** The workflow
   review runs `git log` (since 0.1.0) and the committed-key scan runs `git ls-files` (since 0.1.1) in each repository
-  under the searched folders, and git reads that repository's `.git/config`. With 0.1.0 to 0.1.6, a repository whose
-  config set `core.fsmonitor` had that program run by `git ls-files`; one whose config set `log.showSignature` and
+  under the searched folders, and git reads that repository's `.git/config`. With 0.1.1 to 0.1.6, a repository whose
+  config set `core.fsmonitor` had that program run by `git ls-files`; with 0.1.0 to 0.1.6, one whose config set
+  `log.showSignature` and
   `gpg.program` (or `gpg.ssh.program` or `gpg.x509.program`), with a signed commit that added a workflow file since 1
   September 2026, had that program run by `git log`. In a partial clone (`--filter=tree:0`, or `blob:none` when a
   workflow renamed within the folder needed its contents), `git log` fetched the missing objects from the clone's own
-  remote, such as github.com, with your usual SSH key or credential helper: a request Wardlatch promises never to make,
-  and one that needed no crafted config. A crafted config could also make that fetch run a program
-  (`core.sshCommand`, `remote.<name>.uploadpack`, an `ext::` remote). A cloned repository does not carry such a config,
-  but one unpacked from an archive or copied from elsewhere can. 0.1.7 runs git as `git --no-pager -c
-  core.fsmonitor=false -c log.showSignature=false`, `log` with `--no-show-signature --no-ext-diff --no-textconv
-  --no-renames`, and lazy fetching off (`GIT_NO_LAZY_FETCH=1`, and `GIT_ALLOW_PROTOCOL` for older git). Tests plant
+  remote, such as github.com, with your usual SSH key or credential helper, and wrote what it fetched into that
+  repository's `.git/objects`: a request and a change Wardlatch promises never to make, and ones that needed no crafted
+  config. The fetch also ran the repository's own `reference-transaction` hook (in `.git/hooks`, or wherever
+  `core.hooksPath` points), which needs no config at all, and `core.alternateRefsCommand` when the repository has
+  `objects/info/alternates`. A crafted config could also make that fetch run a program (`core.sshCommand`,
+  `remote.<name>.uploadpack`, a credential helper, an `ext::` remote). A cloned repository carries no such config and
+  no hooks, but one unpacked from an archive or copied from elsewhere can. 0.1.7 runs git by its full path, from `/`,
+  as `git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c log.showRoot=true`, `log` with
+  `--no-show-signature --no-ext-diff --no-textconv --no-renames`, and lazy fetching off (`GIT_NO_LAZY_FETCH=1`, and
+  `GIT_ALLOW_PROTOCOL` for older git). Tests plant
   programs for `core.fsmonitor`, `gpg.program`, diff drivers, filters, the pager and hooks, and a partial clone whose
   fetch would run one, and fail if any of them runs.
-- **Hardening: programs found from the place you started Wardlatch.** Run with npx from inside a project, Wardlatch
-  could run that project's own programs: npx puts the project's `node_modules/.bin` first on `PATH`, where Wardlatch
-  looks up `git`, `python3`, `node`, `curl`, `php`, `go` and the container engines. And `go version`, run from a project
-  whose `go.mod` asks for a newer Go, can download and run that Go. 0.1.7 drops every `node_modules/.bin` folder and
-  any relative entry from `PATH` before anything runs, runs programs from `/`, sets `GOTOOLCHAIN=local`, and reads
-  PHP's version with `php -n -v`, which loads no `php.ini` and no extension. npx also applies a project's `.npmrc`
-  before Wardlatch starts, which Wardlatch can't undo: run it from your home folder. Found in an independent review.
+- **A Node.js older than 18 is tested, and only a certificate refusal reads as "does not trust".** 0.1.0 to 0.1.6
+  reported any Node.js older than 18 on `PATH` as SAFE without testing it: the probe used `fetch()`, which Node 17 and
+  older lack, so it failed, and every failure counted as a refusal once the forced-roots control (which used
+  `https.get`) had passed. Node's bundled roots include Comodo's AAA Certificate Services, so such a Node really is
+  exposed. 0.1.7 probes with `https.get`, and on the host counts a failure as a refusal only when it is a
+  certificate-verification error (curl exit 60, a Node certificate error code, Python's `SSLCertVerificationError`);
+  any other failure, when no test host connected, is UNKNOWN. Found by the critic of the 0.1.7 review; a test runs a
+  Node with `fetch` removed against a trusting local test host and expects EXPOSED.
+- **Hardening: programs found from the place you started Wardlatch.** From 0.1.0 to 0.1.6, run with npx from inside a
+  project, Wardlatch could run that project's own programs: npx puts the project's `node_modules/.bin` first on `PATH`,
+  where Wardlatch looks up `git`, `python3`, `node`, `curl`, `php`, `go` and the container engines. And `go version`,
+  run from a project whose `go.mod` asks for a newer Go, can download and run that Go (a request to the Go module
+  proxy, which Wardlatch promises never to make). 0.1.7 drops every `node_modules/.bin` folder and any relative entry
+  from `PATH` before anything runs (and uses `/usr/bin:/bin` when nothing is left), runs git by its full path, runs
+  every program from `/` (with `--paths` folders and relative CA settings such as `SSL_CERT_FILE` made absolute
+  first), sets `GOTOOLCHAIN=local`, and reads PHP's version with `php -n -v`, which loads no `php.ini` and no
+  extension. A Go you pinned with `GOTOOLCHAIN` (for example `go1.26.5`) is read from that setting without running go,
+  and judged too. npx also starts Wardlatch with the project's own `node_modules/.bin/node` if it has one, and applies
+  its `.npmrc`; Wardlatch can't undo either: run it from your home folder. Found in an independent review.
 
 ### Fixed
 
 - **No silent all-clear when the eMudhra check has nothing to test.** When it found no runtime to test (always the
   case for the machine itself on Windows, and possible elsewhere), it printed nothing for it, and the run could exit 0.
-  Now it prints one UNKNOWN line ("not checked on Windows yet (Windows is not supported)" on Windows, also when
-  containers were checked; "no runtime was found to test" elsewhere; `kind` `runtimes` in `--json`), so the exit code
+  Now it prints one UNKNOWN line ("not checked on Windows yet (Windows is not supported)" on Windows, or "the runtimes
+  on this machine were not checked: Windows is not supported yet" when containers were checked; "no runtime was found
+  to test" elsewhere; `kind` `runtimes` in `--json`), so the exit code
   is 2. On Windows the OVHcloud CLI and PHP checks say UNKNOWN too, instead of SAFE: they look only for macOS and Linux
   program names. The OVHcloud stealer's temp folder is still found there, and still EXPOSED.
 - **A container engine that can't be asked is UNKNOWN, not "not running".** From 0.1.2 to 0.1.6, any failure of
@@ -82,6 +101,14 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   clone (`--filter=tree:0`) is one of them.
 - **A workflow renamed within `.github/workflows` is listed.** The workflow review now runs `git log --no-renames`, so a
   workflow file renamed into place is listed as added, and a blobless partial clone needs nothing fetched.
+- **A workflow added in a repository's first commit is listed, whatever `log.showRoot` says.** Up to 0.1.6, with
+  `log.showRoot=false` in the repository's config or your own, `git log` showed no files for a root commit, so a
+  workflow added there was missed and the review could read SAFE. git now runs with `-c log.showRoot=true`, and with
+  `GIT_NO_REPLACE_OBJECTS=1`, so `refs/replace/` can't swap one commit for another. Found in an independent review.
+- **A Python environment found through a relative `--paths` folder is tested.** Since every program runs from `/`, a
+  relative folder would have given curl a bundle path it couldn't open, and the environment would have read SAFE.
+  Folders are made absolute first, and a curl row whose own bundle can't be found is UNKNOWN. No release had this:
+  it was found in the review of 0.1.7 before release.
 
 ## [0.1.6] - 2026-10-21
 

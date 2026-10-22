@@ -16,8 +16,8 @@ on its own. Wardlatch tells you which ones still trust the leaked keys, and chec
 npx wardlatch@latest
 ```
 
-Run it from your home folder (`cd ~` first), not from inside a project: npx applies the current project's `.npmrc`
-before Wardlatch starts. Use `@latest`: a bare `npx wardlatch` runs any copy already installed globally or in the current project, whatever its version (and npm older than 9.6.5 also reuses a copy npx cached earlier). If you installed Wardlatch with `npm install -g`, update that copy too. `wardlatch --help` prints the version without running any check.
+Run it from your home folder (`cd ~` first), not from inside a project: npx also starts Wardlatch with the current
+project's own `node_modules/.bin/node` if it has one, and applies its `.npmrc`; Wardlatch can't undo either. Use `@latest`: a bare `npx wardlatch` runs any copy already installed globally or in the current project, whatever its version (and npm older than 9.6.5 also reuses a copy npx cached earlier). If you installed Wardlatch, update that copy too (`npm install -g wardlatch@latest` for a global copy, `npm install wardlatch@latest` in the project), or remove it. `wardlatch --help` prints the version without running any check.
 
 Runs on macOS and Linux, tested on both in CI. **Windows is not supported yet:** some checks don't look in Windows
 locations, so a Windows run can miss what it should find. The trust check and the program checks say UNKNOWN there.
@@ -38,8 +38,8 @@ It doesn't compare version numbers. It asks each runtime to open a real, verifie
 whose certificates are signed with the compromised keys, the way your own code would, with your own environment.
 If a runtime connects, it still trusts them. Two exceptions keep it from running what it checks: Python is started
 with `-I -S`, so a `.pth` file or `sitecustomize.py` that changes its trust (pip-system-certs, for example) is not
-applied, and the `certifi` in the own site-packages of a Python on your `PATH` is not tested yet (a virtual
-environment's is); and every program runs from `/`, so a version manager picks your default, not the current project's.
+applied, and, as before, the `certifi` in the own site-packages of a Python on your `PATH` is not tested yet (a
+virtual environment's is); and every program runs from `/`, so a version manager picks your default, not the current project's.
 
 Two checks keep the answer honest:
 
@@ -51,7 +51,8 @@ Two checks keep the answer honest:
 
 ## What it looks at
 
-- every `node`, `curl` and `python3` on your `PATH`, plus the operating system's own
+- every `node`, `curl` and `python3` on your `PATH` (except in `node_modules/.bin` folders and relative entries, which
+  are dropped so a project can't have Wardlatch run its programs), plus the operating system's own
 - Python virtual environments (and their `certifi`) under `~/Development`, `~/code`, `~/src`, `~/projects`, `~/Projects`,
   `~/dev`, `~/work`, `~/Sites` and `/var/www`, or the folders you give with `--paths`
 - every running Docker or Podman container, checked from inside with the image's own curl, python3 or wget. Two
@@ -73,7 +74,8 @@ script from Jamf, Kandji or Intune.
 
 Wardlatch runs on your machine. It sends nothing anywhere: no telemetry, no results, no machine details. The only
 network traffic is TLS connections to the incident's public test hosts and two control sites (the advisory's own
-page, and a self-signed test site for containers). It changes nothing on your system; each result comes with the fix
+page, and a self-signed test site for containers), and your own container engine, wherever `DOCKER_HOST` or the
+current docker context points (`--no-containers` skips it). It changes nothing on your system; each result comes with the fix
 for you to apply. What it can and can't promise, and why: [ASSURANCE_CASE.md](ASSURANCE_CASE.md).
 
 ## Reference
@@ -95,9 +97,9 @@ reason) or `REVIEW` (something to look at, such as a new workflow file). The exi
 exposed, otherwise **2** if anything could not be tested, otherwise **0**. Review lines never change it.
 
 `--json` prints one object: `{ tool, version, incidents: [{ id, title, advisory }], results: [...] }`. Each result
-has `incident`, `status` and `kind` (`node`, `curl`, `python`, `python-certifi`, `macos-system`, `container`,
+has `incident`, `status` and `kind` (`node`, `curl`, `python`, `macos-system`, `container`,
 `containers` when an engine can't be asked, `runtimes` when a trust check found nothing to test, `binary`,
-`workflow`, `secret` or `wordpress`), the fields of that kind (such as `bin`, `version`, `trusted` and `tested` for a
+`workflow`, `secret` or `wordpress`; a virtual environment's certifi is kind `curl` with `certifi` and `env`), the fields of that kind (such as `bin`, `version`, `trusted` and `tested` for a
 trust probe, or `file`, `line`, `type` and `masked` for a key), `reason` when it is UNKNOWN, and `fix` when there is
 something to do.
 

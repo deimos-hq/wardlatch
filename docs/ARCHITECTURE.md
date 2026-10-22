@@ -42,9 +42,9 @@ programs already on the machine:
 | `lib/probe.mjs` | The trust check. `reachable()` does a TLS handshake with verification off and sends nothing, to learn whether a test host is up. `probe()` makes the runtime itself open a verified connection, with the user's environment. `check()` runs the controls, then the probes. | The only module that opens network connections. |
 | `lib/containers.mjs` | Lists running containers (`docker ps` / `podman ps`) and runs a small `sh` script inside each with `exec`: it uses whichever of `curl`, `python3` or `wget` the image has, and prints only which tool it used. An engine that is installed but can't be asked (it hangs past 10 seconds, refuses, or fails for any reason other than "not running") is UNKNOWN, not "no containers". | Runs the engine's `ps` and `exec`, each killed if it outlives its timeout. Writes nothing into a container. |
 | `lib/binaries.mjs` | Version rules: a bad range, a fixed version, or one fixed version per release line (and "end of life" when a line gets none). | Runs `<tool> --version` (or the rule's arguments) for programs found on `PATH`, except a rule marked `noExec` (the OVHcloud CLI): that program is never run; its file is hashed and `$TMPDIR`, `/tmp` and `/var/tmp` are listed for the malware's folder. |
-| `lib/workflows.mjs` | Finds git repositories (4 levels) and lists `.github/workflows` files added since a date. | `git log --no-show-signature --no-ext-diff --no-textconv` in each repository, through `lib/git.mjs`. |
+| `lib/workflows.mjs` | Finds git repositories (4 levels) and lists `.github/workflows` files added since a date. | `git log --no-show-signature --no-ext-diff --no-textconv --no-renames` in each repository, through `lib/git.mjs`. |
 | `lib/secrets.mjs` | High-confidence key shapes in the files git tracks (up to 512 KB each, binary files skipped). A finding keeps the type, file, line and a mask, never the key. | `git ls-files`, through `lib/git.mjs`, then reads files. |
-| `lib/git.mjs` | Runs git in a repository Wardlatch found, with every setting in the repository's own config that could make `ls-files` or `log` start a program overridden: `git --no-pager -c core.fsmonitor=false -c log.showSignature=false -C <repo>`, with lazy fetching off (`GIT_NO_LAZY_FETCH=1`, `GIT_ALLOW_PROTOCOL` set to no real protocol). See [ASSURANCE_CASE.md](../ASSURANCE_CASE.md#4-what-is-not-defended). | Runs `git`. |
+| `lib/git.mjs` | Runs git in a repository Wardlatch found, with every setting in the repository's own config that could make `ls-files` or `log` start a program overridden: `git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c log.showRoot=true -C <absolute repo>`, with lazy fetching off (`GIT_NO_LAZY_FETCH=1`, `GIT_ALLOW_PROTOCOL` set to no real protocol) and `GIT_NO_REPLACE_OBJECTS=1`. git is found on `PATH` and run by its full path, from `/`. See [ASSURANCE_CASE.md](../ASSURANCE_CASE.md#4-what-is-not-defended). | Runs `git`. |
 | `lib/wordpress.mjs` | Finds WordPress installs (5 levels), reads plugin version headers (a version that can't be read is UNKNOWN), searches a plugin's files for an indicator string (up to 4,000 files of under 2 MB), lists plugin folders created since a date. | Reads files and folder dates. |
 | `lib/files.mjs` | `readCapped()`: reads a file only if it is a regular file under a size cap, checking and reading through one read-only, non-blocking file descriptor, so it can't be swapped for a huge file, a device or a pipe in between. Used by the key scan and the WordPress checks. | Opens files read-only. |
 | `fix/fix-macos.sh` | The Mac fix. See below. | `/etc/ssl/cert.pem` and a dated backup beside it. |
@@ -69,15 +69,15 @@ asks each runtime to make the connection itself.
    must open the advisory's own page, or the line is UNKNOWN.
 3. **The probe**: the runtime connects to each reachable host with its own defaults and the user's environment, the
    way the user's code would, run from `/`. Python is the exception: it starts with `-I -S`, so its start-up files
-   (`.pth`, `sitecustomize.py`) and anything they change about trust are left out. Any host it reaches makes the line EXPOSED, naming the hosts; none makes it SAFE.
+   (`.pth`, `sitecustomize.py`) and anything they change about trust are left out. Any host it reaches makes the line EXPOSED, naming the hosts. Only a certificate-verification refusal counts as a refusal (curl exit 60, a Node certificate error code, Python's `SSLCertVerificationError`): when no host connected, every refusal of that kind makes it SAFE, and any other failure makes it UNKNOWN.
 
 Probes per runtime:
 
 | Runtime | How it is asked |
 |---|---|
-| `curl` | `curl -s -o /dev/null --max-time N [--cacert roots] URL` (the Linux system store adds `--cacert <bundle>`) |
-| `node` | `node -e <script>`: `fetch()` for the probe, `https.get` with `ca:` for the control |
-| `python`, `python-certifi` | `python3 -I -S -c <script>`: `ssl.create_default_context()` (or `certifi.where()`) and `urllib`. `-S` skips the `site` module, so no `.pth` file or `sitecustomize.py` runs (since 0.1.7); `-I` leaves out the user's site-packages, the `PYTHON*` variables and the current folder |
+| `curl` | `curl -s -o /dev/null --max-time N [--cacert roots] URL` (the Linux system store and a virtual environment's certifi add `--cacert <bundle>`; a bundle that can't be found is UNKNOWN) |
+| `node` | `node -e <script>`: `https.get` for the probe, and with `ca:` for the control (since 0.1.7; `fetch()` before, which Node 17 and older lack) |
+| `python` | `python3 -I -S -c <script>`: `ssl.create_default_context()` and `urllib`. A virtual environment's certifi is not run through Python: it is a `curl` row with `--cacert <bundle>`. `-S` skips the `site` module, so no `.pth` file or `sitecustomize.py` runs (since 0.1.7); `-I` leaves out the user's site-packages, the `PYTHON*` variables and the current folder |
 | macOS system | `nscurl URL`, read from its output, since it exits 0 even when the load fails |
 | a container | `sh -c <script>` inside it via `docker exec` / `podman exec`, using `curl`, else `python3 -I -S`, else `wget`; first a normal site must open, then `self-signed.badssl.com` must be refused, or the tool doesn't check certificates and the line is UNKNOWN |
 
@@ -109,7 +109,8 @@ when the file and its folder are writable by the user (as in the tests, which po
 - **Run the real thing.** The probes use the runtimes themselves, with the user's environment, so a result reflects
   what the user's code would do, including `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS` and a virtual environment's own
   `certifi`. Except for what would mean running what is being checked: Python's start-up files are skipped (`-I -S`),
-  every program runs from `/` with `GOTOOLCHAIN=local`, and `node_modules/.bin` folders are dropped from `PATH`.
+  every program runs from `/` (`go version` with `GOTOOLCHAIN=local`), and `node_modules/.bin` folders are dropped from
+  `PATH`.
 - **Controls before verdicts.** Every SAFE is preceded by evidence that the check could have said EXPOSED.
 - **Read-only command, separate fix.** Applying a fix is the person's decision. The one fix that ships is a separate
   script with its own safety checks, run on purpose.
