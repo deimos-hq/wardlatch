@@ -408,15 +408,19 @@ test('git and the container engine run from / too', () => {
 test('a repository git refuses to open (another user\'s) is UNKNOWN for both git checks (exit 2); an empty repository is clean', () => {
   const root = join(dir, 'owner'), path = join(root, 'app'); const repo = gitRepo(path);
   mkdirSync(join(path, '.github', 'workflows'), { recursive: true }); writeFileSync(join(path, '.github', 'workflows', 'ci.yml'), 'on: push\n'); repo.commit();
+  // only the global and system git config can allow a folder (safe.directory), and CI runners allow every one: the
+  // test reads neither
+  const empty = join(dir, 'owner-gitconfig'); writeFileSync(empty, '');
+  const other = { GIT_TEST_ASSUME_DIFFERENT_OWNER: '1', GIT_CONFIG_GLOBAL: empty, GIT_CONFIG_NOSYSTEM: '1' };
   for (const [id, kind] of [['github-actions-2026-10', 'workflow'], ['committed-keys-2026-10', 'secret']]) {
-    const r = run(['--incident', id, '--json', '--paths', root], { GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' });
-    assert.equal(r.code, 2, id);
+    const r = run(['--incident', id, '--json', '--paths', root], other);
+    assert.equal(r.code, 2, `${id}: ${r.out}`);
     assert.deepEqual(JSON.parse(r.out).results.map((x) => [x.kind, x.status, x.repo]), [[kind, 'UNKNOWN', path]], id);
-    assert.doesNotMatch(run(['--incident', id, '--paths', root], { GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' }).out, /SAFE/, id);
+    assert.doesNotMatch(run(['--incident', id, '--paths', root], other).out, /SAFE/, id);
   }
-  const empty = join(dir, 'empty'); gitRepo(join(empty, 'fresh'));
-  const wf = run(['--incident', 'github-actions-2026-10', '--paths', empty]);
+  const fresh = join(dir, 'empty'); gitRepo(join(fresh, 'fresh'));
+  const wf = run(['--incident', 'github-actions-2026-10', '--paths', fresh]);
   assert.equal(wf.code, 0, wf.out); assert.match(wf.out, /SAFE {5}no workflow files added since 2026-09-01 in 1 local repository\n/);
-  const keys = run(['--incident', 'committed-keys-2026-10', '--paths', empty]);
+  const keys = run(['--incident', 'committed-keys-2026-10', '--paths', fresh]);
   assert.equal(keys.code, 0, keys.out); assert.match(keys.out, /SAFE {5}no committed keys found in the files of 1 local repository /);
 });
