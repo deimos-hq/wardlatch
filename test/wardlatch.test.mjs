@@ -25,8 +25,9 @@ const node = (env) => ({ kind: 'node', bin: process.execPath, env: { NODE_EXTRA_
 before(async () => {
   dir = mkdtempSync(join(tmpdir(), 'wardlatch-'));
   const o = (...a) => execFileSync(OPENSSL, a, { cwd: dir, stdio: 'pipe' });
-  for (const n of ['bad-root', 'other-root']) o('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', `${n}.key`, '-out', `${n}.pem`, '-days', '2', '-subj', `/CN=${n}`);
-  writeFileSync(join(dir, 'leaf.ext'), 'subjectAltName=IP:127.0.0.1\nbasicConstraints=CA:FALSE\n');
+  for (const n of ['bad-root', 'other-root']) o('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', `${n}.key`, '-out', `${n}.pem`, '-days', '2', '-subj', `/CN=${n}`, '-addext', 'keyUsage=critical,keyCertSign,cRLSign');
+  // key identifiers and the roots' key usage: Python 3.13 and later verify strictly and refuse a chain without them
+  writeFileSync(join(dir, 'leaf.ext'), 'subjectAltName=IP:127.0.0.1\nbasicConstraints=CA:FALSE\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n');
   o('req', '-newkey', 'rsa:2048', '-nodes', '-keyout', 'leaf.key', '-out', 'leaf.csr', '-subj', '/CN=127.0.0.1');
   o('x509', '-req', '-in', 'leaf.csr', '-CA', 'bad-root.pem', '-CAkey', 'bad-root.key', '-CAcreateserial', '-out', 'leaf.pem', '-days', '2', '-extfile', 'leaf.ext');
   badCa = join(dir, 'bad-root.pem'); otherCa = join(dir, 'other-root.pem');
@@ -295,4 +296,30 @@ test('a curl row whose own CA bundle is missing or relative is UNKNOWN, never SA
     const r = await check({ kind: 'curl', bin: '/usr/bin/curl', args: ['--cacert', bundle] }, [canary], { rootsPem: badCa, timeoutMs: 3000 });
     assert.equal(r.status, 'UNKNOWN', bundle); assert.match(r.reason, /could not be found, so it was not tested/);
   }
+});
+
+test('a Node.js without fetch() (Node 17 and older) is still tested: one that trusts the root is EXPOSED', async () => {
+  // Up to 0.1.6 the probe used fetch(), which Node 17 and older lack: it threw, exited 1, and counted as a refusal after
+  // the forced-roots control (https.get) had passed, so an old Node read SAFE without being tested.
+  const nofetch = join(dir, 'nofetch.cjs'); writeFileSync(nofetch, 'delete globalThis.fetch;\n');
+  const r = await check(node({ NODE_EXTRA_CA_CERTS: badCa, NODE_OPTIONS: `--require ${nofetch}` }), [canary], { rootsPem: badCa, timeoutMs: 3000 });
+  assert.equal(r.status, 'EXPOSED'); assert.deepEqual(r.trusted, ['local']);
+});
+
+test('only a certificate refusal counts as "does not trust": any other failure is UNKNOWN, never SAFE', async () => {
+  // the second test host refuses the TCP connection: no certificate was ever judged there
+  const dead = { id: 'dead', url: 'https://127.0.0.1:1/', up: true };
+  const r = await check(node(), [canary, dead], { rootsPem: badCa, timeoutMs: 3000 });
+  assert.equal(r.status, 'UNKNOWN'); assert.match(r.reason, /^1 of 2 test connections failed for a reason other than a certificate refusal/);
+  if (existsSync('/usr/bin/curl')) assert.equal((await check({ kind: 'curl', bin: '/usr/bin/curl' }, [canary, dead], { rootsPem: badCa, timeoutMs: 3000 })).status, 'UNKNOWN');
+});
+
+test('the Python probe tells a certificate refusal (SAFE) from a connection that trusts the root (EXPOSED)', async (t) => {
+  let py; try { py = execFileSync('python3', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).trim(); } catch { return t.skip('python3 is not available here'); }
+  const rt = (env = {}) => ({ kind: 'python', bin: py, version: '', env: { SSL_CERT_FILE: otherCa, SSL_CERT_DIR: dir, ...env } });
+  const exposed = await check(rt({ SSL_CERT_FILE: badCa }), [canary], { rootsPem: badCa, timeoutMs: 3000 });
+  // LibreSSL's openssl x509 writes no Authority Key Identifier, which a strict Python refuses: then nothing can be shown
+  if (exposed.status === 'UNKNOWN' && /positive control failed/.test(exposed.reason)) return t.skip('this Python refuses the test chain itself');
+  assert.equal(exposed.status, 'EXPOSED');
+  assert.equal((await check(rt(), [canary], { rootsPem: badCa, timeoutMs: 3000 })).status, 'SAFE');
 });
