@@ -149,22 +149,45 @@ Read this section before relying on anything above.
 
 **Fixed after 0.1.2: a found virtual environment's interpreter is never run.** Up to 0.1.2, a folder under the
 searched paths that contained `pyvenv.cfg` and `bin/python` had that `bin/python` run, so a repository cloned from a
-stranger could ship a fake "python" that Wardlatch would execute. Since then Wardlatch only reads files in a found
+stranger could ship a fake "python" that Wardlatch would execute. Starting a real environment's Python also ran the
+`.pth` files in its site-packages (see the next paragraphs). Since then Wardlatch only reads files in a found
 environment: its certifi bundle (`lib/python*/site-packages/certifi/cacert.pem`) and version (the dist-info), and it
 tests that bundle with a curl the machine already trusts (`/usr/bin/curl`, else the first on `PATH`) and `--cacert`.
 An environment without certifi uses its base Python's trust, which is checked through `PATH`. A test plants a fake
 interpreter that would leave a marker file and fails if it ever runs.
 
-**Programs on `PATH` are trusted, except a program an incident says may itself be malware.** Every `node`, `curl`,
-`python3`, and each tool named in a version rule, is run as found, as your shell would. A `PATH` that includes `.` or a
-writable folder is outside what Wardlatch can defend. A rule marked `noExec` is never run: the file is hashed and
-compared with the builds the vendor published as compromised, and the temp directories are searched for the traces
-the malware leaves. Since 0.1.6 the OVHcloud CLI rule works this way, with the five MD5 hashes and the `envchecker-`
+**Programs on `PATH` are trusted, except a program an incident says may itself be malware.** Every `node`, `curl`
+and `python3` on `PATH`, `/usr/bin/curl`, `/usr/bin/python3`, and each tool named in a version rule, is run from the
+place it was found, the one your shell would pick. Each is run once for its version (`node -v`, `curl --version`,
+`python3 -V`, or the rule's arguments), and each runtime once more per test connection, with the arguments in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#the-trust-check-step-by-step). Python is not started the way your shell
+would start it: see the next paragraph. A `PATH` that includes `.` or a writable folder is outside what Wardlatch can
+defend. A rule marked `noExec` is never run: the file is hashed and compared with the builds the vendor published as
+compromised, and the temp directories are searched for the traces the malware leaves. Since 0.1.6 the OVHcloud CLI rule works this way, with the five MD5 hashes and the `envchecker-`
 folder from OVHcloud's advisory (GHSA-862f-55f5-vmvw); a test plants a program that would leave a marker file and
 fails if it ever runs. **Found in our own review, 21 October 2026:** 0.1.0 to 0.1.5 read the OVHcloud CLI's version by
 running `ovhcloud --version`, so on a machine that still held one of the compromised builds, running Wardlatch would
 also have run the stealer. Anyone who ran an earlier Wardlatch with a compromised `ovhcloud` installed should follow
 that rule's fix.
+
+**Python's start-up files are not run.** At start-up Python imports `site`, which runs every `.pth` file in that
+interpreter's site-packages, and a malicious package can put code there that runs on every Python start (LiteLLM
+1.107.0's `cook.pth`, 21 October 2026). `-I` does not stop this: it leaves out only the user's own site-packages, the
+`PYTHON*` environment variables and the current folder. So since 0.1.7 the trust probe runs `python3 -I -S -c
+<script>`: `-S` skips `site`, and with it every `.pth` file and `sitecustomize.py`. The probe needs only the standard
+library. The version is read with `python3 -V`, which exits before any start-up code. Inside a container `python3` runs
+with `-I -S` too; one older than 3.4 has no `-I`, fails the normal-site control and is UNKNOWN. The cost: a `.pth` file
+or `sitecustomize.py` that changes how that Python trusts certificates (one that makes it use the system's store, for
+example) no longer applies to the probe, so the result can differ from what your code sees. *Evidence:* a test builds a
+real virtual environment with a marker `.pth`, checks that an ordinary `-I` start runs it, and fails if the probe does;
+another runs the container script with a `python3` that rejects `-I` and expects UNKNOWN. **Found 21 October 2026,
+[GHSA-xcqr-prh6-6g8w](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-xcqr-prh6-6g8w):** 0.1.0 to
+0.1.6 started each `python3` on `PATH` and `/usr/bin/python3` with `-I` alone, so a malicious `.pth` in that
+interpreter's own site-packages ran when Wardlatch started it (an activated virtual environment, conda environment,
+pyenv version or Homebrew Python included). 0.1.0 to 0.1.2 also started the `bin/python` of each virtual environment
+found under the searched folders, which ran that environment's `.pth` files. 0.1.2 to 0.1.6 ran `python3` without `-I`
+inside running containers that had no `curl`. On the host, a copy installed with `pip install --user` was not run,
+because `-I` leaves out the user's site-packages.
 
 **Git reads each repository's own configuration.** Wardlatch runs `git ls-files` and `git log` in every repository
 it finds. It runs no hooks, no pager and no `git status`, but it does not override the repository's config either.
