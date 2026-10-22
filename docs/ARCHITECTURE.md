@@ -21,8 +21,8 @@ programs already on the machine:
   (checked:                   |                    ──> probe.mjs ────> TLS to the advisory's test hosts
    known options only)        |                    ──> containers.mjs ─> docker/podman exec, inside each container
                               ├──> version rules ───> binaries.mjs ───> `<tool> --version` of programs on PATH
-                              ├──> workflows ───────> workflows.mjs ──> git log in local repositories
-                              ├──> committed keys ──> secrets.mjs ────> git ls-files, then read tracked files
+                              ├──> workflows ───────> workflows.mjs ──> git log in local repositories (git.mjs)
+                              ├──> committed keys ──> secrets.mjs ────> git ls-files (git.mjs), then read tracked files
                               └──> WordPress ───────> wordpress.mjs ──> read plugin headers and files
                               |
                               v
@@ -42,8 +42,9 @@ programs already on the machine:
 | `lib/probe.mjs` | The trust check. `reachable()` does a TLS handshake with verification off and sends nothing, to learn whether a test host is up. `probe()` makes the runtime itself open a verified connection, with the user's environment. `check()` runs the controls, then the probes. | The only module that opens network connections. |
 | `lib/containers.mjs` | Lists running containers (`docker ps` / `podman ps`) and runs a small `sh` script inside each with `exec`: it uses whichever of `curl`, `python3` or `wget` the image has, and prints only which tool it used. | Runs the engine's `ps` and `exec`. Writes nothing into a container. |
 | `lib/binaries.mjs` | Version rules: a bad range, a fixed version, or one fixed version per release line (and "end of life" when a line gets none). | Runs `<tool> --version` (or the rule's arguments) for programs found on `PATH`. |
-| `lib/workflows.mjs` | Finds git repositories (4 levels) and lists `.github/workflows` files added since a date. | `git log` in each repository. |
-| `lib/secrets.mjs` | High-confidence key shapes in the files git tracks (up to 512 KB each, binary files skipped). A finding keeps the type, file, line and a mask, never the key. | `git ls-files`, then reads files. |
+| `lib/workflows.mjs` | Finds git repositories (4 levels) and lists `.github/workflows` files added since a date. | `git log --no-show-signature --no-ext-diff --no-textconv` in each repository, through `lib/git.mjs`. |
+| `lib/secrets.mjs` | High-confidence key shapes in the files git tracks (up to 512 KB each, binary files skipped). A finding keeps the type, file, line and a mask, never the key. | `git ls-files`, through `lib/git.mjs`, then reads files. |
+| `lib/git.mjs` | Runs git in a repository Wardlatch found, with every setting in the repository's own config that could make `ls-files` or `log` start a program overridden: `git --no-pager -c core.fsmonitor=false -c log.showSignature=false -C <repo>`, with lazy fetching off (`GIT_NO_LAZY_FETCH=1`, `GIT_ALLOW_PROTOCOL` set to no real protocol). See [ASSURANCE_CASE.md](../ASSURANCE_CASE.md#4-what-is-not-defended). | Runs `git`. |
 | `lib/wordpress.mjs` | Finds WordPress installs (5 levels), reads plugin version headers (a version that can't be read is UNKNOWN), searches a plugin's files for an indicator string (up to 4,000 files of under 2 MB), lists plugin folders created since a date. | Reads files and folder dates. |
 | `lib/files.mjs` | `readCapped()`: reads a file only if it is a regular file under a size cap, checking and reading through one read-only, non-blocking file descriptor, so it can't be swapped for a huge file, a device or a pipe in between. Used by the key scan and the WordPress checks. | Opens files read-only. |
 | `fix/fix-macos.sh` | The Mac fix. See below. | `/etc/ssl/cert.pem` and a dated backup beside it. |

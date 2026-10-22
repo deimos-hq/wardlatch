@@ -189,8 +189,30 @@ found under the searched folders, which ran that environment's `.pth` files. 0.1
 inside running containers that had no `curl`. On the host, a copy installed with `pip install --user` was not run,
 because `-I` leaves out the user's site-packages.
 
-**Git reads each repository's own configuration.** Wardlatch runs `git ls-files` and `git log` in every repository
-it finds. It runs no hooks, no pager and no `git status`, but it does not override the repository's config either.
+**Git runs with the repository's program settings overridden.** Wardlatch runs `git ls-files` (committed keys) and
+`git log` (workflow review) in every repository it finds, and a repository's own `.git/config` can name programs for
+git to run. A cloned repository starts with git's default config, but one unpacked from an archive or copied from
+elsewhere can carry any config it likes. Since 0.1.7 both run through `lib/git.mjs` as `git --no-pager -c
+core.fsmonitor=false -c log.showSignature=false -C <repo>`, and `log` adds `--no-show-signature --no-ext-diff
+--no-textconv`. A `-c` setting wins over every config file. So `ls-files` runs no `core.fsmonitor` program, and `log`
+runs no `gpg.program` (nor `gpg.ssh.program` or `gpg.x509.program`) to check a signed commit. `diff.external`, a diff
+driver's `command` or `textconv`, and `filter` programs run only for a patch or a checkout, which neither command
+makes. Neither command runs a hook, and with no terminal git starts no pager. Lazy fetching is off too
+(`GIT_NO_LAZY_FETCH=1`, and `GIT_ALLOW_PROTOCOL` set to no real protocol for a git too old to know that variable): in
+a partial clone, `git log` fetches a missing tree or blob from the remote the config names, running `core.sshCommand`,
+`remote.<name>.uploadpack` or a credential helper on the way, and sending a request. *Evidence:* `test/cli.test.mjs`
+plants a repository whose config names a program for `core.fsmonitor`, the three `gpg` programs, `diff.external`, a
+diff driver's `command` and `textconv`, both `filter` programs and `core.pager`, with hooks and a signed commit that
+adds a workflow file. It checks that plain `git ls-files` and `git log` do start the planted programs, then runs both
+checks and fails if any program runs. Another test makes a partial clone whose `uploadpack` leaves a marker if git
+fetches from it. **Found 21
+October 2026, [GHSA-x8rh-w6q6-4r3h](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-x8rh-w6q6-4r3h):**
+0.1.0 to 0.1.6 ran `git log`, and 0.1.1 to 0.1.6 ran `git ls-files`, with the repository's own config, so a
+repository under the searched folders whose config set `core.fsmonitor`, or `log.showSignature` with `gpg.program`,
+had its program run by Wardlatch, and a partial clone's config could do the same through a fetch. **Still true:** when
+git fails in a repository (a partial clone missing an object, a repository git refuses to open), that repository adds
+nothing to these two checks; it is not reported as UNKNOWN. Git itself and any `git-remote-*` helper are programs on
+`PATH`, trusted as above.
 
 **An on-path attacker can produce a false SAFE for a host.** After the controls pass, any failure to connect counts
 as a refusal. An attacker on the network path who lets the reachability handshake and the positive control through,
