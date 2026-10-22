@@ -162,6 +162,9 @@ const fs = require('node:fs'), tls = require('node:tls'), net = require('node:ne
 const cp = require('node:child_process'), path = require('node:path'), { EventEmitter } = require('node:events');
 const exists = fs.existsSync;
 fs.existsSync = (p) => !/^\\/(usr|etc|opt|bin)\\//.test(String(p)) && exists(p);
+// hidden from every way of looking, not only existsSync: 0.1.9 reads the disk through statSync and friends, and X1
+// passed for the wrong reason while only existsSync was covered (the strict review of eb82857)
+for (const k of ['statSync', 'lstatSync', 'realpathSync', 'readdirSync', 'openSync']) { const o = fs[k]; fs[k] = (p, ...a) => { if (/^\\/(usr|etc|opt|bin)\\//.test(String(p))) throw Object.assign(new Error('hidden by the test'), { code: 'ENOENT' }); return o(p, ...a); }; }
 const fake = (ok) => (...a) => {
   const cb = a.find((x) => typeof x === 'function'), s = new EventEmitter();
   s.end = s.destroy = s.setTimeout = s.write = s.setNoDelay = s.setKeepAlive = () => s;
