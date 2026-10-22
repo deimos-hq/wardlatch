@@ -11,6 +11,9 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
+### Added
+- `identity-headers-2026-10`: agents that tell websites who you are. Finds your name or email, or any email address, in the header settings your tools send (curl and wget start-up files, git's http.extraHeader and http.userAgent, npm's user-agent, coding-agent and MCP client configs, `*_HEADERS` variables). Read-only; values are never printed.
+
 ## [0.1.7] - 2026-10-22
 
 ### Security

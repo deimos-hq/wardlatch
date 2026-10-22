@@ -16,6 +16,7 @@ import { listContainers, checkContainer } from '../lib/containers.mjs';
 import { reposUnder, workflowsAddedSince } from '../lib/workflows.mjs';
 import { scanRepo } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
+import { scanHeaders } from '../lib/headers.mjs';
 
 // npx puts the current project's node_modules/.bin, and each parent folder's, first on PATH. Wardlatch finds git,
 // python3, node, curl, php, go and the container engines on PATH and runs some of them, so a project could otherwise
@@ -219,6 +220,22 @@ for (const inc of chosen) {
     }
     if (!sites.length) print('SAFE', 'no WordPress installs found in the folders searched (run it on the server, or pass --paths)');
     else if (results.some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.reviewFix}`);
+  }
+  if (inc.type === 'headers') {
+    // your name and email are read from this machine to compare against; they are never printed or sent
+    const h = scanHeaders({ home: homedir(), roots });
+    for (const u of h.unread) {
+      results.push({ incident: inc.id, kind: 'header', status: 'UNKNOWN', file: u.file, reason: u.reason });
+      print('UNKNOWN', short(u.file)); note('33', `could not read it: ${u.reason}`);
+    }
+    for (const f of h.findings) {
+      results.push({ incident: inc.id, kind: 'header', status: f.status, file: f.file, where: f.where, carries: f.carries, to: f.to, fix: inc.fix });
+      print(f.status, `${short(f.file)} · ${f.where}`, c('2', `  carries ${f.carries}, ${f.to}`));
+    }
+    if (h.findings.length) note('2', `fix: ${inc.fix}`);
+    else print('SAFE', `no name or email in the ${h.settings} header setting${h.settings === 1 ? '' : 's'} found in ${h.read} file${h.read === 1 ? '' : 's'} and the environment`);
+    if (!h.id.name && !h.id.email) note('2', 'no git name or email is set, so only email-shaped values were looked for');
+    note('2', `not covered: ${inc.notCovered}`);
   }
   all.push(...results);
   if (!json) console.log(c('2', `Source: ${inc.advisory}`));

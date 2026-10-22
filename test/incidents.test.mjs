@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 const DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'incidents');
 const incidents = readdirSync(DIR).filter((f) => f.endsWith('.json')).map((f) => ({ file: f, ...JSON.parse(readFileSync(join(DIR, f), 'utf8')) }));
-const TYPES = ['trust', 'binaries', 'workflows', 'secrets', 'wordpress'];
+const TYPES = ['trust', 'binaries', 'workflows', 'secrets', 'wordpress', 'headers'];
 const https = (u) => typeof u === 'string' && new URL(u).protocol === 'https:';
 
 test('every incident has the fields its check reads, named after its file', () => {
@@ -24,6 +24,7 @@ test('every incident has the fields its check reads, named after its file', () =
     for (const b of i.binaries ?? []) assert.ok(b.binary && b.fix && (b.bad || b.fixedIn || b.pendingUntil || (b.noExec && b.md5Bad?.length)), `${i.id}: ${b.binary}`);
     if (i.type === 'workflows') assert.ok(!Number.isNaN(Date.parse(i.since)) && i.fix);
     if (i.type === 'secrets') assert.ok(i.fix);
+    if (i.type === 'headers') assert.ok(i.fix && i.notCovered);
     if (i.type === 'wordpress') { assert.ok(!Number.isNaN(Date.parse(i.addedSince)) && i.reviewFix); for (const r of i.rules) assert.ok(r.plugin && r.mainFile && r.fix); }
   }
   assert.equal(new Set(incidents.map((i) => i.id)).size, incidents.length, 'ids are unique');
