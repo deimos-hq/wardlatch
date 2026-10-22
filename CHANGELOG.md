@@ -16,48 +16,72 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 ### Security
 
 - Advisory: [GHSA-xcqr-prh6-6g8w](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-xcqr-prh6-6g8w).
-- **Wardlatch no longer runs Python's start-up files.** At start-up Python runs every `.pth` file in its
-  site-packages, and a malicious package can put code there: LiteLLM 1.107.0, compromised on PyPI on 21 October 2026,
-  ships `cook.pth`. The eMudhra check started each `python3` on `PATH` and `/usr/bin/python3` with `-I`, which does not
-  stop this. So with 0.1.0 to 0.1.6, if that interpreter's own site-packages held a malicious `.pth` (in an activated
-  virtual environment, a conda environment, a pyenv version or Homebrew's Python, for example), running Wardlatch ran
-  it. 0.1.0 to 0.1.2 also started the `bin/python` of each virtual environment found under the searched folders, which
-  ran that environment's `.pth` files. 0.1.2 to 0.1.6 ran `python3` without `-I` inside running containers that had no
-  `curl`, which ran the `.pth` files of the image's Python. On the host, a copy installed with `pip install --user` was
-  not run, because `-I` leaves out the user's site-packages. 0.1.7 runs `python3 -I -S`, on the host and in
-  containers: `-S` skips the `site` module, and with it every `.pth` file and `sitecustomize.py`. A `.pth` file that
-  changes how Python trusts certificates no longer applies to the probe, so a result can differ from what your code
-  sees. A container's `python3` older than 3.4, which has no `-I`, is UNKNOWN. Found in our own review; a test plants
-  a marker `.pth` in a real virtual environment and fails if the probe runs it. If one of those Pythons held LiteLLM
-  1.107.0, every start of it ran the stealer, Wardlatch's included: follow LiteLLM's advisory.
+- **Wardlatch no longer runs Python's start-up files.** At start-up Python runs every `.pth` file and any
+  `sitecustomize.py` in its site-packages, and a malicious package can put code there: LiteLLM 1.107.0, compromised on
+  PyPI on 21 October 2026, ships `cook.pth` and a `sitecustomize.py`. The eMudhra check started each `python3` on `PATH`
+  and `/usr/bin/python3` with `-I`, which does not stop this. So with 0.1.0 to 0.1.6, if that interpreter's own
+  site-packages held a malicious `.pth` (in an activated virtual environment, a conda environment, a pyenv version or
+  Homebrew's Python, for example), running Wardlatch ran it. 0.1.0 to 0.1.2 also started the `bin/python` of each
+  virtual environment found under the searched folders, which ran that environment's `.pth` files. 0.1.2 to 0.1.6 ran
+  `python3` without `-I` inside running containers that had no `curl`, which ran the `.pth` files of the image's
+  Python, its user site-packages included; LiteLLM's own Docker images (pulled on 21 October between 11:46 and 14:20
+  UTC) are such a case. On the host, a copy installed with `pip install --user` was not run, because `-I` leaves out
+  the user's site-packages. 0.1.7 runs `python3 -I -S`, on the host and in containers: `-S` skips the `site` module,
+  and with it every `.pth` file and `sitecustomize.py`. A container's `python3` older than 3.4, which has no `-I`, is
+  UNKNOWN. Found in our own review; a test plants a marker `.pth` in a real virtual environment and fails if the probe
+  runs it. If one of those Pythons held LiteLLM 1.107.0, every start of it ran the stealer, Wardlatch's included:
+  follow LiteLLM's advisory.
+  The trade-off: a `.pth` file or `sitecustomize.py` that changes how Python trusts certificates (pip-system-certs, for
+  example) no longer applies to the probe, and the `certifi` in the own site-packages of a Python on `PATH` is not
+  tested yet (a virtual environment's is). A Python whose code uses an old `certifi` that way can read SAFE here; the
+  certifi check for those is planned.
 - Advisory: [GHSA-x8rh-w6q6-4r3h](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-x8rh-w6q6-4r3h).
-- **A repository's own git config can no longer make Wardlatch run a program.** The workflow review runs `git log`
-  (since 0.1.0) and the committed-key scan runs `git ls-files` (since 0.1.1) in each repository under the searched
-  folders, and git reads that repository's `.git/config`. With 0.1.0 to 0.1.6, a repository whose config set
-  `core.fsmonitor` had that program run by `git ls-files`; one whose config set `log.showSignature` and `gpg.program`,
-  with a signed commit that added a workflow file since 1 September 2026, had that program run by `git log`. A partial
-  clone's config could do the same through the fetch `git log` makes for a missing object (`core.sshCommand`,
-  `remote.<name>.uploadpack`), which also sent a request to its remote. A cloned repository does not carry such a
-  config, but one unpacked from an archive or copied from elsewhere can. 0.1.7 runs git as `git --no-pager -c
-  core.fsmonitor=false -c log.showSignature=false`, `log` with `--no-show-signature --no-ext-diff --no-textconv`, and
-  lazy fetching off (`GIT_NO_LAZY_FETCH=1`, and `GIT_ALLOW_PROTOCOL` for older git). Tests plant programs for
-  `core.fsmonitor`, `gpg.program`, diff drivers, filters, the pager and hooks, and a partial clone whose fetch would run
-  one, and fail if any of them runs.
+- **A repository's own git config can no longer make Wardlatch run a program, and git never fetches.** The workflow
+  review runs `git log` (since 0.1.0) and the committed-key scan runs `git ls-files` (since 0.1.1) in each repository
+  under the searched folders, and git reads that repository's `.git/config`. With 0.1.0 to 0.1.6, a repository whose
+  config set `core.fsmonitor` had that program run by `git ls-files`; one whose config set `log.showSignature` and
+  `gpg.program` (or `gpg.ssh.program` or `gpg.x509.program`), with a signed commit that added a workflow file since 1
+  September 2026, had that program run by `git log`. In a partial clone (`--filter=tree:0`, or `blob:none` when a
+  workflow renamed within the folder needed its contents), `git log` fetched the missing objects from the clone's own
+  remote, such as github.com, with your usual SSH key or credential helper: a request Wardlatch promises never to make,
+  and one that needed no crafted config. A crafted config could also make that fetch run a program
+  (`core.sshCommand`, `remote.<name>.uploadpack`, an `ext::` remote). A cloned repository does not carry such a config,
+  but one unpacked from an archive or copied from elsewhere can. 0.1.7 runs git as `git --no-pager -c
+  core.fsmonitor=false -c log.showSignature=false`, `log` with `--no-show-signature --no-ext-diff --no-textconv
+  --no-renames`, and lazy fetching off (`GIT_NO_LAZY_FETCH=1`, and `GIT_ALLOW_PROTOCOL` for older git). Tests plant
+  programs for `core.fsmonitor`, `gpg.program`, diff drivers, filters, the pager and hooks, and a partial clone whose
+  fetch would run one, and fail if any of them runs.
+- **Hardening: programs found from the place you started Wardlatch.** Run with npx from inside a project, Wardlatch
+  could run that project's own programs: npx puts the project's `node_modules/.bin` first on `PATH`, where Wardlatch
+  looks up `git`, `python3`, `node`, `curl`, `php`, `go` and the container engines. And `go version`, run from a project
+  whose `go.mod` asks for a newer Go, can download and run that Go. 0.1.7 drops every `node_modules/.bin` folder and
+  any relative entry from `PATH` before anything runs, runs programs from `/`, sets `GOTOOLCHAIN=local`, and reads
+  PHP's version with `php -n -v`, which loads no `php.ini` and no extension. npx also applies a project's `.npmrc`
+  before Wardlatch starts, which Wardlatch can't undo: run it from your home folder. Found in an independent review.
 
 ### Fixed
 
-- **No silent all-clear when the eMudhra check has nothing to test.** When it found no runtime to test (always on
-  Windows, and possible elsewhere), it printed nothing for it, and the run could exit 0. Now it prints one UNKNOWN line
-  ("not checked on Windows yet (Windows is not supported)" on Windows, "no runtime was found to test" elsewhere; `kind`
-  `runtimes` in `--json`), so the exit code is 2. On Windows the OVHcloud CLI and PHP checks say UNKNOWN too, instead
-  of SAFE: they look only for macOS and Linux program names.
+- **No silent all-clear when the eMudhra check has nothing to test.** When it found no runtime to test (always the
+  case for the machine itself on Windows, and possible elsewhere), it printed nothing for it, and the run could exit 0.
+  Now it prints one UNKNOWN line ("not checked on Windows yet (Windows is not supported)" on Windows, also when
+  containers were checked; "no runtime was found to test" elsewhere; `kind` `runtimes` in `--json`), so the exit code
+  is 2. On Windows the OVHcloud CLI and PHP checks say UNKNOWN too, instead of SAFE: they look only for macOS and Linux
+  program names. The OVHcloud stealer's temp folder is still found there, and still EXPOSED.
 - **A container engine that can't be asked is UNKNOWN, not "not running".** From 0.1.2 to 0.1.6, any failure of
   `docker ps` or `podman ps` other than "permission denied" read as "not running", so a hung Docker Desktop, or one
   answering "error during connect", let the eMudhra check end all SAFE (exit 0) with its running containers never
   checked. Now only an engine that isn't installed, or says it can't connect to its daemon, counts as not running. A
-  hang (killed after 10 seconds), more output than can be read, or any other failure is an UNKNOWN line with the
-  reason. Commands run inside a container are killed too if they outlive their timeout. Found in an independent
-  review.
+  hang (killed after 10 seconds), more output than can be read, or any other failure is an UNKNOWN line with the reason
+  and what to do. A pipeline whose engine is installed but stuck now exits 2 where it exited 0; `--no-containers` skips
+  running containers. The `docker exec` or `podman exec` command Wardlatch starts is now killed with SIGKILL, not
+  SIGTERM, if it outlives its timeout. Found in an independent review.
+- **A repository git can't read is UNKNOWN, not clean.** Up to 0.1.6, when `git log` or `git ls-files` failed in a
+  repository (a git refusing a folder owned by another user, a timeout), the workflow review and the committed-key
+  scan left it out without a word and still counted it in their SAFE line. Now each such repository is an UNKNOWN line
+  with git's reason, and the SAFE line counts only what git could read. Since git no longer fetches, a treeless partial
+  clone (`--filter=tree:0`) is one of them.
+- **A workflow renamed within `.github/workflows` is listed.** The workflow review now runs `git log --no-renames`, so a
+  workflow file renamed into place is listed as added, and a blobless partial clone needs nothing fetched.
 
 ## [0.1.6] - 2026-10-21
 

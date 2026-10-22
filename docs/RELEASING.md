@@ -30,6 +30,13 @@ gh attestation verify wardlatch-X.Y.Z.tgz --repo deimos-hq/wardlatch
 npm publish ./wardlatch-X.Y.Z.tgz
 ```
 
+```bash
+# 5. If the release fixes a draft security advisory, publish it once the package is on npm: the changelog and the
+#    release notes link to it, and it links back to them. Then request its CVE.
+gh api -X PATCH repos/deimos-hq/wardlatch/security-advisories/GHSA-xxxx-xxxx-xxxx -f state=published
+gh api -X POST repos/deimos-hq/wardlatch/security-advisories/GHSA-xxxx-xxxx-xxxx/cve
+```
+
 If `fix/fix-macos.sh` changed in the release, the download on www.deimoscore.com, the SHA-256 printed on the page and
 the site's changelog record change at the same time, and the hash pinned in `.github/workflows/ci.yml` with them.
 

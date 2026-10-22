@@ -9,6 +9,7 @@
     {
       "binary": "php",
       "versionArgs": [
+        "-n",
         "-v"
       ],
       "versionRe": "PHP (\\d+\\.\\d+\\.\\d+)",

@@ -16,7 +16,8 @@ on its own. Wardlatch tells you which ones still trust the leaked keys, and chec
 npx wardlatch@latest
 ```
 
-Use `@latest`: a bare `npx wardlatch` runs any copy already installed globally or in the current project, whatever its version (and npm older than 9.6.5 also reuses a copy npx cached earlier). If you installed Wardlatch with `npm install -g`, update that copy too. `wardlatch --help` prints the version without running any check.
+Run it from your home folder (`cd ~` first), not from inside a project: npx applies the current project's `.npmrc`
+before Wardlatch starts. Use `@latest`: a bare `npx wardlatch` runs any copy already installed globally or in the current project, whatever its version (and npm older than 9.6.5 also reuses a copy npx cached earlier). If you installed Wardlatch with `npm install -g`, update that copy too. `wardlatch --help` prints the version without running any check.
 
 Runs on macOS and Linux, tested on both in CI. **Windows is not supported yet:** some checks don't look in Windows
 locations, so a Windows run can miss what it should find. The trust check and the program checks say UNKNOWN there.
@@ -35,7 +36,10 @@ SAFE     certifi 2026.10.19  ~/Development/app/.venv
 
 It doesn't compare version numbers. It asks each runtime to open a real, verified TLS connection to public test hosts
 whose certificates are signed with the compromised keys, the way your own code would, with your own environment.
-If a runtime connects, it still trusts them.
+If a runtime connects, it still trusts them. Two exceptions keep it from running what it checks: Python is started
+with `-I -S`, so a `.pth` file or `sitecustomize.py` that changes its trust (pip-system-certs, for example) is not
+applied, and the `certifi` in the own site-packages of a Python on your `PATH` is not tested yet (a virtual
+environment's is); and every program runs from `/`, so a version manager picks your default, not the current project's.
 
 Two checks keep the answer honest:
 
