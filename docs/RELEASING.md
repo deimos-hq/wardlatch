@@ -32,7 +32,8 @@ npm publish ./wardlatch-X.Y.Z.tgz
 
 ```bash
 # 5. If the release fixes a draft security advisory, publish it once the package is on npm: the changelog and the
-#    release notes link to it, and it links back to them. Then request its CVE.
+#    release notes link to it, and it links back to them. Then request its CVE, and update any published advisory
+#    whose workaround or impact the new one changes.
 gh api -X PATCH repos/deimos-hq/wardlatch/security-advisories/GHSA-xxxx-xxxx-xxxx -f state=published
 gh api -X POST repos/deimos-hq/wardlatch/security-advisories/GHSA-xxxx-xxxx-xxxx/cve
 ```

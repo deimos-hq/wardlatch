@@ -72,7 +72,11 @@ that can't connect at all (a proxy, a firewall, a broken install) and would othe
 root can't be forced (macOS's networking stack, containers), a normal site must open first, and inside a container a
 self-signed site must be refused, or the line is UNKNOWN. A trust check that finds nothing to test is UNKNOWN (always
 so on Windows), and so is a container engine that is installed but can't be asked: one that hangs, refuses or fails
-for any reason other than "not running". UNKNOWN sets exit code 2, so CI does not pass on it.
+for any reason other than "not running". (4) Since 0.1.7, on the host, only a certificate-verification refusal (curl
+exit 60, a Node certificate error code, Python's `SSLCertVerificationError`) counts as "does not trust"; when no test
+host connected and any probe failed for another reason (a reset, a timeout, a bundle that can't be opened, a missing
+API), the line is UNKNOWN. Up to 0.1.6 every failure counted as a refusal, and a Node.js older than 18, which has no
+`fetch()`, read SAFE without being tested. UNKNOWN sets exit code 2, so CI does not pass on it.
 *Evidence:* `test/wardlatch.test.mjs` (no host up is UNKNOWN; a failed positive control is UNKNOWN; a failed system
 control is UNKNOWN; containers with no tool, or a tool that accepts a self-signed site, are UNKNOWN; a plugin whose
 version can't be read is UNKNOWN) against a local throwaway CA and canary; `test/cli.test.mjs` for the exit codes,
@@ -166,12 +170,14 @@ place it was found, the one your shell would pick. Each is run once for its vers
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#the-trust-check-step-by-step). Python is not started the way your shell
 would start it: see the next paragraph. Since 0.1.7 every `node_modules/.bin` folder and every relative entry is
 dropped from `PATH` before anything runs (npx puts the current project's `node_modules/.bin` first, so a project could
-otherwise have Wardlatch run its own `git` or `python3`), every program runs from `/` (so a version manager picks your
-default, not the current project's pin), `GOTOOLCHAIN=local` stops `go version` downloading or running the newer Go a
-project's `go.mod` asks for, and PHP's version is read with `php -n -v`, which loads no `php.ini` and no extension; a
+otherwise have Wardlatch run its own `git` or `python3`; when nothing is left, `PATH` is `/usr/bin:/bin`, and git is
+run by its full path), every program runs from `/` (so a version manager picks your default, not the current project's
+pin; `--paths` folders and relative CA settings such as `SSL_CERT_FILE` are made absolute first),
+`GOTOOLCHAIN=local` stops `go version` downloading or running the newer Go a project's `go.mod` asks for (a Go you
+pinned with `GOTOOLCHAIN` is read from that setting, without running go, and judged too), and PHP's version is read with `php -n -v`, which loads no `php.ini` and no extension; a
 test puts marker programs in a `node_modules/.bin` and fails if one runs, and another records the folder, the Go
-setting and PHP's arguments. npx applies the current project's `.npmrc` before Wardlatch starts, which Wardlatch can't
-undo: run it from your home folder. A `PATH` that includes a writable folder is outside what Wardlatch can defend. A rule marked `noExec` is never run: the file is hashed and compared with the builds the vendor published as
+setting and PHP's arguments. npx also starts Wardlatch with the current project's own `node_modules/.bin/node` if it
+has one, and applies its `.npmrc`; Wardlatch can't undo either: run it from your home folder. A `PATH` that includes a writable folder is outside what Wardlatch can defend. A rule marked `noExec` is never run: the file is hashed and compared with the builds the vendor published as
 compromised, and the temp directories are searched for the traces the malware leaves. Since 0.1.6 the OVHcloud CLI rule works this way, with the five MD5 hashes and the `envchecker-`
 folder from OVHcloud's advisory (GHSA-862f-55f5-vmvw); a test plants a program that would leave a marker file and
 fails if it ever runs. **Found in our own review, 21 October 2026:** 0.1.0 to 0.1.5 read the OVHcloud CLI's version by
@@ -188,7 +194,7 @@ library. The version is read with `python3 -V`, which exits before any start-up 
 with `-I -S` too; one older than 3.4 has no `-I`, fails the normal-site control and is UNKNOWN. The cost: a `.pth` file
 or `sitecustomize.py` that changes how that Python trusts certificates (pip-system-certs, which makes it use the
 system's store, for example) no longer applies to the probe, so the result can differ from what your code sees. In
-particular the `certifi` in the own site-packages of a Python on `PATH` is not tested yet (a virtual environment's
+particular, as before, the `certifi` in the own site-packages of a Python on `PATH` is not tested yet (a virtual environment's
 is): a Python whose code uses an old `certifi` can read SAFE here. *Evidence:* a test builds a
 real virtual environment with a marker `.pth`, checks that an ordinary `-I` start runs it, and fails if the probe does;
 another runs the container script with a `python3` that rejects `-I` and expects UNKNOWN. **Found 21 October 2026,
@@ -203,12 +209,15 @@ installed with `pip install --user` was not run, because `-I` leaves out the use
 **Git runs with the repository's program settings overridden.** Wardlatch runs `git ls-files` (committed keys) and
 `git log` (workflow review) in every repository it finds, and a repository's own `.git/config` can name programs for
 git to run. A cloned repository starts with git's default config, but one unpacked from an archive or copied from
-elsewhere can carry any config it likes. Since 0.1.7 both run through `lib/git.mjs` as `git --no-pager -c
-core.fsmonitor=false -c log.showSignature=false -C <repo>`, and `log` adds `--no-show-signature --no-ext-diff
+elsewhere can carry any config it likes. Since 0.1.7 both run through `lib/git.mjs`, by git's full path and from `/`,
+as `git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c log.showRoot=true -C <repo>`, with
+`GIT_NO_REPLACE_OBJECTS=1` (`log.showRoot=false` would hide the files of a root commit; up to 0.1.6 a workflow added
+in a repository's first commit could read SAFE that way), and `log` adds `--no-show-signature --no-ext-diff
 --no-textconv --no-renames`. A `-c` setting wins over every config file. So `ls-files` runs no `core.fsmonitor` program, and `log`
 runs no `gpg.program` (nor `gpg.ssh.program` or `gpg.x509.program`) to check a signed commit. `diff.external`, a diff
 driver's `command` or `textconv`, and `filter` programs run only for a patch or a checkout, which neither command
-makes. Neither command runs a hook, and with no terminal git starts no pager. Lazy fetching is off too
+makes. Neither command runs a hook now that nothing is fetched (the fetch in 0.1.0 to 0.1.6 did: see below), and
+with no terminal git starts no pager. Lazy fetching is off too
 (`GIT_NO_LAZY_FETCH=1`, and `GIT_ALLOW_PROTOCOL` set to no real protocol for a git too old to know that variable): in
 a partial clone, `git log` fetches a missing tree or blob from the remote the config names, running `core.sshCommand`,
 `remote.<name>.uploadpack` or a credential helper on the way, and sending a request. *Evidence:* `test/cli.test.mjs`
@@ -220,16 +229,20 @@ fetches from it. **Found 21
 October 2026, [GHSA-x8rh-w6q6-4r3h](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-x8rh-w6q6-4r3h):**
 0.1.0 to 0.1.6 ran `git log`, and 0.1.1 to 0.1.6 ran `git ls-files`, with the repository's own config, so a
 repository under the searched folders whose config set `core.fsmonitor`, or `log.showSignature` with `gpg.program`,
-had its program run by Wardlatch, and any partial clone made `git log` fetch from the clone's own remote (a request
-Wardlatch promises never to make), which a crafted config could also make run a program. Since 0.1.7, when git fails in
+had its program run by Wardlatch, and a treeless partial clone, or a blobless one with a workflow renamed within the
+folder, made `git log` fetch from the clone's own remote and write what it fetched into `.git/objects` (a request and a
+change Wardlatch promises never to make). That fetch ran the repository's own `reference-transaction` hook, which needs
+no config, and `core.alternateRefsCommand` when `objects/info/alternates` exists, and a crafted config could also make
+it run a program (`core.sshCommand`, `remote.<name>.uploadpack`, a credential helper, an `ext::` remote). Since 0.1.7, when git fails in
 a repository (a treeless partial clone missing what it would have to fetch, a repository git refuses to open, a
 timeout), that repository is an UNKNOWN line with git's reason, and the SAFE line counts only the repositories git
 could read; up to 0.1.6 it was left out without a word and still counted. Git itself and any `git-remote-*` helper are programs on
 `PATH`, trusted as above.
 
-**An on-path attacker can produce a false SAFE for a host.** After the controls pass, any failure to connect counts
-as a refusal. An attacker on the network path who lets the reachability handshake and the positive control through,
-then drops the next connection to the same host, would make a trusting runtime look like a refusing one. The
+**An on-path attacker can produce a false SAFE for a host.** After the controls pass, a certificate refusal counts as
+a refusal. An attacker on the network path who lets the reachability handshake and the positive control through,
+then answers the next connection to the same host with a certificate of their own, would make a trusting runtime look
+like a refusing one (since 0.1.7 a dropped connection is UNKNOWN instead). The
 connections are indistinguishable on the wire except for their order, which makes this hard, but it is not
 prevented.
 
@@ -240,7 +253,7 @@ file). On the host, a program that passes its own CA bundle, or runs under a dif
 
 **What is not covered at all:** browsers (the README sends you to the advisory's check page), compiled programs (Go,
 Rust, Electron; the output says what to rebuild with), container images that aren't running, runtimes not on `PATH`
-and outside the searched folders, other user accounts, git history for committed keys (current files only), and
+and outside the searched folders, runtimes in a `node_modules/.bin` folder on `PATH`, other user accounts, git history for committed keys (current files only), and
 Windows, which is not supported: since 0.1.7 the trust check and the program checks say UNKNOWN there instead of a
 SAFE they couldn't support; the other checks run, untested.
 
