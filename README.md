@@ -19,7 +19,7 @@ npx wardlatch@latest
 Use `@latest`: a bare `npx wardlatch` can run an older copy npx cached on an earlier run.
 
 Runs on macOS and Linux, tested on both in CI. **Windows is not supported yet:** some checks don't look in Windows
-locations, so a Windows run can miss what it should find.
+locations, so a Windows run can miss what it should find. The trust check and the program checks say UNKNOWN there.
 
 ```
 SAFE     node 26.12.0  /opt/homebrew/bin/node
@@ -92,9 +92,10 @@ exposed, otherwise **2** if anything could not be tested, otherwise **0**. Revie
 
 `--json` prints one object: `{ tool, version, incidents: [{ id, title, advisory }], results: [...] }`. Each result
 has `incident`, `status` and `kind` (`node`, `curl`, `python`, `python-certifi`, `macos-system`, `container`,
-`containers` when an engine can't be asked, `binary`, `workflow`, `secret` or `wordpress`), the fields of that kind
-(such as `bin`, `version`, `trusted` and `tested` for a trust probe, or `file`, `line`, `type` and `masked` for a
-key), `reason` when it is UNKNOWN, and `fix` when there is something to do.
+`containers` when an engine can't be asked, `runtimes` when a trust check found nothing to test, `binary`,
+`workflow`, `secret` or `wordpress`), the fields of that kind (such as `bin`, `version`, `trusted` and `tested` for a
+trust probe, or `file`, `line`, `type` and `masked` for a key), `reason` when it is UNKNOWN, and `fix` when there is
+something to do.
 
 ```
 npx wardlatch@latest --json          # for CI and scripts

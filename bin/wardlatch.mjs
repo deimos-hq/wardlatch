@@ -75,6 +75,13 @@ if (!json) {
 for (const inc of chosen) {
   if (!json) console.log(`\n${c('1', inc.title)} ${c('2', `(${inc.date})`)}`);
   const results = [];
+  // Windows is not supported yet: the program checks look only for macOS and Linux names (no .exe), so on Windows they
+  // would read SAFE without having looked. Say so instead (README).
+  if (platform() === 'win32' && inc.type === 'binaries') {
+    results.push({ incident: inc.id, kind: 'binary', status: 'UNKNOWN', reason: 'not checked on Windows yet (Windows is not supported)' });
+    print('UNKNOWN', 'not checked on Windows yet'); note('33', 'this check looks only in macOS and Linux locations; Windows is not supported yet');
+    all.push(...results); if (!json) console.log(c('2', `Source: ${inc.advisory}`)); continue;
+  }
 
   if (inc.type === 'trust') {
     if (!json) console.log(c('2', `Asks each runtime to connect to ${inc.canaries.length} test hosts signed with the compromised keys.`));
@@ -114,6 +121,13 @@ for (const inc of chosen) {
     }
     const down = canaries.filter((x) => !x.up).length;
     if (down) note('33', `${down} of ${canaries.length} test hosts did not answer`);
+  }
+  // A trust check that found nothing to test is not an all-clear: always so on Windows, whose program names discover()
+  // doesn't look for, and possible elsewhere. Up to 0.1.6 nothing was printed here, and the exit code could be 0.
+  if (inc.type === 'trust' && !results.length) {
+    const reason = platform() === 'win32' ? 'not checked on Windows yet (Windows is not supported)' : 'no runtime was found to test';
+    results.push({ incident: inc.id, kind: 'runtimes', status: 'UNKNOWN', reason });
+    print('UNKNOWN', reason);
   }
 
   for (const rule of inc.binaries ?? []) {
