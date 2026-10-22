@@ -73,7 +73,7 @@ root can't be forced (macOS's networking stack, containers), a normal site must 
 self-signed site must be refused, or the line is UNKNOWN. A trust check that finds nothing to test is UNKNOWN (always
 so on Windows), and so is a container engine that is installed but can't be asked: one that hangs, refuses or fails
 for any reason other than "not running". (4) Since 0.1.7, on the host, only a certificate-verification refusal (curl
-exit 60, a Node certificate error code, Python's `SSLCertVerificationError`) counts as "does not trust"; when no test
+exit 60, a Node certificate error code, Python's `SSLCertVerificationError`, macOS's NSURLErrorDomain -1201 to -1204) counts as "does not trust"; when no test
 host connected and any probe failed for another reason (a reset, a timeout, a bundle that can't be opened, a missing
 API), the line is UNKNOWN. Up to 0.1.6 every failure counted as a refusal, and a Node.js older than 18, which has no
 `fetch()`, read SAFE without being tested. UNKNOWN sets exit code 2, so CI does not pass on it.
