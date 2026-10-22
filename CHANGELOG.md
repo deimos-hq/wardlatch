@@ -11,7 +11,7 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
-## [0.1.8] - unreleased
+## [0.1.8] - 2026-10-22
 
 ### Added
 
@@ -317,7 +317,8 @@ Published 05:14 UTC. npm `gitHead`: `4d4f295`. The first release.
 npm also lists `0.0.0-stage` (21 October, 05:13 UTC), a 331-byte, two-file placeholder from npm's staged publishing,
 described on npm as a "Temporary package placeholder". It is not a release and holds none of Wardlatch's code.
 
-[Unreleased]: https://github.com/deimos-hq/wardlatch/compare/v0.1.7...main
+[Unreleased]: https://github.com/deimos-hq/wardlatch/compare/v0.1.8...main
+[0.1.8]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.8
 [0.1.7]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.7
 [0.1.6]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.6
 [0.1.5]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.5
