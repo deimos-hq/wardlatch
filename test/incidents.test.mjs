@@ -28,7 +28,15 @@ test('every incident has the fields its check reads, named after its file', () =
       assert.ok(i.versionFiles || i.sitePackages || i.dockerDigests, `${i.id}: something to check`);
       assert.ok(i.safeText, `${i.id}: safeText`);
       if (i.versionFiles) { const v = i.versionFiles; assert.ok(v.product && v.fix && v.lookedIn && (v.fixedIn || v.bad) && v.files.length); for (const f of v.files) { assert.match(f.path, /^\//); new RegExp(f.re); } }
-      if (i.sitePackages) { assert.ok(i.sitePackages.fix); for (const f of i.sitePackages.iocFiles ?? []) assert.ok(f.name && !f.name.includes('/') && /^[0-9a-f]{64}$/.test(f.sha256), `${i.id}: ${f.name}`); }
+      if (i.sitePackages) {
+        assert.ok(i.sitePackages.fix);
+        for (const f of i.sitePackages.iocFiles ?? []) {
+          assert.ok(f.name && !f.name.includes('/') && [].concat(f.sha256).every((h) => /^[0-9a-f]{64}$/.test(h)), `${i.id}: ${f.name}`);
+          assert.ok([undefined, 'EXPOSED'].includes(f.nameAlone), `${i.id}: ${f.name} nameAlone`);
+          // a review line needs its own advice: the EXPOSED fix ("rotate every credential") is wrong for a legitimate file
+          if (f.nameAlone !== 'EXPOSED' && f.reviewIfOther !== false) assert.ok(i.reviewFix, `${i.id}: reviewFix for ${f.name}`);
+        }
+      }
       if (i.tmpTrace) new RegExp(i.tmpTrace);
       for (const d of i.dockerDigests ?? []) assert.match(d, /^sha256:[0-9a-f]{64}$/);
       if (i.dockerDigests) assert.ok(i.dockerFix);

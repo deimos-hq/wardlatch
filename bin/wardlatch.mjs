@@ -132,10 +132,11 @@ for (const inc of chosen) {
     // Read-only: versions from the product's own files, dropped files in site-packages by hash, local image digests.
     // Nothing found is run (lib/installs.mjs).
     const show = (r, what, fix) => {
-      results.push({ incident: inc.id, kind: 'install', ...r, fix: r.status === 'EXPOSED' ? fix : r.status === 'REVIEW' ? inc.reviewFix ?? fix : undefined });
+      results.push({ incident: inc.id, kind: 'install', ...r, fix: r.status === 'EXPOSED' ? fix : r.status === 'REVIEW' ? inc.reviewFix : undefined });
       print(r.status, what);
       if (r.reason) note({ EXPOSED: '31', SAFE: '2' }[r.status] ?? '33', r.reason);
       if (r.status === 'EXPOSED') note('2', `fix: ${fix}`);
+      else if (r.status === 'REVIEW' && inc.reviewFix) note('2', `check: ${inc.reviewFix}`);
     };
     const looked = [];
     if (inc.versionFiles) {
@@ -146,17 +147,21 @@ for (const inc of chosen) {
     if (inc.sitePackages) {
       const dirs = sitePackagesDirs({ roots });
       for (const r of checkSitePackages(inc.sitePackages, dirs)) show(r, `${r.what}  ${short(r.dir)}`, inc.sitePackages.fix);
-      looked.push(`${dirs.length} Python package folder${dirs.length === 1 ? '' : 's'}`);
+      // say where: a SAFE that only gives a count reads as "everywhere"
+      looked.push(`${dirs.length} Python package folder${dirs.length === 1 ? '' : 's'}: the system's, Homebrew, user, pyenv, conda, pipx, uv, Poetry and Pipenv installs, and virtual environments near the top of ~ and under ${roots.map(short).join(', ')}; pass --paths for one elsewhere`);
     }
     if (inc.tmpTrace) {
-      for (const t of tmpTraces(inc.tmpTrace)) show({ status: 'EXPOSED', reason: 'the malware ran on this machine: it leaves this marker each time it runs' }, short(t), inc.tmpFix ?? inc.sitePackages?.fix);
+      for (const t of tmpTraces(inc.tmpTrace)) show({ status: 'EXPOSED', path: t, reason: 'the malware ran on this machine: it leaves this marker each time it runs' }, short(t), inc.tmpFix ?? inc.sitePackages?.fix);
       looked.push('the temp folders');
     }
+    if (inc.dockerDigests && flag('--no-containers')) looked.push('no container images (--no-containers)');
     if (inc.dockerDigests && !flag('--no-containers')) {
       const byEngine = {};
       for (const e of ['docker', 'podman'].filter((x) => findOnPath(x))) {
         const list = localImageDigests(e);
-        if (list === null) { note('2', `${e}: not running, so its local images were not checked`); continue; }
+        if (list === null) { note('2', `${e}: not running, so its local images were not checked`); looked.push(`no ${e} images (not running)`); continue; }
+        // permission denied, no answer, too much output: the images exist but weren't seen, which is not SAFE
+        if (list.error) { show({ status: 'UNKNOWN', engine: e, reason: `${list.error}, so its local images were not checked` }, `${e} images`); continue; }
         byEngine[e] = list; looked.push(`${list.length} ${e} image${list.length === 1 ? '' : 's'}`);
       }
       for (const r of checkImages(inc, byEngine)) show(r, `${r.engine} image ${r.what}`, inc.dockerFix);

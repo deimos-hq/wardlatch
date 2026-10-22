@@ -6,13 +6,13 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:https';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, reachable, nscurlOk, canForceCa } from '../lib/probe.mjs';
 import { discover } from '../lib/discover.mjs';
-import { cmp, checkBinary, md5File, tmpTraces } from '../lib/binaries.mjs';
-import { expand, checkVersionFiles, sitePackagesDirs, checkSitePackages, checkImages } from '../lib/installs.mjs';
+import { cmp, checkBinary, md5File, tmpTraces, judgeVersion } from '../lib/binaries.mjs';
+import { expand, checkVersionFiles, sitePackagesDirs, checkSitePackages, checkImages, localImageDigests } from '../lib/installs.mjs';
 import { createHash } from 'node:crypto';
 import { workflowsAddedSince } from '../lib/workflows.mjs';
 import { scanText } from '../lib/secrets.mjs';
@@ -159,7 +159,7 @@ test('site-packages: a dropped file is EXPOSED only when its hash matches; the s
   const bad = 'import cook\n', h = createHash('sha256').update(bad).digest('hex');
   writeFileSync(join(sp, 'cook.pth'), bad); writeFileSync(join(sp, 'sitecustomize.py'), '# legit\n');
   mkdirSync(join(sp, 'evil-9.9.9.dist-info'));
-  assert.ok(sitePackagesDirs({ roots: [join(dir, 'proj')], patterns: [] }).includes(sp), 'the venv under the root is found');
+  assert.ok(sitePackagesDirs({ roots: [join(dir, 'proj')], patterns: [], home: '' }).includes(sp), 'the venv under the root is found');
   const rule = { iocFiles: [{ name: 'cook.pth', sha256: h }, { name: 'sitecustomize.py', sha256: 'f'.repeat(64) }], distInfo: ['evil-9.9.9.dist-info'] };
   const r = checkSitePackages(rule, [sp]);
   assert.equal(r.find((x) => x.what === 'cook.pth').status, 'EXPOSED');
@@ -176,6 +176,40 @@ test('path patterns expand against the disk; image digests and temp markers are 
   assert.equal(checkImages({ dockerDigests: [d] }, { docker: [`ghcr.io/x/y@${d}`, `ghcr.io/x/z@sha256:${'b'.repeat(64)}`] }).length, 1);
   const t = join(dir, 'tmpm'); mkdirSync(t, { recursive: true }); writeFileSync(join(t, '.pc_once_0123abcd'), '');
   assert.equal(tmpTraces('^\\.pc_once_[0-9a-f]+$', [t]).length, 1);
+});
+
+test('regression: a suffix never hides a version part (NaN compared as equal and read 19.4.2-ee as fixed)', () => {
+  assert.equal(cmp('19.4.2-ee', '19.4.3'), -1); assert.equal(cmp('19.5.1-ee', '19.5.1'), 0); assert.equal(cmp('19.5.0-ce.0', '19.5.1'), -1);
+  assert.equal(cmp('1.41.3.9313-c6bbc1b53', '1.41.3.9314'), -1); assert.equal(cmp('1.41.2.9200-c6bbc1b53', '1.41.2.9200'), 0);
+  const g = { fixedIn: ['19.5.1', '19.4.3', '19.3.5'] };
+  assert.equal(judgeVersion('19.4.2-ee', g).status, 'EXPOSED'); assert.equal(judgeVersion('19.4.3-ee', g).status, 'SAFE');
+  assert.equal(judgeVersion('19.5.1-rc1-ee', g).status, 'EXPOSED', 'a pre-release of the fix is older than the fix');
+  assert.equal(judgeVersion('v19.4.2', g).status, 'EXPOSED'); assert.equal(judgeVersion('unknown', g).status, 'UNKNOWN');
+  assert.equal(judgeVersion('1.41.3.9313-xxx', { fixedIn: '1.41.3.9314' }).status, 'EXPOSED');
+});
+
+test('container images: an engine that refuses, hangs or floods is UNKNOWN, never "not running"; a stopped daemon is null', () => {
+  const eng = (name, body) => { const p = join(dir, `eng-${name}`); writeFileSync(p, `#!/bin/sh\n${body}\n`); chmodSync(p, 0o755); return p; };
+  const d = 'a'.repeat(64);
+  assert.deepEqual(localImageDigests(eng('ok', `echo "x/y@sha256:${d}"; echo "<none>@<none>"`)), [`x/y@sha256:${d}`]);
+  assert.equal(localImageDigests(eng('down', "echo 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?' >&2; exit 1")), null);
+  assert.match(localImageDigests(eng('perm', "echo 'permission denied while trying to connect to the Docker daemon socket' >&2; exit 1")).error, /permission denied/);
+  assert.match(localImageDigests(eng('odd', "echo 'error: something else' >&2; exit 125")).error, /something else/);
+  const big = localImageDigests(eng('big', `awk 'BEGIN{for(i=0;i<20000;i++) printf "r%07d@sha256:%064d\\n", i, 0}'; echo "x/y@sha256:${d}"`));
+  assert.ok(Array.isArray(big) && big.includes(`x/y@sha256:${d}`), 'more than 1 MB of images is still read to the end');
+  assert.deepEqual(localImageDigests(join(dir, 'no-such-engine')), []);
+});
+
+test('site-packages: a name nothing legitimate installs is EXPOSED by name alone; links are looked at once, never walked', () => {
+  const root = join(dir, 'sp2'); const env = join(root, 'a', '.venv'); const sp = join(env, 'lib', 'python3.12', 'site-packages');
+  mkdirSync(sp, { recursive: true }); writeFileSync(join(env, 'pyvenv.cfg'), 'x\n'); symlinkSync('lib', join(env, 'lib64'));
+  writeFileSync(join(sp, 'cook.pth'), 'import cook  # a variant\n');
+  const away = join(dir, 'sp2-away', 'env'); mkdirSync(join(away, 'lib', 'python3.12', 'site-packages'), { recursive: true }); writeFileSync(join(away, 'pyvenv.cfg'), 'x\n');
+  symlinkSync(away, join(root, '.venv-link')); symlinkSync('.', join(root, 'loop'));
+  const dirs = sitePackagesDirs({ roots: [root], patterns: [], home: '' });
+  assert.equal(dirs.length, 2, 'lib64 -> lib is one folder; the linked venv is found; the loop is not followed');
+  const r = checkSitePackages({ iocFiles: [{ name: 'cook.pth', sha256: ['0'.repeat(64), '1'.repeat(64)], nameAlone: 'EXPOSED' }] }, dirs);
+  assert.equal(r.length, 1); assert.equal(r[0].status, 'EXPOSED'); assert.match(r[0].reason, /variant/);
 });
 
 test('workflow review lists each workflow file added since the date, once', () => {
