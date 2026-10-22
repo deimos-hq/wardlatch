@@ -7,7 +7,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, chmodSync, existsSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { envFor } from '../lib/run.mjs';
@@ -123,13 +123,19 @@ test('3 a checked-out git submodule\'s files are scanned too', () => {
   assert.deepEqual(review(keys(root)), ['vendor/lib/keys.py:1']);
 });
 
-test('4 a project folder named Library is searched; macOS\'s own Library (with Preferences) is not', () => {
+test('4 a project folder named Library is searched, even with a Caches folder inside; macOS\'s own Library is not', async () => {
+  const { isSystemFolder } = await import('../lib/files.mjs');
   const root = fresh('k4-root');
-  const proj = gitRepo(join(root, 'Library')); put(join(root, 'Library', 'k.py'), `k = "${AWS}"\n`); proj.commit();
-  const home = fresh('k4-home'); mkdirSync(join(home, 'Library', 'Preferences'), { recursive: true });
-  const sys = gitRepo(join(home, 'Library', 'Mail')); put(join(home, 'Library', 'Mail', 'k.py'), `k = "${AWS}"\n`); sys.commit();
-  assert.deepEqual(review(keys(root)), ['k.py:1'], 'the project called Library');
-  assert.deepEqual(review(keys(home)), [], 'macOS\'s Library is never searched');
+  const proj = gitRepo(join(root, 'Library')); put(join(root, 'Library', 'k.py'), `k = "${AWS}"\n`); put(join(root, 'Library', 'Caches', 'c.py'), `c = "${AWS.replace('Q', 'R')}"\n`); proj.commit();
+  assert.deepEqual(review(keys(root)).sort(), ['Caches/c.py:1', 'k.py:1'], 'the project called Library, Caches folder and all');
+  // a folder that only looks like macOS's (macOS's folders inside) but isn't where macOS keeps one is searched
+  mkdirSync(join(fresh('k4-home'), 'Library', 'Preferences'), { recursive: true });
+  assert.equal(isSystemFolder('Library', join(dir, 'k4-home')), false);
+  assert.equal(isSystemFolder('.Trash', join(dir, 'k4-home')), true);
+  if (process.platform === 'darwin') {
+    assert.equal(isSystemFolder('Library', homedir()), true, 'this Mac\'s ~/Library');
+    assert.equal(isSystemFolder('Library', '/'), true, '/Library');
+  }
 });
 
 test('5 a trust probe gets CURL_SSL_BACKEND, which picks macOS curl\'s trust store', () => {
@@ -163,4 +169,51 @@ test('9 on macOS, a folder that can\'t be opened says what can help: sudo for an
   const root = fresh('k9-root'), shut = fresh('k9-root/shut'); lock(shut);
   const r = run(['--incident', 'github-actions-2026-10', '--paths', root], { PATH: '/usr/bin:/bin' });
   assert.match(r.rows.find((x) => x.path === shut)?.reason ?? '', /Full Disk Access/);
+});
+
+// ---- from the final check (7e12f17) ------------------------------------------------------------------------------------
+// scanText over every piece of `text`, cut by eachPiece with small pieces, as lib/secrets.mjs does for a large file
+// (with half the overlap longer than any key, as in use: 4 KB pieces' 4,096-byte overlap; here 512 and 256)
+const pieceScan = (name, text, piece = 512, overlap = 256) => {
+  const f = put(join(dir, name), text), hits = [];
+  eachPiece(f, 1e9, (t, first, range) => { for (const h of scanText(t, range)) hits.push({ ...h, line: h.line + first - 1 }); }, piece, overlap);
+  return hits;
+};
+
+test('10 every match belongs to exactly one piece: no key twice, no part of a token as a key, no placeholder lost at a cut', () => {
+  const ghp = `ghp_${'a1B2'.repeat(15)}`;   // 64 characters
+  for (let at = 860; at < 1180; at += 7) {   // a one-line text cut at 1,024 bytes; the key at every offset around the cut
+    const text = `${'x'.repeat(at)} ${AWS} ${'y'.repeat(2000 - at)}`;
+    assert.equal(pieceScan(`p10a-${at}.txt`, text).length, 1, `the key at ${at}: found exactly once`);
+    const g = pieceScan(`p10b-${at}.txt`, `${'x'.repeat(at)} ${ghp} ${'y'.repeat(2000 - at)}`);
+    assert.deepEqual(g.map((h) => h.masked), [`ghp_…(64 chars)`], `the token at ${at}: once, whole`);
+    assert.equal(pieceScan(`p10c-${at}.txt`, `${'x'.repeat(at)} ${AWS} EXAMPLE ${'y'.repeat(2000 - at)}`).length, 0, `a placeholder right after the key at ${at} still counts`);
+  }
+  // 34 letters starting with AKIA is no key wherever a cut falls
+  for (let at = 860; at < 1180; at += 11) assert.equal(pieceScan(`p10d-${at}.txt`, `${'x'.repeat(at)}AKIA${'Z'.repeat(30)}${'y'.repeat(2000 - at)}`).length, 0, `at ${at}`);
+});
+
+test('11 a key inside the overlap of a 12 MB one-line file is reported once (the command, end to end)', () => {
+  const root = fresh('k11-root'), repo = gitRepo(join(root, 'app'));
+  put(join(root, 'app', 'data.json'), `${'x'.repeat(8 * 1024 * 1024 - 2000)} "${AWS}" ${'y'.repeat(4 * 1024 * 1024)}`);
+  repo.commit();
+  assert.deepEqual(review(keys(root)), ['data.json:1']);
+});
+
+test('12 a reviewed-line marker anywhere on a line of up to 2,000 characters counts, however far from the key', () => {
+  assert.equal(scanText(`k = "${AWS}"; ${'x'.repeat(1200)} // gitleaks:allow`).length, 0);
+  assert.equal(scanText(`k = "${AWS}"; ${'x'.repeat(2500)} // gitleaks:allow`).length, 1, 'on a longer line only near the key');
+});
+
+test('13 a repository inside another one is scanned too: a gitignored checkout, and an embedded repository; a submodule only once', () => {
+  const root = fresh('k13-root'), outer = gitRepo(join(root, 'outer'));
+  put(join(root, 'outer', '.gitignore'), 'tools/\n'); put(join(root, 'outer', 'a.py'), 'print(1)\n'); outer.commit();
+  const inner = gitRepo(join(root, 'outer', 'tools', 'inner')); put(join(root, 'outer', 'tools', 'inner', 'k.py'), `k = "${AWS}"\n`); inner.commit();
+  const r = keys(root);
+  assert.deepEqual(r.rows.filter((x) => x.status === 'REVIEW').map((x) => `${x.repo.slice(root.length + 1)}/${x.file}`), ['outer/tools/inner/k.py']);
+  // a submodule: found through the outer repository's scan, and not again as a repository of its own
+  const lib = gitRepo(join(dir, 'k13-lib')); put(join(dir, 'k13-lib', 's.py'), `s = "${AWS.replace('Q', 'S')}"\n`); lib.commit();
+  outer.g('-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', join(dir, 'k13-lib'), 'vendor/lib'); outer.commit();
+  const r2 = keys(root);
+  assert.deepEqual(r2.rows.filter((x) => x.status === 'REVIEW').map((x) => `${x.repo.slice(root.length + 1)}/${x.file}`).sort(), ['outer/tools/inner/k.py', 'outer/vendor/lib/s.py']);
 });

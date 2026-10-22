@@ -81,11 +81,12 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   A container's probe output counts only with exactly one result line.
 - File reads are capped by what is read, not only by the size reported at open.
 - The key scan reads every tracked text file up to 512 MB (0.1.8 skipped files over 512 KB, and unreadable ones, without
-  a word): past 8 MB in overlapping pieces that end at line breaks, so a key is never cut in two. It scans checked-out
-  submodules too (0.1.8 never did), and a placeholder word (`example`, `fake`) counts only right next to a key, never
+  a word): past 8 MB in overlapping pieces that end at line breaks, so a key is never cut in two and each match is
+  counted in exactly one piece. It scans checked-out submodules too (0.1.8 never did), and a repository nested inside
+  another one (a gitignored checkout, an embedded repository), which the workflow review now reads as well, and a placeholder word (`example`, `fake`) counts only right next to a key, never
   anywhere on its line (one `example.com` on a minified line hid every key on it).
-- macOS's own folders (its Library, the Trash, the Photos libraries) are never searched; a project folder that is only
-  named Library is (0.1.8 skipped every Library folder). A trust probe also gets `CURL_SSL_BACKEND`, which picks macOS
+- macOS's own folders (its Library at `/`, in `/System` and in a home folder, the Trash, the Photos libraries) are never
+  searched; any other folder named Library is (0.1.8 skipped every Library folder). A trust probe also gets `CURL_SSL_BACKEND`, which picks macOS
   curl's trust store.
 
 ### Known limits
