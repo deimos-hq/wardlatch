@@ -276,3 +276,23 @@ test('a runtime that refuses the compromised keys even with their roots forced i
   const r2 = await check(rt, c1, { rootsPem: badCa, timeoutMs: 2000 });
   assert.equal(r2.status, 'UNKNOWN', 'without a control site it still cannot tell');
 });
+
+test('a found environment\'s bundle reached through a relative root is still EXPOSED, though curl runs from /', { skip: !existsSync('/usr/bin/curl') }, async () => {
+  // With a relative root the row was `curl --cacert proj/app/.venv/...`; from / curl could not open it, every test host
+  // looked refused, and the forced-roots control (a later --cacert, which wins) still passed: SAFE.
+  const was = process.cwd();
+  try {
+    process.chdir(dir);
+    const env1 = discover({ roots: ['proj'], pathEnv: '' }).find((r) => r.env);
+    assert.ok(env1);
+    const r = await check(env1, [canary], { rootsPem: badCa, timeoutMs: 3000 });
+    assert.equal(r.status, 'EXPOSED');
+  } finally { process.chdir(was); }
+});
+
+test('a curl row whose own CA bundle is missing or relative is UNKNOWN, never SAFE', { skip: !existsSync('/usr/bin/curl') }, async () => {
+  for (const bundle of [join(dir, 'no-such-bundle.pem'), 'relative/cacert.pem']) {
+    const r = await check({ kind: 'curl', bin: '/usr/bin/curl', args: ['--cacert', bundle] }, [canary], { rootsPem: badCa, timeoutMs: 3000 });
+    assert.equal(r.status, 'UNKNOWN', bundle); assert.match(r.reason, /could not be found, so it was not tested/);
+  }
+});
