@@ -50,11 +50,11 @@ programs already on the machine:
 | `lib/wordpress.mjs` | Finds WordPress installs (5 levels), reads plugin version headers (a version that can't be read is UNKNOWN), searches a plugin's files for an indicator string (up to 4,000 files of under 2 MB), lists plugin folders created since a date. | Reads files and folder dates. |
 | `lib/installs.mjs` | Installed software (GitLab, LiteLLM, Plex): a product's version from its own files, judged like a program's version; files a malicious release drops in Python's site-packages, matched by name or SHA-256; the malware's temp-folder markers; local container images by digest or tag. | Reads files; lists images with `docker images` / `podman images`. Nothing it finds is run. |
 | `lib/headers.mjs` | Your name or email (read from your own git config, never sent or printed), or any email address, in the header settings your tools send: `~/.curlrc`, `~/.wgetrc`, git's `http.extraHeader` and `http.userAgent`, npm's `user-agent`, coding-agent and MCP client configs (JSON with comments allowed; `--header` arguments included), and `*_HEADERS` / `*_USER_AGENT` variables. A finding keeps the file, the header's name and what it carries, never the value. | Reads files and the environment. Runs nothing. |
-| `lib/files.mjs` | `readCapped()`: reads a file only if it is a regular file under a size cap, checking and reading through one read-only, non-blocking file descriptor, so it can't be swapped for a huge file, a device or a pipe in between. Used by the key scan and the WordPress checks. | Opens files read-only. |
+| `lib/files.mjs` | `readCapped()`: reads a file only if it is a regular file under a size cap, checking and reading through one read-only, non-blocking file descriptor, so it can't be swapped for a huge file, a device or a pipe in between. Used by the key scan, the WordPress checks, the installed-software checks and the header check. | Opens files read-only. |
 | `fix/fix-macos.sh` | The Mac fix. See below. | `/etc/ssl/cert.pem` and a dated backup beside it. |
 
 Every child process is started with `execFile` and an argument list, never through a shell on the host, and every
-one has a timeout (5 to 20 seconds). `lib/installs.mjs` (installed software: version files, site-packages by SHA-256, temp markers, local image digests and tags) only reads files and lists images with `docker images` / `podman images`; nothing it finds is run.
+one has a timeout (5 to 20 seconds).
 
 ## The trust check, step by step
 

@@ -9,7 +9,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { carries, parseGitConfig, headersInJson, headersInRc, stripJsonc, scanHeaders, identityFrom } from '../lib/headers.mjs';
+import { carries, parseGitConfig, headersInJson, headersInRc, headersInToml, stripJsonc, scanHeaders, identityFrom } from '../lib/headers.mjs';
 
 const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'wardlatch.mjs');
 const ID = { name: 'Ada Lovelace', email: 'ada.lovelace@example.org' };
@@ -85,4 +85,35 @@ test('a home with no header settings is SAFE and says what it could not cover', 
   assert.match(r.stdout, /SAFE     no name or email in the 0 header settings/);
   assert.match(r.stdout, /no git name or email is set/);
   assert.match(r.stdout, /not covered: an agent that adds your details itself/);
+});
+
+// ---- from the 0.1.8 chief-engineer review (22 Oct 2026) ------------------------------------------------------------
+
+test('a hostile config can\'t crash or stall the scan: deep nesting, a huge array, a 2 MB token', () => {
+  const h = mkdtempSync(join(tmpdir(), 'wardlatch-hostile-'));
+  const repo = join(h, 'code', 'app'); mkdirSync(join(repo, '.git'), { recursive: true });
+  writeFileSync(join(repo, '.mcp.json'), '['.repeat(20000) + ']'.repeat(20000));
+  mkdirSync(join(h, '.cursor'), { recursive: true });
+  writeFileSync(join(h, '.cursor', 'mcp.json'), JSON.stringify({ headers: Array(300000).fill('x'), mcpServers: { a: { headers: { Authorization: `Bearer ${'A'.repeat(2_000_000)}` } } } }));
+  writeFileSync(join(h, '.curlrc'), 'header = "From: ada.lovelace@example.org"\n');
+  const t = Date.now();
+  const r = scanHeaders({ home: h, env: { ...CLEAN, GIT_AUTHOR_EMAIL: ID.email }, roots: [join(h, 'code')] });
+  assert.ok(Date.now() - t < 10000, 'the scan took too long');
+  assert.ok(r.findings.some((f) => f.where === 'header "From"'), 'the files after the hostile ones are still scanned');
+});
+
+test('wget spells its commands any way (useragent, user-agent, UserAgent), and Codex puts headers in a [..._headers] table', () => {
+  assert.deepEqual(headersInRc('useragent = a@b.co\nuser-agent = c\nUserAgent=d\nHEADER = X: e\nother = f\n', 'wget').map((x) => x.value), ['a@b.co', 'c', 'd', 'X: e']);
+  const t = headersInToml('[mcp_servers.x.http_headers]\n"X-Email" = "ada.lovelace@example.org"\n\n[mcp_servers.x]\ncommand = "npx"\n');
+  assert.deepEqual(t.map((x) => x.where), ['line 2']);
+});
+
+test('curl\'s short options are case-sensitive: -a (--append) and -h (--help) are not headers', () => {
+  assert.deepEqual(headersInRc('-a x@y.com\n-h\n-H "X: 1"\n-A agent\n--HEADER "Y: 2"\n', 'curl').map((x) => x.value), ['X: 1', 'agent', 'Y: 2']);
+});
+
+test('only a value\'s own key, or the key right above it, makes it a header: a project folder named request-headers does not', () => {
+  const j = headersInJson({ projects: { '/x/request-headers': { history: [{ display: 'mail bob@corp.com' }] } }, mcpServers: { a: { headers: { 'X-Op': 'v' } } } });
+  assert.deepEqual(j.map((x) => x.where), ['mcpServers.a.headers.X-Op']);
+  assert.equal(stripJsonc('{"a": "x,}", "b": [1,],}'), '{"a": "x,}", "b": [1]}', 'text inside strings is never changed');
 });

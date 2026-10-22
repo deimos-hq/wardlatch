@@ -546,3 +546,33 @@ test('a program whose version can\'t be read, and a never-run file that can\'t b
   if (process.getuid?.() === 0) return;   // root reads it anyway
   assert.equal(h.status, 'UNKNOWN'); assert.match(h.reason, /could not be read.*it was not run/);
 });
+
+// ---- from the 0.1.8 chief-engineer review (22 Oct 2026): a folder Wardlatch can't open is UNKNOWN, never "nothing here" -
+
+test('a version file behind a folder Wardlatch can\'t enter is UNKNOWN, not "not installed"', (t) => {
+  if (process.getuid?.() === 0) return t.skip('root enters every folder');
+  const root = join(dir, 'denied-gitlab'); mkdirSync(join(root, 'home', 'git', 'gitlab'), { recursive: true });
+  writeFileSync(join(root, 'home', 'git', 'gitlab', 'VERSION'), '19.4.2\n');
+  const rule = { product: 'GitLab', files: [{ path: '/home/git/gitlab/VERSION', re: '^(\\S+)' }], fixedIn: ['19.4.3'] };
+  assert.equal(checkVersionFiles(rule, { root })[0].status, 'EXPOSED', 'the control: readable, it is found');
+  chmodSync(join(root, 'home', 'git'), 0o000);
+  try {
+    const r = checkVersionFiles(rule, { root });
+    assert.equal(r.length, 1); assert.equal(r[0].status, 'UNKNOWN'); assert.match(r[0].reason, /permission denied/);
+  } finally { chmodSync(join(root, 'home', 'git'), 0o755); }
+});
+
+test('site-packages Wardlatch can\'t list, and a sitecustomize.py it can\'t read, are UNKNOWN; a tagged image with no repo digest is still matched by tag', (t) => {
+  if (process.getuid?.() === 0) return t.skip('root reads everything');
+  const sp = join(dir, 'denied-sp', 'site-packages'); mkdirSync(sp, { recursive: true });
+  writeFileSync(join(sp, 'cook.pth'), 'x');
+  const rule = { iocFiles: [{ name: 'cook.pth', sha256: ['0'.repeat(64)], nameAlone: 'EXPOSED' }, { name: 'sitecustomize.py', sha256: ['0'.repeat(64)], reviewIfOther: false }] };
+  assert.equal(checkSitePackages(rule, [sp])[0].status, 'EXPOSED', 'the control: listable, cook.pth is found');
+  chmodSync(sp, 0o000);
+  try { assert.deepEqual(checkSitePackages(rule, [sp]).map((r) => r.status), ['UNKNOWN']); } finally { chmodSync(sp, 0o755); }
+  unlinkSync(join(sp, 'cook.pth')); writeFileSync(join(sp, 'sitecustomize.py'), 'x', { mode: 0o000 });
+  assert.deepEqual(checkSitePackages(rule, [sp]).map((r) => r.status), ['UNKNOWN']);
+  assert.deepEqual(checkSitePackages(rule, [], [join(dir, 'locked')]).map((r) => [r.status, r.dir]), [['UNKNOWN', join(dir, 'locked')]]);
+  const imgs = checkImages({ dockerTags: ['litellm/litellm:v1.107.0'], dockerFix: 'x' }, { docker: ['litellm/litellm:v1.107.0@<none>'] });
+  assert.deepEqual(imgs.map((r) => r.status), ['EXPOSED']);
+});

@@ -33,8 +33,9 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   `git log` and `git ls-files` against that one repository instead of each repository found, so the GitHub Actions
   review and the committed-key scan reported a repository clean without having read it (exit code 0). Other `GIT_*`
   variables (`GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT`, `GIT_EXEC_PATH` and the like) could set config or name
-  programs the `-c` overrides don't cover. 0.1.8 drops every `GIT_*` variable before running git, except the ones that
-  only choose your own global and system config files. Found by a new test in our own review; a test sets `GIT_DIR`
+  programs the `-c` overrides don't cover. 0.1.8 drops every `GIT_*` variable before running git, except the three that
+  only choose your own global and system config files and `GIT_TEST_ASSUME_DIFFERENT_OWNER`, which can only make git
+  refuse a repository. Found by a new test in our own review; a test sets `GIT_DIR`
   and `GIT_CONFIG_PARAMETERS` and expects the real repository to be read and nothing to run.
 
 ### Fixed
@@ -43,12 +44,19 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   part used to compare as equal, which could read a vulnerable version as SAFE. A pre-release of a fixed version is
   older than the fix.
 - On Windows, which is not supported yet, the installed-software checks report UNKNOWN instead of SAFE.
+- From the release review: a folder Wardlatch can't open (another user's home, a root-owned virtual environment, a
+  locked site-packages) and a `sitecustomize.py` it can't read are UNKNOWN, never "not installed"; a planted config
+  that is deeply nested, huge or holds a very long value can no longer crash or stall the header check (iterative
+  walk, depth and size caps, a bounded email pattern, and one bad file is UNKNOWN while the rest are still read); wget
+  settings are read in any spelling (`useragent`, `user-agent`), Codex's `[..._headers]` tables are read, curl's `-a`
+  and `-h` are no longer taken for headers, and only a value's own key or the key right above it makes it a header; a
+  local image without a repository digest is still matched by its tag. Each has a regression test.
 - OVHcloud's temp-folder marker is matched with any number of digits.
 - Release: the workflow checks the attestation bundle (present, one bundle, and `gh attestation verify` for both files,
   bound to this workflow) before it publishes a release, so a change in the attest action can't ship a release without it.
 - Tests for branches the suite didn't reach: GOTOOLCHAIN's last line winning and `GOENV=off`; each folder in
-  `SSL_CERT_DIR` made absolute; Python and curl failures that aren't certificate refusals; `sitecustomize.py` and
-  `usercustomize.py` never run; `.` and empty `PATH` entries; `core.fsmonitor` through `include.path`, `includeIf` and
+  `SSL_CERT_DIR` made absolute; Python and curl failures that aren't certificate refusals; `sitecustomize.py` never run
+  (skipped where the distribution's own sitecustomize is imported first, as on CI's Ubuntu); `.` and empty `PATH` entries; `core.fsmonitor` through `include.path`, `includeIf` and
   the worktree config; a program whose version or file can't be read.
 
 ## [0.1.7] - 2026-10-22

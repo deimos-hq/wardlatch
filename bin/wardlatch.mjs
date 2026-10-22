@@ -208,8 +208,9 @@ for (const inc of chosen) {
       looked.push(v.lookedIn);
     }
     if (inc.sitePackages) {
-      const dirs = sitePackagesDirs({ roots });
-      for (const r of checkSitePackages(inc.sitePackages, dirs)) show(r, `${r.what}  ${short(r.dir)}`, inc.sitePackages.fix);
+      const denied = [];   // folders on the known paths that are there but can't be opened: UNKNOWN, never "nothing here"
+      const dirs = sitePackagesDirs({ roots, denied });
+      for (const r of checkSitePackages(inc.sitePackages, dirs, denied)) show(r, `${r.what}  ${short(r.dir)}`, inc.sitePackages.fix);
       // say where: a SAFE that only gives a count reads as "everywhere"
       looked.push(`${dirs.length} Python package folder${dirs.length === 1 ? '' : 's'}: the system's, Homebrew, user, pyenv, conda, pipx, uv, Poetry and Pipenv installs, and virtual environments near the top of ~ and under ${roots.map(short).join(', ')}`);
     }
@@ -231,7 +232,9 @@ for (const inc of chosen) {
     }
     // the parts that could be checked found nothing: say so, even when an engine couldn't be asked (its own UNKNOWN line
     // stays, and keeps the exit code at 2); never when a part found something or a file couldn't be read
-    if (results.every((r) => r.status === 'UNKNOWN' && r.engine)) print('SAFE', `${inc.safeText ?? 'nothing found'} (looked in ${looked.filter(Boolean).join('; ')})${inc.sitePackages ? '. Pass --paths for a folder elsewhere' : ''}`);
+    // true for an empty list too: nothing found anywhere it looked
+    const onlyEngineGaps = results.every((r) => r.status === 'UNKNOWN' && r.engine);
+    if (onlyEngineGaps) print('SAFE', `${inc.safeText ?? 'nothing found'} (looked in ${looked.filter(Boolean).join('; ')})${inc.sitePackages ? '. Pass --paths for a folder elsewhere' : ''}`);
   }
 
   if (inc.type === 'workflows') {

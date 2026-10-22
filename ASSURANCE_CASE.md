@@ -169,7 +169,7 @@ a timeout with SIGKILL); nothing they find is executed.
 
 **Header settings are read, never used.** The identity-headers check (`lib/headers.mjs`) reads your name and email from your own git config files as text (git is not run, and `include` lines are not followed), and compares them with the header settings in files and the environment. Neither your identity nor any header value is printed, written or sent; a test checks the output and the `--json` output for both.
 
-**git gets a clean environment, not the caller's.** Since 0.1.8 git runs without the caller's `GIT_*` variables (except the three that only choose your own config files): `GIT_DIR` or `GIT_WORK_TREE` from a hook or a CI step had pointed every scan at one other repository, and the git checks read SAFE without having looked (0.1.0 to 0.1.7). A test sets both kinds and expects the found repository to be read and nothing planted to run.
+**git gets a clean environment, not the caller's.** Since 0.1.8 git runs without the caller's `GIT_*` variables (except `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM` and `GIT_CONFIG_NOSYSTEM`, which only choose your own config files, and `GIT_TEST_ASSUME_DIFFERENT_OWNER`, which can only make git refuse a repository): `GIT_DIR` or `GIT_WORK_TREE` from a hook or a CI step had pointed every scan at one other repository, and the git checks read SAFE without having looked (0.1.0 to 0.1.7). A test sets both kinds and expects the found repository to be read and nothing planted to run.
 
 **Programs on `PATH` are trusted, except a program an incident says may itself be malware.** Every `node`, `curl`
 and `python3` on `PATH`, `/usr/bin/curl`, `/usr/bin/python3`, and each tool named in a version rule, is run from the
