@@ -2,7 +2,8 @@
 // Copyright 2026 Deimos AI LLC
 // The command itself, end to end, offline: every incident here is checked against stand-ins built in a temporary
 // folder (fake programs on a private PATH, throwaway git repositories, a fake WordPress site). The eMudhra trust
-// check is not run here because it needs the advisory's public test hosts; its logic is covered in wardlatch.test.mjs.
+// check runs here only with an offline stand-in (no test host answers), for what it says when it can't test; its
+// probes need the advisory's public test hosts, so they are covered in wardlatch.test.mjs against a local one.
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
@@ -17,8 +18,8 @@ const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).ver
 let dir;
 
 /** Run the CLI → { code, out, err }. Output is piped, as in CI, so stdout is not a TTY and carries no colour. */
-const run = (args, env = {}) => {
-  const r = spawnSync(process.execPath, [BIN, ...args], { encoding: 'utf8', env: { ...process.env, ...env }, maxBuffer: 64 * 1024 * 1024 });
+const run = (args, env = {}, nodeArgs = []) => {
+  const r = spawnSync(process.execPath, [...nodeArgs, BIN, ...args], { encoding: 'utf8', env: { ...process.env, ...env }, maxBuffer: 64 * 1024 * 1024 });
   return { code: r.status, out: r.stdout, err: r.stderr };
 };
 const gitRepo = (path) => {
@@ -200,4 +201,60 @@ test('a partial clone is never fetched from: git log would run the program its c
   assert.ok(existsSync(marker), 'git log fetches missing objects through the configured program'); rmSync(marker);
   run(['--incident', 'github-actions-2026-10', '--paths', root]);
   assert.equal(existsSync(marker), false, 'wardlatch made git fetch from the partial clone\'s remote');
+});
+
+/**
+ * Stand-ins loaded into the command before it starts (node --require), for the checks that would otherwise look at this
+ * machine or the network. offline: the Unix paths discover() looks at are missing, and no test host answers, so nothing
+ * leaves the machine. win32: offline, on a platform that says win32.
+ */
+const preloads = () => {
+  const offline = join(dir, 'offline.cjs'), win32 = join(dir, 'win32.cjs');
+  writeFileSync(offline, `const fs = require('node:fs'), tls = require('node:tls'), { EventEmitter } = require('node:events');
+const exists = fs.existsSync;
+fs.existsSync = (p) => !/^\\/(usr|etc|opt|bin)\\//.test(String(p)) && exists(p);
+tls.connect = () => { const s = new EventEmitter(); s.end = s.destroy = () => {}; process.nextTick(() => s.emit('error', new Error('offline'))); return s; };
+require('node:module').syncBuiltinESMExports();
+`);
+  writeFileSync(win32, `require(${JSON.stringify(offline)});
+Object.defineProperty(process, 'platform', { value: 'win32' });
+require('node:os').platform = () => 'win32';
+require('node:module').syncBuiltinESMExports();
+`);
+  return { offline, win32 };
+};
+
+test('Windows (not supported): the trust check is UNKNOWN, never a silent all-clear, and so are the program checks (exit 2)', () => {
+  // On Windows discover() finds nothing to test: it looks for `node`, `curl` and `python3`, and Windows has node.exe,
+  // curl.exe and python.exe. Up to 0.1.6 the eMudhra check then printed nothing and exited 0.
+  const { offline, win32 } = preloads();
+  const env = { PATH: join(dir, 'empty-path') }, where = ['--no-containers', '--paths', join(dir, 'nothing-here')];
+  const trust = run(['--incident', 'emudhra-2026-10', '--json', ...where], env, ['--require', win32]);
+  assert.equal(trust.code, 2, trust.err);
+  assert.deepEqual(JSON.parse(trust.out).results, [{ incident: 'emudhra-2026-10', kind: 'runtimes', status: 'UNKNOWN', reason: 'not checked on Windows yet (Windows is not supported)' }]);
+  assert.match(run(['--incident', 'emudhra-2026-10', ...where], env, ['--require', win32]).out, /UNKNOWN {2}not checked on Windows yet \(Windows is not supported\)/);
+  for (const id of ['php-2026-10', 'ovhcloud-cli-2026-10']) {
+    const r = run(['--incident', id, '--json', ...where], env, ['--require', win32]);
+    assert.equal(r.code, 2, id); assert.deepEqual(JSON.parse(r.out).results.map((x) => [x.status, x.reason]), [['UNKNOWN', 'not checked on Windows yet (Windows is not supported)']], id);
+  }
+  // elsewhere, finding no runtime at all is UNKNOWN too, with its own reason
+  const none = run(['--incident', 'emudhra-2026-10', '--json', ...where], env, ['--require', offline]);
+  assert.equal(none.code, 2, none.err);
+  assert.deepEqual(JSON.parse(none.out).results.map((x) => [x.kind, x.status, x.reason]), [['runtimes', 'UNKNOWN', 'no runtime was found to test']]);
+});
+
+test('a container engine that hangs or fails is UNKNOWN (exit 2), never "not running"; a stopped daemon stays a note', () => {
+  // Up to 0.1.6 every failure but "permission denied" read as "not running", so a hung Docker Desktop let the eMudhra
+  // check end all SAFE (exit 0) with its running containers never checked.
+  const { offline } = preloads();
+  const engine = (name, body) => { const d = join(dir, `engine-${name}`); mkdirSync(d, { recursive: true }); writeFileSync(join(d, 'docker'), `#!/bin/sh\n${body}\n`, { mode: 0o755 }); return d; };
+  const trust = (path, json = true) => run(['--incident', 'emudhra-2026-10', ...(json ? ['--json'] : []), '--paths', join(dir, 'nothing-here')], { PATH: path }, ['--require', offline]);
+  const rows = (r) => JSON.parse(r.out).results.filter((x) => x.kind === 'containers').map((x) => [x.engine, x.status, x.reason]);
+  const hung = trust(engine('hung', 'exec /bin/sleep 30'));
+  assert.equal(hung.code, 2); assert.deepEqual(rows(hung), [['docker', 'UNKNOWN', 'did not answer within 10 seconds']]);
+  const failing = trust(engine('failing', 'echo \'error during connect: Get "http://%2F%2F.%2Fpipe%2Fdocker_engine/v1.47/containers/json": EOF\' >&2; exit 1'));
+  assert.equal(failing.code, 2); assert.match(rows(failing)[0]?.[2] ?? '', /^could not list its containers \(error during connect: Get /);
+  const stopped = engine('stopped', "echo 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?' >&2; exit 1");
+  assert.deepEqual(rows(trust(stopped)), [], 'a daemon that is not running has no containers to check');
+  assert.match(trust(stopped, false).out, /docker: not running, so no running containers to check/);
 });

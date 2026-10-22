@@ -70,10 +70,13 @@ handshake is left out, and with no host up, every line is UNKNOWN. (2) The posit
 connect to a live test host when it trusts only the compromised roots, or the line is UNKNOWN; this catches a runtime
 that can't connect at all (a proxy, a firewall, a broken install) and would otherwise look like a refusal. (3) Where a
 root can't be forced (macOS's networking stack, containers), a normal site must open first, and inside a container a
-self-signed site must be refused, or the line is UNKNOWN. UNKNOWN sets exit code 2, so CI does not pass on it.
+self-signed site must be refused, or the line is UNKNOWN. A trust check that finds nothing to test is UNKNOWN (always
+so on Windows), and so is a container engine that is installed but can't be asked: one that hangs, refuses or fails
+for any reason other than "not running". UNKNOWN sets exit code 2, so CI does not pass on it.
 *Evidence:* `test/wardlatch.test.mjs` (no host up is UNKNOWN; a failed positive control is UNKNOWN; a failed system
 control is UNKNOWN; containers with no tool, or a tool that accepts a self-signed site, are UNKNOWN; a plugin whose
-version can't be read is UNKNOWN) against a local throwaway CA and canary; `test/cli.test.mjs` for the exit codes. `test/incidents.test.mjs` checks that the bundled
+version can't be read is UNKNOWN) against a local throwaway CA and canary; `test/cli.test.mjs` for the exit codes,
+nothing to test, Windows, and a hung or failing container engine. `test/incidents.test.mjs` checks that the bundled
 roots are exactly the advisory's, by SHA-256 fingerprint, so the positive control forces in the right keys.
 
 **R2, sends nothing: boundary B1.** Only `lib/probe.mjs` opens connections, and the containers' probe script makes
@@ -117,7 +120,7 @@ was tested.
 
 | Principle | How it applies |
 |---|---|
-| Economy of mechanism | About 600 lines, no dependencies, no build step, no server, no configuration file. |
+| Economy of mechanism | About 700 lines, no dependencies, no build step, no server, no configuration file. |
 | Fail-safe defaults | Any doubt is UNKNOWN and exit 2, never SAFE; an unknown option stops the run; the Mac fix's every check failing means "nothing changed". |
 | Complete mediation | Every trust result passes through the controls in `check()` / `checkContainer()`; there is no path from a probe to SAFE that skips them. |
 | Open design | All of it is public, including the test hosts; nothing depends on an attacker not knowing how it works. There are no secrets in it. |
@@ -228,7 +231,8 @@ file). On the host, a program that passes its own CA bundle, or runs under a dif
 **What is not covered at all:** browsers (the README sends you to the advisory's check page), compiled programs (Go,
 Rust, Electron; the output says what to rebuild with), container images that aren't running, runtimes not on `PATH`
 and outside the searched folders, other user accounts, git history for committed keys (current files only), and
-Windows, which is untested.
+Windows, which is not supported: since 0.1.7 the trust check and the program checks say UNKNOWN there instead of a
+SAFE they couldn't support; the other checks run, untested.
 
 **Version rules trust the version a program prints.** A modified binary that lies about its version is not detected.
 
