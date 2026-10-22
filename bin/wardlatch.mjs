@@ -6,16 +6,34 @@
 // Runs locally. Sends nothing anywhere except TLS connections to those test hosts and two control sites. Changes nothing.
 // A free tool from Deimos AI LLC · Apache-2.0
 import { readFileSync, readdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, delimiter, isAbsolute, resolve } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { discover } from '../lib/discover.mjs';
 import { check, reachable } from '../lib/probe.mjs';
-import { checkBinary, findOnPath } from '../lib/binaries.mjs';
+import { checkBinary, findOnPath, tmpTraces } from '../lib/binaries.mjs';
 import { listContainers, checkContainer } from '../lib/containers.mjs';
 import { reposUnder, workflowsAddedSince } from '../lib/workflows.mjs';
 import { scanRepo } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
+
+// npx puts the current project's node_modules/.bin, and each parent folder's, first on PATH. Wardlatch finds git,
+// python3, node, curl, php, go and the container engines on PATH and runs some of them, so a project could otherwise
+// have it run the project's own programs. Those folders, and any relative entry, are dropped before anything runs.
+// npx also starts Wardlatch with the project's own node_modules/.bin/node if it has one, and applies the project's
+// .npmrc, before any of this runs; nothing here can undo either: run it from your home folder, as the README says.
+// When nothing is left (PATH unset, or made only of dropped entries), PATH is /usr/bin:/bin, as Node itself assumes for
+// an unset PATH. An empty PATH would make a bare program name resolve in the current folder.
+const kept = (process.env.PATH ?? '').split(delimiter).filter((d) => d && isAbsolute(d) && !/[\\/]node_modules[\\/]\.bin[\\/]?$/.test(d));
+process.env.PATH = kept.length ? kept.join(delimiter) : ['/usr/bin', '/bin'].join(delimiter);
+// Programs run from /, so a relative CA file or folder in the person's own environment is made absolute first, against
+// the folder Wardlatch was started from, as their own programs would read it.
+for (const k of ['SSL_CERT_FILE', 'SSL_CERT_DIR', 'CURL_CA_BUNDLE', 'NODE_EXTRA_CA_CERTS', 'REQUESTS_CA_BUNDLE']) {
+  if (!process.env[k]) continue;
+  // SSL_CERT_DIR may be a list of folders
+  process.env[k] = k === 'SSL_CERT_DIR' ? process.env[k].split(delimiter).map((d) => (d && !isAbsolute(d) ? resolve(d) : d)).join(delimiter)
+    : isAbsolute(process.env[k]) ? process.env[k] : resolve(process.env[k]);
+}
 
 const LIB = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib');
 const VERSION = JSON.parse(readFileSync(join(LIB, '..', 'package.json'), 'utf8')).version;
@@ -40,15 +58,17 @@ for (let i = 0; i < args.length; i++) {
 if (flag('-h') || flag('--help')) {
   console.log(`wardlatch ${VERSION}: does the wrong key still turn?
 
-  npx wardlatch                    check this machine against every current incident
-  npx wardlatch --paths ~/code     where to look for Python environments, git repositories and WordPress sites (repeatable)
-  npx wardlatch --incident <id>    one incident only (--list shows them)
-  npx wardlatch --json             machine-readable output
-  npx wardlatch --no-containers    skip running Docker and Podman containers
+  npx wardlatch@latest             check this machine against every current incident
+  npx wardlatch@latest --paths ~/code   where to look for Python environments, git repositories and WordPress sites (repeatable)
+  npx wardlatch@latest --incident <id>  one incident only (--list shows them)
+  npx wardlatch@latest --json      machine-readable output
+  npx wardlatch@latest --no-containers  skip running Docker and Podman containers
 
+Run it from your home folder, not inside a project: npx also starts Wardlatch with the project's own
+node_modules/.bin/node if it has one, and applies its .npmrc; Wardlatch can't undo either.
 Exit code: 0 all safe · 1 something is exposed · 2 something could not be tested ("review" lines don't change it).
-Runs locally. Sends nothing anywhere except TLS connections to the incidents' public test hosts and two control sites.
-Changes nothing.`);
+Runs locally. Sends nothing anywhere except TLS connections to the incidents' public test hosts and two control sites
+(and what your container engine sends, if DOCKER_HOST or the docker context points at a remote one). Changes nothing.`);
   process.exit(0);
 }
 const incidents = readdirSync(join(LIB, 'incidents')).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readFileSync(join(LIB, 'incidents', f), 'utf8'))).sort((a, b) => b.date.localeCompare(a.date));
@@ -57,7 +77,8 @@ const chosen = val('--incident') ? incidents.filter((i) => i.id === val('--incid
 if (!chosen.length) { console.error(`unknown incident "${clean(val('--incident'))}" (try --list)`); process.exit(2); }
 
 const json = flag('--json');
-const roots = []; args.forEach((a, i) => { if (a === '--paths') roots.push(args[i + 1].replace(/^~/, homedir())); });
+// absolute before anything runs: programs run from /, where a relative folder would mean something else
+const roots = []; args.forEach((a, i) => { if (a === '--paths') roots.push(resolve(args[i + 1].replace(/^~/, homedir()))); });
 if (!roots.length) { for (const d of ['Development', 'code', 'src', 'projects', 'Projects', 'dev', 'work', 'Sites']) roots.push(join(homedir(), d)); roots.push('/var/www'); }
 
 const tty = process.stdout.isTTY && !json;
@@ -75,6 +96,24 @@ if (!json) {
 for (const inc of chosen) {
   if (!json) console.log(`\n${c('1', inc.title)} ${c('2', `(${inc.date})`)}`);
   const results = [];
+  // Windows is not supported yet: the program checks look only for macOS and Linux names (no .exe), so on Windows they
+  // would read SAFE without having looked. Say so instead (README). A malware's temp-folder trace still counts: the
+  // temp directory is read on Windows too.
+  if (platform() === 'win32' && inc.type === 'binaries') {
+    let traced = 0;
+    for (const rule of inc.binaries) {
+      const t = rule.tmpTrace ? tmpTraces(rule.tmpTrace) : [];
+      if (!t.length) continue;
+      traced++;
+      results.push({ incident: inc.id, kind: 'binary', binary: rule.binary, status: 'EXPOSED', bin: t[0], version: '', reason: `the malware ran on this machine: it left ${t.join(', ')}`, fix: rule.fix });
+      print('EXPOSED', `${rule.binary}  ${short(t[0])}`); note('31', `the malware ran on this machine: it left ${t.join(', ')}`); note('2', `fix: ${rule.fix}`);
+    }
+    if (traced < inc.binaries.length) {
+      results.push({ incident: inc.id, kind: 'binary', status: 'UNKNOWN', reason: 'not checked on Windows yet (Windows is not supported)' });
+      print('UNKNOWN', 'not checked on Windows yet'); note('33', 'this check looks only in macOS and Linux locations; Windows is not supported yet');
+    }
+    all.push(...results); if (!json) console.log(c('2', `Source: ${inc.advisory}`)); continue;
+  }
 
   if (inc.type === 'trust') {
     if (!json) console.log(c('2', `Asks each runtime to connect to ${inc.canaries.length} test hosts signed with the compromised keys.`));
@@ -91,7 +130,7 @@ for (const inc of chosen) {
       const r = await check(rt, canaries, { rootsPem, controlUrl: inc.advisory });
       const row = { incident: inc.id, ...rt, ...r, fix: r.status === 'EXPOSED' ? fixFor(rt) : undefined };
       results.push(row);
-      const what = rt.label ? `${rt.label} ${rt.version}` : rt.kind === 'python-certifi' ? `certifi ${rt.certifi}  ${short(rt.env)}` : `${rt.kind} ${rt.version}  ${short(rt.bin)}${rt.env ? `  (${short(rt.env)})` : ''}`;
+      const what = rt.label ? `${rt.label} ${rt.version}` : `${rt.kind} ${rt.version}  ${short(rt.bin)}${rt.env ? `  (${short(rt.env)})` : ''}`;
       print(r.status, what, r.status === 'EXPOSED' ? c('31', `  trusts ${r.trusted.length}/${r.tested}`) : '');
       if (r.status === 'UNKNOWN') note('33', r.reason);
       if (r.note) note('2', r.note);
@@ -115,6 +154,15 @@ for (const inc of chosen) {
     const down = canaries.filter((x) => !x.up).length;
     if (down) note('33', `${down} of ${canaries.length} test hosts did not answer`);
   }
+  // A trust check that found nothing to test is not an all-clear: possible anywhere, and always so for the machine itself
+  // on Windows, whose program names discover() doesn't look for (a container row must not hide that). Up to 0.1.6
+  // nothing was printed here, and the exit code could be 0.
+  if (inc.type === 'trust' && (platform() === 'win32' || !results.length)) {
+    const reason = platform() !== 'win32' ? 'no runtime was found to test'
+      : results.length ? 'the runtimes on this machine were not checked: Windows is not supported yet' : 'not checked on Windows yet (Windows is not supported)';
+    results.push({ incident: inc.id, kind: 'runtimes', status: 'UNKNOWN', reason });
+    print('UNKNOWN', reason);
+  }
 
   for (const rule of inc.binaries ?? []) {
     const r = checkBinary(rule);
@@ -122,35 +170,45 @@ for (const inc of chosen) {
     const row = { incident: inc.id, kind: 'binary', binary: rule.binary, ...r, fix: r.status !== 'SAFE' ? rule.fix : undefined };
     results.push(row);
     print(r.status, `${rule.binary} ${r.version}  ${short(r.bin)}`);
-    if (r.reason) note(r.status === 'EXPOSED' ? '31' : '33', r.reason);
+    if (r.reason) note({ EXPOSED: '31', SAFE: '2' }[r.status] ?? '33', r.reason);
     if (r.status === 'EXPOSED') note('2', `fix: ${rule.fix}`);
   }
   if (inc.type === 'binaries' && !results.length) print('SAFE', `${inc.binaries.map((b) => b.binary).join(', ')} not installed`);
 
+  // A repository git could not read (a partial clone missing what git would have to fetch, an ownership refusal, a
+  // timeout) is UNKNOWN with git's reason, and is left out of the count in the SAFE line: it was not looked at.
+  const unread = (kind, repo, error) => {
+    results.push({ incident: inc.id, kind, status: 'UNKNOWN', repo, reason: `git could not read this repository (${error})` });
+    print('UNKNOWN', short(repo)); note('33', `git could not read it: ${error}`);
+  };
+  const repoCount = (n) => `${n} local repositor${n === 1 ? 'y' : 'ies'}`;
   if (inc.type === 'workflows') {
     let repos = 0;
     for (const repo of reposUnder(roots)) {
-      repos++;
       const added = workflowsAddedSince(repo, inc.since);
+      if (added.error) { unread('workflow', repo, added.error); continue; }
+      repos++;
       for (const w of added) {
         results.push({ incident: inc.id, kind: 'workflow', status: 'REVIEW', repo, ...w, fix: inc.fix });
         print('REVIEW', `${short(repo)}/${w.file}`, c('2', `  added ${w.commit}`));
       }
     }
-    if (!results.length) print('SAFE', `no workflow files added since ${inc.since} in ${repos} local repositor${repos === 1 ? 'y' : 'ies'}`);
-    else note('2', `check: ${inc.fix}`);
+    if (results.some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.fix}`);
+    else if (repos || !results.length) print('SAFE', `no workflow files added since ${inc.since} in ${repoCount(repos)}${results.length ? ' that git could read' : ''}`);
   }
   if (inc.type === 'secrets') {
     let repos = 0;
     for (const repo of reposUnder(roots)) {
+      const hits = scanRepo(repo);
+      if (hits.error) { unread('secret', repo, hits.error); continue; }
       repos++;
-      for (const h of scanRepo(repo)) {
+      for (const h of hits) {
         results.push({ incident: inc.id, kind: 'secret', status: 'REVIEW', repo, file: h.file, line: h.line, type: h.type, masked: h.masked, fix: inc.fix });
         print('REVIEW', `${short(repo)}/${h.file}:${h.line}`, c('2', `  ${h.type} ${h.masked}`));
       }
     }
-    if (!results.length) print('SAFE', `no committed keys found in the files of ${repos} local repositor${repos === 1 ? 'y' : 'ies'} (current files; history needs gitleaks or trufflehog)`);
-    else note('2', `check: ${inc.fix}`);
+    if (results.some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.fix}`);
+    else if (repos || !results.length) print('SAFE', `no committed keys found in the files of ${repoCount(repos)}${results.length ? ' that git could read' : ''} (current files; history needs gitleaks or trufflehog)`);
   }
   if (inc.type === 'wordpress') {
     const sites = wordpressUnder(roots);

@@ -3,16 +3,17 @@
   "type": "binaries",
   "title": "PHP: two critical flaws (php2shell)",
   "date": "2026-10-21",
-  "summary": "PHP released fixes for two critical remote code execution flaws (CVE-2026-109618 and CVE-2026-109619) on 21 October 2026: 8.5.12, 8.4.27, 8.3.36 and 8.2.35. PHP says there are no complete mitigations; updating is the only safe choice. 8.1 and older get no updates from the PHP project.",
+  "summary": "PHP released fixes for two critical remote code execution flaws (CVE-2026-109618 and CVE-2026-109619) on 21 October 2026: 8.5.12, 8.4.27, 8.3.36 and 8.2.35. PHP says there are no complete mitigations; updating is the only safe choice. For 8.1 and older, the PHP project published minimal source backports for 7.4, 8.0 and 8.1, for people who build PHP themselves.",
   "advisory": "https://blog.qualys.com/vulnerabilities-threat-research/2026/10/20/php-announces-critical-security-release-for-two-vulnerabilities",
   "binaries": [
     {
       "binary": "php",
       "versionArgs": [
+        "-n",
         "-v"
       ],
       "versionRe": "PHP (\\d+\\.\\d+\\.\\d+)",
-      "fix": "Update PHP to 8.5.12, 8.4.27, 8.3.36 or 8.2.35 (released 21 Oct 2026), then restart PHP-FPM, Apache or your PHP server. There are no complete mitigations. PHP 8.1 and older get no updates from the PHP project: use your distribution's or LTS vendor's backport, or move to a supported branch.",
+      "fix": "Update PHP to 8.5.12, 8.4.27, 8.3.36 or 8.2.35 (released 21 Oct 2026), then restart PHP-FPM, Apache or your PHP server. There are no complete mitigations. For PHP 8.1 and older, the PHP project published minimal source backports for 7.4, 8.0 and 8.1 for people who build PHP themselves; otherwise use your distribution's or LTS vendor's backport, or move to a supported version.",
       "fixedIn": [
         "8.2.35",
         "8.3.36",

@@ -1,13 +1,151 @@
 # Changelog
 
 What changed in each release of the `wardlatch` package on npm, newest first, written to help you decide whether to
-update. Running `npx wardlatch` always fetches the latest release, so for most people updating means running it again.
+update. Run `npx wardlatch@latest` to get the latest release: a bare `npx wardlatch` runs any copy already installed
+globally or in the current project, whatever its version (and npm older than 9.6.5 also reuses a copy npx cached
+earlier).
 
-Releases are not yet tagged in git. Each entry names the commit npm recorded when it was published (`gitHead`); a pack
-of that commit matches the published package's file count and size. The format follows
+Every release has a signed tag (`v0.1.0` onwards; 0.1.0 to 0.1.2 were tagged afterwards at the commit npm recorded as
+each one's `gitHead`), and 0.1.3 onwards were built and attested by the release workflow. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+
+## [0.1.7] - 2026-10-22
+
+### Security
+
+- Advisory: [GHSA-xcqr-prh6-6g8w](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-xcqr-prh6-6g8w).
+- **Wardlatch no longer runs Python's start-up files.** At start-up Python runs every `.pth` file and any
+  `sitecustomize.py` in its site-packages, and a malicious package can put code there: LiteLLM 1.107.0, compromised on
+  PyPI on 21 October 2026, ships `cook.pth` and a `sitecustomize.py`. The eMudhra check started each `python3` on `PATH`
+  and `/usr/bin/python3` with `-I`, which does not stop this. So with 0.1.0 to 0.1.6, if that interpreter's own
+  site-packages held a malicious `.pth` (in an activated virtual environment, a conda environment, a pyenv version or
+  Homebrew's Python, for example), running Wardlatch ran it. 0.1.0 to 0.1.2 also started the `bin/python` of each
+  virtual environment found under the searched folders, which ran that environment's `.pth` files. That `bin/python` did not have to be
+  Python: any program a cloned repository put there was run (fixed in 0.1.3; [GHSA-383w-hfwc-vx2h](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-383w-hfwc-vx2h)). 0.1.2 to 0.1.6 ran
+  `python3` without `-I` inside running containers that had no `curl`, which ran the `.pth` files of the image's
+  Python, its user site-packages included; a running container from LiteLLM's own images (pulled on 21 October
+  between 11:46 and 14:20 UTC) would be such a case if it had no `curl`. On the host, a copy installed with `pip install --user` was not run, because `-I` leaves out
+  the user's site-packages. 0.1.7 runs `python3 -I -S`, on the host and in containers: `-S` skips the `site` module,
+  and with it every `.pth` file and `sitecustomize.py`. A container's `python3` older than 3.4, which has no `-I`, is
+  UNKNOWN. Found in our own review; a test plants a marker `.pth` in a real virtual environment and fails if the probe
+  runs it. If one of those Pythons held LiteLLM 1.107.0, every start of it ran the stealer, Wardlatch's included:
+  follow LiteLLM's advisory.
+  The trade-off: a `.pth` file or `sitecustomize.py` that changes how Python trusts certificates (pip-system-certs, for
+  example) no longer applies to the probe, and, as before, the `certifi` in the own site-packages of a Python on `PATH` is
+  not tested yet (a virtual environment's is). A Python whose code uses an old `certifi` that way can read SAFE here; the
+  certifi check for those is planned.
+- Advisory: [GHSA-x8rh-w6q6-4r3h](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-x8rh-w6q6-4r3h).
+- **A repository's own git config can no longer make Wardlatch run a program, and git never fetches.** The workflow
+  review runs `git log` (since 0.1.0) and the committed-key scan runs `git ls-files` (since 0.1.1) in each repository
+  under the searched folders, and git reads that repository's `.git/config`. With 0.1.1 to 0.1.6, a repository whose
+  config set `core.fsmonitor` had that program run by `git ls-files`; with 0.1.0 to 0.1.6, one whose config set
+  `log.showSignature` and
+  `gpg.program` (or `gpg.ssh.program` or `gpg.x509.program`), with a signed commit that added a workflow file since 1
+  September 2026, had that program run by `git log`. In a partial clone (`--filter=tree:0`, or `blob:none` when a
+  workflow renamed within the folder needed its contents), `git log` fetched the missing objects from the clone's own
+  remote, such as github.com, with your usual SSH key or credential helper, and wrote what it fetched into that
+  repository's `.git/objects`: a request and a change Wardlatch promises never to make, and ones that needed no crafted
+  config. The fetch also ran the repository's own `reference-transaction` hook (in `.git/hooks`, or wherever
+  `core.hooksPath` points), which needs no config at all, and `core.alternateRefsCommand` when the repository has
+  `objects/info/alternates`. A crafted config could also make that fetch run a program (`core.sshCommand`,
+  `remote.<name>.uploadpack`, a credential helper, an `ext::` remote). A cloned repository carries no such config and
+  no hooks, but one unpacked from an archive or copied from elsewhere can. 0.1.7 runs git by its full path, from `/`,
+  as `git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c log.showRoot=true`, `log` with
+  `--no-show-signature --no-ext-diff --no-textconv --no-renames`, and lazy fetching off (`GIT_NO_LAZY_FETCH=1`, and
+  `GIT_ALLOW_PROTOCOL` for older git). Tests plant
+  programs for `core.fsmonitor`, `gpg.program`, diff drivers, filters, the pager and hooks, and a partial clone whose
+  fetch would run one, and fail if any of them runs.
+- Advisory: [GHSA-x4qj-7j53-r4cv](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-x4qj-7j53-r4cv) (this item and the `log.showRoot` one under Fixed).
+- **A Node.js older than 18 is tested, and only a certificate refusal reads as "does not trust".** 0.1.0 to 0.1.6
+  reported any Node.js older than 18 on `PATH` as SAFE without testing it: the probe used `fetch()`, which Node 17 and
+  older lack, so it failed, and every failure counted as a refusal once the forced-roots control (which used
+  `https.get`) had passed. Node's bundled roots include Comodo's AAA Certificate Services (Node 10 to 17; 12 to 17 also emSign ECC Root CA - G3),
+  so such a Node really is exposed. 0.1.7 probes with `https.get`, and on the host counts a failure as a refusal only when it is a
+  certificate-verification error (curl exit 60, a Node certificate error code, Python's `SSLCertVerificationError`, macOS's NSURLErrorDomain -1201 to -1204);
+  any other failure, when no test host connected, is UNKNOWN. Found by the critic of the 0.1.7 review; a test runs a
+  Node with `fetch` removed against a trusting local test host and expects EXPOSED.
+- **Hardening: programs found from the place you started Wardlatch.** From 0.1.0 to 0.1.6, run with npx from inside a
+  project, Wardlatch could run that project's own programs: npx puts the project's `node_modules/.bin` first on `PATH`,
+  where Wardlatch looks up `git`, `python3`, `node`, `curl`, `php`, `go` and the container engines. And `go version`,
+  run from a project whose `go.mod` asks for a newer Go, can download and run that Go (a request to the Go module
+  proxy, which Wardlatch promises never to make). 0.1.7 drops every `node_modules/.bin` folder and any relative entry
+  from `PATH` before anything runs (and uses `/usr/bin:/bin` when nothing is left), runs git by its full path, runs
+  every program from `/` (with `--paths` folders and relative CA settings such as `SSL_CERT_FILE` made absolute
+  first), sets `GOTOOLCHAIN=local`, and reads PHP's version with `php -n -v`, which loads no `php.ini` and no
+  extension. A Go you pinned with `GOTOOLCHAIN` (for example `go1.26.5`) is read from that setting without running go,
+  and judged too. npx also starts Wardlatch with the project's own `node_modules/.bin/node` if it has one, and applies
+  its `.npmrc`; Wardlatch can't undo either: run it from your home folder. Found in an independent review.
+
+### Fixed
+
+- **No silent all-clear when the eMudhra check has nothing to test.** When it found no runtime to test (always the
+  case for the machine itself on Windows, and possible elsewhere), it printed nothing for it, and the run could exit 0.
+  Now it prints one UNKNOWN line ("not checked on Windows yet (Windows is not supported)" on Windows, or "the runtimes
+  on this machine were not checked: Windows is not supported yet" when containers were checked; "no runtime was found
+  to test" elsewhere; `kind` `runtimes` in `--json`), so the exit code
+  is 2. On Windows the OVHcloud CLI and PHP checks say UNKNOWN too, instead of SAFE: they look only for macOS and Linux
+  program names. The OVHcloud stealer's temp folder is still found there, and still EXPOSED.
+- **A container engine that can't be asked is UNKNOWN, not "not running".** From 0.1.2 to 0.1.6, any failure of
+  `docker ps` or `podman ps` other than "permission denied" read as "not running", so a hung Docker Desktop, or one
+  answering "error during connect", let the eMudhra check end all SAFE (exit 0) with its running containers never
+  checked. Now only an engine that isn't installed, or says it can't connect to its daemon, counts as not running. A
+  hang (killed after 10 seconds), more output than can be read, or any other failure is an UNKNOWN line with the reason
+  and what to do. A pipeline whose engine is installed but stuck now exits 2 where it exited 0; `--no-containers` skips
+  running containers. The `docker exec` or `podman exec` command Wardlatch starts is now killed with SIGKILL, not
+  SIGTERM, if it outlives its timeout. Found in an independent review.
+- **A repository git can't read is UNKNOWN, not clean.** Up to 0.1.6, when `git log` or `git ls-files` failed in a
+  repository (a git refusing a folder owned by another user, a timeout), the workflow review and the committed-key
+  scan left it out without a word and still counted it in their SAFE line. Now each such repository is an UNKNOWN line
+  with git's reason, and the SAFE line counts only what git could read. Since git no longer fetches, a treeless partial
+  clone (`--filter=tree:0`) is one of them.
+- **A workflow renamed within `.github/workflows` is listed.** The workflow review now runs `git log --no-renames`, so a
+  workflow file renamed into place is listed as added, and a blobless partial clone needs nothing fetched.
+- **A workflow added in a repository's first commit is listed, whatever `log.showRoot` says.** Up to 0.1.6, with
+  `log.showRoot=false` in the repository's config or your own, `git log` showed no files for a root commit, so a
+  workflow added there was missed and the review could read SAFE ([GHSA-x4qj-7j53-r4cv](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-x4qj-7j53-r4cv)). git now runs with `-c log.showRoot=true`, and with
+  `GIT_NO_REPLACE_OBJECTS=1`, so `refs/replace/` can't swap one commit for another. Found in an independent review.
+- **A Python environment found through a relative `--paths` folder is tested.** Since every program runs from `/`, a
+  relative folder would have given curl a bundle path it couldn't open, and the environment would have read SAFE.
+  Folders are made absolute first, and a curl row whose own bundle can't be found is UNKNOWN. No release had this:
+  it was found in the review of 0.1.7 before release.
+
+## [0.1.6] - 2026-10-21
+
+### Security
+
+- Advisory: [GHSA-23m2-fmmq-w3pr](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-23m2-fmmq-w3pr).
+- **The OVHcloud CLI check no longer runs the program.** 0.1.0 to 0.1.5 read its version with `ovhcloud --version`.
+  On a machine that still held one of the compromised builds, that would have run the credential stealer, which
+  OVHcloud's advisory warns against. 0.1.6 never runs it: it compares the file's MD5 with the five compromised builds
+  OVHcloud published (GHSA-862f-55f5-vmvw), and looks in `$TMPDIR`, `/tmp` and `/var/tmp` for the `envchecker-NNNNNNNNN`
+  folder the stealer leaves every time it runs, so a machine where it already ran is EXPOSED even if the binary is
+  gone, while that folder is still in the temp directory (a reboot or temp cleanup can remove it; a SAFE result does
+  not clear a machine that installed or updated the CLI in the window). A clean copy reads SAFE whatever its version: OVHcloud says only downloads from the 94-minute window were
+  affected, so 0.1.0 to 0.1.5 flagged every copy of v0.11.0 to v0.15.0, wrongly. Found in our own review while updating to the
+  advisory. If you ran an earlier Wardlatch with a compromised `ovhcloud` installed, treat every secret the machine held then as
+  exposed and replace it, whatever Wardlatch reports now (the advisory has the details).
+- Rules can now mark a program as possible malware (`noExec`, `md5Bad`, `tmpTrace`); a test plants a program that
+  would leave a marker file and fails if it ever runs.
+
+### Changed
+
+- The OVHcloud fix lists what the stealer took, from OVHcloud's advisory: cloud, SSH, Kubernetes, Docker, npm and
+  Terraform credentials, `.netrc` and git credentials, and the histories of AI coding tools.
+
+
+## [0.1.5] - 2026-10-21
+
+### Changed
+
+- **A second maintainer with full access.** @mlimano5 is an admin of the repository and an owner of the npm package
+  ([GOVERNANCE.md](GOVERNANCE.md#continuity)).
+- **The repository moved to the Deimos AI organization:** [github.com/deimos-hq/wardlatch](https://github.com/deimos-hq/wardlatch).
+  Old links and `git clone` URLs redirect. 0.1.3 and 0.1.4 still verify under the earlier name
+  ([docs/RELEASING.md](docs/RELEASING.md#verifying-a-release)).
+- PHP's fix text for 8.1 and older now says the PHP project published minimal source backports for 7.4, 8.0 and 8.1, for
+  people who build PHP themselves.
 
 ## [0.1.4] - 2026-10-21
 
@@ -36,7 +174,7 @@ of that commit matches the published package's file count and size. The format f
 
 - **A found Python virtual environment's own interpreter is never run.** Up to 0.1.2, Wardlatch ran the `bin/python`
   of each environment it found under the searched folders, so a repository cloned from a stranger could ship a fake
-  interpreter that would run as you. Now it reads the environment's certifi bundle and version as files and tests the
+  interpreter that would run as you ([GHSA-383w-hfwc-vx2h](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-383w-hfwc-vx2h), recorded on 22 October). Now it reads the environment's certifi bundle and version as files and tests the
   bundle with a curl the machine already trusts (`--cacert`). An environment without certifi uses its base Python's
   trust, which is checked through `PATH`. Found by this project's own review; no report of it being exploited.
 
@@ -139,9 +277,12 @@ Published 05:14 UTC. npm `gitHead`: `4d4f295`. The first release.
 npm also lists `0.0.0-stage` (21 October, 05:13 UTC), a 331-byte, two-file placeholder from npm's staged publishing,
 described on npm as a "Temporary package placeholder". It is not a release and holds none of Wardlatch's code.
 
-[Unreleased]: https://github.com/thearchitect0x-glitch/wardlatch/compare/v0.1.4...main
-[0.1.4]: https://github.com/thearchitect0x-glitch/wardlatch/releases/tag/v0.1.4
-[0.1.3]: https://github.com/thearchitect0x-glitch/wardlatch/releases/tag/v0.1.3
-[0.1.2]: https://github.com/thearchitect0x-glitch/wardlatch/tree/bcf739c318dd60397a76360ac68e04138fd532bd
-[0.1.1]: https://github.com/thearchitect0x-glitch/wardlatch/tree/49ea20cd599c817efa4d4c9ec37cfdaca8d5b48e
-[0.1.0]: https://github.com/thearchitect0x-glitch/wardlatch/tree/4d4f2955b2a5ac39f36797ac6b8f5cfc1209034d
+[Unreleased]: https://github.com/deimos-hq/wardlatch/compare/v0.1.7...main
+[0.1.7]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.7
+[0.1.6]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.6
+[0.1.5]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.5
+[0.1.4]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.4
+[0.1.3]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.3
+[0.1.2]: https://github.com/deimos-hq/wardlatch/tree/bcf739c318dd60397a76360ac68e04138fd532bd
+[0.1.1]: https://github.com/deimos-hq/wardlatch/tree/49ea20cd599c817efa4d4c9ec37cfdaca8d5b48e
+[0.1.0]: https://github.com/deimos-hq/wardlatch/tree/4d4f2955b2a5ac39f36797ac6b8f5cfc1209034d

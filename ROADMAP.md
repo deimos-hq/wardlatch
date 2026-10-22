@@ -12,16 +12,16 @@ sent, nothing changed) and quick to act on (a fix on every line).
 - Trust probes for a compromised certificate authority (eMudhra, October 2026): every `node`, `curl` and `python3` on
   `PATH`, Python virtual environments and their `certifi`, the macOS networking stack, the Linux distribution's trust
   store, and running Docker and Podman containers, each behind a reachability control and a positive control.
-- Version rules for tools with a bad range or a fixed version (OVHcloud CLI, cloudflared, Go, PHP, one fix per
-  release line), file checks for committed keys and WordPress plugins, and a review list of new GitHub workflow files.
+- Version rules for tools with a bad range or a fixed version (cloudflared, Go, PHP, one fix per release line), a
+  never-run check of the OVHcloud CLI by its MD5 and the stealer's temp folder, file checks for committed keys and WordPress plugins, and a review list of new GitHub workflow files.
 - `--json` and exit codes for CI; a fix text on every exposed line.
 - `fix/fix-macos.sh`, the Mac fix with checks around the advisory's change.
 
 ## Next: the coming months
 
-- **Keep the current incidents current.** PHP's fixed versions (due 21 October, 14:00 UTC) replace the "pending"
-  line; Node's release with nodejs/node#66871 and any macOS update that replaces `/etc/ssl/cert.pem` change the fix
-  texts; each change gets a dated changelog line.
+- **Keep the current incidents current.** Done so far: PHP's fixed versions (0.1.3), Node's fixed releases (0.1.4),
+  OVHcloud's published hashes (0.1.6). Next: any macOS update that replaces `/etc/ssl/cert.pem` changes the Mac fix
+  text. Each change gets a dated changelog line.
 - **New incidents as they happen**, when there is a public source and something checkable on a machine. That is the
   reason the tool exists, and it outranks everything else on this list.
 - **Retiring incidents.** Decide, and write down, when an incident stops being checked by default (for example once
@@ -29,14 +29,13 @@ sent, nothing changed) and quick to act on (a fix on every line).
   available with `--incident`.
 - ~~Narrow the Python trust assumption.~~ Done after 0.1.2: a found environment's interpreter is never run; its
   certifi bundle is read as a file and tested with a trusted curl (see [ASSURANCE_CASE.md](ASSURANCE_CASE.md)).
-- **Signed releases and tags.** The release workflow attests the source archive and the npm package with Sigstore;
-  the next release is the first to go through it, from a signed tag. Signed tags for 0.1.0 to 0.1.2 at the commits
-  npm recorded.
+- ~~Signed releases and tags.~~ Done: 0.1.3 onwards are attested by the release workflow from signed tags, and 0.1.0
+  to 0.1.2 have signed tags at the commits npm recorded.
 - **A second maintainer**, then required review: see [GOVERNANCE.md](GOVERNANCE.md#continuity). The successor has
-  had write access since 21 October 2026; npm ownership is pending. Then every change to `main` goes through a pull
+  had admin access and co-owned the npm package since 21 October 2026; next is a rehearsed release. Then every change to `main` goes through a pull
   request approved by someone other than its author.
-- **Windows.** Untested today. Either test and support it in CI, or say plainly in the README that it is not
-  supported.
+- **Windows.** Not supported yet, and the README says so. Next: Windows paths for the installed-software checks, a
+  Windows CI job, then support.
 
 ## Later: under consideration, not committed
 

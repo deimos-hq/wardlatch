@@ -6,7 +6,7 @@ when they are not. That is the first thing in scope below.
 ## Reporting a vulnerability
 
 Report privately through
-[GitHub Security Advisories](https://github.com/thearchitect0x-glitch/wardlatch/security/advisories/new) for this
+[GitHub Security Advisories](https://github.com/deimos-hq/wardlatch/security/advisories/new) for this
 repository. Only the maintainers can see an advisory. Do not open a public issue for a suspected vulnerability.
 
 **You will hear back within 72 hours**, and get a first assessment within 7 days. If you do not, escalate by
@@ -22,7 +22,8 @@ reported, and what was actually true.
   REVIEW or EXPOSED line disappear) when the thing checked is exposed, including a control that fails without the
   result turning into "could not be tested".
 - **Anything that sends data about the user.** Wardlatch's only network traffic is TLS connections to the incident's
-  public test hosts and its two control sites, carrying nothing beyond what any request from the runtime being tested
+  public test hosts and its two control sites (and what your own container engine sends, wherever `DOCKER_HOST` or the
+  current docker context points; `--no-containers` skips it), carrying nothing beyond what any request from the runtime being tested
   carries (the machine's address and the runtime's default User-Agent). Telemetry, results, paths, names, environment
   variables, keys or any other detail of the machine leaving it, by any route, is a vulnerability.
 - **Anything that modifies the system outside `fix/fix-macos.sh`.** The command changes nothing: no file, setting,
@@ -67,16 +68,19 @@ report how you would like to be credited.
 
 ## Supported versions
 
-Only the latest release on npm. `npx wardlatch` fetches the latest release unless you pin a version, so the upgrade
-path is to run it again. Fixes are not backported.
+Only the latest release on npm. Run `npx wardlatch@latest` from your home folder (npx also starts Wardlatch with the
+current project's own `node_modules/.bin/node` if it has one, and applies its `.npmrc`; Wardlatch can't undo either): a bare `npx wardlatch` runs any copy already installed
+globally or in the current project, whatever its version (and npm older than 9.6.5 also reuses a copy npx cached
+earlier). Fixes are not backported.
 
 ## Verifying what you run
 
 Releases 0.1.0 to 0.1.2 were published to npm from the maintainer's machine and carry no signature of the project's
 own (npm's registry signature shows only that npm serves what was uploaded). A release cut from a tag now goes
 through the release workflow, which attaches a Sigstore attestation of its source archive and npm package to the
-GitHub release; no release has been through it yet. How to check one:
+GitHub release; 0.1.3 and every release since went through it. How to check one:
 [docs/RELEASING.md](docs/RELEASING.md#verifying-a-release).
 
 `fix/fix-macos.sh` in this repository is byte-identical to the download on www.deimoscore.com, whose page prints its
-SHA-256 (`22153b4acaaa8675f9b4a87390a06cae077f9b5c8f748945ff6b886e400f6a86`). CI fails if the two ever differ.
+SHA-256 (`22153b4acaaa8675f9b4a87390a06cae077f9b5c8f748945ff6b886e400f6a86`). CI pins that hash, so a change to the
+script fails CI until the pin, the download and the printed checksum change together.
