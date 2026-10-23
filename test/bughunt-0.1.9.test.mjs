@@ -7,7 +7,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, chmodSync, existsSync, symlinkSync } from 'node:fs';
+import { renameSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, chmodSync, existsSync, symlinkSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -177,7 +177,7 @@ test('--incident with one known and one unknown id is refused, exit 2, naming th
 // =========================================================================================================================
 test('containers: DOCKER_HOST naming a local socket that is gone (Colima stopped) is "not running", not an unfollowed host', () => {
   const d = fresh('c1'); nodeRt(d);
-  const sock = join(dir, 'c1-colima', 'default', 'docker.sock');
+  const sock = join(fresh('c1-colima'), 'docker.sock');   // Colima stopped: its folder is there, the socket gone
   const eng = engine('c1', { ps: `echo "Cannot connect to the Docker daemon at unix://${sock}. Is the docker daemon running?" >&2; exit 1` });
   const r = run(['--incident', 'emudhra-2026-10', '--paths', fresh('c1-root')], { PATH: `${eng}:${d}`, DOCKER_HOST: `unix://${sock}` }, preload('c1', { online: true }));
   assert.equal(unknowns(r).length, 0, show(r)); assert.equal(r.code, 0);
@@ -247,7 +247,7 @@ test('headers: a curl header file with nothing of yours is SAFE, even when its p
   assert.equal(r.rows.filter((x) => x.status !== 'SAFE').length, 0, show(r)); assert.equal(r.code, 0);
 });
 
-test('headers: a curl header file that is gone sends nothing (SAFE); one that cannot be read is UNKNOWN', () => {
+test('headers: a curl header file that is gone, or that this user cannot read, sends nothing (curl exits 26): SAFE', () => {
   const h = fresh('h6'); gitconfigId(h);
   put(join(h, '.curlrc'), `-H @${join(h, 'missing-headers')}\n`);
   const r = hdr(h);
@@ -257,7 +257,17 @@ test('headers: a curl header file that is gone sends nothing (SAFE); one that ca
   const f = put(join(h2, 'locked-headers'), `From: ${EMAIL}\n`); lock(f);
   put(join(h2, '.curlrc'), `-H @${f}\n`);
   const r2 = hdr(h2);
-  assert.ok(unknowns(r2).length, show(r2)); assert.equal(r2.code, 2);
+  assert.equal(unknowns(r2).length, 0, show(r2)); assert.equal(r2.code, 0);
+});
+
+test('headers: -H@file with no space, and --header=@file, are read like -H @file', () => {
+  for (const [i, line] of ['-H@{f}', '--header=@{f}', '-H "@{f}"'].entries()) {
+    const h = fresh(`h8-${i}`); gitconfigId(h);
+    const f = put(join(h, 'my headers'), `From: ${EMAIL}\n`);
+    put(join(h, '.curlrc'), `${line.replace('{f}', f)}\n`);
+    const r = hdr(h);
+    assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && x.carries === 'your email'), `${line}: ${show(r)}`); assert.equal(r.code, 1);
+  }
 });
 
 test('headers: a curl header file named by a relative path is UNKNOWN (curl reads it from wherever it runs); @/dev/null is empty', () => {
@@ -390,4 +400,117 @@ test('wordpress: a site that is found and has none of the listed plugins says so
   assert.equal(r.code, 0, show(r));
   const safeRow = r.rows.find((x) => x.status === 'SAFE');
   assert.ok(safeRow && !/no WordPress installs found/.test(safeRow.reason) && /1 WordPress install/.test(safeRow.reason), show(r));
+});
+
+test('wordpress: a core that still holds its bundled wp-content beside the live one is checked in both (the live plugin is EXPOSED)', () => {
+  const root = fresh('w6'), s = join(root, 'site');
+  put(join(s, 'wp', 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";');
+  plugin(join(s, 'wp', 'wp-content', 'plugins'), 'akismet', 'akismet.php', '5.3');
+  plugin(join(s, 'wp-content', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.12');
+  const r = wp(root);
+  assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && /updraftplus/.test(x.what)), show(r)); assert.equal(r.code, 1);
+});
+
+test('wordpress: WP_CONTENT_DIR in wp-config.php (__DIR__ . "/content") is followed, past a leftover wp-content', () => {
+  const root = fresh('w7'), s = site(join(root, 'site'));
+  put(join(s, 'wp-config.php'), "<?php\ndefine( 'WP_CONTENT_DIR', __DIR__ . '/content' );\nrequire_once ABSPATH . 'wp-settings.php';\n");
+  plugin(join(s, 'content', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.12');
+  const r = wp(root);
+  assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && /updraftplus/.test(x.what)), show(r)); assert.equal(r.code, 1);
+});
+
+test('wordpress: WP_PLUGIN_DIR set to something that cannot be followed is UNKNOWN; a commented-out one is ignored', () => {
+  const root = fresh('w8'), s = site(join(root, 'site'));
+  put(join(s, 'wp-config.php'), "<?php\ndefine('WP_PLUGIN_DIR', getenv('PLUGINS'));\n");
+  const r = wp(root);
+  assert.ok(unknowns(r).some((x) => /WP_PLUGIN_DIR/.test(x.reason)), show(r)); assert.equal(r.code, 2);
+  const root2 = fresh('w8b'), s2 = site(join(root2, 'site'));
+  put(join(s2, 'wp-config.php'), "<?php\n// define('WP_PLUGIN_DIR', getenv('PLUGINS'));\n");
+  assert.equal(wp(root2).code, 0);
+});
+
+test('wordpress: a site inside another site\'s folder (public_html/blog) is searched too', () => {
+  const root = fresh('w9'), top = site(join(root, 'public_html'));
+  plugin(join(top, 'wp-content', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.13');
+  plugin(join(site(join(top, 'blog')), 'wp-content', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.12');
+  const r = wp(root);
+  assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && x.site === join(top, 'blog')), show(r));
+  assert.equal(r.rows.filter((x) => x.what === 'updraftplus 1.26.13').length, 1, `the outer site's plugin is checked once: ${show(r)}`);
+  assert.equal(r.code, 1);
+});
+
+test('containers: a gone DOCKER_HOST socket whose folder is not there either is not followed (nothing vouches for it)', () => {
+  const d = fresh('c5'); nodeRt(d);
+  const sock = join(dir, 'c5-no-such-folder', 'docker.sock');
+  const eng = engine('c5', { ps: `echo "Cannot connect to the Docker daemon at unix://${sock}. Is the docker daemon running?" >&2; exit 1` });
+  const r = run(['--incident', 'emudhra-2026-10', '--paths', fresh('c5-root')], { PATH: `${eng}:${d}`, DOCKER_HOST: `unix://${sock}` }, preload('c5', { online: true }));
+  assert.ok(unknowns(r).some((x) => /DOCKER_HOST/.test(x.reason)), show(r)); assert.equal(r.code, 2);
+});
+
+test('keys: a text file with a zero byte past its first 8,000 bytes is still scanned (git decides by the head too)', () => {
+  const root = fresh('k7'), app = join(root, 'app'), g = gitRepo(app);
+  put(join(app, 'dump.sql'), Buffer.concat([Buffer.from(`${'x'.repeat(9000)}\n\n`), Buffer.from([0]), Buffer.from(`\nkey=${AWS}\n`)]));
+  g.commit();
+  assert.deepEqual(keyRows(keys(root)).map((x) => [x.file, x.line]), [['dump.sql', 4]]);
+});
+
+test('keys: an example key of another kind beside a real key does not hide it', () => {
+  const root = fresh('k8'), app = join(root, 'app'), g = gitRepo(app);
+  put(join(app, 'cfg.json'), `{"aws":"${AWS}","gh":"ghp_EXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLE12"}\n`); g.commit();
+  assert.deepEqual(keyRows(keys(root)).map((x) => x.type), ['AWS access key']);
+});
+
+test('keys: a tracked file replaced by a folder is read from git\'s copy (a key in it is found)', () => {
+  const root = fresh('k9'), app = join(root, 'app'), g = gitRepo(app);
+  put(join(app, 'conf'), `key=${AWS}\n`); put(join(app, 'README'), 'x\n'); g.commit();
+  rmSync(join(app, 'conf')); mkdirSync(join(app, 'conf'));
+  assert.deepEqual(keyRows(keys(root)).map((x) => x.file), ['conf']);
+});
+
+test('keys: a deleted tracked file whose copy git no longer has is UNKNOWN, never silently skipped', () => {
+  const root = fresh('k10'), app = join(root, 'app'), g = gitRepo(app);
+  put(join(app, 'gone.txt'), `secret stuff ${'y'.repeat(50)}\n`); put(join(app, 'README'), 'x\n'); g.commit();
+  const blob = g.g(['rev-parse', ':gone.txt']).trim();
+  rmSync(join(app, 'gone.txt')); rmSync(join(app, '.git', 'objects', blob.slice(0, 2), blob.slice(2)));
+  const r = keys(root);
+  assert.ok(unknowns(r).some((x) => x.file === 'gone.txt'), show(r)); assert.equal(r.code, 2);
+});
+
+test('keys: 3,000 deleted tracked files are read in one batch, in seconds', () => {
+  const root = fresh('k11'), app = join(root, 'app'), g = gitRepo(app);
+  for (let i = 0; i < 3000; i++) put(join(app, 'd', `f${i}.txt`), `line ${i}\n`);
+  put(join(app, 'd', 'f77.txt'), `key=${AWS}\n`); g.commit();
+  rmSync(join(app, 'd'), { recursive: true, force: true });
+  const t = Date.now(); const r = keys(root); const ms = Date.now() - t;
+  assert.deepEqual(keyRows(r).map((x) => x.file), ['d/f77.txt'], show(r));
+  assert.ok(ms < 15000, `took ${ms} ms`);
+});
+
+test('keys: files a sparse checkout of a partial clone leaves out are not reported (a clean monorepo clone is SAFE)', () => {
+  const src = fresh('k12-src'), g0 = gitRepo(src);
+  for (let i = 0; i < 20; i++) put(join(src, 'b', `f${i}.txt`), `x ${i}\n`);
+  put(join(src, 'a', 'keep.txt'), 'keep\n'); g0.commit(); g0.g(['config', 'uploadpack.allowFilter', 'true']);
+  const root = fresh('k12'), app = join(root, 'app');
+  execFileSync('git', ['clone', '-q', '--filter=blob:none', '--sparse', `file://${src}`, app], { stdio: 'pipe', env: GITENV });
+  execFileSync('git', ['-C', app, 'sparse-checkout', 'set', 'a'], { stdio: 'pipe', env: GITENV });
+  assert.equal(existsSync(join(app, 'b')), false, 'the fixture: b is outside the sparse checkout');
+  const r = keys(root);
+  assert.equal(r.rows.filter((x) => x.status !== 'SAFE').length, 0, show(r)); assert.equal(r.code, 0);
+});
+
+test('keys: a UTF-16 file over the in-memory size is UNKNOWN (it is not read in pieces), and a binary that starts FF FE is skipped', async () => {
+  const { scanRepo } = await import('../lib/secrets.mjs');
+  const root = fresh('k13'), g = gitRepo(root);
+  put(join(root, 'big16.txt'), Buffer.from(`﻿${'hello world\r\n'.repeat(200)}`, 'utf16le'));
+  put(join(root, 'bin.dat'), Buffer.concat([Buffer.from([0xff, 0xfe, 0, 0, 0, 0]), Buffer.alloc(5000, 7)]));
+  g.commit();
+  const found = scanRepo(root, { maxBytes: 1024 });
+  assert.deepEqual(found.map((x) => [x.file, Boolean(x.unread)]), [['big16.txt', true]]);
+});
+
+test('trust: REQUESTS_CA_BUNDLE naming a folder is UNKNOWN (not tested), never dropped', () => {
+  const d = fresh('t4'), folder = fresh('t4-certs');
+  pythonRt(d); nodeRt(d); curlRt(d);
+  const r = trust({ PATH: d, REQUESTS_CA_BUNDLE: folder }, preload('t4', { online: true }));
+  assert.ok(unknowns(r).some((x) => x.caVar === 'REQUESTS_CA_BUNDLE' && /not a file/.test(x.reason)), show(r)); assert.equal(r.code, 2);
 });

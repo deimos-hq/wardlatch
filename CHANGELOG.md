@@ -117,19 +117,23 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
     - Podman refusing its socket (permission denied) read as "not running" in the image check, so the run could end SAFE.
       One rule now classifies engine failures for running containers and local images alike.
     - A Bedrock site (core in `web/wp`, plugins in `web/app/plugins`), or WordPress in its own directory with
-      `wp-content` one level up, was never found: "no WordPress installs found". Those layouts are checked now. A core
-      whose plugins folder is in none of the known places is UNKNOWN.
+      `wp-content` one level up, was never found: "no WordPress installs found". Every plugins folder a site can use is
+      checked now: those places, and what `WP_CONTENT_DIR` / `WP_PLUGIN_DIR` name in wp-config.php (one that can't be
+      followed is UNKNOWN), not only the first found (a core still holding its bundled `wp-content` beside the live one
+      read SAFE about the wrong plugins). A core with no plugins folder in any of those places is UNKNOWN.
+    - A site inside another site's folder (`public_html/blog`) was never searched: the search stopped at the first.
     - A key in a tracked file deleted from the working tree (still in the index, HEAD and every push) was skipped. git's
-      own copy is scanned now.
+      own copy is scanned now, all such files in one batch.
     - A key in a UTF-16 file with a byte-order mark (PowerShell 5's `Out-File`) was skipped as binary.
-    - A real key with the docs' example key beside it on the same line was taken for a placeholder.
-    - curl's `-H @file` (`header = "@file"` in `.curlrc`) was checked as a file name, never as the headers in the
-      file. The file is read now; one that can't be read, or is named by a relative path, is UNKNOWN.
+    - A real key with an example key (of any kind) beside it on the same line was taken for a placeholder.
+    - curl's `-H @file` (`header = "@file"`, `-H@file`, `--header=@file`) was checked as a file name, never as the
+      headers in the file. The file is read now; one named by a relative path is UNKNOWN, and one curl couldn't read
+      either sends nothing.
     - The bundle `REQUESTS_CA_BUNDLE` names (what requests and pip trust in place of certifi) was never tested. It is
-      tested now, and is UNKNOWN when there is no curl to test it with.
+      tested now, and is UNKNOWN when there is no curl to test it with, or when it names a folder.
   - **False UNKNOWNs:**
     - `DOCKER_HOST` naming a local socket that is gone (Colima or a Podman machine stopped) read as an unfollowed host.
-      It is "not running" now.
+      It is "not running" now, when the socket's folder is this user's or root's.
     - A JSON-with-comments file whose last setting is commented out after a trailing comma (VS Code writes these) read
       as invalid.
   - **Options and wording:**
@@ -181,7 +185,10 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   into a web root by a symbolic link. A `~` written literally in `PATH` (which the shell expands) is dropped with the
   other relative entries.
 - A UTF-16 file without a byte-order mark is skipped as binary, and a UTF-16 file over 8 MB is UNKNOWN (it isn't read
-  in pieces). `REQUESTS_CA_BUNDLE` naming a folder is not tested.
+  in pieces). Files a sparse checkout leaves out of the working tree are not scanned, as in 0.1.8.
+- WordPress: a content or plugins folder that only Bedrock's `config/application.php` moves, or that wp-config.php moves
+  in a form other than an absolute path, `__DIR__`, `dirname(__FILE__)` or `ABSPATH` (a constant, `getenv()`), isn't
+  followed: the second is UNKNOWN, the first is not seen.
 - A later copy of a program on `PATH` that can be run but not read (mode 111) is taken for a script: named for review,
   not run.
 - `--paths` given for a folder and a folder inside it reports a finding in the inner one twice, and `--list --json`

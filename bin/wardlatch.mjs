@@ -292,7 +292,7 @@ for (const inc of chosen) {
     }
     gaps(results, inc, 'search', deniedVenvs, { found: foundUnread });
     for (const u of untested) {
-      const reason = `${u.caVar ? `the bundle ${u.caVar} names` : 'this virtual environment\'s certifi bundle'} was found, but there is no curl on this machine to test it with: install curl and run again`;
+      const reason = u.caVar ? `${u.caVar} names ${u.bundle}, which was not tested: ${u.why}` : 'this virtual environment\'s certifi bundle was found, but there is no curl on this machine to test it with: install curl and run again';
       results.push({ incident: inc.id, kind: 'curl', status: 'UNKNOWN', ...(u.caVar ? { caVar: u.caVar, bundle: u.bundle } : { env: u.env, certifi: u.certifi }), reason });
       print('UNKNOWN', u.label ?? `certifi ${u.certifi || '(version unknown)'}  ${short(u.env)}`); note('33', reason);
     }
@@ -448,7 +448,7 @@ for (const inc of chosen) {
     const privateDot = [], coreOnly = [];
     const sites = wordpressUnder(searchable, 5, denied, privateDot, coreOnly);
     for (const core of coreOnly) {
-      const reason = 'WordPress core is here, but its plugins folder is not where WordPress, a moved wp-content or Bedrock keep it, so its plugins were not checked: pass --paths for the folder that holds wp-content';
+      const reason = 'WordPress core is here, but no plugins folder is where WordPress, a moved wp-content, Bedrock or its wp-config.php puts one, so its plugins were not checked: pass --paths for the folder that holds them';
       results.push({ incident: inc.id, kind: 'wordpress', site: core, status: 'UNKNOWN', what: 'plugins folder', reason });
       print('UNKNOWN', `${short(core)} · plugins folder`); note('33', reason);
     }
