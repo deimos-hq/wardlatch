@@ -80,7 +80,10 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   but plain "installed" (held with `apt-mark hold`, marked for removal, unpacked, half-configured, waiting on triggers)
   read as not installed, though its files were on disk (half-installed is now UNKNOWN); a PHP release candidate or `-dev` build of
   a fixed version (`8.4.27RC1`, older than the fix) read as fixed; and a virtual environment's certifi bundle on a
-  machine with no curl to test it with was dropped without a line (now UNKNOWN).
+  machine with no curl to test it with was dropped without a line (now UNKNOWN). A fourth, from the same checks: the PHP
+  check judged only the program called `php`, so on a server with several PHP versions an old `php8.1`, and the
+  `php-fpm8.1` serving the sites, read SAFE; versioned `php`, `php-fpm` and `php-cgi` programs on `PATH` and in the
+  `sbin` folders are now each judged (one file reached by two names, once).
 - Bounded work: hand-written parsers instead of patterns that backtracked (a planted line took 22 s), a capped JSON walk
   and a 1 MB cap on a repository's config files (a planted 16 MB `.mcp.json` took 1.4 GB), every file read through one
   reader that never blocks on a FIFO, and every program killed with SIGKILL at its timeout.

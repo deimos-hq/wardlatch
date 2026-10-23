@@ -8,6 +8,8 @@
   "binaries": [
     {
       "binary": "php",
+      "binaryNames": "^php(?:-fpm|-cgi)?(?:\\d+(?:\\.\\d+)?)?$",
+      "extraDirs": ["/usr/sbin", "/usr/local/sbin", "/opt/homebrew/sbin", "/usr/local/opt/php/sbin"],
       "versionArgs": [
         "-n",
         "-v"

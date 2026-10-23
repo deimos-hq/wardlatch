@@ -64,7 +64,7 @@ test('a known-bad tool version is EXPOSED (exit 1); a missing tool is SAFE (exit
   const text = run(['--incident', 'php-2026-10', '--paths', dir], { PATH: bin });
   assert.match(text.out, /EXPOSED {2}php 8\.4\.26/); assert.match(text.out, /fix: Update PHP to 8\.5\.12/);
   const none = run(['--incident', 'php-2026-10', '--paths', dir], { PATH: join(dir, 'empty-path') });
-  assert.equal(none.code, 0); assert.match(none.out, /SAFE {5}php not found on PATH \(searched: /);
+  assert.equal(none.code, 0); assert.match(none.out, /SAFE {5}php not found on PATH(?: or in [^(]+)? \(searched: /);
 });
 
 test('the OVHcloud CLI is never run: a clean file is SAFE, the stealer\'s temp folder is EXPOSED (exit 1)', () => {

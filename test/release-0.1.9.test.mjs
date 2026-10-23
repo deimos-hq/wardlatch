@@ -365,3 +365,33 @@ test('a virtual environment\'s certifi on a machine with no curl is could-not-be
   assert.ok(r.rows.some((x) => x.status === 'UNKNOWN' && x.env === v && /no curl/.test(x.reason)), JSON.stringify(r.rows));
   assert.equal(r.code, 2);
 });
+
+// ---- from the strict check of 9eceb76: a second PHP beside the default one ---------------------------------------------
+test('PHP: an old php8.1 and php-fpm8.1 beside a fixed php are each EXPOSED; helper tools are never run', () => {
+  const d = fresh('pv-bin'), ran = join(dir, 'pv-ran');
+  exe(join(d, 'php'), 'echo "PHP 8.3.36 (cli) (built: Oct 21 2026)"');
+  exe(join(d, 'php8.1'), 'echo "PHP 8.1.2-1ubuntu2.22 (cli) (built: Oct 1 2026)"');
+  exe(join(d, 'php-fpm8.1'), 'echo "PHP 8.1.2-1ubuntu2.22 (fpm-fcgi) (built: Oct 1 2026)"');
+  for (const tool of ['php-config8.1', 'phpize8.1']) exe(join(d, tool), `touch ${JSON.stringify(ran)}`);
+  const r = sys(['--incident', 'php-2026-10'], { PATH: d });
+  assert.deepEqual(r.rows.filter((x) => x.kind === 'binary').map((x) => `${x.bin.slice(d.length + 1)} ${x.status}`).sort(), ['php SAFE', 'php-fpm8.1 EXPOSED', 'php8.1 EXPOSED']);
+  assert.equal(r.code, 1);
+  assert.equal(existsSync(ran), false, 'php-config or phpize ran');
+});
+
+test('PHP: php pointing at php8.3 (one file, two names) is judged once; a clean server passes', () => {
+  const d = fresh('pv-one');
+  exe(join(d, 'php8.3'), 'echo "PHP 8.3.36 (cli)"'); symlinkSync(join(d, 'php8.3'), join(d, 'php'));
+  const r = sys(['--incident', 'php-2026-10'], { PATH: d });
+  assert.equal(r.rows.filter((x) => x.kind === 'binary').length, 1, JSON.stringify(r.rows));
+  assert.equal(r.code, 0);
+});
+
+test('PHP: php-fpm in an sbin folder off PATH is found; with no PHP anywhere, the receipt names those folders too', async () => {
+  const { copiesMatching } = await import('../lib/binaries.mjs');
+  const sbin = fresh('pv-sbin'); exe(join(sbin, 'php-fpm8.2'), 'echo "PHP 8.2.1 (fpm-fcgi)"');
+  assert.deepEqual(copiesMatching('^php(?:-fpm|-cgi)?(?:\\d+(?:\\.\\d+)?)?$', fresh('pv-path'), [sbin]).run, [join(sbin, 'php-fpm8.2')]);
+  const r = sys(['--incident', 'php-2026-10'], { PATH: fresh('pv-none') });
+  const safe = r.rows.find((x) => x.status === 'SAFE');
+  assert.ok(safe && safe.searched.includes('/usr/sbin') && /or in \/usr\/sbin/.test(safe.reason), JSON.stringify(r.rows));
+});

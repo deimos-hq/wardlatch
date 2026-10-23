@@ -342,7 +342,9 @@ for (const inc of chosen) {
       if (r.reason) note({ EXPOSED: '31', SAFE: '2' }[r.status] ?? '33', r.reason);
       if (r.status === 'EXPOSED') note('2', `fix: ${rule.fix}`);
     }
-    if (!rows.length) allClear(results, inc, 'binary', `${rule.binary} not found on PATH (searched: ${short(process.env.PATH ?? '')})`, [`PATH: ${process.env.PATH ?? ''}`, ...(rule.tmpTrace ? tempDirs() : [])]);
+    // the receipt names every place looked in: PATH, and a rule's extraDirs (PHP's sbin folders, where php-fpm lives)
+    const extra = rule.binaryNames ? rule.extraDirs ?? [] : [];
+    if (!rows.length) allClear(results, inc, 'binary', `${rule.binary} not found on PATH${extra.length ? ` or in ${extra.join(', ')}` : ''} (searched: ${short(process.env.PATH ?? '')})`, [`PATH: ${process.env.PATH ?? ''}`, ...extra, ...(rule.tmpTrace ? tempDirs() : [])]);
   }
 
   // A repository git could not read (a partial clone missing what git would have to fetch, an ownership refusal, a
