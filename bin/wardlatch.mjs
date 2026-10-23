@@ -45,7 +45,6 @@ const LIB = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib');
 const VERSION = JSON.parse(readText(join(LIB, '..', 'package.json'), 1024 * 1024)).version;
 const args = process.argv.slice(2);
 const flag = (f) => args.includes(f);
-const val = (f) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : undefined; };
 // Names shown come from the disk, git and container engines, and can carry terminal control characters (a planted
 // plugin folder could try to erase its own line). They are printed escaped, never interpreted.
 const clean = (s) => String(s).replace(/[\u0000-\u001f\u007f-\u009f]/g, (ch) => `\\x${ch.charCodeAt(0).toString(16).padStart(2, '0')}`);
@@ -56,7 +55,8 @@ const VALUED = ['--paths', '--incident'];
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (VALUED.includes(a)) {
-    if (args[i + 1] === undefined || args[i + 1].startsWith('-')) { console.error(`${a} needs a value (try --help)`); process.exit(2); }
+    // an empty value is an unset variable in a script (--paths "$DIR"): refused, not resolved to the current folder
+    if (args[i + 1] === undefined || args[i + 1] === '' || args[i + 1].startsWith('-')) { console.error(`${a} needs a value (try --help)`); process.exit(2); }
     i++;
   } else if (!FLAGS.includes(a)) { console.error(`unknown option "${clean(a)}" (try --help)`); process.exit(2); }
 }
@@ -66,7 +66,7 @@ if (flag('-h') || flag('--help')) {
 
   npx wardlatch@latest             check this machine against every current incident
   npx wardlatch@latest --paths ~/code   where to look for Python environments, git repositories and WordPress sites (repeatable)
-  npx wardlatch@latest --incident <id>  one incident only (--list shows them)
+  npx wardlatch@latest --incident <id>  only that incident (repeatable; --list shows them)
   npx wardlatch@latest --json      machine-readable output
   npx wardlatch@latest --no-containers  skip Docker and Podman (running containers and local images)
 
@@ -80,8 +80,11 @@ a local socket is). Changes nothing.`);
 }
 const incidents = (listDir(join(LIB, 'incidents')).entries ?? []).map((e) => e.name).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readText(join(LIB, 'incidents', f), 4 * 1024 * 1024))).sort((a, b) => b.date.localeCompare(a.date));
 if (flag('--list')) { for (const i of incidents) console.log(`${i.id}  ${i.date}  ${i.title}`); process.exit(0); }
-const chosen = val('--incident') ? incidents.filter((i) => i.id === val('--incident')) : incidents;
-if (!chosen.length) { console.error(`unknown incident "${clean(val('--incident'))}" (try --list)`); process.exit(2); }
+// --incident is repeatable, like --paths: every one named is checked (0.1.8 checked only the first)
+const ids = args.filter((a, i) => args[i - 1] === '--incident');
+const unknownId = ids.find((id) => !incidents.some((i) => i.id === id));
+if (unknownId !== undefined) { console.error(`unknown incident "${clean(unknownId)}" (try --list)`); process.exit(2); }
+const chosen = ids.length ? incidents.filter((i) => ids.includes(i.id)) : incidents;
 
 const json = flag('--json');
 // absolute before anything runs: programs run from /, where a relative folder would mean something else
@@ -289,9 +292,9 @@ for (const inc of chosen) {
     }
     gaps(results, inc, 'search', deniedVenvs, { found: foundUnread });
     for (const u of untested) {
-      const reason = 'this virtual environment\'s certifi bundle was found, but there is no curl on this machine to test it with: install curl and run again';
-      results.push({ incident: inc.id, kind: 'curl', status: 'UNKNOWN', env: u.env, certifi: u.certifi, reason });
-      print('UNKNOWN', `certifi ${u.certifi || '(version unknown)'}  ${short(u.env)}`); note('33', reason);
+      const reason = `${u.caVar ? `the bundle ${u.caVar} names` : 'this virtual environment\'s certifi bundle'} was found, but there is no curl on this machine to test it with: install curl and run again`;
+      results.push({ incident: inc.id, kind: 'curl', status: 'UNKNOWN', ...(u.caVar ? { caVar: u.caVar, bundle: u.bundle } : { env: u.env, certifi: u.certifi }), reason });
+      print('UNKNOWN', u.label ?? `certifi ${u.certifi || '(version unknown)'}  ${short(u.env)}`); note('33', reason);
     }
     notRunRow(results, inc, 'trust', notRun);
     // the test hosts' certificates expire: after that a container (which has no forced-roots control) would read every
@@ -442,15 +445,21 @@ for (const inc of chosen) {
   }
   if (inc.type === 'wordpress') {
     const denied = [...lockedRoots];
-    const privateDot = [];
-    const sites = wordpressUnder(searchable, 5, denied, privateDot);
+    const privateDot = [], coreOnly = [];
+    const sites = wordpressUnder(searchable, 5, denied, privateDot, coreOnly);
+    for (const core of coreOnly) {
+      const reason = 'WordPress core is here, but its plugins folder is not where WordPress, a moved wp-content or Bedrock keep it, so its plugins were not checked: pass --paths for the folder that holds wp-content';
+      results.push({ incident: inc.id, kind: 'wordpress', site: core, status: 'UNKNOWN', what: 'plugins folder', reason });
+      print('UNKNOWN', `${short(core)} · plugins folder`); note('33', reason);
+    }
     for (const site of sites) for (const f of checkSite(site, inc.rules, inc.addedSince)) {
       results.push({ incident: inc.id, kind: 'wordpress', ...f, fix: f.fix ?? (f.status === 'REVIEW' ? inc.reviewFix : undefined) });
       print(f.status, `${short(site)} · ${f.what}`, f.reason ? c('2', `  ${f.reason}`) : '');
       if (f.status === 'EXPOSED') note('2', `fix: ${f.fix}`);
     }
     gaps(results, inc, 'wordpress', denied, { review: privateDot });
-    if (!counted(results).length) allClear(results, inc, 'wordpress', `no WordPress installs found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched (run it on the server, or pass --paths)`, searchable);
+    // sites found with none of the listed plugins are named as found (up to b03e7be this said "no WordPress installs found")
+    if (!counted(results).length) allClear(results, inc, 'wordpress', sites.length ? `${sites.length} WordPress install${sites.length === 1 ? '' : 's'} found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched; none has any of the listed plugins` : `no WordPress installs found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched (run it on the server, or pass --paths)`, searchable);
     else if (counted(results).some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.reviewFix}`);
   }
   if (inc.type === 'headers') {

@@ -55,7 +55,9 @@ Two checks keep the answer honest:
 
 - the first `node`, `curl` and `python3` on your `PATH`, the ones your shell runs, and any later copy that is a compiled
   program (a later copy that is a script is named, not run; `node_modules/.bin` folders and relative entries are
-  dropped first, so a project can't have Wardlatch run its programs), plus the operating system's own
+  dropped first, so a project can't have Wardlatch run its programs), plus the operating system's own trust: macOS's
+  networking stack (Safari and Apple's apps) and, on Linux, the distribution's CA bundle (tested with curl)
+- the bundle `REQUESTS_CA_BUNDLE` names, which requests and pip use in place of certifi (tested with curl)
 - Python virtual environments (and their `certifi`) under `~/Development`, `~/code`, `~/src`, `~/projects`, `~/Projects`,
   `~/dev`, `~/work`, `~/Sites`, `/var/www`, `/srv/www` and `/Library/WebServer/Documents`, or the folders you give with `--paths`
 - every running Docker or Podman container, checked from inside with the image's own curl, python3 or wget. Two
@@ -86,7 +88,7 @@ for you to apply. What it can and can't promise, and why: [ASSURANCE_CASE.md](AS
 | Option | |
 |---|---|
 | *(none)* | Check this machine against every current incident. |
-| `--incident <id>` | One incident only. `--list` prints the ids. |
+| `--incident <id>` | Only that incident; repeat it for several. `--list` prints the ids. |
 | `--paths <folder>` | Where to look for Python environments, git repositories and WordPress sites; repeat it for several. Default: `~/Development`, `~/code`, `~/src`, `~/projects`, `~/Projects`, `~/dev`, `~/work`, `~/Sites`, `/var/www`, `/srv/www` and `/Library/WebServer/Documents`. A folder given here that isn't there, or isn't a folder, is an UNKNOWN line. |
 | `--no-containers` | Skip Docker and Podman: running containers, and the local image list. |
 | `--json` | Machine-readable output instead of lines (below). |
@@ -129,7 +131,7 @@ To work on it: `git clone`, then `npm test`. Nothing to install.
 
 ## Incidents
 
-`npx wardlatch@latest` checks all of them; `--incident <id>` checks one.
+`npx wardlatch@latest` checks all of them; `--incident <id>` checks only the ones named.
 
 - `emudhra-2026-10`: eMudhra intermediate CA compromise, 20 Oct 2026 ([advisory](https://emudhra.we-have-a-problem.com/)). Real TLS probes per runtime, plus cloudflared (fixed in 2026.10.2) and the Go toolchain (1.27.3 / 1.26.10).
 - `ovhcloud-cli-2026-10`: OVHcloud CLI v0.11.0 to v0.15.0 swapped for a secret-stealer on 19 Oct ([OVHcloud's advisory](https://github.com/ovh/ovhcloud-cli/security/advisories/GHSA-862f-55f5-vmvw)). Never runs the program: compares the installed file with the five compromised builds OVHcloud published, and looks for the `envchecker-` folder the stealer leaves in the temp directory.

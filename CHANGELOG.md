@@ -112,15 +112,43 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
 - macOS's own folders (its Library at `/`, in `/System` and in a home folder, the Trash, the Photos libraries) are never
   searched; any other folder named Library is (0.1.8 skipped every Library folder). A trust probe also gets `CURL_SSL_BACKEND`, which picks macOS
   curl's trust store.
+- From the bug hunt before release (a red team's 75 scenario tests and 614 planted bugs; `test/bughunt-0.1.9.test.mjs`):
+  - **False SAFEs:**
+    - Podman refusing its socket (permission denied) read as "not running" in the image check, so the run could end SAFE.
+      One rule now classifies engine failures for running containers and local images alike.
+    - A Bedrock site (core in `web/wp`, plugins in `web/app/plugins`), or WordPress in its own directory with
+      `wp-content` one level up, was never found: "no WordPress installs found". Those layouts are checked now. A core
+      whose plugins folder is in none of the known places is UNKNOWN.
+    - A key in a tracked file deleted from the working tree (still in the index, HEAD and every push) was skipped. git's
+      own copy is scanned now.
+    - A key in a UTF-16 file with a byte-order mark (PowerShell 5's `Out-File`) was skipped as binary.
+    - A real key with the docs' example key beside it on the same line was taken for a placeholder.
+    - curl's `-H @file` (`header = "@file"` in `.curlrc`) was checked as a file name, never as the headers in the
+      file. The file is read now; one that can't be read, or is named by a relative path, is UNKNOWN.
+    - The bundle `REQUESTS_CA_BUNDLE` names (what requests and pip trust in place of certifi) was never tested. It is
+      tested now, and is UNKNOWN when there is no curl to test it with.
+  - **False UNKNOWNs:**
+    - `DOCKER_HOST` naming a local socket that is gone (Colima or a Podman machine stopped) read as an unfollowed host.
+      It is "not running" now.
+    - A JSON-with-comments file whose last setting is commented out after a trailing comma (VS Code writes these) read
+      as invalid.
+  - **Options and wording:**
+    - `--paths ""` and `--incident ""` (an unset variable in a script) are refused, exit 2: an empty `--paths` searched
+      the current folder.
+    - `--incident` can be given more than once: 0.1.8 checked only the first.
+    - A WordPress site found with none of the listed plugins said "no WordPress installs found"; it now says how many
+      were found.
+    - A README sentence about the operating system's trust was cut off.
 
 ### Known limits
 
 - The issuer check compares the issuer's common name, not a fingerprint: something on the network that copies the name
   gets past it (the forced-roots control still catches it for curl, Node and Python, not for macOS's own stack or
   containers).
-- The workflow review reads commits dated on or after the incident's date: a commit given an earlier date isn't seen.
-  (0.1.9's first cut read the whole history to catch that, and lost its findings on repositories past about 1.3 million
-  commits; taken out, owner, 22 Oct.)
+- The workflow review reads commits dated on or after the incident's date: a commit given an earlier date isn't seen,
+  and git stops reading a branch at a commit dated before it, so a correctly dated workflow behind a later commit from a
+  machine with a wrong clock can be missed too. (0.1.9's first cut read the whole history to catch that, and lost its
+  findings on repositories past about 1.3 million commits; taken out, owner, 22 Oct.)
 - The key scan and the workflow review stop at the first repository they find, as 0.1.8 did: a repository nested inside
   another one, a git worktree placed inside one, and submodules are not read.
 - A later copy of a program on `PATH` that is a script, not a compiled program, is not run, so its version isn't judged.
@@ -142,6 +170,22 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   uses.
 - The engine is the one the person's own docker or podman configuration selects (their home folder's config), which can
   name a remote host, or a local socket `DOCKER_HOST` names; a remote `DOCKER_HOST` and the like are not followed.
+- With Docker Desktop or a Podman machine stopped, its local images can't be listed: the line says it is not running,
+  and the check can still end SAFE. Start it and run again to include them.
+- Inside containers, a refusal of the test hosts can't be told from a DNS filter or TLS-inspecting proxy on the
+  containers' network that answers for them with its own certificate (the issuer check covers the host's network only).
+- On Linux with no curl, the distribution's CA bundle is not tested and gets no line of its own; the system python3,
+  when there is one, reads the same bundle and is tested.
+- Searches don't reach: PyPy environments (`lib/pypy3.x`); OpenLiteSpeed's `lsphp` and DirectAdmin's `/usr/local/php*`
+  installs; repositories in hidden folders, more than 4 levels down, or linked in by a symbolic link; and a site linked
+  into a web root by a symbolic link. A `~` written literally in `PATH` (which the shell expands) is dropped with the
+  other relative entries.
+- A UTF-16 file without a byte-order mark is skipped as binary, and a UTF-16 file over 8 MB is UNKNOWN (it isn't read
+  in pieces). `REQUESTS_CA_BUNDLE` naming a folder is not tested.
+- A later copy of a program on `PATH` that can be run but not read (mode 111) is taken for a script: named for review,
+  not run.
+- `--paths` given for a folder and a folder inside it reports a finding in the inner one twice, and `--list --json`
+  prints text.
 
 ### Changed (rules the tests now enforce)
 
