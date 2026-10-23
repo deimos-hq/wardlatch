@@ -260,13 +260,27 @@ test('headers: a curl header file that is gone, or that this user cannot read, s
   assert.equal(unknowns(r2).length, 0, show(r2)); assert.equal(r2.code, 0);
 });
 
-test('headers: -H@file with no space, and --header=@file, are read like -H @file', () => {
-  for (const [i, line] of ['-H@{f}', '--header=@{f}', '-H "@{f}"'].entries()) {
+// each form was run through curl 8.7.1 against a local listener: these send your email
+test('headers: .curlrc lines curl sends your email from (attached values, short-option clusters, header files) are EXPOSED', () => {
+  const lines = ['-H@{f}', '-sH@{f}', '-H "@{f}"', 'header=@{f}', `-HFrom:${EMAIL}`, `-sH "From: ${EMAIL}"`, `-svH "From: ${EMAIL}"`, `-sA "ua ${EMAIL}"`, `-A${EMAIL}`, `header: "From: ${EMAIL}"`];
+  for (const [i, line] of lines.entries()) {
     const h = fresh(`h8-${i}`); gitconfigId(h);
-    const f = put(join(h, 'my headers'), `From: ${EMAIL}\n`);
+    const f = put(join(h, 'my-headers'), `From: ${EMAIL}\n`);   // no space: an unquoted path ends at one
     put(join(h, '.curlrc'), `${line.replace('{f}', f)}\n`);
     const r = hdr(h);
-    assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && x.carries === 'your email'), `${line}: ${show(r)}`); assert.equal(r.code, 1);
+    assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && x.carries === 'your email'), `${line}: ${show(r)}`); assert.equal(r.code, 1, line);
+  }
+});
+
+// and these send nothing of yours (curl refuses the line, or sends only the first word of an unquoted value)
+test('headers: .curlrc lines curl refuses or cuts short (--header=, an attached value plus a word, -oH, unquoted spaces) are SAFE', () => {
+  const lines = ['--header=@{f}', `-H"From: ${EMAIL}"`, `-HFrom: ${EMAIL}`, `-oH "From: ${EMAIL}"`, `-H From: ${EMAIL}`, `header = From: ${EMAIL}`];
+  for (const [i, line] of lines.entries()) {
+    const h = fresh(`h9-${i}`); gitconfigId(h);
+    const f = put(join(h, 'hf'), `From: ${EMAIL}\n`);
+    put(join(h, '.curlrc'), `${line.replace('{f}', f)}\n`);
+    const r = hdr(h);
+    assert.equal(r.rows.filter((x) => x.status !== 'SAFE').length, 0, `${line}: ${show(r)}`); assert.equal(r.code, 0, line);
   }
 });
 
@@ -513,4 +527,130 @@ test('trust: REQUESTS_CA_BUNDLE naming a folder is UNKNOWN (not tested), never d
   pythonRt(d); nodeRt(d); curlRt(d);
   const r = trust({ PATH: d, REQUESTS_CA_BUNDLE: folder }, preload('t4', { online: true }));
   assert.ok(unknowns(r).some((x) => x.caVar === 'REQUESTS_CA_BUNDLE' && /not a file/.test(x.reason)), show(r)); assert.equal(r.code, 2);
+});
+
+// ---- the strict check of 66621a5 ----------------------------------------------------------------------------------------
+test('keys: a file marked skip-worktree that is on disk (update-index --skip-worktree on a config) is scanned', () => {
+  const root = fresh('s1'), app = join(root, 'app'), g = gitRepo(app);
+  put(join(app, '.env.production'), `AWS=${AWS}\n`); g.commit();
+  g.g(['update-index', '--skip-worktree', '.env.production']);
+  assert.deepEqual(keyRows(keys(root)).map((x) => x.file), ['.env.production']);
+});
+
+test('keys: deleted files are read in runs of at most the in-memory size, and one larger than it is UNKNOWN', async () => {
+  const { scanRepo } = await import('../lib/secrets.mjs');
+  const root = fresh('s2'), g = gitRepo(root);
+  for (let i = 0; i < 4; i++) put(join(root, `f${i}.txt`), i === 2 ? `key=${AWS}\n` : `${'z'.repeat(60)}\n`);
+  put(join(root, 'big.txt'), `${'q'.repeat(400)}\n`); put(join(root, 'README'), 'x\n'); g.commit();
+  for (const f of ['f0.txt', 'f1.txt', 'f2.txt', 'f3.txt', 'big.txt']) rmSync(join(root, f));
+  const found = scanRepo(root, { maxIndexed: 100 });
+  assert.deepEqual(found.filter((x) => x.type).map((x) => x.file), ['f2.txt']);
+  assert.deepEqual(found.filter((x) => x.unread).map((x) => x.file), ['big.txt']);
+});
+
+test('the program runner: a program gets no standard input unless it is given (runSync), and run() refuses input', async () => {
+  const { runSync, run: runAsync } = await import('../lib/run.mjs');
+  assert.equal(runSync('/bin/sh', ['-c', '[ -p /dev/stdin ] && echo pipe || echo none'], { purpose: 'version', timeout: 5000 }).trim(), 'none');
+  assert.equal(runSync('/bin/sh', ['-c', 'cat'], { purpose: 'version', timeout: 5000, input: 'hi' }), 'hi');
+  const t = Date.now(); const r = await runAsync('/bin/cat', [], { purpose: 'version', timeout: 5000 });
+  assert.ok(Date.now() - t < 3000 && r.stdout === '', 'cat ends at once: its standard input is closed');
+  assert.match(String((await runAsync('/bin/cat', [], { purpose: 'version', timeout: 5000, input: 'x' })).err), /runSync only/);
+});
+
+test('containers: a gone DOCKER_HOST socket in a folder others can write to (as /tmp) is not followed', () => {
+  const d = fresh('s4'); nodeRt(d);
+  const open = fresh('s4-open'); chmodSync(open, 0o777);
+  const sock = join(open, 'docker.sock');
+  const eng = engine('s4', { ps: `echo "Cannot connect to the Docker daemon at unix://${sock}. Is the docker daemon running?" >&2; exit 1` });
+  const r = run(['--incident', 'emudhra-2026-10', '--paths', fresh('s4-root')], { PATH: `${eng}:${d}`, DOCKER_HOST: `unix://${sock}` }, preload('s4', { online: true }));
+  assert.ok(unknowns(r).some((x) => /DOCKER_HOST/.test(x.reason)), show(r)); assert.equal(r.code, 2);
+});
+
+test('headers: the SAFE receipt lists the curl header file it read', () => {
+  const h = fresh('s5'); gitconfigId(h);
+  const f = put(join(h, 'hdrs'), 'X-Team: platform\n'); put(join(h, '.curlrc'), `-H @${f}\n`);
+  const r = hdr(h);
+  assert.ok(r.rows.some((x) => x.status === 'SAFE' && x.searched?.includes(f)), show(r)); assert.equal(r.code, 0);
+});
+
+// a site whose live plugins are in content/ (UpdraftPlus 1.26.12), with the core's bundled wp-content left beside it
+const moved = (name, cfg, cfgAt = 'core') => {
+  const root = fresh(name), s = join(root, 'site');
+  put(join(s, 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";');
+  plugin(join(s, 'wp-content', 'plugins'), 'akismet', 'akismet.php', '5.3');
+  plugin(join(s, 'content', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.12');
+  if (cfg !== null) put(join(cfgAt === 'core' ? s : root, 'wp-config.php'), cfg);
+  return root;
+};
+const exposedOrUnknown = (r) => r.rows.some((x) => x.status === 'EXPOSED' && /updraftplus/.test(x.what)) || unknowns(r).length > 0;
+
+test('wordpress: WP_CONTENT_DIR defined in the forms sites use (inside an if, on the <?php line, over lines, in capitals) is followed', () => {
+  const forms = [
+    "<?php\nif ( ! defined('WP_CONTENT_DIR') ) define('WP_CONTENT_DIR', __DIR__ . '/content');\n",
+    "<?php define('WP_CONTENT_DIR', __DIR__ . '/content');\n",
+    "<?php\ndefine(\n  'WP_CONTENT_DIR',\n  __DIR__ . '/content'\n);\n",
+    "<?php\nDEFINE('WP_CONTENT_DIR', dirname( __FILE__ ) . '/content');\n",
+    "<?php\ndefine('WP_CONTENT_DIR', ABSPATH . 'content');\n",
+  ];
+  for (const [i, cfg] of forms.entries()) {
+    const r = wp(moved(`s6-${i}`, cfg));
+    assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && /updraftplus/.test(x.what)), `form ${i}: ${show(r)}`); assert.equal(r.code, 1, `form ${i}`);
+  }
+});
+
+test('wordpress: a wp-config.php that cannot be read, or mentions WP_CONTENT_DIR in a way that cannot be followed, is UNKNOWN', { skip: AS_ROOT && 'root reads a mode-000 file' }, () => {
+  const root = moved('s7', "<?php\ndefine('WP_CONTENT_DIR', __DIR__ . '/content');\n"); lock(join(root, 'site', 'wp-config.php'));
+  const r = wp(root);
+  assert.ok(unknowns(r).some((x) => /could not be read/.test(x.reason)), show(r)); assert.equal(r.code, 2);
+  const r2 = wp(moved('s7b', "<?php\n$d = WP_CONTENT_DIR;\n"));
+  assert.ok(unknowns(r2).some((x) => /WP_CONTENT_DIR/.test(x.reason)), show(r2)); assert.equal(r2.code, 2);
+});
+
+test('wordpress: a define in a block or line comment is not a define (no UNKNOWN for it)', () => {
+  for (const [i, cfg] of ["<?php\n/* define('WP_PLUGIN_DIR', getenv('X')); */\n", "<?php\n// define('WP_PLUGIN_DIR', getenv('X'));\n", "<?php\n# define('WP_PLUGIN_DIR', getenv('X'));\n"].entries()) {
+    const root = fresh(`s8-${i}`); site(join(root, 'site')); put(join(root, 'site', 'wp-config.php'), cfg);
+    assert.equal(wp(root).code, 0, `form ${i}`);
+  }
+});
+
+test('wordpress: WP_PLUGIN_DIR alone (no wp-content) is checked; WP_CONTENT_DIR with no plugins in it is a site, SAFE', () => {
+  const root = fresh('s9'), s = join(root, 'site');
+  put(join(s, 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";'); put(join(s, 'wp-config.php'), "<?php\ndefine('WP_PLUGIN_DIR', __DIR__ . '/plugs');\n");
+  plugin(join(s, 'plugs'), 'updraftplus', 'updraftplus.php', '1.26.12');
+  const r = wp(root);
+  assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && /updraftplus/.test(x.what)), show(r)); assert.equal(r.code, 1);
+  const root2 = fresh('s9b'), s2 = join(root2, 'site');
+  put(join(s2, 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";'); put(join(s2, 'wp-config.php'), "<?php\ndefine('WP_CONTENT_DIR', __DIR__ . '/stuff');\n");
+  mkdirSync(join(s2, 'stuff'));
+  const r2 = wp(root2);
+  assert.ok(r2.rows.some((x) => x.status === 'SAFE' && /1 WordPress install/.test(x.reason)), show(r2)); assert.equal(r2.code, 0);
+});
+
+test('wordpress: one plugins folder reached two ways (a define naming the default) is checked once, with no plugins field', () => {
+  const root = fresh('s10'), s = site(join(root, 'site'));
+  plugin(join(s, 'wp-content', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.13');
+  put(join(s, 'wp-config.php'), "<?php\ndefine('WP_CONTENT_DIR', __DIR__ . '/wp-content');\n");
+  const r = wp(root);
+  const rows = r.rows.filter((x) => x.what === 'updraftplus 1.26.13');
+  assert.equal(rows.length, 1, show(r)); assert.equal(rows[0].plugins, undefined);
+});
+
+test('wordpress: Bedrock with a custom CONTENT_DIR is followed; one set in another way is UNKNOWN', () => {
+  const root = fresh('s11'), b = join(root, 'example.com');
+  put(join(b, 'web', 'wp', 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";');
+  plugin(join(b, 'web', 'wp', 'wp-content', 'plugins'), 'akismet', 'akismet.php', '5.3');
+  put(join(b, 'config', 'application.php'), "<?php\nConfig::define('CONTENT_DIR', '/content');\n");
+  plugin(join(b, 'web', 'content', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.12');
+  const r = wp(root);
+  assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && /updraftplus/.test(x.what)), show(r)); assert.equal(r.code, 1);
+  put(join(b, 'config', 'application.php'), "<?php\nConfig::define('CONTENT_DIR', env('CONTENT_DIR'));\n");
+  const r2 = wp(root);
+  assert.ok(unknowns(r2).some((x) => /application\.php/.test(x.reason)), show(r2));
+});
+
+test('wordpress: a staging copy inside a site\'s wp-content is a site of its own', () => {
+  const root = fresh('s12'), top = site(join(root, 'site'));
+  plugin(join(site(join(top, 'wp-content', 'staging')), 'wp-content', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.12');
+  const r = wp(root);
+  assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && x.site === join(top, 'wp-content', 'staging')), show(r)); assert.equal(r.code, 1);
 });
