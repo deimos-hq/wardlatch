@@ -14,6 +14,8 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
+// the PHP check also searches folders off PATH: these tests hide them, so PHP installed on the machine can't change them
+const HIDE_PHP = ['--require', join(ROOT, 'test', 'support', 'hide-php-places.cjs')];
 const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
 let dir;
 
@@ -54,16 +56,16 @@ test('an unknown incident is refused with exit code 2, never a SAFE', () => {
 test('a known-bad tool version is EXPOSED (exit 1); a missing tool is SAFE (exit 0); --json is complete', () => {
   const bin = join(dir, 'php'); mkdirSync(bin, { recursive: true });
   writeFileSync(join(bin, 'php'), '#!/bin/sh\necho "PHP 8.4.26 (cli)"\n', { mode: 0o755 });
-  const bad = run(['--incident', 'php-2026-10', '--json', '--paths', dir], { PATH: bin });
+  const bad = run(['--incident', 'php-2026-10', '--json', '--paths', dir], { PATH: bin }, HIDE_PHP);
   assert.equal(bad.code, 1);
   const j = JSON.parse(bad.out);
   assert.equal(j.tool, 'wardlatch'); assert.equal(j.version, VERSION);
   assert.deepEqual(j.incidents.map((i) => i.id), ['php-2026-10']);
   assert.equal(j.results.length, 1);
   assert.equal(j.results[0].status, 'EXPOSED'); assert.equal(j.results[0].version, '8.4.26'); assert.ok(j.results[0].fix);
-  const text = run(['--incident', 'php-2026-10', '--paths', dir], { PATH: bin });
+  const text = run(['--incident', 'php-2026-10', '--paths', dir], { PATH: bin }, HIDE_PHP);
   assert.match(text.out, /EXPOSED {2}php 8\.4\.26/); assert.match(text.out, /fix: Update PHP to 8\.5\.12/);
-  const none = run(['--incident', 'php-2026-10', '--paths', dir], { PATH: join(dir, 'empty-path') });
+  const none = run(['--incident', 'php-2026-10', '--paths', dir], { PATH: join(dir, 'empty-path') }, HIDE_PHP);
   assert.equal(none.code, 0); assert.match(none.out, /SAFE {5}php not found on PATH(?: or in [^(]+)? \(searched: /);
 });
 
@@ -254,7 +256,7 @@ test('programs are run from /, with Go\'s toolchain switching off, and PHP witho
   const project = join(dir, 'a-project'); mkdirSync(project, { recursive: true }); writeFileSync(join(project, 'go.mod'), 'module x\n\ngo 1.99\n\ntoolchain go1.99.0\n');
   const { offline } = preloads();
   run(['--incident', 'emudhra-2026-10', '--no-containers', '--paths', join(dir, 'nothing-here')], { PATH: bin }, ['--require', offline], project);
-  run(['--incident', 'php-2026-10', '--paths', join(dir, 'nothing-here')], { PATH: bin }, [], project);
+  run(['--incident', 'php-2026-10', '--paths', join(dir, 'nothing-here')], { PATH: bin }, HIDE_PHP, project);
   const lines = readFileSync(log, 'utf8').trim().split('\n');
   assert.ok(lines.some((l) => l.startsWith('go ')), 'go was asked its version'); assert.ok(lines.some((l) => l.startsWith('php ')), 'php was asked its version');
   for (const l of lines) assert.match(l, /^\S+ cwd=\/ /, l);

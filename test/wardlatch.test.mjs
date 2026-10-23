@@ -423,7 +423,8 @@ test('WordPress: a plugin whose version cannot be read is UNKNOWN, never SAFE', 
 });
 
 test('PHP 21 Oct 2026: the real fixed versions per branch, and end of life below 8.2', () => {
-  const rule = JSON.parse(readFileSync(new URL('../lib/incidents/php-2026-10.json', import.meta.url), 'utf8')).binaries[0];
+  // without the install folders off PATH, so a PHP installed on this machine can't change the result
+  const rule = { ...JSON.parse(readFileSync(new URL('../lib/incidents/php-2026-10.json', import.meta.url), 'utf8')).binaries[0], extraDirs: [] };
   const bin = join(dir, 'phpreal'); mkdirSync(bin, { recursive: true });
   const php = (v) => writeFileSync(join(bin, 'php'), `#!/bin/sh\necho "PHP ${v} (cli)"\n`, { mode: 0o755 });
   php('8.4.27'); assert.equal(checkBinary(rule, bin).status, 'SAFE');

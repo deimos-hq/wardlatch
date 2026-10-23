@@ -21,6 +21,8 @@ import { discover } from '../lib/discover.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
+// the PHP check also searches folders off PATH: these tests hide them, so PHP installed on the machine can't change them
+const HIDE_PHP = ['--require', join(ROOT, 'test', 'support', 'hide-php-places.cjs')];
 const AS_ROOT = process.getuid?.() === 0;
 let dir, home;
 const locked = [];
@@ -95,6 +97,7 @@ const gitRepo = (path) => {
 };
 const AWS = ['AKIA', 'Q'.repeat(16)].join('');
 const sys = (args, env = {}) => run(args, { PATH: '/usr/bin:/bin', ...env });
+const php = (args, env = {}) => run(args, { PATH: '/usr/bin:/bin', ...env }, HIDE_PHP);
 const unknowns = (r) => r.rows.filter((x) => x.status === 'UNKNOWN');
 
 // ---- locked folders, by owner ------------------------------------------------------------------------------------------
@@ -352,7 +355,7 @@ test('Plex: every dpkg state with its files on disk is judged by version; half-i
 test('PHP: a release candidate or -dev build of a fixed version is EXPOSED (it predates the fix); the release is SAFE', () => {
   for (const [v, code] of [['8.4.27RC1', 1], ['8.4.27-dev', 1], ['8.5.12RC1', 1], ['8.4.27', 0], ['8.3.6-1ubuntu1.24', 1], ['8.4.28', 0]]) {
     const d = fresh(`php-${v}`); exe(join(d, 'php'), `echo "PHP ${v} (cli) (built: Oct 21 2026)"`);
-    const r = sys(['--incident', 'php-2026-10'], { PATH: d });
+    const r = php(['--incident', 'php-2026-10'], { PATH: d });
     assert.equal(r.code, code, `${v}: ${JSON.stringify(r.rows)}`);
   }
 });
@@ -373,7 +376,7 @@ test('PHP: an old php8.1 and php-fpm8.1 beside a fixed php are each EXPOSED; hel
   exe(join(d, 'php8.1'), 'echo "PHP 8.1.2-1ubuntu2.22 (cli) (built: Oct 1 2026)"');
   exe(join(d, 'php-fpm8.1'), 'echo "PHP 8.1.2-1ubuntu2.22 (fpm-fcgi) (built: Oct 1 2026)"');
   for (const tool of ['php-config8.1', 'phpize8.1']) exe(join(d, tool), `touch ${JSON.stringify(ran)}`);
-  const r = sys(['--incident', 'php-2026-10'], { PATH: d });
+  const r = php(['--incident', 'php-2026-10'], { PATH: d });
   assert.deepEqual(r.rows.filter((x) => x.kind === 'binary').map((x) => `${x.bin.slice(d.length + 1)} ${x.status}`).sort(), ['php SAFE', 'php-fpm8.1 EXPOSED', 'php8.1 EXPOSED']);
   assert.equal(r.code, 1);
   assert.equal(existsSync(ran), false, 'php-config or phpize ran');
@@ -382,7 +385,7 @@ test('PHP: an old php8.1 and php-fpm8.1 beside a fixed php are each EXPOSED; hel
 test('PHP: php pointing at php8.3 (one file, two names) is judged once; a clean server passes', () => {
   const d = fresh('pv-one');
   exe(join(d, 'php8.3'), 'echo "PHP 8.3.36 (cli)"'); symlinkSync(join(d, 'php8.3'), join(d, 'php'));
-  const r = sys(['--incident', 'php-2026-10'], { PATH: d });
+  const r = php(['--incident', 'php-2026-10'], { PATH: d });
   assert.equal(r.rows.filter((x) => x.kind === 'binary').length, 1, JSON.stringify(r.rows));
   assert.equal(r.code, 0);
 });
@@ -391,7 +394,37 @@ test('PHP: php-fpm in an sbin folder off PATH is found; with no PHP anywhere, th
   const { copiesMatching } = await import('../lib/binaries.mjs');
   const sbin = fresh('pv-sbin'); exe(join(sbin, 'php-fpm8.2'), 'echo "PHP 8.2.1 (fpm-fcgi)"');
   assert.deepEqual(copiesMatching('^php(?:-fpm|-cgi)?(?:\\d+(?:\\.\\d+)?)?$', fresh('pv-path'), [sbin]).run, [join(sbin, 'php-fpm8.2')]);
-  const r = sys(['--incident', 'php-2026-10'], { PATH: fresh('pv-none') });
+  const r = php(['--incident', 'php-2026-10'], { PATH: fresh('pv-none') });
   const safe = r.rows.find((x) => x.status === 'SAFE');
   assert.ok(safe && safe.searched.includes('/usr/sbin') && /or in \/usr\/sbin/.test(safe.reason), JSON.stringify(r.rows));
+});
+
+// ---- from the strict check of 82a57b5 -----------------------------------------------------------------------------------
+test('PHP: a PATH folder that can\'t be listed is still asked for php by name; one that can\'t be entered is could-not-be-tested', { skip: AS_ROOT && 'root' }, () => {
+  const d = fresh('pl-311'); exe(join(d, 'php'), 'echo "PHP 8.1.2 (cli)"'); chmodSync(d, 0o311); locked.push(d);
+  const a = php(['--incident', 'php-2026-10'], { PATH: d });
+  assert.ok(a.rows.some((x) => x.status === 'EXPOSED' && x.bin === join(d, 'php')), JSON.stringify(a.rows)); assert.equal(a.code, 1);
+  const e = fresh('pl-000'); exe(join(e, 'php'), 'echo "PHP 8.1.2 (cli)"'); lock(e);
+  const b = php(['--incident', 'php-2026-10'], { PATH: e });
+  assert.ok(b.rows.some((x) => x.status === 'UNKNOWN'), JSON.stringify(b.rows)); assert.equal(b.code, 2);
+});
+
+test('PHP copies: each name counts as met even when its file was already seen under another name (a later script of that name is not run)', async () => {
+  const { copiesMatching } = await import('../lib/binaries.mjs');
+  const a = fresh('cm-a'), b = fresh('cm-b');
+  put(join(a, 'php8.3'), Buffer.concat([Buffer.from('7f454c46', 'hex'), Buffer.alloc(60)])); chmodSync(join(a, 'php8.3'), 0o755);
+  symlinkSync(join(a, 'php8.3'), join(a, 'php'));
+  exe(join(b, 'php8.3'), 'echo "PHP 8.1.2 (cli)"');
+  assert.deepEqual(copiesMatching('^php(?:-fpm|-cgi)?(?:\\d+(?:\\.\\d+)?)?$', `${a}:${b}`, [], [], 'php'), { run: [join(a, 'php')], notRun: [join(b, 'php8.3')] });
+});
+
+test('PHP copies: install folders off PATH with a wildcard (Homebrew\'s php@8.1 keg, Remi, cPanel, Plesk) are searched', async () => {
+  const { copiesMatching } = await import('../lib/binaries.mjs');
+  const opt = fresh('cm-opt');
+  exe(join(opt, 'php@8.1', 'sbin', 'php-fpm'), 'echo "PHP 8.1.30 (fpm-fcgi)"'); exe(join(opt, 'php@8.1', 'bin', 'php'), 'echo "PHP 8.1.30 (cli)"');
+  exe(join(opt, 'ea-php81', 'root', 'usr', 'sbin', 'php-fpm'), 'echo "PHP 8.1.30 (fpm-fcgi)"');
+  const got = copiesMatching('^php(?:-fpm|-cgi)?(?:\\d+(?:\\.\\d+)?)?$', fresh('cm-empty'), [`${opt}/php@*/bin`, `${opt}/php@*/sbin`, `${opt}/ea-php*/root/usr/sbin`], [], 'php');
+  // the first of each name runs; a later same-name copy that is a script does not
+  assert.deepEqual(got.run, [join(opt, 'php@8.1', 'bin', 'php'), join(opt, 'php@8.1', 'sbin', 'php-fpm')]);
+  assert.deepEqual(got.notRun, [join(opt, 'ea-php81', 'root', 'usr', 'sbin', 'php-fpm')]);
 });

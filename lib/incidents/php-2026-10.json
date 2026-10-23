@@ -9,7 +9,7 @@
     {
       "binary": "php",
       "binaryNames": "^php(?:-fpm|-cgi)?(?:\\d+(?:\\.\\d+)?)?$",
-      "extraDirs": ["/usr/sbin", "/usr/local/sbin", "/opt/homebrew/sbin", "/usr/local/opt/php/sbin"],
+      "extraDirs": ["/usr/sbin", "/usr/local/sbin", "/opt/homebrew/sbin", "/usr/local/opt/php/sbin", "/opt/homebrew/opt/php@*/bin", "/opt/homebrew/opt/php@*/sbin", "/usr/local/opt/php@*/bin", "/usr/local/opt/php@*/sbin", "/opt/remi/php*/root/usr/bin", "/opt/remi/php*/root/usr/sbin", "/opt/cpanel/ea-php*/root/usr/bin", "/opt/cpanel/ea-php*/root/usr/sbin", "/opt/plesk/php/*/bin", "/opt/plesk/php/*/sbin"],
       "versionArgs": [
         "-n",
         "-v"

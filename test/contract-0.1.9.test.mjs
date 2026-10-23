@@ -77,6 +77,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
 const LIB = join(ROOT, 'lib');
+// the PHP check also searches folders off PATH: these tests hide them, so PHP installed on the machine can't change them
+const HIDE_PHP = ['--require', join(ROOT, 'test', 'support', 'hide-php-places.cjs')];
 const libUrl = (m) => pathToFileURL(join(LIB, m)).href;
 const AS_ROOT = process.getuid?.() === 0;
 const IS_MAC = process.platform === 'darwin';
@@ -512,14 +514,14 @@ test('R6 versions: every copy on PATH that may be run is judged: a later compile
 test('R6 versions: a later copy on PATH that is a script is named, never silently dropped (a review line, in --json too)', () => {
   const fixed = fresh('r6-fixed'), bad = fresh('r6-bad');
   exe(join(fixed, 'php'), 'echo "PHP 8.4.27 (cli)"'); exe(join(bad, 'php'), 'echo "PHP 8.4.26 (cli)"');
-  const j = runJson(['--incident', 'php-2026-10', '--paths', emptyRoot], { PATH: `${fixed}:${bad}` });
+  const j = runJson(['--incident', 'php-2026-10', '--paths', emptyRoot], { PATH: `${fixed}:${bad}` }, HIDE_PHP);
   assert.ok(j.rows.some((r) => r.kind === 'not-run' && r.status === 'REVIEW' && r.paths.includes(join(bad, 'php'))), JSON.stringify(j.rows));
   assert.equal(j.code, 0, 'a review line does not change the exit code');
 });
 
 test('R6 versions: a program not found says it searched PATH, never a bare "not installed"', () => {
   const args = ['--incident', 'php-2026-10', '--paths', emptyRoot];
-  const text = run(args), j = runJson(args);
+  const text = run(args, {}, HIDE_PHP), j = runJson(args, {}, HIDE_PHP);
   assert.doesNotMatch(text.out, /^SAFE {2,}php not installed\s*$/m, 'a bare "not installed" after looking only on PATH');
   const safe = lines(text.out, 'SAFE');
   assert.ok(safe.length >= 1, `the not-found result is not printed:\n${text.out}`);
@@ -712,7 +714,7 @@ test('R11 bounded work: nothing on PATH or in the environment can hang the run (
     }),
     t.test('a version-queried program that ignores SIGTERM and sleeps', async () => {
       const b = fresh('r11-sigterm-bin'); exe(join(b, 'php'), "trap '' TERM\nexec /bin/sleep 45");
-      const r = await runAsync(['--incident', 'php-2026-10', '--json', '--paths', emptyRoot], { PATH: b });
+      const r = await runAsync(['--incident', 'php-2026-10', '--json', '--paths', emptyRoot], { PATH: b }, HIDE_PHP);
       assert.ok(r.signal === null && r.ms < 30000, `the run hung (${r.ms} ms, ${r.signal})`);
       assert.equal(r.code, 2, r.out); assert.deepEqual(JSON.parse(r.out).results.map((x) => x.status), ['UNKNOWN']);
     }),
