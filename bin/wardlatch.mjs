@@ -163,8 +163,10 @@ const ownedByPerson = (d, kind) => {
   if (uid >= PERSON_UIDS[0] && uid <= PERSON_UIDS[1]) return true;
   return kind === 'wordpress' && WEB_ACCOUNTS.includes(ACCOUNTS.get(uid));
 };
-function gaps(results, inc, kind, dirs, found = []) {
-  for (const d of missingRoots) {
+// `searchesRoots`: whether this check searches the --paths folders at all (Plex's and GitLab's look only in their own
+// install places: a --paths folder that isn't there is nothing to them)
+function gaps(results, inc, kind, dirs, found = [], searchesRoots = true) {
+  for (const d of searchesRoots ? missingRoots : []) {
     const reason = `given with --paths, but ${pathState(d) === 'gone' ? 'not there' : 'not a folder'}, so it was not searched`;
     results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason });
     print('UNKNOWN', short(d)); note('33', reason);
@@ -389,7 +391,7 @@ for (const inc of chosen) {
       }
       for (const r of checkImages(inc, byEngine)) show(r, `${r.engine} image ${r.what}`, inc.dockerFix);
     }
-    gaps(results, inc, 'install', denied, foundUnread);
+    gaps(results, inc, 'install', denied, foundUnread, Boolean(inc.sitePackages));
     // nothing found in any part that could be looked at: the all-clear names every folder it searched. An engine that
     // couldn't be asked keeps its own UNKNOWN row (and the exit code at 2) beside it; a finding or another gap doesn't.
     const onlyEngineGaps = counted(results).every((r) => r.status === 'UNKNOWN' && r.engine);

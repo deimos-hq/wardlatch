@@ -227,3 +227,9 @@ test('git\'s hints are never the reason shown, and too much output or a timeout 
   assert.equal(gitError({ code: 'ENOBUFS', stderr: 'hint: x' }), 'git wrote more than could be read');
   assert.equal(gitError({ code: 'ETIMEDOUT', stderr: 'hint: x' }), 'git did not finish in time');
 });
+
+test('a --paths entry that is a file is could-not-be-tested only in checks that search folders, not in Plex\'s or GitLab\'s', () => {
+  const f = put(join(dir, 'p1-file'), 'x');
+  for (const id of ['plex-2026-10', 'gitlab-2026-10', 'php-2026-10']) assert.ok(!sys(['--incident', id, '--paths', f]).rows.some((x) => x.path === f), id);
+  for (const id of ['github-actions-2026-10', 'litellm-2026-10']) assert.equal(sys(['--incident', id, '--paths', f]).code, 2, id);
+});
