@@ -916,3 +916,54 @@ test('wordpress: a parent wp-config.php is not read when that folder holds a wp-
   put(join(root, 'wp-settings.php'), '<?php\n'); put(join(root, 'wp-config.php'), "<?php\ndefine('WP_CONTENT_DIR', '/elsewhere');\n");
   assert.equal(wp(root).code, 0);
 });
+
+// ---- the strict check of f92b7ae ----------------------------------------------------------------------------------------
+test('headers: a file name with a backslash or an escaped quote is read as curl reads it (escapes undone only in quotes)', () => {
+  const h = fresh('t61'); gitconfigId(h);
+  const back = put(join(h, 'a\\b'), FROM), quote = put(join(h, 'q"x'), FROM), cfg = put(join(h, 'c\\d.rc'), `-H "${FROM.trim()}"\n`);
+  for (const [i, line] of [`-H @${back}`, `header = @${back}`, `-H@${back}`, `-K ${cfg}`, `config = ${cfg}`, `-K${cfg}`,
+    `header = "@${quote.replace('"', '\\"')}"`, `-K "${put(join(h, 'k"y.rc'), `-H "${FROM.trim()}"\n`).replace('"', '\\"')}"`].entries()) {
+    const h2 = fresh(`t61-${i}`); gitconfigId(h2); put(join(h2, '.curlrc'), `${line}\n`);
+    assert.equal(hdr(h2).code, 1, line);
+  }
+});
+
+test('headers: an expand-config line with {{ in it is UNKNOWN; a plain header with {{ in it is an ordinary header', () => {
+  const r = curlCase('t62', 'expand-config = "/x/{{d}}c.rc"\n');
+  assert.ok(unknowns(r).some((x) => /curl variables/.test(x.reason)), show(r)); assert.equal(r.code, 2);
+  const r2 = curlCase('t62b', '-H "X-Tmpl: {{a}}"\n');
+  assert.equal(unknowns(r2).length, 0, show(r2)); assert.equal(r2.code, 0);
+});
+
+test('headers: clean twins: -K/path, expand-config and a both-ways file with nothing of yours, and user-agent = "@acme-bot/2.0", are SAFE', () => {
+  for (const [i, [rc, files]] of [['-K{c.rc}\n', { 'c.rc': '-H "X: 1"\n' }], ['expand-config = "{c.rc}"\n', { 'c.rc': '-H "X: 1"\n' }],
+    ['header = @{x}\nconfig = {x}\n', { x: 'X-Team: platform\n' }], ['user-agent = "@acme-bot/2.0"\n', {}]].entries()) {
+    const r = curlCase(`t63-${i}`, rc, files);
+    assert.equal(r.rows.filter((x) => x.status !== 'SAFE').length, 0, `${rc}: ${show(r)}`); assert.equal(r.code, 0);
+  }
+});
+
+test('wordpress: Bedrock app/plugins, or config/environments, linked into a folder that cannot be opened is UNKNOWN', { skip: AS_ROOT && 'root opens any folder' }, () => {
+  // each link points into a folder whose parent can't be opened, so the link itself can't be followed
+  const s1 = bedrockSite('t64a'), lockedParent = fresh('t64a-locked'), lockedPlugins = join(lockedParent, 'plugins');
+  plugin(lockedPlugins, 'updraftplus', 'updraftplus.php', '1.26.12'); rmSync(join(s1.web, 'app', 'plugins'), { recursive: true });
+  symlinkSync(lockedPlugins, join(s1.web, 'app', 'plugins')); lock(lockedParent);
+  const r1 = wp(s1.root);
+  assert.ok(unknowns(r1).length, show(r1)); assert.equal(r1.code, 2);
+  const s2 = bedrockSite('t64b'), lockedEnvParent = fresh('t64b-locked'), lockedEnv = join(lockedEnvParent, 'environments');
+  put(join(lockedEnv, 'production.php'), "<?php\nConfig::define('CONTENT_DIR', '/content');\n");
+  symlinkSync(lockedEnv, join(dirname(s2.web), 'config', 'environments')); lock(lockedEnvParent);
+  const r2 = wp(s2.root);
+  assert.ok(unknowns(r2).some((x) => /environments could not be opened/.test(x.reason)), show(r2)); assert.equal(r2.code, 2);
+});
+
+test('wordpress: Bedrock whose app/ has no plugins folder yet is a site, SAFE (as a classic core with an empty wp-content is)', () => {
+  const s = bedrockSite('t65'); rmSync(join(s.web, 'app', 'plugins'), { recursive: true }); mkdirSync(join(s.web, 'app', 'themes'));
+  const r = wp(s.root);
+  assert.equal(unknowns(r).length, 0, show(r)); assert.equal(r.code, 0);
+});
+
+test('wordpress: a define of WP_CONTENT_DIR tucked inside Bedrock\'s WP_CONTENT_URL line is not a stock line: UNKNOWN', () => {
+  const s = bedrockSite('t66', { app: "<?php\nConfig::define('CONTENT_DIR', '/app');\nConfig::define('WP_CONTENT_URL', Config::define('WP_CONTENT_DIR', '/srv/x'));\n" });
+  assert.equal(wp(s.root).code, 2);
+});
