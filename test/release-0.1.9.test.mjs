@@ -319,23 +319,8 @@ test('DOCKER_HOST to a local socket settles the engine: a DOCKER_CONTEXT beside 
 });
 
 // ---- from the narrow check of c5b2509 ------------------------------------------------------------------------------------
-test('a wildcard install place: a locked folder only a * matched (a vendor\'s under /opt) is judged by owner; a locked known place is found', { skip: (process.platform !== 'darwin' || AS_ROOT) && 'macOS (/private/var), as a user' }, async (t) => {
-  const { expand } = await import('../lib/installs.mjs');
-  // root-owned folders under /private/var that a user can't open, standing in for /opt/<vendor>
-  // folders that can't even be entered (looking for anything inside them fails with EACCES): a folder that can be entered
-  // but not listed is no obstacle, since the pattern's next part is fixed (venv) and can be looked for directly
-  const locked = readdirSync('/private/var').map((n) => join('/private/var', n)).filter((d) => { try { statSync(join(d, 'venv')); return false; } catch (e) { return e.code === 'EACCES'; } });
-  if (!locked.length) return t.skip('no locked folder under /private/var');
-  const found = [], denied = [];
-  expand('/private/var/*/venv/lib/python3*/site-packages', found, denied);
-  assert.deepEqual(found, [], `a * match is not a known place: ${JSON.stringify(found)}`);
-  for (const d of locked) assert.ok(denied.includes(d), `the locked folder itself is reported, not a path below it: ${d} in ${JSON.stringify(denied.slice(0, 5))}`);
-  assert.ok(denied.every((d) => statSync(d).isDirectory()), 'only folders that exist');
-  const found2 = [], denied2 = [];
-  expand('/private/var/root/lib/python3*/site-packages', found2, denied2);
-  assert.deepEqual([found2, denied2], [['/private/var/root'], []], 'a locked folder in the fixed part is a known place: found');
-});
-
+// (its wildcard item was tried in 70e7030 and taken back: the quick check of 70e7030 found that judging a wildcard-matched
+// folder by its owner let a root-owned python3.X read SAFE; a locked place a pattern reaches is always UNKNOWN)
 test('on Windows a folder\'s owner can\'t be read, so it counts as a person\'s', async () => {
   const { isPersonUid: person } = await import('../lib/owners.mjs');
   assert.equal(person(0, 'workflow', { os: 'win32', self: undefined, names: new Map(), subuids: [] }), true);

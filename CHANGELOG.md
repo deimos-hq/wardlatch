@@ -116,6 +116,8 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   another one, a git worktree placed inside one, and submodules are not read.
 - A later copy of a program on `PATH` that is a script, not a compiled program, is not run, so its version isn't judged.
 - A folder that can't be opened and whose owner can't be read counts as a person's: UNKNOWN.
+- A locked folder on the way to a known install place (a vendor's folder under `/opt` or `/srv`, a `python3.X`) is
+  UNKNOWN whoever owns it, and the line names the place Wardlatch was looking for, which may lie below the locked folder.
 - A site folder owned by root that this user can't open (a hardened `root:www-data 750`) is a service's by the rule:
   listed for review, not UNKNOWN; run Wardlatch with sudo on a web server to include such sites.
 - A file of Wardlatch's own that fails to load (a broken install) exits 1, before anything of Wardlatch's runs.
