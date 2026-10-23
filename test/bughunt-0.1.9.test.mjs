@@ -1104,3 +1104,46 @@ test('headers: a vertical tab or a CR inside an unquoted file name ends it, as c
   const r = curlCase('t80-nbsp', ` header = "${FROM.trim()}"\n`);
   assert.equal(r.code, 0, `curl refuses that line as an unknown option: ${show(r)}`);
 });
+
+// ---- the strict check of 5a0d790 ----------------------------------------------------------------------------------------
+test('wordpress: 1.0.0\'s $root_dir line in a Bedrock 1.1+ config moves the content folder: not stock there, UNKNOWN', () => {
+  for (const [i, line] of ["define('WP_CONTENT_DIR', $root_dir . CONTENT_DIR);", "Config::define('WP_CONTENT_DIR', $root_dir . Config::get('CONTENT_DIR'));"].entries()) {
+    const sb = bedrockSite(`t81-${i}`, { app: `<?php\nConfig::define('CONTENT_DIR', '/app');\n${line}\n` });
+    plugin(join(dirname(sb.web), 'app', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.12');
+    assert.equal(wp(sb.root).code, 2, line);
+  }
+});
+
+test('wordpress: a Rails app (app/, config/application.rb, config/environments/*.rb) beside a core is not Bedrock: a core with no content folder is UNKNOWN', () => {
+  const root = fresh('t82'), r = join(root, 'railsapp');
+  put(join(r, 'app', 'models', 'user.rb'), 'class User; end\n'); put(join(r, 'config', 'application.rb'), 'module App; end\n');
+  put(join(r, 'config', 'environments', 'production.rb'), 'Rails.application.configure do; end\n');
+  put(join(r, 'blog', 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";');
+  const res = wp(root);
+  assert.ok(unknowns(res).some((x) => /plugins folder/.test(x.what)), show(res)); assert.equal(res.code, 2);
+});
+
+test('wordpress: Bedrock 1.0.0\'s URL line counts as stock only exactly: a move before or after it, or inside it, is UNKNOWN', () => {
+  const url = "define('WP_CONTENT_URL', 'http://' . $_SERVER['HTTP_HOST'] . CONTENT_DIR);", mv = "define('WP_PLUGIN_DIR', '/srv/p');";
+  for (const [i, line] of [`${mv} ${url}`, `${url} ${mv}`, "define('WP_CONTENT_URL', 'http://' . $_SERVER['HTTP_HOST'] . CONTENT_DIR . define('WP_PLUGIN_DIR', '/srv/p'));"].entries()) {
+    assert.equal(wp(bedrock100(`t83-${i}`, STOCK100.replace(url, line))).code, 2, line);
+  }
+});
+
+test('wordpress: a content folder built from another variable ($dir . CONTENT_DIR) is not stock: UNKNOWN', () => {
+  assert.equal(wp(bedrock100('t84', STOCK100.replace('$root_dir . CONTENT_DIR', '$dir . CONTENT_DIR'))).code, 2);
+});
+
+test('wordpress: Bedrock environment files with no application.php are still read (a move there is UNKNOWN)', () => {
+  const root = fresh('t85'), b = join(root, 'example.com');
+  put(join(b, 'web', 'wp', 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";');
+  plugin(join(b, 'web', 'app', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.13');
+  put(join(b, 'config', 'environments', 'production.php'), "<?php\nConfig::define('CONTENT_DIR', '/content');\n");
+  assert.equal(wp(root).code, 2);
+});
+
+test('wordpress: a Bedrock 1.0.0 config folder that cannot be entered is UNKNOWN, searched from the core itself', { skip: AS_ROOT && 'root enters any folder' }, () => {
+  const root = bedrock100('t86', STOCK100); const conf = join(root, 'example.com', 'config'); lock(conf);
+  const r = run(['--incident', 'wordpress-plugins-2026-10', '--paths', join(root, 'example.com', 'wp')]);
+  assert.ok(unknowns(r).length, show(r)); assert.equal(r.code, 2);
+});
