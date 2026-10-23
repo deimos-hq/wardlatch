@@ -899,7 +899,7 @@ test('wordpress: a Bedrock environments folder that cannot be opened or listed i
   for (const [i, mode] of [0o000, 0o111].entries()) {
     const s = bedrockSite(`t58-${i}`, { envs: { 'production.php': "<?php\nConfig::define('CONTENT_DIR', '/content');\n" }, envMode: mode });
     const r = run(['--incident', 'wordpress-plugins-2026-10', '--paths', s.web]);
-    assert.ok(unknowns(r).some((x) => /environments could not be opened/.test(x.reason)), `mode ${mode.toString(8)}: ${show(r)}`); assert.equal(r.code, 2);
+    assert.ok(unknowns(r).some((x) => /environments could not be opened \(run Wardlatch with sudo\)/.test(x.reason)), `mode ${mode.toString(8)}: ${show(r)}`); assert.equal(r.code, 2);
   }
 });
 
@@ -966,4 +966,56 @@ test('wordpress: Bedrock whose app/ has no plugins folder yet is a site, SAFE (a
 test('wordpress: a define of WP_CONTENT_DIR tucked inside Bedrock\'s WP_CONTENT_URL line is not a stock line: UNKNOWN', () => {
   const s = bedrockSite('t66', { app: "<?php\nConfig::define('CONTENT_DIR', '/app');\nConfig::define('WP_CONTENT_URL', Config::define('WP_CONTENT_DIR', '/srv/x'));\n" });
   assert.equal(wp(s.root).code, 2);
+});
+
+// ---- the strict check of 284ffbb ----------------------------------------------------------------------------------------
+test('headers: a file name with a no-break or narrow space (as macOS names files) is one name, as curl reads it', () => {
+  for (const sp of [' ', ' ']) {
+    const h = fresh(`t67-${sp.charCodeAt(0)}`); gitconfigId(h);
+    const f = put(join(h, `team${sp}headers`), FROM), c = put(join(h, `my${sp}cfg.rc`), `-H "${FROM.trim()}"\n`);
+    for (const [i, line] of [`-H @${f}`, `header = @${f}`, `-H@${f}`, `-K ${c}`, `-K${c}`, `config = ${c}`, `header = "@${f.replace(sp, `\\${' '}`).replace(' ', sp)}"`].entries()) {
+      const h2 = fresh(`t67-${sp.charCodeAt(0)}-${i}`); gitconfigId(h2); put(join(h2, '.curlrc'), `${line}\n`);
+      assert.equal(hdr(h2).code, 1, JSON.stringify(line));
+    }
+  }
+});
+
+test('headers: an escaped line separator inside a quoted file name is undone like any escape', () => {
+  const h = fresh('t67b'); gitconfigId(h); const f = put(join(h, 'a b'), FROM);
+  put(join(h, '.curlrc'), `header = "@${f.replace(' ', '\\ ')}"\n`);
+  assert.equal(hdr(h).code, 1);
+});
+
+test('headers: proxy-header @file is read like header @file', () => {
+  assert.equal(curlCase('t69', 'proxy-header = @{h}\n', { h: FROM }).code, 1);
+});
+
+test('headers: a quoted value attached to its option (-H"@file", -K"file") is not a file name curl opens', () => {
+  const r = curlCase('t71', '-H"@{h}"\n', { h: FROM });
+  assert.equal(r.code, 0, show(r));
+  const r2 = curlCase('t71b', '-K"{c.rc}"\n', { 'c.rc': `-H "${FROM.trim()}"\n` });
+  assert.ok(unknowns(r2).some((x) => /relative path/.test(x.reason)), show(r2)); assert.equal(r2.code, 2);
+});
+
+test('headers: clean twin: an unquoted name a\\b is read as a\\b, not ab (the one holding your email)', () => {
+  const h = fresh('t72'); gitconfigId(h);
+  const clean = put(join(h, 'a\\b'), 'X-Team: platform\n'); put(join(h, 'ab'), FROM);
+  put(join(h, '.curlrc'), `-H @${clean}\n`);
+  assert.equal(hdr(h).code, 0);
+});
+
+test('wordpress: any define tucked inside Bedrock\'s WP_CONTENT_URL line (CONTENT_DIR, WP_PLUGIN_DIR) is not a stock line: UNKNOWN', () => {
+  for (const [i, inner] of ["Config::define('CONTENT_DIR', '/content')", "Config::define('WP_PLUGIN_DIR', '/srv/p')"].entries()) {
+    const s = bedrockSite(`t68-${i}`, { app: `<?php\nConfig::define('WP_CONTENT_URL', Config::get('WP_HOME') . ${inner});\nConfig::define('CONTENT_DIR', '/app');\nConfig::define('WP_CONTENT_DIR', $webroot_dir . Config::get('CONTENT_DIR'));\n` });
+    assert.equal(wp(s.root).code, 2, inner);
+  }
+});
+
+test('wordpress: app/plugins linked into a folder that cannot be opened, with no Bedrock config, is UNKNOWN (the core\'s bundled plugins aside)', { skip: AS_ROOT && 'root opens any folder' }, () => {
+  const root = fresh('t70'), s = join(root, 'site'), core = join(s, 'wp');
+  put(join(core, 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";'); plugin(join(core, 'wp-content', 'plugins'), 'akismet', 'akismet.php', '5.3');
+  const parent = fresh('t70-locked'); plugin(join(parent, 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.12');
+  mkdirSync(join(s, 'app')); symlinkSync(join(parent, 'plugins'), join(s, 'app', 'plugins')); lock(parent);
+  const r = wp(root);
+  assert.ok(unknowns(r).length, show(r)); assert.equal(r.code, 2);
 });

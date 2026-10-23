@@ -138,7 +138,8 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
       brings in (`-K file`, `-K/file`, `-sK file`) were not read. They are now, on the safe side (owner, 23 Oct): your name or email anywhere after a header
       option counts, with backslash escapes undone. curl variables (a `variable` line, or `{{name}}` in an `expand-`
       line), which can build a header from pieces, are UNKNOWN. Brought-in files are read once per use, at most 32 of 1 MB.
-      File names are read as curl reads them: escapes are undone only inside quotes.
+      File names are read as curl reads them: split only at ASCII white space (a no-break or narrow space is part of
+      the name), with escapes undone only inside quotes.
     - The bundle `REQUESTS_CA_BUNDLE` names (what requests and pip trust in place of certifi) was never tested. It is
       tested now, and is UNKNOWN when there is no curl to test it with, when it names a folder, or when it can't be
       opened.
