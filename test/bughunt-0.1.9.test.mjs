@@ -1147,3 +1147,50 @@ test('wordpress: a Bedrock 1.0.0 config folder that cannot be entered is UNKNOWN
   const r = run(['--incident', 'wordpress-plugins-2026-10', '--paths', join(root, 'example.com', 'wp')]);
   assert.ok(unknowns(r).length, show(r)); assert.equal(r.code, 2);
 });
+
+// ---- the strict check of cd45cb7 ----------------------------------------------------------------------------------------
+const envOnly = (name, mode, envFile = 'production.php') => {
+  const root = fresh(name), b = join(root, 'example.com');
+  put(join(b, 'web', 'wp', 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";');
+  plugin(join(b, 'web', 'app', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.13');
+  plugin(join(b, 'web', 'content', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.12');
+  put(join(b, 'config', 'environments', envFile), "<?php\nConfig::define('CONTENT_DIR', '/content');\n");
+  if (mode !== undefined) { chmodSync(join(b, 'config', 'environments'), mode); locked.push(join(b, 'config', 'environments')); }
+  return { root, wpDir: join(b, 'web', 'wp') };
+};
+
+test('wordpress: Bedrock environments/ that cannot be opened or listed, with no application.php, is UNKNOWN (searched from web/wp)', { skip: AS_ROOT && 'root lists any folder' }, () => {
+  for (const mode of [0o000, 0o311]) {
+    const e = envOnly(`t87-${mode}`, mode);
+    const r = run(['--incident', 'wordpress-plugins-2026-10', '--paths', e.wpDir]);
+    assert.equal(r.code, 2, `mode ${mode.toString(8)}: ${show(r)}`);
+  }
+});
+
+test('wordpress: a move in an environment file named in capitals (production.PHP) is read too', () => {
+  assert.equal(wp(envOnly('t88', undefined, 'production.PHP').root).code, 2);
+});
+
+test('wordpress: both content lines count as stock only exactly (a move before, after or inside either is UNKNOWN)', () => {
+  const mv = "define('WP_PLUGIN_DIR', '/srv/p');";
+  const l100 = "define('WP_CONTENT_DIR', $root_dir . CONTENT_DIR);";
+  for (const [i, line] of [`${mv} ${l100}`, `${l100} ${mv}`, "define('WP_CONTENT_DIR', $root_dir . CONTENT_DIR . define('WP_PLUGIN_DIR', '/srv/p'));"].entries()) {
+    assert.equal(wp(bedrock100(`t89a-${i}`, STOCK100.replace(l100, line))).code, 2, line);
+  }
+  const l11 = "Config::define('WP_CONTENT_DIR', $webroot_dir . Config::get('CONTENT_DIR'));";
+  for (const [i, line] of [`${mv} ${l11}`, `${l11} ${mv}`, "Config::define('WP_CONTENT_DIR', $webroot_dir . Config::get('CONTENT_DIR') . define('WP_PLUGIN_DIR', '/srv/p'));"].entries()) {
+    const sb = bedrockSite(`t89b-${i}`, { app: `<?php\nConfig::define('CONTENT_DIR', '/app');\n${line}\n` });
+    assert.equal(wp(sb.root).code, 2, line);
+  }
+});
+
+test('wordpress: with both config folders (beside the web root and beside the core), a move in either one is UNKNOWN', () => {
+  for (const [i, where] of ['webroot', 'core'].entries()) {
+    const sb = bedrockSite(`t90-${i}`);
+    const coreConf = join(sb.web, 'config', 'application.php');
+    put(coreConf, "<?php\ndefine('CONTENT_DIR', '/app');\n");
+    if (where === 'core') put(coreConf, "<?php\ndefine('CONTENT_DIR', '/content');\n");
+    else put(join(dirname(sb.web), 'config', 'application.php'), "<?php\nConfig::define('CONTENT_DIR', '/content');\n");
+    assert.equal(wp(sb.root).code, 2, where);
+  }
+});
