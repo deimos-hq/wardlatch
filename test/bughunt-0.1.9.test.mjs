@@ -1019,3 +1019,42 @@ test('wordpress: app/plugins linked into a folder that cannot be opened, with no
   const r = wp(root);
   assert.ok(unknowns(r).length, show(r)); assert.equal(r.code, 2);
 });
+
+// ---- the strict check of c7e903d ----------------------------------------------------------------------------------------
+test('wordpress: Bedrock\'s URL line counts as stock only in its exact forms: a define written any way PHP allows on it is UNKNOWN', () => {
+  const inners = ["define('WP_PLUGIN_DIR', '/srv/p')", "define ('WP_PLUGIN_DIR', '/srv/p')", "'define'('WP_PLUGIN_DIR', '/srv/p')", "call_user_func('define', 'WP_PLUGIN_DIR', '/srv/p')",
+    "define/**/('WP_PLUGIN_DIR', '/srv/p')", "\"define\"('WP_CONTENT_DIR', '/srv/c')", "[Config::class, 'define']('WP_PLUGIN_DIR', '/srv/p')", "[Config::class, 'define']('CONTENT_DIR', '/content')"];
+  for (const [i, inner] of inners.entries()) {
+    const s = bedrockSite(`t73-${i}`, { app: `<?php\nConfig::define('WP_CONTENT_URL', Config::get('WP_HOME') . ${inner});\nConfig::define('CONTENT_DIR', '/app');\nConfig::define('WP_CONTENT_DIR', $webroot_dir . Config::get('CONTENT_DIR'));\n` });
+    assert.equal(wp(s.root).code, 2, inner);
+  }
+});
+
+test('wordpress: both exact stock URL lines (Bedrock 1.9+ and earlier), plain and CRLF, leave no doubt', () => {
+  const forms = ["<?php\nConfig::define('CONTENT_DIR', '/app');\nConfig::define('WP_CONTENT_DIR', $webroot_dir . Config::get('CONTENT_DIR'));\nConfig::define('WP_CONTENT_URL', Config::get('WP_HOME') . Config::get('CONTENT_DIR'));\n",
+    "<?php\ndefine('CONTENT_DIR', '/app');\ndefine('WP_CONTENT_DIR', $webroot_dir . CONTENT_DIR);\ndefine('WP_CONTENT_URL', WP_HOME . CONTENT_DIR);\n"];
+  for (const [i, app] of [...forms, ...forms.map((f) => f.replace(/\n/g, '\r\n'))].entries()) assert.equal(wp(bedrockSite(`t74-${i}`, { app }).root).code, 0, `form ${i}`);
+});
+
+test('headers: a file name that ends in a non-ASCII space (no-break, narrow, ideographic) is read with it, even beside a clean twin', () => {
+  for (const sp of [' ', ' ', '　']) {
+    const h = fresh(`t75-${sp.charCodeAt(0)}`); gitconfigId(h);
+    put(join(h, 'a'), 'X-Team: platform\n'); const f = put(join(h, `a${sp}`), FROM), c = put(join(h, `c${sp}`), `-H "${FROM.trim()}"\n`);
+    for (const [i, line] of [`-H @${f}`, `header = @${f}`, `-K ${c}`, `config = ${c}`].entries()) {
+      const h2 = fresh(`t75-${sp.charCodeAt(0)}-${i}`); gitconfigId(h2); put(join(h2, '.curlrc'), `${line}\r\n`);
+      assert.equal(hdr(h2).code, 1, JSON.stringify(line));
+    }
+  }
+});
+
+test('headers: ASCII separators split as curl splits: a tab after a file name, a vertical tab after -H, indented lines', () => {
+  for (const [i, rc] of ['-H @{h}\tx\n', '-H\v@{h}\n', `\t-H "${FROM.trim()}"\n`, `  header = "${FROM.trim()}"\n`, `-H @{h}\fy\n`].entries()) {
+    assert.equal(curlCase(`t76-${i}`, rc, { h: FROM }).code, 1, JSON.stringify(rc));
+  }
+});
+
+test('headers: --header="@file" and --config="file" (curl refuses the =) do not open a file named by the quotes', () => {
+  assert.equal(curlCase('t77', '--header="@{h}"\n', { h: FROM }).code, 0);
+  const r = curlCase('t77b', '--config="{c.rc}"\n', { 'c.rc': `-H "${FROM.trim()}"\n` });
+  assert.ok(unknowns(r).some((x) => /relative path/.test(x.reason)), show(r)); assert.equal(r.code, 2);
+});
