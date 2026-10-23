@@ -819,3 +819,100 @@ test('headers: a planted .curlrc of thousands of relative or over-the-cap file l
   const t = Date.now(); const r = hdr(h);
   assert.equal(unknowns(r).length, 2, show(r)); assert.ok(Date.now() - t < 20000);
 });
+
+// ---- the strict check of 50af5ea ----------------------------------------------------------------------------------------
+const curlCase = (name, rc, files = {}, env = {}) => {
+  const h = fresh(name); gitconfigId(h);
+  const paths = Object.fromEntries(Object.entries(files).map(([k, v]) => [k, put(join(h, k), v)]));
+  put(join(h, '.curlrc'), rc.replace(/\{(\w[\w.]*)\}/g, (_, k) => paths[k] ?? `{${k}}`));
+  return hdr(h, env);
+};
+const FROM = `From: ${EMAIL}\n`;
+
+test('headers: config files curl brings in every way are read: -K/path attached, expand-config, an escaped name', () => {
+  for (const [i, rc] of ['-K{c.rc}', 'expand-config = "{c.rc}"', '-K "{c.rc}"'].entries()) {
+    const r = curlCase(`t50-${i}`, `${rc}\n`, { 'c.rc': `header = "${FROM.trim()}"\n` });
+    assert.equal(r.code, 1, `${rc}: ${show(r)}`);
+  }
+  const h = fresh('t50-esc'); gitconfigId(h); const c = put(join(h, 'cfg.rc'), `-H "${FROM.trim()}"\n`);
+  put(join(h, '.curlrc'), `config = "${c.replace('cfg', 'c\\fg')}"\nheader = "\\@${put(join(h, 'hdr'), FROM)}"\n`);
+  const r = hdr(h);
+  assert.equal(r.rows.filter((x) => x.status === 'EXPOSED').length, 2, `escaped names are read as curl reads them: ${show(r)}`);
+});
+
+test('headers: a user agent that starts with @/ is a user agent, not a header file (curl sends it as it is)', () => {
+  for (const [i, rc] of [`user-agent = "@/x ${EMAIL}"`, '-A "@/ Ada Lovelace"'].entries()) {
+    const r = curlCase(`t51-${i}`, `${rc}\n`);
+    assert.equal(r.code, 1, `${rc}: ${show(r)}`);
+  }
+});
+
+test('headers: one file brought in both as headers and as config is read both ways', () => {
+  const h = fresh('t52'); gitconfigId(h);
+  const y = put(join(h, 'y'), FROM), x = put(join(h, 'x'), `header = @${y}\n`);
+  put(join(h, '.curlrc'), `header = @${x}\nconfig = ${x}\n`);
+  assert.equal(hdr(h).code, 1);
+});
+
+test('headers: expand-proxy-header counts; \\t in a quoted value is white space (a tab between first and last name)', () => {
+  assert.equal(curlCase('t53a', `expand-proxy-header = "${FROM.trim()}"\n`).code, 1);
+  assert.equal(curlCase('t53b', '-A "Ada\\tLovelace"\n').code, 1);
+});
+
+test('headers: -K - and -H @- read standard input, never a file named "-" (no UNKNOWN)', () => {
+  const r = curlCase('t54', '-K -\n-H @-\n');
+  assert.equal(unknowns(r).length, 0, show(r)); assert.equal(r.code, 0);
+});
+
+test('headers: a header file is read as curl reads it, line by line and as written (no escapes undone)', () => {
+  const r = curlCase('t55', '-H @{h}\n', { h: 'X-Who: Ada\\ Lovelace\n' });
+  assert.equal(r.code, 0, `curl sends the backslash too, which is not the name: ${show(r)}`);
+});
+
+test('headers: a .curlrc that brings in itself is read once (one finding, not two)', () => {
+  const h = fresh('t56'); gitconfigId(h); const rc = join(h, '.curlrc');
+  put(rc, `-H "${FROM.trim()}"\n-K ${rc}\n`);
+  const r = hdr(h);
+  assert.equal(r.rows.filter((x) => x.status === 'EXPOSED').length, 1, show(r));
+});
+
+const bedrockSite = (name, { app, envs = {}, envMode } = {}) => {
+  const root = fresh(name), b = join(root, 'example.com');
+  put(join(b, 'web', 'wp', 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";');
+  plugin(join(b, 'web', 'app', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.13');
+  put(join(b, 'config', 'application.php'), app ?? "<?php\nConfig::define('CONTENT_DIR', '/app');\nConfig::define('WP_CONTENT_DIR', $webroot_dir . Config::get('CONTENT_DIR'));\n");
+  for (const [f, t] of Object.entries(envs)) put(join(b, 'config', 'environments', f), t);
+  if (envMode !== undefined) { chmodSync(join(b, 'config', 'environments'), envMode); locked.push(join(b, 'config', 'environments')); }
+  return { root, web: join(b, 'web') };
+};
+
+test('wordpress: Bedrock environment files: stock ones (and non-PHP files) leave no doubt; one naming WP_PLUGIN_DIR does', () => {
+  const stock = bedrockSite('t57a', { envs: { 'development.php': "<?php\nConfig::define('SAVEQUERIES', true);\nConfig::define('WP_DEBUG', true);\n", 'README.md': 'CONTENT_DIR notes\n' } });
+  assert.equal(wp(stock.root).code, 0);
+  const moved = bedrockSite('t57b', { envs: { 'production.php': "<?php\nConfig::define('WP_PLUGIN_DIR', '/srv/plugins');\n" } });
+  assert.equal(wp(moved.root).code, 2);
+  const app = bedrockSite('t57c', { app: "<?php\nConfig::define('CONTENT_DIR', '/app');\nConfig::define('WP_PLUGIN_DIR', '/srv/plugins');\n" });
+  assert.equal(wp(app.root).code, 2);
+});
+
+test('wordpress: a Bedrock environments folder that cannot be opened or listed is a doubt (UNKNOWN), even searched from web/', { skip: AS_ROOT && 'root opens any folder' }, () => {
+  for (const [i, mode] of [0o000, 0o111].entries()) {
+    const s = bedrockSite(`t58-${i}`, { envs: { 'production.php': "<?php\nConfig::define('CONTENT_DIR', '/content');\n" }, envMode: mode });
+    const r = run(['--incident', 'wordpress-plugins-2026-10', '--paths', s.web]);
+    assert.ok(unknowns(r).some((x) => /environments could not be opened/.test(x.reason)), `mode ${mode.toString(8)}: ${show(r)}`); assert.equal(r.code, 2);
+  }
+});
+
+test('wordpress: an app/ folder of another program beside a core is not Bedrock: a core with no plugins folder there is UNKNOWN', () => {
+  const root = fresh('t59'), s = join(root, 'site');
+  put(join(s, 'wp', 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";'); put(join(s, 'app', 'Http', 'Kernel.php'), '<?php\n');
+  const r = wp(root);
+  assert.ok(unknowns(r).some((x) => /plugins folder/.test(x.what)), show(r)); assert.equal(r.code, 2);
+});
+
+test('wordpress: a parent wp-config.php is not read when that folder holds a wp-settings.php of its own', () => {
+  const root = fresh('t60'), s = join(root, 'site');
+  put(join(s, 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";'); mkdirSync(join(s, 'wp-content', 'plugins'), { recursive: true });
+  put(join(root, 'wp-settings.php'), '<?php\n'); put(join(root, 'wp-config.php'), "<?php\ndefine('WP_CONTENT_DIR', '/elsewhere');\n");
+  assert.equal(wp(root).code, 0);
+});

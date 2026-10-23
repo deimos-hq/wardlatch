@@ -121,9 +121,10 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
       and leftover ones beside it, is checked now, not only the first found (a core still holding its bundled
       `wp-content` beside the live one read SAFE about the wrong plugins). Wardlatch doesn't read PHP (owner, 23 Oct):
       when the wp-config.php WordPress reads names `WP_CONTENT_DIR` or `WP_PLUGIN_DIR` anywhere, when Bedrock's
-      `config/application.php` or `config/environments/*.php` sets a content folder other than its stock `/app`, or
+      `config/application.php` (past its stock lines) or `config/environments/*.php` names `CONTENT_DIR` or
+      `WP_PLUGIN_DIR`, or
       when one of those files can't be read, the site is UNKNOWN: its plugins may be elsewhere. So is a core with no
-      plugins folder in any of those places.
+      content folder in any of those places.
     - A site inside another site's folder (`public_html/blog`) was never searched: the search stopped at the first.
     - A key in a tracked file deleted from the working tree (still in the index, HEAD and every push) was skipped. git's
       own copy is scanned now, in a few git runs however many there are. A file marked skip-worktree that is on disk is
@@ -133,8 +134,8 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
     - curl's `-H @file` (`header = "@file"`, `-H@file`) was checked as a file name, never as the headers in the file.
       The file is read now; one named by a relative path is UNKNOWN, and one curl couldn't read either sends nothing.
     - `.curlrc` lines with short options in a cluster (`-sH "From: …"`, `-sA …`) or an attached value (`-HFrom:…`),
-      `proxy-header`, curl 8.3's `expand-header` / `expand-user-agent`, and the config files a `config =` or `-K` line
-      brings in were not read. They are now, on the safe side (owner, 23 Oct): your name or email anywhere after a header
+      `proxy-header`, curl 8.3's `expand-` forms, and the config files a `config =`, `expand-config` or `-K` line
+      brings in (`-K file`, `-K/file`, `-sK file`) were not read. They are now, on the safe side (owner, 23 Oct): your name or email anywhere after a header
       option counts, with backslash escapes undone. curl variables (a `variable` line, or `{{name}}` in an `expand-`
       line), which can build a header from pieces, are UNKNOWN. Brought-in files are read once each, at most 32 of 1 MB.
     - The bundle `REQUESTS_CA_BUNDLE` names (what requests and pip trust in place of certifi) was never tested. It is
@@ -199,16 +200,20 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   in pieces). Files a sparse checkout leaves out of the working tree (skip-worktree, not on disk) are not scanned, as in
   0.1.8.
 - WordPress: a site whose wp-config.php names `WP_CONTENT_DIR` or `WP_PLUGIN_DIR` anywhere (even in a comment, or to
-  use it rather than move it) is UNKNOWN, since Wardlatch doesn't read PHP. A move made only in a file wp-config.php
-  brings in with `require` or `include` (a `wp-config-local.php`) is not seen, except Bedrock's config files. A
-  wp-config.php over 1 MB is UNKNOWN. Leftover plugins folders beside a site are checked too, so a stale copy of a
+  use it rather than move it) is UNKNOWN, since Wardlatch doesn't read PHP; so is a Bedrock site whose config names
+  `CONTENT_DIR` beyond its stock lines (even an environment file setting `/app` again). A move made outside the files
+  read is not seen: in a file wp-config.php brings in with `require` or `include` (a `wp-config-local.php`), through
+  `eval` (the Docker image's `WORDPRESS_CONFIG_EXTRA`) or PHP's `auto_prepend_file`, with a changed Bedrock
+  `$webroot_dir`, or under a constant name built from pieces. A wp-config.php over 1 MB is UNKNOWN. Must-use plugins
+  (`mu-plugins`) are not checked, and the indicator search doesn't enter a linked folder inside a plugin. Leftover plugins folders beside a site are checked too, so a stale copy of a
   plugin can read EXPOSED: its files are still on the web server.
 - `.curlrc` is read on the safe side, not as curl parses it: a line with a header option and your name or email after
   it is EXPOSED even when curl refuses the line or sends only part of it (an unquoted value is cut at its first space;
   `--header=x` and an attached value followed by another word are refused; a later `-A` replaces an earlier one; long
   names in capitals are refused by curl 8.7 but were taken by older curl). Fix or remove such a line. Abbreviated long
   option names (`user-agen`, which older curl took) are not read; `cookie` and `referer` lines are outside this check;
-  a `-K` inside a cluster with its file attached (`-sKfile`) is not followed.
+  a `-K` inside a cluster with its file attached (`-sKfile`) is not followed. Start-up files some curl versions read
+  and 8.7.1 doesn't (`$XDG_CONFIG_HOME/curlrc`) are read too, on the safe side.
 - `DOCKER_HOST` naming a socket whose folder is gone too (a stopped Podman machine's after a reboot) is not followed:
   UNKNOWN, as for a remote host. Start the engine, or pass `--no-containers`.
 - A later copy of a program on `PATH` that can be run but not read (mode 111) is taken for a script: named for review,
