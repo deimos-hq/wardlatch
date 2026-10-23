@@ -11,10 +11,10 @@
     "files": [
       {
         "path": "/var/lib/dpkg/status",
-        "re": "^Package: plexmediaserver\\nStatus: [a-z]+ (?:ok|reinstreq) installed\\n(?:[^\\n]+\\n)*?Version: (\\d+\\.\\d+\\.\\d+\\.\\d+)",
+        "re": "^Package: plexmediaserver\\nStatus: [a-z]+ [a-z-]+ (?:installed|half-configured|unpacked|triggers-awaited|triggers-pending)\\n(?:[^\\n]+\\n)*?Version: (\\d+\\.\\d+\\.\\d+\\.\\d+)",
         "label": "Debian or Ubuntu package",
         "maxBytes": 134217728,
-        "presentRe": "^Package: plexmediaserver\\nStatus: [a-z]+ (?:ok|reinstreq) installed$"
+        "presentRe": "^Package: plexmediaserver\\nStatus: [a-z]+ [a-z-]+ (?!not-installed$|config-files$)[a-z-]+$"
       },
       {
         "path": "/Applications/Plex Media Server.app/Contents/Info.plist",

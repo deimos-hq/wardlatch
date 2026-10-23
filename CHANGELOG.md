@@ -76,8 +76,9 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   hints as the reason a repository couldn't be read.
 - The header check reads more of the files curl and git read: CRLF files, `$CURL_HOME/.curlrc`, `$CURL_HOME/.config/curlrc`, `~/.config/curlrc`, the
   file `GIT_CONFIG_GLOBAL` names, `WGETRC`, `NPM_CONFIG_USERCONFIG` (not all of them: see Known limits).
-- Three false SAFEs found in the last check before release, all in 0.1.8 too: a Plex Media Server held at a vulnerable
-  version with `apt-mark hold` (or marked for removal) read as not installed; a PHP release candidate or `-dev` build of
+- Three false SAFEs found in the last checks before release, all in 0.1.8 too: a Plex Media Server in any dpkg state
+  but plain "installed" (held with `apt-mark hold`, marked for removal, unpacked, half-configured, waiting on triggers)
+  read as not installed, though its files were on disk (half-installed is now UNKNOWN); a PHP release candidate or `-dev` build of
   a fixed version (`8.4.27RC1`, older than the fix) read as fixed; and a virtual environment's certifi bundle on a
   machine with no curl to test it with was dropped without a line (now UNKNOWN).
 - Bounded work: hand-written parsers instead of patterns that backtracked (a planted line took 22 s), a capped JSON walk

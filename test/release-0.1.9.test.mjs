@@ -335,18 +335,18 @@ test('the trust check names a later node on PATH that is a script, in --json too
 });
 
 // ---- from the last check before release (581bfc6): false SAFEs already in 0.1.8 --------------------------------------
-test('Plex held at a vulnerable version (apt-mark hold, or marked for removal) is EXPOSED; a fixed one is SAFE', async () => {
+test('Plex: every dpkg state with its files on disk is judged by version; half-installed is could-not-be-tested; removed is not installed', async () => {
   const { checkVersionFiles } = await import('../lib/installs.mjs');
   const rule = JSON.parse(readFileSync(join(ROOT, 'lib', 'incidents', 'plex-2026-10.json'), 'utf8')).versionFiles;
-  const status = (want, version) => {
-    const root = fresh(`px-${want}-${version}`);
-    put(join(root, 'var', 'lib', 'dpkg', 'status'), `Package: plexmediaserver\nStatus: ${want} ok installed\nPriority: optional\nVersion: ${version}-c6bbc1b53\n\n`);
-    return checkVersionFiles(rule, { root }).filter((r) => r.label === 'Debian or Ubuntu package').map((r) => r.status);
+  const status = (state, version) => {
+    const root = fresh(`px-${state.replace(/\W/g, '')}-${version}`);
+    put(join(root, 'var', 'lib', 'dpkg', 'status'), `Package: libc6\nStatus: install ok installed\nVersion: 2.36-9\n\nPackage: plexmediaserver\nStatus: ${state}\nPriority: optional\nVersion: ${version}-c6bbc1b53\n\nPackage: zlib1g\nStatus: install ok installed\nVersion: 1:1.2.13\n`);
+    return checkVersionFiles(rule, { root }).filter((r) => r.label === 'Debian or Ubuntu package').map((r) => r.status).join(',');
   };
-  for (const want of ['install', 'hold', 'deinstall']) {
-    assert.deepEqual(status(want, '1.41.2.9200'), ['EXPOSED'], want);
-    assert.deepEqual(status(want, '1.43.3.10861'), ['SAFE'], `${want}, fixed`);
-  }
+  const onDisk = ['install ok installed', 'hold ok installed', 'deinstall ok installed', 'install reinstreq installed', 'hold ok half-configured', 'install ok unpacked', 'install ok triggers-awaited', 'install ok triggers-pending'];
+  for (const st of onDisk) { assert.equal(status(st, '1.41.2.9200'), 'EXPOSED', st); assert.equal(status(st, '1.43.3.10861'), 'SAFE', `${st}, fixed`); }
+  assert.equal(status('install reinstreq half-installed', '1.41.2.9200'), 'UNKNOWN', 'half-installed: its files are mixed');
+  for (const st of ['deinstall ok config-files', 'purge ok not-installed']) assert.equal(status(st, '1.41.2.9200'), '', `${st}: not installed`);
 });
 
 test('PHP: a release candidate or -dev build of a fixed version is EXPOSED (it predates the fix); the release is SAFE', () => {
