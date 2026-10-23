@@ -83,7 +83,7 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   machine with no curl to test it with was dropped without a line (now UNKNOWN). A fourth, from the same checks: the PHP
   check judged only the program called `php`, so on a server with several PHP versions an old `php8.1`, and the
   `php-fpm8.1` serving the sites, read SAFE; versioned `php`, `php-fpm` and `php-cgi` programs on `PATH`, in the `sbin`
-  folders and in Homebrew's `php@*`, Remi, cPanel and Plesk install folders are now each judged (one file reached by two
+  folders and in macOS Homebrew's `php@*`, Remi, cPanel and Plesk install folders are now each judged (one file reached by two
   names, once; a later copy of a name that is a script is not run).
 - Bounded work: hand-written parsers instead of patterns that backtracked (a planted line took 22 s), a capped JSON walk
   and a 1 MB cap on a repository's config files (a planted 16 MB `.mcp.json` took 1.4 GB), every file read through one

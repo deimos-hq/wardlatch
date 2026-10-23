@@ -218,7 +218,8 @@ test('under sudo with no home folder for the sudo user, an UNKNOWN row says root
   assert.equal(r.code, 2);
   // the php check reads PATH only, and a folder check given --paths reads only those folders: no row, and a clean run passes
   for (const id of ['php-2026-10', 'github-actions-2026-10']) {
-    const c = run(['--incident', id, '--paths', fresh(`nohome-root-${id}`)], { HOME: fresh(`nohome-roots-home-${id}`), SUDO_USER: 'no-such-user-wardlatch' }, ['--require', sudo]);
+    // (the PHP check's folders off PATH are hidden, so PHP installed on the machine can't change the result)
+    const c = run(['--incident', id, '--paths', fresh(`nohome-root-${id}`)], { HOME: fresh(`nohome-roots-home-${id}`), SUDO_USER: 'no-such-user-wardlatch' }, ['--require', sudo, '--require', join(ROOT, 'test', 'support', 'hide-php-places.cjs')]);
     assert.ok(!c.rows.some((x) => x.kind === 'home'), `${id}: ${JSON.stringify(c.rows)}`);
     assert.equal(c.code, 0, id);
   }

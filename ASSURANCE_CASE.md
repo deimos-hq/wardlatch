@@ -191,7 +191,7 @@ a timeout with SIGKILL); nothing they find is executed.
 **Programs on `PATH` are trusted, except a program an incident says may itself be malware.** The first `node`, `curl`
 and `python3` on `PATH`, and later copies that are compiled programs (a later script is never run), `/usr/bin/curl`, `/usr/bin/python3`, and each tool named in a version rule, is run from the
 place it was found, the one your shell would pick; the PHP check also runs the first `php`, `php-fpm` or `php-cgi` of
-each versioned name in its known install folders off `PATH` (the `sbin` folders, Homebrew's `php@*` kegs, Remi, cPanel,
+each versioned name in its known install folders off `PATH` (the `sbin` folders, macOS Homebrew's `php@*` kegs, Remi, cPanel,
 Plesk), where a second PHP serving the sites lives. Each is run once for its version (`node -v`, `curl --version`,
 `python3 -V`, or the rule's arguments), and each runtime once more per test connection, with the arguments in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#the-trust-check-step-by-step). Python is not started the way your shell

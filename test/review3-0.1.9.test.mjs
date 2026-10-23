@@ -211,7 +211,7 @@ test('11 a crash after an EXPOSED line exits 1 (exposed), not 2', () => {
   const d = fresh('r11-path');
   exe(join(d, 'php'), 'echo "PHP 8.2.0 (cli)"');
   const crash = preload('r11-crash', { extra: 'const S = JSON.stringify; JSON.stringify = (v, ...a) => { if (v && v.tool === \'wardlatch\') throw new TypeError(\'planted crash\'); return S(v, ...a); };' });
-  const r = spawnCli(['--incident', 'php-2026-10'], { PATH: d }, ['--require', crash]);
+  const r = spawnCli(['--incident', 'php-2026-10'], { PATH: d }, ['--require', crash, '--require', join(ROOT, 'test', 'support', 'hide-php-places.cjs')]);
   assert.match(r.stderr, /planted crash/, 'the fixture: it crashed while writing the results');
   assert.equal(r.status, 1, r.stderr.slice(0, 300));
 });

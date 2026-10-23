@@ -428,3 +428,23 @@ test('PHP copies: install folders off PATH with a wildcard (Homebrew\'s php@8.1 
   assert.deepEqual(got.run, [join(opt, 'php@8.1', 'bin', 'php'), join(opt, 'php@8.1', 'sbin', 'php-fpm')]);
   assert.deepEqual(got.notRun, [join(opt, 'ea-php81', 'root', 'usr', 'sbin', 'php-fpm')]);
 });
+
+// ---- from the strict check of a0f9346 -----------------------------------------------------------------------------------
+test('PHP copies: a locked folder a wildcard is matched in (/opt/cpanel closed by an admin) is could-not-be-tested, never absent', { skip: AS_ROOT && 'root' }, async () => {
+  const { copiesMatching } = await import('../lib/binaries.mjs');
+  const panel = fresh('lp-panel'); exe(join(panel, 'ea-php81', 'root', 'usr', 'bin', 'php'), 'echo "PHP 8.1.2 (cli)"'); lock(panel);
+  const odd = [];
+  const got = copiesMatching('^php(?:-fpm|-cgi)?(?:\\d+(?:\\.\\d+)?)?$', fresh('lp-empty'), [`${panel}/ea-php*/root/usr/bin`], odd, 'php');
+  assert.deepEqual([got.run, odd], [[], [panel]]);
+  // and a folder that simply isn't there is nothing to report
+  const odd2 = [];
+  copiesMatching('^php(?:-fpm|-cgi)?(?:\\d+(?:\\.\\d+)?)?$', fresh('lp-empty2'), [`${join(dir, 'lp-nowhere')}/ea-php*/root/usr/bin`], odd2, 'php');
+  assert.deepEqual(odd2, []);
+});
+
+test('the PHP rule searches the install folders the docs name: sbin, macOS Homebrew\'s php@* kegs, Remi, cPanel, Plesk', () => {
+  const rule = JSON.parse(readFileSync(join(ROOT, 'lib', 'incidents', 'php-2026-10.json'), 'utf8')).binaries[0];
+  for (const d of ['/usr/sbin', '/opt/homebrew/opt/php@*/sbin', '/usr/local/opt/php@*/sbin', '/opt/remi/php*/root/usr/sbin', '/opt/cpanel/ea-php*/root/usr/sbin', '/opt/plesk/php/*/sbin']) assert.ok(rule.extraDirs.includes(d), d);
+  for (const n of ['php', 'php8.1', 'php-fpm8.1', 'php-cgi8.3', 'php81']) assert.match(n, new RegExp(rule.binaryNames), n);
+  for (const n of ['php-config8.1', 'phpize8.1', 'phpdbg8.1', 'phpunit']) assert.doesNotMatch(n, new RegExp(rule.binaryNames), n);
+});
