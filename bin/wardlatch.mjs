@@ -140,8 +140,8 @@ function allClear(results, inc, kind, text, searched) {
 // container, must never stand in for them)
 const RUNTIME_KINDS = ['node', 'curl', 'python', 'macos-system'];
 const hostRowsOf = (results) => results.filter((r) => RUNTIME_KINDS.includes(r.kind)).length;
-// rows that count for a summary line: a skipped-folders or not-run line is information beside it, never instead of it
-const counted = (results) => results.filter((r) => !['skipped', 'not-run'].includes(r.kind));
+// rows that count for a summary line: a skipped-folders line is information beside it, never instead of it
+const counted = (results) => results.filter((r) => r.kind !== 'skipped');
 // later copies on PATH that are scripts, and so were not run (lib/binaries.mjs copiesToRun): a REVIEW line, in --json
 // too, so a reader can tell a copy went unchecked; it doesn't change the exit code
 function notRunRow(results, inc, what, paths) {
@@ -379,7 +379,7 @@ for (const inc of chosen) {
       const tempsDenied = [];
       for (const t of tmpTraces(inc.tmpTrace, temps, tempsDenied)) show({ status: 'EXPOSED', path: t, reason: 'the malware ran on this machine: it leaves this marker each time it runs' }, short(t), inc.tmpFix ?? inc.sitePackages?.fix);
       foundUnread.push(...tempsDenied);
-      searched.push(...temps.filter((t) => !tempsDenied.includes(t)));
+      searched.push(...temps);
     }
     if (inc.dockerDigests && !flag('--no-containers')) {
       hostVarsRow(results, inc, 'images');

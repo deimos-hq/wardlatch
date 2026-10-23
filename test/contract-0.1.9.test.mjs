@@ -31,7 +31,7 @@
 //     summary counts them. Every SAFE row carries its receipt: `searched`, a non-empty array of non-empty strings that
 //     says what was looked at.
 // R6  Versions. Every copy of a version-checked program on PATH that may be run is judged: the first, and later ones that
-//     are compiled programs (a later script is named in a note, not run; owner, 22 Oct). A program that isn't found is reported as not found on PATH: the receipt says PATH, never a bare
+//     are compiled programs (a later script is named in a REVIEW row, not run; owner, 22 Oct). A program that isn't found is reported as not found on PATH: the receipt says PATH, never a bare
 //     "not installed".
 // R7  Workflow review lists: a workflow introduced by a merge commit; and a .git/info/grafts file can't hide a workflow.
 //     (Also listed here first: a workflow added by a commit dated earlier than its parent, a backdated commit. Taken

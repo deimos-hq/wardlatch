@@ -35,7 +35,8 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   directory's included; for WordPress, the web server's account too) is UNKNOWN; one a service owns (root, a database,
   "nobody", a rootless container's uids) is named in one REVIEW line, which doesn't change the exit code. A searched
   folder itself (a `--paths` folder, `/var/www`), or something already found or known (a virtual environment's own
-  folders, `~/.local/lib`, a temp folder), that can't be opened is always UNKNOWN. A `--paths` folder that doesn't exist is UNKNOWN (exit 2), not "SAFE, 0 repositories"; with no `--paths`
+  folders, `~/.local/lib`, a temp folder), that can't be opened is always UNKNOWN. For WordPress, a locked dot-folder
+  below a root (www-data's `.ssh`) is listed for review whoever owns it. A `--paths` folder that doesn't exist is UNKNOWN (exit 2), not "SAFE, 0 repositories"; with no `--paths`
   and none of the usual folders on the machine (a fresh server, a CI runner), the check is SAFE and lists the folders
   it looked for.
 - **Environment allowlist.** Every program Wardlatch runs gets an environment built for its purpose from an allowlist

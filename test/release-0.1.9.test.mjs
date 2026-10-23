@@ -100,8 +100,10 @@ const unknowns = (r) => r.rows.filter((x) => x.status === 'UNKNOWN');
 // ---- locked folders, by owner ------------------------------------------------------------------------------------------
 // A real system folder on this machine whose only locked descendants are owned by a service and can be looked at (a
 // user can't chown a test folder to another account): picked at run time, or the test is skipped.
+let isPersonUid;
+before(async () => { ({ isPersonUid } = await import('../lib/owners.mjs')); });
 const serviceLockedRoot = () => {
-  const isPerson = (uid) => uid >= 501 && uid <= 59999;
+  const isPerson = (uid) => isPersonUid(uid, 'workflow');
   const ok = (d, depth) => {   // the number of service-owned locked folders below d, or -1 if anything else is locked
     let ents; try { ents = readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith('.')); } catch { return -1; }
     let n = 0;
@@ -274,7 +276,7 @@ test('a known install place that can\'t be opened (~/.local/lib, a temp folder) 
   assert.ok(unknowns(a).some((x) => x.path === join(h, '.local', 'lib')), JSON.stringify(a.rows)); assert.equal(a.code, 2);
   const b = run(['--incident', 'litellm-2026-10', '--no-containers', '--paths', fresh('fp-root2')], { HOME: fresh('fp-home2'), TMPDIR: '/private/var/root' }, ['--require', preload('fp-offline')]);
   assert.ok(unknowns(b).some((x) => x.path === '/private/var/root'), JSON.stringify(b.rows));
-  assert.ok(!b.rows.some((x) => (x.searched ?? []).includes('/private/var/root')), 'an unread temp folder is never in a receipt');
+  assert.equal(b.code, 2, 'an unread temp folder is could-not-be-tested, never part of a SAFE');
 });
 
 test('headers: a settings file this user can\'t read is not used: no could-not-be-tested', { skip: AS_ROOT && 'root' }, () => {
@@ -314,4 +316,35 @@ test('DOCKER_HOST to a local socket settles the engine: a DOCKER_CONTEXT beside 
   const { createServer } = await import('node:net');
   const sock = join(dir, 'dc.sock'); const srv = createServer(); await new Promise((res) => srv.listen(sock, res));
   try { assert.deepEqual(engineHost({ DOCKER_HOST: `unix://${sock}`, DOCKER_CONTEXT: 'prod' }).refused, []); } finally { srv.close(); }
+});
+
+// ---- from the narrow check of c5b2509 ------------------------------------------------------------------------------------
+test('a wildcard install place: a locked folder only a * matched (a vendor\'s under /opt) is judged by owner; a locked known place is found', { skip: (process.platform !== 'darwin' || AS_ROOT) && 'macOS (/private/var), as a user' }, async (t) => {
+  const { expand } = await import('../lib/installs.mjs');
+  // root-owned folders under /private/var that a user can't open, standing in for /opt/<vendor>
+  // folders that can't even be entered (looking for anything inside them fails with EACCES): a folder that can be entered
+  // but not listed is no obstacle, since the pattern's next part is fixed (venv) and can be looked for directly
+  const locked = readdirSync('/private/var').map((n) => join('/private/var', n)).filter((d) => { try { statSync(join(d, 'venv')); return false; } catch (e) { return e.code === 'EACCES'; } });
+  if (!locked.length) return t.skip('no locked folder under /private/var');
+  const found = [], denied = [];
+  expand('/private/var/*/venv/lib/python3*/site-packages', found, denied);
+  assert.deepEqual(found, [], `a * match is not a known place: ${JSON.stringify(found)}`);
+  for (const d of locked) assert.ok(denied.includes(d), `the locked folder itself is reported, not a path below it: ${d} in ${JSON.stringify(denied.slice(0, 5))}`);
+  assert.ok(denied.every((d) => statSync(d).isDirectory()), 'only folders that exist');
+  const found2 = [], denied2 = [];
+  expand('/private/var/root/lib/python3*/site-packages', found2, denied2);
+  assert.deepEqual([found2, denied2], [['/private/var/root'], []], 'a locked folder in the fixed part is a known place: found');
+});
+
+test('on Windows a folder\'s owner can\'t be read, so it counts as a person\'s', async () => {
+  const { isPersonUid: person } = await import('../lib/owners.mjs');
+  assert.equal(person(0, 'workflow', { os: 'win32', self: undefined, names: new Map(), subuids: [] }), true);
+});
+
+test('the trust check names a later node on PATH that is a script, in --json too, without running it', () => {
+  const first = nodeStandIn('nr1', 'NOTHING'), second = fresh('nr2'), ran = join(dir, 'nr2-ran');
+  exe(join(second, 'node'), `touch ${JSON.stringify(ran)}; echo v18.0.0`);
+  const r = run(['--incident', 'emudhra-2026-10', '--no-containers', '--paths', fresh('nr-root')], { PATH: `${first}:${second}` }, ['--require', preload('nr-online', { online: true })]);
+  assert.ok(r.rows.some((x) => x.kind === 'not-run' && x.status === 'REVIEW' && x.paths.includes(join(second, 'node'))), JSON.stringify(r.rows));
+  assert.equal(existsSync(ran), false, 'the later script ran');
 });
