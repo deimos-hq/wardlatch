@@ -204,7 +204,7 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
 - WordPress: a site whose wp-config.php names `WP_CONTENT_DIR` or `WP_PLUGIN_DIR` anywhere (even in a comment, or to
   use it rather than move it) is UNKNOWN, since Wardlatch doesn't read PHP; so is a Bedrock site whose config names
   `CONTENT_DIR` beyond its stock lines (even an environment file setting `/app` again; its `WP_CONTENT_URL` line counts
-  as stock only in Bedrock's two exact forms). A move made outside the files
+  as stock only in the exact forms Bedrock shipped, 1.0.0 to today). A move made outside the files
   read is not seen: in a file wp-config.php brings in with `require` or `include` (a `wp-config-local.php`), through
   `eval` (the Docker image's `WORDPRESS_CONFIG_EXTRA`) or PHP's `auto_prepend_file`, with a changed Bedrock
   `$webroot_dir`, or under a constant name built from pieces. A wp-config.php over 1 MB is UNKNOWN. Must-use plugins

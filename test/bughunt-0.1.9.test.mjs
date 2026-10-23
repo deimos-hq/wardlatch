@@ -1058,3 +1058,49 @@ test('headers: --header="@file" and --config="file" (curl refuses the =) do not 
   const r = curlCase('t77b', '--config="{c.rc}"\n', { 'c.rc': `-H "${FROM.trim()}"\n` });
   assert.ok(unknowns(r).some((x) => /relative path/.test(x.reason)), show(r)); assert.equal(r.code, 2);
 });
+
+// ---- the strict check of c2ee54e ----------------------------------------------------------------------------------------
+test('headers: a planted .curlrc line with a million spaces in the middle is read in linear time', async () => {
+  const { headersInRc } = await import('../lib/headers.mjs');
+  for (const line of [`header a${' '.repeat(1e6)}x\r`, `-H a${' '.repeat(1e6)}b`, `-K a${'\t'.repeat(1e6)}b`]) {
+    const t = Date.now(); headersInRc(line, 'curl'); assert.ok(Date.now() - t < 1000, `${Date.now() - t} ms`);
+  }
+});
+
+const bedrock100 = (name, app, env) => {
+  const root = fresh(name), b = join(root, 'example.com');
+  put(join(b, 'wp', 'wp-includes', 'version.php'), '<?php $wp_version = "4.0";');
+  put(join(b, 'wp-config.php'), "<?php\nrequire_once(dirname(__FILE__) . '/config/application.php');\nrequire_once(ABSPATH . 'wp-settings.php');\n");
+  put(join(b, 'config', 'application.php'), app);
+  if (env) put(join(b, 'config', 'environments', 'production.php'), env);
+  plugin(join(b, 'app', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.13');
+  plugin(join(b, 'content', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.12');
+  return root;
+};
+const STOCK100 = "<?php\n$root_dir = dirname(dirname(__FILE__));\ndefine('CONTENT_DIR', '/app');\ndefine('WP_CONTENT_DIR', $root_dir . CONTENT_DIR);\ndefine('WP_CONTENT_URL', 'http://' . $_SERVER['HTTP_HOST'] . CONTENT_DIR);\n";
+
+test('wordpress: Bedrock 1.0.0 (app/, config/ and wp/ side by side): stock reads SAFE; a moved CONTENT_DIR or WP_PLUGIN_DIR in its config is UNKNOWN', () => {
+  assert.equal(wp(bedrock100('t78a', STOCK100)).code, 0);
+  assert.equal(wp(bedrock100('t78b', STOCK100.replace("'/app'", "'/content'"))).code, 2);
+  assert.equal(wp(bedrock100('t78c', STOCK100, "<?php\ndefine('WP_PLUGIN_DIR', '/srv/p');\n")).code, 2);
+});
+
+test('wordpress: anything more on a stock URL line (a move before or after it, a define in place of WP_HOME or after the stock part) is UNKNOWN', () => {
+  const modern = "Config::define('WP_CONTENT_URL', Config::get('WP_HOME') . Config::get('CONTENT_DIR'));", old = "define('WP_CONTENT_URL', WP_HOME . CONTENT_DIR);";
+  const mv = "Config::define('WP_PLUGIN_DIR', '/srv/p');";
+  const lines = [`${mv} ${modern}`, `${modern} ${mv}`, `${mv} ${old}`, `${old} ${mv}`, "define('WP_CONTENT_URL', define('WP_PLUGIN_DIR', '/srv/p') . CONTENT_DIR);",
+    `Config::define('WP_CONTENT_URL', Config::get('WP_HOME') . Config::get('CONTENT_DIR') . Config::define('WP_PLUGIN_DIR', '/srv/p'));`, "define('WP_CONTENT_URL', WP_HOME . CONTENT_DIR . define('WP_PLUGIN_DIR', '/srv/p'));"];
+  for (const [i, line] of lines.entries()) {
+    const sb = bedrockSite(`t79-${i}`, { app: `<?php\nConfig::define('CONTENT_DIR', '/app');\nConfig::define('WP_CONTENT_DIR', $webroot_dir . Config::get('CONTENT_DIR'));\n${line}\n` });
+    assert.equal(wp(sb.root).code, 2, line);
+  }
+});
+
+test('headers: a vertical tab or a CR inside an unquoted file name ends it, as curl splits; a line starting with a no-break space is not an option', () => {
+  for (const [i, sep] of ['\v', '\r'].entries()) {
+    const r = curlCase(`t80-${i}`, `-H @{h}${sep}junk\n`, { h: FROM });
+    assert.equal(r.code, 1, JSON.stringify(sep));
+  }
+  const r = curlCase('t80-nbsp', ` header = "${FROM.trim()}"\n`);
+  assert.equal(r.code, 0, `curl refuses that line as an unknown option: ${show(r)}`);
+});
