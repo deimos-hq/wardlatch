@@ -291,8 +291,8 @@ test('headers: .curlrc lines that send nothing of yours, or are not header optio
   assert.equal(r.rows.filter((x) => x.status !== 'SAFE').length, 0, show(r)); assert.equal(r.code, 0);
 });
 
-test('headers: curl 8.3\'s expand-header and expand-user-agent, a variable carrying your email, and -sH@file word are EXPOSED', () => {
-  const lines = [`expand-header = "From: ${EMAIL}"`, `--expand-user-agent "ua ${EMAIL}"`, `variable = "e=${EMAIL}"\nexpand-header = "From: {{e}}"`, '-sH@{f} word'];
+test('headers: curl 8.3\'s expand-header, expand-user-agent and proxy-header, and -sH@file word, are EXPOSED', () => {
+  const lines = [`expand-header = "From: ${EMAIL}"`, `--expand-user-agent "ua ${EMAIL}"`, `proxy-header = "From: ${EMAIL}"`, '-sH@{f} word', `-H "From: ada.lovelace\\@example.org"`];
   for (const [i, line] of lines.entries()) {
     const h = fresh(`h11-${i}`); gitconfigId(h);
     const f = put(join(h, 'hf'), `From: ${EMAIL}\n`);
@@ -316,14 +316,14 @@ test('headers: a config file curl brings in (config = file, -K file) is read too
   assert.ok(unknowns(r3).some((x) => /relative path/.test(x.reason)), show(r3)); assert.equal(r3.code, 2);
 });
 
-test('headers: a variable that takes your email from the environment (%NAME) or a file (name@file) is EXPOSED', () => {
-  const h = fresh('h13'); gitconfigId(h);
-  put(join(h, '.curlrc'), 'variable = %MYMAIL\nexpand-header = "From: {{MYMAIL}}"\n');
-  const r = hdr(h, { MYMAIL: EMAIL });
-  assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && x.carries === 'your email'), show(r)); assert.equal(r.code, 1);
-  const h2 = fresh('h13b'); gitconfigId(h2);
-  const f = put(join(h2, 'mail.txt'), `${EMAIL}\n`); put(join(h2, '.curlrc'), `variable = "m@${f}"\n`);
-  assert.equal(hdr(h2).code, 1);
+test('headers: curl variables (a variable line, or {{name}} in an expand- line) are UNKNOWN: a header can be built from pieces', () => {
+  for (const [i, rc] of [`variable = "u=ada.lovelace"\nexpand-header = "From: {{u}}@example.org"\n`, 'variable = %MYMAIL\n', 'expand-user-agent = "{{a}} {{b}}"\n'].entries()) {
+    const h = fresh(`h13-${i}`); gitconfigId(h); put(join(h, '.curlrc'), rc);
+    const r = hdr(h);
+    assert.ok(unknowns(r).some((x) => /curl variables/.test(x.reason)), `rc ${i}: ${show(r)}`); assert.equal(r.code, 2, `rc ${i}`);
+  }
+  const h = fresh('h13-ok'); gitconfigId(h); put(join(h, '.curlrc'), 'expand-header = "X-Team: platform"\n');
+  assert.equal(hdr(h).code, 0, 'an expand- line with no variable in it is an ordinary header');
 });
 
 test('headers: a curl header file named by a relative path is UNKNOWN (curl reads it from wherever it runs); @/dev/null is empty', () => {
@@ -467,22 +467,33 @@ test('wordpress: a core that still holds its bundled wp-content beside the live 
   assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && /updraftplus/.test(x.what)), show(r)); assert.equal(r.code, 1);
 });
 
-test('wordpress: WP_CONTENT_DIR in wp-config.php (__DIR__ . "/content") is followed, past a leftover wp-content', () => {
+test('wordpress: a wp-config.php that sets WP_CONTENT_DIR is UNKNOWN (Wardlatch does not read PHP), and the leftover folder is still checked', () => {
   const root = fresh('w7'), s = site(join(root, 'site'));
+  plugin(join(s, 'wp-content', 'plugins'), 'akismet', 'akismet.php', '5.3');
   put(join(s, 'wp-config.php'), "<?php\ndefine( 'WP_CONTENT_DIR', __DIR__ . '/content' );\nrequire_once ABSPATH . 'wp-settings.php';\n");
   plugin(join(s, 'content', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.12');
   const r = wp(root);
-  assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && /updraftplus/.test(x.what)), show(r)); assert.equal(r.code, 1);
+  assert.ok(unknowns(r).some((x) => /moves the plugins folder/.test(x.reason)), show(r)); assert.equal(r.code, 2);
 });
 
-test('wordpress: WP_PLUGIN_DIR set to something that cannot be followed is UNKNOWN; a commented-out one is ignored', () => {
-  const root = fresh('w8'), s = site(join(root, 'site'));
-  put(join(s, 'wp-config.php'), "<?php\ndefine('WP_PLUGIN_DIR', getenv('PLUGINS'));\n");
+test('wordpress: any mention of WP_CONTENT_DIR or WP_PLUGIN_DIR in wp-config.php, in any form (even a comment), is UNKNOWN', () => {
+  const forms = ["<?php\ndefine('WP_PLUGIN_DIR', getenv('PLUGINS'));\n", "<?php\n// define('WP_PLUGIN_DIR', getenv('PLUGINS'));\n",
+    "<?php\nif ( ! defined('WP_CONTENT_DIR') ) define('WP_CONTENT_DIR', __DIR__ . '/content');\n", "<?php define('WP_CONTENT_DIR', __DIR__ . '/content');\n",
+    "<?php\nDEFINE('wp_content_dir', dirname( __FILE__ ) . '/content');\n", "<?php\nforeach ($s as $k => $v) define($k, $v); // WP_CONTENT_DIR comes from $s\n",
+    "<?php\nconst MY_A = 1, WP_CONTENT_DIR = __DIR__ . '/content';\n", "<?php\n$uploads = WP_CONTENT_DIR . '/uploads';\n", "<?php\n$t = <<<EOT\nIt's WP_PLUGIN_DIR\nEOT;\n"];
+  for (const [i, cfg] of forms.entries()) {
+    const root = fresh(`w8-${i}`); site(join(root, 'site')); put(join(root, 'site', 'wp-config.php'), cfg);
+    const r = wp(root);
+    assert.ok(unknowns(r).some((x) => /moves the plugins folder/.test(x.reason)), `form ${i}: ${show(r)}`); assert.equal(r.code, 2, `form ${i}`);
+  }
+});
+
+test('wordpress: a stock wp-config.php (database settings, salts, table prefix, WP_DEBUG, ABSPATH) leaves no doubt: SAFE', () => {
+  const root = fresh('w8-stock'), s = site(join(root, 'site'));
+  plugin(join(s, 'wp-content', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.13');
+  put(join(s, 'wp-config.php'), "<?php\ndefine( 'DB_NAME', 'wp' );\ndefine( 'DB_USER', 'wp' );\ndefine( 'DB_PASSWORD', 'x' );\ndefine( 'DB_HOST', 'localhost' );\ndefine( 'AUTH_KEY', 'put your unique phrase here' );\n$table_prefix = 'wp_';\ndefine( 'WP_DEBUG', false );\nif ( ! defined( 'ABSPATH' ) ) {\n\tdefine( 'ABSPATH', __DIR__ . '/' );\n}\nrequire_once ABSPATH . 'wp-settings.php';\n");
   const r = wp(root);
-  assert.ok(unknowns(r).some((x) => /WP_PLUGIN_DIR/.test(x.reason)), show(r)); assert.equal(r.code, 2);
-  const root2 = fresh('w8b'), s2 = site(join(root2, 'site'));
-  put(join(s2, 'wp-config.php'), "<?php\n// define('WP_PLUGIN_DIR', getenv('PLUGINS'));\n");
-  assert.equal(wp(root2).code, 0);
+  assert.equal(unknowns(r).length, 0, show(r)); assert.equal(r.code, 0);
 });
 
 test('wordpress: a site inside another site\'s folder (public_html/blog) is searched too', () => {
@@ -626,19 +637,7 @@ const moved = (name, cfg, cfgAt = 'core') => {
 };
 const exposedOrUnknown = (r) => r.rows.some((x) => x.status === 'EXPOSED' && /updraftplus/.test(x.what)) || unknowns(r).length > 0;
 
-test('wordpress: WP_CONTENT_DIR defined in the forms sites use (inside an if, on the <?php line, over lines, in capitals) is followed', () => {
-  const forms = [
-    "<?php\nif ( ! defined('WP_CONTENT_DIR') ) define('WP_CONTENT_DIR', __DIR__ . '/content');\n",
-    "<?php define('WP_CONTENT_DIR', __DIR__ . '/content');\n",
-    "<?php\ndefine(\n  'WP_CONTENT_DIR',\n  __DIR__ . '/content'\n);\n",
-    "<?php\nDEFINE('WP_CONTENT_DIR', dirname( __FILE__ ) . '/content');\n",
-    "<?php\ndefine('WP_CONTENT_DIR', ABSPATH . 'content');\n",
-  ];
-  for (const [i, cfg] of forms.entries()) {
-    const r = wp(moved(`s6-${i}`, cfg));
-    assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && /updraftplus/.test(x.what)), `form ${i}: ${show(r)}`); assert.equal(r.code, 1, `form ${i}`);
-  }
-});
+
 
 test('wordpress: a wp-config.php that cannot be opened, or a move set in a form that cannot be followed, is UNKNOWN', { skip: AS_ROOT && 'root reads a mode-000 file' }, () => {
   const root = moved('s7', "<?php\ndefine('WP_CONTENT_DIR', __DIR__ . '/content');\n"); lock(join(root, 'site', 'wp-config.php'));
@@ -652,27 +651,6 @@ test('wordpress: a wp-config.php that cannot be opened, or a move set in a form 
   }
 });
 
-test('wordpress: a plain use of the constant, or its name in a string or heredoc, moves nothing (no UNKNOWN)', () => {
-  const cfgs = ["<?php\n$uploads = WP_CONTENT_DIR . '/uploads';\n", "<?php\n$help = 'Set WP_CONTENT_DIR in the panel; it is not set here';\n",
-    "<?php\n$t = <<<EOT\nIt's here: define('WP_CONTENT_DIR', getenv('X'));\nEOT;\ndefine('WP_HOME', 'http://x'); define('WP_DEBUG', false);\n",
-    "<?php\nif ( ! defined( 'WP_CONTENT_DIR' ) ) { $x = 1; }\n"];
-  for (const [i, cfg] of cfgs.entries()) {
-    const root = fresh(`s7c-${i}`); site(join(root, 'site')); put(join(root, 'site', 'wp-config.php'), cfg);
-    const r = wp(root);
-    assert.equal(unknowns(r).length, 0, `cfg ${i}: ${show(r)}`); assert.equal(r.code, 0, `cfg ${i}`);
-  }
-});
-
-test('wordpress: a heredoc with an apostrophe, and a // comment ended by ?>, do not hide a define after them', () => {
-  const forms = ["<?php\n$t = <<<EOT\nIt's a note\nEOT;\ndefine('WP_HOME','http://x'); define('WP_CONTENT_DIR', __DIR__ . '/content');\n",
-    "<?php\n// old ?><?php define('WP_CONTENT_DIR', __DIR__ . '/content');\n", "<?php\n$s = 'it\\'s'; define('WP_CONTENT_DIR', __DIR__ . '/content');\n",
-    "<?php\ndefine('WP_CONTENT_DIR', dirname (__FILE__) . '/content');\n"];
-  for (const [i, cfg] of forms.entries()) {
-    const r = wp(moved(`s7d-${i}`, cfg));
-    assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && /updraftplus/.test(x.what)), `form ${i}: ${show(r)}`); assert.equal(unknowns(r).length, 0, `form ${i}`);
-  }
-});
-
 test('wordpress: the wp-config.php a level up is read only when the core has none (as WordPress does): a locked unrelated one is not UNKNOWN', { skip: AS_ROOT && 'root reads a mode-000 file' }, () => {
   const root = fresh('s7e'), s = site(join(root, 'site')); put(join(s, 'wp-config.php'), "<?php\ndefine('DB_NAME', 'x');\n");
   const other = put(join(root, 'wp-config.php'), '<?php\n'); lock(other);
@@ -682,7 +660,7 @@ test('wordpress: the wp-config.php a level up is read only when the core has non
   put(join(s2, 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";'); plugin(join(s2, 'content', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.12');
   put(join(root2, 'wp-config.php'), "<?php\ndefine('WP_CONTENT_DIR', __DIR__ . '/site/content');\n");
   const r2 = wp(root2);
-  assert.ok(r2.rows.some((x) => x.status === 'EXPOSED'), `with no wp-config.php of its own, the one a level up is read: ${show(r2)}`);
+  assert.ok(unknowns(r2).some((x) => x.reason.startsWith(join(root2, 'wp-config.php'))), `with no wp-config.php of its own, the one a level up is read: ${show(r2)}`);
 });
 
 test('wordpress: earlier Bedrock (a plain define of CONTENT_DIR in application.php) is followed, with no UNKNOWN', () => {
@@ -694,46 +672,43 @@ test('wordpress: earlier Bedrock (a plain define of CONTENT_DIR in application.p
   assert.equal(unknowns(r).length, 0, show(r)); assert.equal(r.code, 0);
 });
 
-test('wordpress: a define in a block or line comment is not a define (no UNKNOWN for it)', () => {
-  for (const [i, cfg] of ["<?php\n/* define('WP_PLUGIN_DIR', getenv('X')); */\n", "<?php\n// define('WP_PLUGIN_DIR', getenv('X'));\n", "<?php\n# define('WP_PLUGIN_DIR', getenv('X'));\n"].entries()) {
-    const root = fresh(`s8-${i}`); site(join(root, 'site')); put(join(root, 'site', 'wp-config.php'), cfg);
-    assert.equal(wp(root).code, 0, `form ${i}`);
-  }
-});
-
-test('wordpress: WP_PLUGIN_DIR alone (no wp-content) is checked; WP_CONTENT_DIR with no plugins in it is a site, SAFE', () => {
+test('wordpress: a core with no plugins folder on disk but a wp-config.php that moves it is a site, UNKNOWN (not "no plugins folder")', () => {
   const root = fresh('s9'), s = join(root, 'site');
   put(join(s, 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";'); put(join(s, 'wp-config.php'), "<?php\ndefine('WP_PLUGIN_DIR', __DIR__ . '/plugs');\n");
   plugin(join(s, 'plugs'), 'updraftplus', 'updraftplus.php', '1.26.12');
   const r = wp(root);
-  assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && /updraftplus/.test(x.what)), show(r)); assert.equal(r.code, 1);
-  const root2 = fresh('s9b'), s2 = join(root2, 'site');
-  put(join(s2, 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";'); put(join(s2, 'wp-config.php'), "<?php\ndefine('WP_CONTENT_DIR', __DIR__ . '/stuff');\n");
-  mkdirSync(join(s2, 'stuff'));
-  const r2 = wp(root2);
-  assert.ok(r2.rows.some((x) => x.status === 'SAFE' && /1 WordPress install/.test(x.reason)), show(r2)); assert.equal(r2.code, 0);
+  assert.ok(unknowns(r).some((x) => /moves the plugins folder/.test(x.reason)), show(r)); assert.equal(r.code, 2);
 });
 
-test('wordpress: one plugins folder reached two ways (a define naming the default) is checked once, with no plugins field', () => {
-  const root = fresh('s10'), s = site(join(root, 'site'));
-  plugin(join(s, 'wp-content', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.13');
-  put(join(s, 'wp-config.php'), "<?php\ndefine('WP_CONTENT_DIR', __DIR__ . '/wp-content');\n");
+test('wordpress: one plugins folder reached two ways (wp-content linked to the core\'s) is checked once, with no plugins field', () => {
+  const root = fresh('s10'), s = join(root, 'site'), core = join(s, 'wp');
+  put(join(core, 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";');
+  plugin(join(core, 'wp-content', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.13');
+  symlinkSync(join(core, 'wp-content'), join(s, 'wp-content'));
   const r = wp(root);
   const rows = r.rows.filter((x) => x.what === 'updraftplus 1.26.13');
   assert.equal(rows.length, 1, show(r)); assert.equal(rows[0].plugins, undefined);
 });
 
-test('wordpress: Bedrock with a custom CONTENT_DIR is followed; one set in another way is UNKNOWN', () => {
-  const root = fresh('s11'), b = join(root, 'example.com');
-  put(join(b, 'web', 'wp', 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";');
-  plugin(join(b, 'web', 'wp', 'wp-content', 'plugins'), 'akismet', 'akismet.php', '5.3');
-  put(join(b, 'config', 'application.php'), "<?php\nConfig::define('CONTENT_DIR', '/content');\n");
-  plugin(join(b, 'web', 'content', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.12');
-  const r = wp(root);
-  assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && /updraftplus/.test(x.what)), show(r)); assert.equal(r.code, 1);
-  put(join(b, 'config', 'application.php'), "<?php\nConfig::define('CONTENT_DIR', env('CONTENT_DIR'));\n");
-  const r2 = wp(root);
-  assert.ok(unknowns(r2).some((x) => /application\.php/.test(x.reason)), show(r2));
+test('wordpress: Bedrock with any CONTENT_DIR but its stock /app (in application.php or an environment file), or an unreadable application.php, is UNKNOWN', { skip: AS_ROOT && 'root reads a mode-000 file' }, () => {
+  const mk = (name, app, env) => {
+    const root = fresh(name), b = join(root, 'example.com');
+    put(join(b, 'web', 'wp', 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";');
+    plugin(join(b, 'web', 'app', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.13');
+    put(join(b, 'config', 'application.php'), app);
+    if (env) put(join(b, 'config', 'environments', 'production.php'), env);
+    return { root, app: join(b, 'config', 'application.php') };
+  };
+  for (const [i, [app, env]] of [["<?php\nConfig::define('CONTENT_DIR', '/content');\n"], ["<?php\nConfig::define('CONTENT_DIR', env('CONTENT_DIR'));\n"],
+    ["<?php\nConfig::define('CONTENT_DIR', '/app');\nConfig::define('WP_CONTENT_DIR', '/srv/shared/content');\n"], ["<?php\nConfig::define('CONTENT_DIR', '/app');\n", "<?php\nConfig::define('CONTENT_DIR', '/content');\n"]].entries()) {
+    const r = wp(mk(`s11-${i}`, app, env).root);
+    assert.ok(unknowns(r).length, `case ${i}: ${show(r)}`); assert.equal(r.code, 2, `case ${i}`);
+  }
+  const locked = mk('s11-locked', "<?php\nConfig::define('CONTENT_DIR', '/app');\n"); lock(locked.app);
+  const r = wp(locked.root);
+  assert.ok(unknowns(r).some((x) => /could not be opened/.test(x.reason)), show(r)); assert.equal(r.code, 2);
+  const stock = mk('s11-stock', "<?php\nuse Roots\\WPConfig\\Config;\n$webroot_dir = $root_dir . '/web';\nConfig::define('CONTENT_DIR', '/app');\nConfig::define('WP_CONTENT_DIR', $webroot_dir . Config::get('CONTENT_DIR'));\nConfig::define('WP_CONTENT_URL', Config::get('WP_HOME') . Config::get('CONTENT_DIR'));\n");
+  assert.equal(wp(stock.root).code, 0, 'stock Bedrock leaves no doubt');
 });
 
 test('wordpress: a staging copy inside a site\'s wp-content is a site of its own', () => {
@@ -795,4 +770,52 @@ test('wordpress: a clean staging copy inside wp-content is found and SAFE', () =
   const r = wp(root);
   assert.ok(r.rows.some((x) => x.status === 'SAFE' && x.site === join(top, 'wp-content', 'staging')), show(r));
   assert.equal(r.rows.filter((x) => ['EXPOSED', 'UNKNOWN'].includes(x.status)).length, 0, show(r)); assert.equal(r.code, 0);
+});
+
+test('headers: curl files brought in are capped (32 files, 1 MB each): past that UNKNOWN, never a hang', () => {
+  const h = fresh('s18'); gitconfigId(h);
+  const many = Array.from({ length: 40 }, (_, i) => put(join(h, 'k', `c${i}.rc`), '-H "X: 1"\n'));
+  put(join(h, '.curlrc'), many.map((f) => `-K ${f}`).join('\n') + '\n');
+  const t = Date.now(); const r = hdr(h);
+  assert.ok(unknowns(r).some((x) => /more files than the 32/.test(x.reason)), show(r)); assert.equal(r.code, 2); assert.ok(Date.now() - t < 20000);
+  const h2 = fresh('s18b'); gitconfigId(h2);
+  const big = put(join(h2, 'big-headers'), 'X: y\n'.repeat(300000)); put(join(h2, '.curlrc'), `-H @${big}\n`);
+  const r2 = hdr(h2);
+  assert.ok(unknowns(r2).some((x) => x.file === big), show(r2)); assert.equal(r2.code, 2);
+});
+
+test('headers: a capital K inside another option\'s value (-uKen:pw, -eKnown) brings in no file; -sK file does', () => {
+  const h = fresh('s19'); gitconfigId(h); put(join(h, '.curlrc'), '-uKen:secret\n-eKnown\n');
+  const r = hdr(h);
+  assert.equal(unknowns(r).length, 0, show(r)); assert.equal(r.code, 0);
+  const h2 = fresh('s19b'); gitconfigId(h2); const w = put(join(h2, 'w.rc'), `-H "From: ${EMAIL}"\n`); put(join(h2, '.curlrc'), `-sK ${w}\n`);
+  assert.equal(hdr(h2).code, 1);
+});
+
+// ---- owner decisions, 23 Oct 2026 ---------------------------------------------------------------------------------------
+test('images: Docker installed but not running (Docker Desktop quit) is a REVIEW line saying its images were not checked; exit 0', () => {
+  const eng = engine('o1', { images: 'echo "Cannot connect to the Docker daemon at unix:///Users/ada/.docker/run/docker.sock. Is the docker daemon running?" >&2; exit 1' });
+  const r = run(['--incident', 'litellm-2026-10', '--paths', fresh('o1-root')], { PATH: eng, HOME: fresh('o1-home'), TMPDIR: fresh('o1-tmp') }, preload('o1'));
+  assert.ok(r.rows.some((x) => x.status === 'REVIEW' && x.engine === 'docker' && x.notRunning && /not running, so its local images were not checked/.test(x.reason)), show(r));
+  assert.ok(r.rows.some((x) => x.status === 'SAFE'), `the all-clear for what was looked at stays: ${show(r)}`);
+  assert.equal(r.code, 0);
+});
+
+test('trust (Linux): the distribution\'s CA bundle with neither curl nor python3 to test it is UNKNOWN; with python3 it is not', () => {
+  const bundle = put(join(fresh('o2-ca'), 'ca-certificates.crt'), '-----BEGIN CERTIFICATE-----\n');
+  const linux = (name) => preload(name, { online: true, redirects: { '/etc/ssl/certs/ca-certificates.crt': bundle }, extra: "Object.defineProperty(process, 'platform', { value: 'linux' });" });
+  const d = fresh('o2'); nodeRt(d);
+  const r = trust({ PATH: d }, linux('o2'));
+  assert.ok(unknowns(r).some((x) => x.system && /neither curl nor python3/.test(x.reason)), show(r)); assert.equal(r.code, 2);
+  const d2 = fresh('o2b'); nodeRt(d2); pythonRt(d2);
+  const r2 = trust({ PATH: d2 }, linux('o2b'));
+  assert.ok(!r2.rows.some((x) => x.system && x.status === 'UNKNOWN'), show(r2));
+});
+
+test('headers: a planted .curlrc of thousands of relative or over-the-cap file lines makes one UNKNOWN row of each kind, quickly', () => {
+  const h = fresh('s20'); gitconfigId(h);
+  const lines = [...Array.from({ length: 5000 }, (_, i) => `-H @rel${i}.txt`), ...Array.from({ length: 5000 }, (_, i) => `-K /nowhere/c${i}.rc`)];
+  put(join(h, '.curlrc'), lines.join('\n') + '\n');
+  const t = Date.now(); const r = hdr(h);
+  assert.equal(unknowns(r).length, 2, show(r)); assert.ok(Date.now() - t < 20000);
 });

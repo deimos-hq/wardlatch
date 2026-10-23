@@ -291,10 +291,10 @@ for (const inc of chosen) {
       if (row.fix) note('2', `fix: ${row.fix}`);
     }
     gaps(results, inc, 'search', deniedVenvs, { found: foundUnread });
+    // found, but not tested (lib/discover.mjs says why): UNKNOWN, never dropped
     for (const u of untested) {
-      const reason = u.caVar ? `${u.caVar} names ${u.bundle}, which was not tested: ${u.why}` : 'this virtual environment\'s certifi bundle was found, but there is no curl on this machine to test it with: install curl and run again';
-      results.push({ incident: inc.id, kind: 'curl', status: 'UNKNOWN', ...(u.caVar ? { caVar: u.caVar, bundle: u.bundle } : { env: u.env, certifi: u.certifi }), reason });
-      print('UNKNOWN', u.label ?? `certifi ${u.certifi || '(version unknown)'}  ${short(u.env)}`); note('33', reason);
+      results.push({ incident: inc.id, kind: 'curl', status: 'UNKNOWN', ...u.fields, reason: u.reason });
+      print('UNKNOWN', u.label); note('33', u.reason);
     }
     notRunRow(results, inc, 'trust', notRun);
     // the test hosts' certificates expire: after that a container (which has no forced-roots control) would read every
@@ -396,7 +396,13 @@ for (const inc of chosen) {
       const byEngine = {};
       for (const e of ['docker', 'podman'].filter((x) => findOnPath(x))) {
         const list = localImageDigests(e);
-        if (list === null) { note('2', `${e}: not running, so its local images were not checked`); continue; }
+        // installed but not running (Docker Desktop quit, a Podman machine stopped): its images weren't listed. A REVIEW
+        // line, never the exit code (owner, 23 Oct 2026: a quit Docker Desktop is normal on a laptop)
+        if (list === null) {
+          const reason = `${e} is installed but not running, so its local images were not checked: start it and run again to include them`;
+          results.push({ incident: inc.id, kind: 'install', engine: e, status: 'REVIEW', notRunning: true, reason });
+          print('REVIEW', `${e} images`); note('33', reason); continue;
+        }
         // permission denied, no answer, too much output: the images exist but weren't seen, which is not SAFE
         if (list.error) { show({ status: 'UNKNOWN', engine: e, reason: `${list.error}, so its local images were not checked` }, `${e} images`); continue; }
         byEngine[e] = list; searched.push(`${list.length} ${e} image${list.length === 1 ? '' : 's'}`);
@@ -405,8 +411,9 @@ for (const inc of chosen) {
     }
     gaps(results, inc, 'install', denied, { found: foundUnread, searchesRoots: Boolean(inc.sitePackages) });
     // nothing found in any part that could be looked at: the all-clear names every folder it searched. An engine that
-    // couldn't be asked keeps its own UNKNOWN row (and the exit code at 2) beside it; a finding or another gap doesn't.
-    const onlyEngineGaps = counted(results).every((r) => r.status === 'UNKNOWN' && r.engine);
+    // couldn't be asked keeps its own UNKNOWN row (and the exit code at 2) beside it, and one that isn't running its
+    // REVIEW row; a finding or another gap doesn't.
+    const onlyEngineGaps = counted(results).every((r) => r.engine && (r.status === 'UNKNOWN' || r.notRunning));
     if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean));
   }
 

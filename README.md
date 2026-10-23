@@ -108,7 +108,7 @@ has `incident`, `status` and `kind` (`node`, `curl`, `python`, `macos-system`, `
 `containers` when an engine can't be asked or a `DOCKER_HOST` isn't followed, `runtimes` when a trust check found nothing to test,
 `skipped` for the folders a service owns that couldn't be opened (`paths`),
 `environment` when a trust setting couldn't be given to the probes, `search` for a folder the trust check couldn't open,
-`home` when a sudo user's home folder wasn't found, `binary`, `install`, `header`, `workflow`, `secret` or `wordpress`; a virtual environment's certifi is kind `curl` with `certifi` and `env`, and the bundle `REQUESTS_CA_BUNDLE` names is kind `curl` with `caVar` and `bundle`; a WordPress row has `site`, and `plugins` when that site has more than one plugins folder), the fields of that kind (such as `bin`, `version`, `trusted` and `tested` for a
+`home` when a sudo user's home folder wasn't found, `binary`, `install`, `header`, `workflow`, `secret` or `wordpress`; a virtual environment's certifi is kind `curl` with `certifi` and `env`, and the bundle `REQUESTS_CA_BUNDLE` names is kind `curl` with `caVar` and `bundle`; a WordPress row has `site`, and `plugins` when that site has more than one plugins folder; a container engine that is installed but not running is a REVIEW row with `engine` and `notRunning`), the fields of that kind (such as `bin`, `version`, `trusted` and `tested` for a
 trust probe, or `file`, `line`, `type` and `masked` for a key), `reason` when it is UNKNOWN, and `fix` when there is
 something to do.
 
