@@ -120,9 +120,9 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
       `wp-content` one level up, was never found: "no WordPress installs found". Every plugins folder a site can use,
       and leftover ones beside it, is checked now, not only the first found (a core still holding its bundled
       `wp-content` beside the live one read SAFE about the wrong plugins): those places, what `WP_CONTENT_DIR` and
-      `WP_PLUGIN_DIR` are set to in wp-config.php (in any of the forms sites write a define, comments ignored), and
-      Bedrock's `CONTENT_DIR`. A mention of either that can't be followed, or a wp-config.php that can't be read, is
-      UNKNOWN; so is a core with no plugins folder in any of those places.
+      `WP_PLUGIN_DIR` are set to in the wp-config.php WordPress reads (a define in any form sites write it, comments
+      and heredocs ignored), and Bedrock's `CONTENT_DIR`. A define of either that can't be followed, a `const` one, or a
+      wp-config.php that can't be read, is UNKNOWN; so is a core with no plugins folder in any of those places.
     - A site inside another site's folder (`public_html/blog`) was never searched: the search stopped at the first.
     - A key in a tracked file deleted from the working tree (still in the index, HEAD and every push) was skipped. git's
       own copy is scanned now, in a few git runs however many there are. A file marked skip-worktree that is on disk is
@@ -131,15 +131,17 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
     - A real key with an example key (of any kind) beside it on the same line was taken for a placeholder.
     - curl's `-H @file` (`header = "@file"`, `-H@file`) was checked as a file name, never as the headers in the file.
       The file is read now; one named by a relative path is UNKNOWN, and one curl couldn't read either sends nothing.
-    - `.curlrc` lines are read as curl reads them (each form checked against curl 8.7.1): short options in a cluster
-      (`-sH "From: …"`, `-sA …`) and attached values (`-HFrom:…`) were missed; lines curl refuses (`--header=…`, an
-      attached value followed by another word) or cuts at the first space (an unquoted value) were taken whole, a false
-      EXPOSED.
+    - `.curlrc` lines with short options in a cluster (`-sH "From: …"`, `-sA …`) or an attached value (`-HFrom:…`),
+      curl 8.3's `expand-header` / `expand-user-agent` and `variable` lines, and the config files a `config =` or `-K`
+      line brings in were not read. They are now, on the safe side: your name or email anywhere after a header option
+      counts.
     - The bundle `REQUESTS_CA_BUNDLE` names (what requests and pip trust in place of certifi) was never tested. It is
-      tested now, and is UNKNOWN when there is no curl to test it with, or when it names a folder.
+      tested now, and is UNKNOWN when there is no curl to test it with, when it names a folder, or when it can't be
+      opened.
   - **False UNKNOWNs:**
     - `DOCKER_HOST` naming a local socket that is gone (Colima or a Podman machine stopped) read as an unfollowed host.
-      It is "not running" now, when the socket's folder is this user's or root's.
+      It is "not running" now, when the socket's folder is there, is this user's or root's, and no one else can write
+      to it.
     - A JSON-with-comments file whose last setting is commented out after a trailing comma (VS Code writes these) read
       as invalid.
   - **Options and wording:**
@@ -197,7 +199,16 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   `ABSPATH` (a constant, `getenv()`, `dirname(__DIR__)`) can't be followed: UNKNOWN. Bedrock's per-environment config
   files (`config/environments/*.php`) are not read. Leftover plugins folders beside a site are checked too, so a stale
   copy of a plugin can read EXPOSED: its files are still on the web server.
-- curl's long option names are matched without regard to case (older curl did; curl 8.7 refuses `--HEADER`).
+- `.curlrc` is read on the safe side, not as curl parses it: a line with a header option and your name or email after
+  it is EXPOSED even when curl refuses the line or sends only part of it (an unquoted value is cut at its first space;
+  `--header=x` and an attached value followed by another word are refused; a later `-A` replaces an earlier one; long
+  names in capitals are refused by curl 8.7 but were taken by older curl). Fix or remove such a line. Abbreviated long
+  option names (`user-agen`, which older curl took) are not read, and `cookie` and `referer` lines are outside this
+  check.
+- `DOCKER_HOST` naming a socket whose folder is gone too (a stopped Podman machine's after a reboot) is not followed:
+  UNKNOWN, as for a remote host. Start the engine, or pass `--no-containers`.
+- Bedrock's `CONTENT_DIR` is followed when `config/application.php` sets it to a quoted path (`Config::define` or
+  `define`); set in any other way it is UNKNOWN.
 - A later copy of a program on `PATH` that can be run but not read (mode 111) is taken for a script: named for review,
   not run.
 - `--paths` given for a folder and a folder inside it reports a finding in the inner one twice, and `--list --json`

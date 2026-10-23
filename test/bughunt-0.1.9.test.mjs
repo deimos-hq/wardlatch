@@ -7,7 +7,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { renameSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, chmodSync, existsSync, symlinkSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, chmodSync, existsSync, symlinkSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -272,16 +272,58 @@ test('headers: .curlrc lines curl sends your email from (attached values, short-
   }
 });
 
-// and these send nothing of yours (curl refuses the line, or sends only the first word of an unquoted value)
-test('headers: .curlrc lines curl refuses or cuts short (--header=, an attached value plus a word, -oH, unquoted spaces) are SAFE', () => {
-  const lines = ['--header=@{f}', `-H"From: ${EMAIL}"`, `-HFrom: ${EMAIL}`, `-oH "From: ${EMAIL}"`, `-H From: ${EMAIL}`, `header = From: ${EMAIL}`];
+// read on the safe side: a line curl refuses, or reads only in part, is still reported (fix or remove it)
+test('headers: .curlrc lines curl refuses or cuts short (--header=, an attached value plus a word, -oH, unquoted spaces) are still EXPOSED', () => {
+  const lines = ['--header=@{f}', `-H"From: ${EMAIL}"`, `-HFrom: ${EMAIL}`, `-oH "From: ${EMAIL}"`, `-H From: ${EMAIL}`, `header = From: ${EMAIL}`, `-HFrom:${EMAIL}   # so admins can reach me`, `HEADER = "From: ${EMAIL}"`, `-A "${EMAIL}"\n-A "other"`];
   for (const [i, line] of lines.entries()) {
     const h = fresh(`h9-${i}`); gitconfigId(h);
     const f = put(join(h, 'hf'), `From: ${EMAIL}\n`);
     put(join(h, '.curlrc'), `${line.replace('{f}', f)}\n`);
     const r = hdr(h);
-    assert.equal(r.rows.filter((x) => x.status !== 'SAFE').length, 0, `${line}: ${show(r)}`); assert.equal(r.code, 0, line);
+    assert.ok(r.rows.some((x) => x.status === 'EXPOSED'), `${line}: ${show(r)}`); assert.equal(r.code, 1, line);
   }
+});
+
+test('headers: .curlrc lines that send nothing of yours, or are not header options (-a, -h, --cacert, -k), are SAFE', () => {
+  const h = fresh('h10'); gitconfigId(h);
+  put(join(h, '.curlrc'), `﻿-a ${EMAIL}\n-h\n--cacert /x/${EMAIL}.pem\n-k\n-H "X-Team: platform"\n-sA "curl-wrapper/1.0"\nheader:\n`);
+  const r = hdr(h);
+  assert.equal(r.rows.filter((x) => x.status !== 'SAFE').length, 0, show(r)); assert.equal(r.code, 0);
+});
+
+test('headers: curl 8.3\'s expand-header and expand-user-agent, a variable carrying your email, and -sH@file word are EXPOSED', () => {
+  const lines = [`expand-header = "From: ${EMAIL}"`, `--expand-user-agent "ua ${EMAIL}"`, `variable = "e=${EMAIL}"\nexpand-header = "From: {{e}}"`, '-sH@{f} word'];
+  for (const [i, line] of lines.entries()) {
+    const h = fresh(`h11-${i}`); gitconfigId(h);
+    const f = put(join(h, 'hf'), `From: ${EMAIL}\n`);
+    put(join(h, '.curlrc'), `${line.replace('{f}', f)}\n`);
+    const r = hdr(h);
+    assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && x.carries === 'your email'), `${line}: ${show(r)}`); assert.equal(r.code, 1, line);
+  }
+});
+
+test('headers: a config file curl brings in (config = file, -K file) is read too; a relative one is UNKNOWN; a loop ends', () => {
+  const h = fresh('h12'); gitconfigId(h);
+  const work = put(join(h, '.curl-work'), `-H "From: ${EMAIL}"\n`);
+  put(join(h, '.curlrc'), `config = "${work}"\n`);
+  const r = hdr(h);
+  assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && x.carries === 'your email'), show(r)); assert.equal(r.code, 1);
+  const h2 = fresh('h12b'); gitconfigId(h2);
+  const a = join(h2, 'a.rc'), b = join(h2, 'b.rc'); put(a, `-K ${b}\n`); put(b, `-K ${a}\n-H "X: 1"\n`); put(join(h2, '.curlrc'), `-K ${a}\n`);
+  assert.equal(hdr(h2).code, 0, 'a loop of config files ends');
+  const h3 = fresh('h12c'); gitconfigId(h3); put(join(h3, '.curlrc'), 'config = work.rc\n');
+  const r3 = hdr(h3);
+  assert.ok(unknowns(r3).some((x) => /relative path/.test(x.reason)), show(r3)); assert.equal(r3.code, 2);
+});
+
+test('headers: a variable that takes your email from the environment (%NAME) or a file (name@file) is EXPOSED', () => {
+  const h = fresh('h13'); gitconfigId(h);
+  put(join(h, '.curlrc'), 'variable = %MYMAIL\nexpand-header = "From: {{MYMAIL}}"\n');
+  const r = hdr(h, { MYMAIL: EMAIL });
+  assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && x.carries === 'your email'), show(r)); assert.equal(r.code, 1);
+  const h2 = fresh('h13b'); gitconfigId(h2);
+  const f = put(join(h2, 'mail.txt'), `${EMAIL}\n`); put(join(h2, '.curlrc'), `variable = "m@${f}"\n`);
+  assert.equal(hdr(h2).code, 1);
 });
 
 test('headers: a curl header file named by a relative path is UNKNOWN (curl reads it from wherever it runs); @/dev/null is empty', () => {
@@ -598,12 +640,58 @@ test('wordpress: WP_CONTENT_DIR defined in the forms sites use (inside an if, on
   }
 });
 
-test('wordpress: a wp-config.php that cannot be read, or mentions WP_CONTENT_DIR in a way that cannot be followed, is UNKNOWN', { skip: AS_ROOT && 'root reads a mode-000 file' }, () => {
+test('wordpress: a wp-config.php that cannot be opened, or a move set in a form that cannot be followed, is UNKNOWN', { skip: AS_ROOT && 'root reads a mode-000 file' }, () => {
   const root = moved('s7', "<?php\ndefine('WP_CONTENT_DIR', __DIR__ . '/content');\n"); lock(join(root, 'site', 'wp-config.php'));
   const r = wp(root);
-  assert.ok(unknowns(r).some((x) => /could not be read/.test(x.reason)), show(r)); assert.equal(r.code, 2);
-  const r2 = wp(moved('s7b', "<?php\n$d = WP_CONTENT_DIR;\n"));
-  assert.ok(unknowns(r2).some((x) => /WP_CONTENT_DIR/.test(x.reason)), show(r2)); assert.equal(r2.code, 2);
+  assert.ok(unknowns(r).some((x) => /could not be opened/.test(x.reason)), show(r)); assert.equal(r.code, 2);
+  const forms = ["<?php\ndefine('WP_CONTENT_DIR', MY_ROOT . '/content');\n", "<?php\nconst WP_CONTENT_DIR = __DIR__ . '/content';\n",
+    "<?php\n$site = 'x';\ndefine('WP_CONTENT_DIR', \"/srv/{$site}/content\");\n", "<?php\ndefine('WP_PLUGIN_DIR', __DIR__ . \"/$p\");\n", "<?php\ndefine( \"WP_CONTENT_DIR\", getenv('C') );\n"];
+  for (const [i, cfg] of forms.entries()) {
+    const r2 = wp(moved(`s7b-${i}`, cfg));
+    assert.ok(exposedOrUnknown(r2) && unknowns(r2).length, `form ${i}: ${show(r2)}`); assert.notEqual(r2.code, 0, `form ${i}`);
+  }
+});
+
+test('wordpress: a plain use of the constant, or its name in a string or heredoc, moves nothing (no UNKNOWN)', () => {
+  const cfgs = ["<?php\n$uploads = WP_CONTENT_DIR . '/uploads';\n", "<?php\n$help = 'Set WP_CONTENT_DIR in the panel; it is not set here';\n",
+    "<?php\n$t = <<<EOT\nIt's here: define('WP_CONTENT_DIR', getenv('X'));\nEOT;\ndefine('WP_HOME', 'http://x'); define('WP_DEBUG', false);\n",
+    "<?php\nif ( ! defined( 'WP_CONTENT_DIR' ) ) { $x = 1; }\n"];
+  for (const [i, cfg] of cfgs.entries()) {
+    const root = fresh(`s7c-${i}`); site(join(root, 'site')); put(join(root, 'site', 'wp-config.php'), cfg);
+    const r = wp(root);
+    assert.equal(unknowns(r).length, 0, `cfg ${i}: ${show(r)}`); assert.equal(r.code, 0, `cfg ${i}`);
+  }
+});
+
+test('wordpress: a heredoc with an apostrophe, and a // comment ended by ?>, do not hide a define after them', () => {
+  const forms = ["<?php\n$t = <<<EOT\nIt's a note\nEOT;\ndefine('WP_HOME','http://x'); define('WP_CONTENT_DIR', __DIR__ . '/content');\n",
+    "<?php\n// old ?><?php define('WP_CONTENT_DIR', __DIR__ . '/content');\n", "<?php\n$s = 'it\\'s'; define('WP_CONTENT_DIR', __DIR__ . '/content');\n",
+    "<?php\ndefine('WP_CONTENT_DIR', dirname (__FILE__) . '/content');\n"];
+  for (const [i, cfg] of forms.entries()) {
+    const r = wp(moved(`s7d-${i}`, cfg));
+    assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && /updraftplus/.test(x.what)), `form ${i}: ${show(r)}`); assert.equal(unknowns(r).length, 0, `form ${i}`);
+  }
+});
+
+test('wordpress: the wp-config.php a level up is read only when the core has none (as WordPress does): a locked unrelated one is not UNKNOWN', { skip: AS_ROOT && 'root reads a mode-000 file' }, () => {
+  const root = fresh('s7e'), s = site(join(root, 'site')); put(join(s, 'wp-config.php'), "<?php\ndefine('DB_NAME', 'x');\n");
+  const other = put(join(root, 'wp-config.php'), '<?php\n'); lock(other);
+  const r = wp(root);
+  assert.equal(unknowns(r).length, 0, show(r)); assert.equal(r.code, 0);
+  const root2 = fresh('s7f'), s2 = join(root2, 'site');
+  put(join(s2, 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";'); plugin(join(s2, 'content', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.12');
+  put(join(root2, 'wp-config.php'), "<?php\ndefine('WP_CONTENT_DIR', __DIR__ . '/site/content');\n");
+  const r2 = wp(root2);
+  assert.ok(r2.rows.some((x) => x.status === 'EXPOSED'), `with no wp-config.php of its own, the one a level up is read: ${show(r2)}`);
+});
+
+test('wordpress: earlier Bedrock (a plain define of CONTENT_DIR in application.php) is followed, with no UNKNOWN', () => {
+  const root = fresh('s7g'), b = join(root, 'example.com');
+  put(join(b, 'web', 'wp', 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";');
+  put(join(b, 'config', 'application.php'), "<?php\ndefine('CONTENT_DIR', '/app');\ndefine('WP_CONTENT_DIR', $webroot_dir . CONTENT_DIR);\n");
+  plugin(join(b, 'web', 'app', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.13');
+  const r = wp(root);
+  assert.equal(unknowns(r).length, 0, show(r)); assert.equal(r.code, 0);
 });
 
 test('wordpress: a define in a block or line comment is not a define (no UNKNOWN for it)', () => {
@@ -653,4 +741,58 @@ test('wordpress: a staging copy inside a site\'s wp-content is a site of its own
   plugin(join(site(join(top, 'wp-content', 'staging')), 'wp-content', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.12');
   const r = wp(root);
   assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && x.site === join(top, 'wp-content', 'staging')), show(r)); assert.equal(r.code, 1);
+});
+
+// ---- the strict check of b827dc6 ----------------------------------------------------------------------------------------
+test('keys: the batch parser reads past an object git no longer has, and keeps blobs that hold newlines', async () => {
+  const { parseBatch } = await import('../lib/secrets.mjs');
+  const a = Buffer.from('line1\nline2\n'), b = Buffer.from('x\n0 blob 5\nfake\n');
+  const out = Buffer.concat([Buffer.from(`aaa blob ${a.length}\n`), a, Buffer.from('\nbbb missing\n'), Buffer.from(`ccc blob ${b.length}\n`), b, Buffer.from('\n')]);
+  assert.deepEqual(parseBatch(out).map((o) => (o.missing ? [o.blob, 'missing'] : [o.blob, o.body.toString()])), [['aaa', 'line1\nline2\n'], ['bbb', 'missing'], ['ccc', 'x\n0 blob 5\nfake\n']]);
+});
+
+test('keys: deleted files are read in one --batch run per maxIndexed bytes (counted through a git that logs its calls)', async () => {
+  const { scanRepo } = await import('../lib/secrets.mjs');
+  const root = fresh('s13'), g = gitRepo(root);
+  for (let i = 0; i < 4; i++) put(join(root, `f${i}.txt`), `${'z'.repeat(60)} ${i}\n`);
+  put(join(root, 'README'), 'x\n'); g.commit();
+  for (let i = 0; i < 4; i++) rmSync(join(root, `f${i}.txt`));
+  const wrap = fresh('s13-bin'), log = join(dir, 's13.log'), real = execFileSync('/bin/sh', ['-c', 'command -v git'], { env: { PATH: '/usr/bin:/bin' } }).toString().trim();
+  exe(join(wrap, 'git'), `echo "$*" >> ${JSON.stringify(log)}\nexec ${JSON.stringify(real)} "$@"`);
+  const saved = process.env.PATH; process.env.PATH = `${wrap}:/usr/bin:/bin`;
+  try { scanRepo(root, { maxIndexed: 130 }); } finally { process.env.PATH = saved; }
+  const runs = readFileSync(log, 'utf8').split('\n').filter((l) => /cat-file --batch$/.test(l));
+  assert.equal(runs.length, 2, 'four 63-byte files in runs of at most 130 bytes: two runs');
+});
+
+test('headers: a folder where a settings or header file would be is not used (SAFE), as curl and git skip it', () => {
+  const h = fresh('s14'); gitconfigId(h); mkdirSync(join(h, '.curlrc'));
+  assert.equal(hdr(h).code, 0);
+  const h2 = fresh('s14b'); gitconfigId(h2); mkdirSync(join(h2, 'hdrdir')); put(join(h2, '.curlrc'), `-H @${join(h2, 'hdrdir')}\n`);
+  const r2 = hdr(h2);
+  assert.equal(unknowns(r2).length, 0, show(r2)); assert.equal(r2.code, 0);
+});
+
+test('trust: REQUESTS_CA_BUNDLE that cannot be opened is UNKNOWN and says so', { skip: AS_ROOT && 'root opens a mode-000 file' }, () => {
+  const d = fresh('s15'), b = put(join(fresh('s15-ca'), 'bundle.pem'), 'x\n'); lock(dirname(b));
+  pythonRt(d); nodeRt(d); curlRt(d);
+  const r = trust({ PATH: d, REQUESTS_CA_BUNDLE: b }, preload('s15', { online: true }));
+  assert.ok(unknowns(r).some((x) => x.caVar === 'REQUESTS_CA_BUNDLE' && /could not be opened/.test(x.reason)), show(r)); assert.equal(r.code, 2);
+});
+
+test('containers: a gone DOCKER_HOST socket in a group-writable folder is not followed; the reason says why', () => {
+  const d = fresh('s16'); nodeRt(d);
+  const grp = fresh('s16-grp'); chmodSync(grp, 0o775);
+  const sock = join(grp, 'docker.sock');
+  const eng = engine('s16', { ps: `echo "Cannot connect to the Docker daemon at unix://${sock}. Is the docker daemon running?" >&2; exit 1` });
+  const r = run(['--incident', 'emudhra-2026-10', '--paths', fresh('s16-root')], { PATH: `${eng}:${d}`, DOCKER_HOST: `unix://${sock}` }, preload('s16', { online: true }));
+  assert.ok(unknowns(r).some((x) => /others can write to/.test(x.reason)), show(r)); assert.equal(r.code, 2);
+});
+
+test('wordpress: a clean staging copy inside wp-content is found and SAFE', () => {
+  const root = fresh('s17'), top = site(join(root, 'site'));
+  plugin(join(site(join(top, 'wp-content', 'staging')), 'wp-content', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.13');
+  const r = wp(root);
+  assert.ok(r.rows.some((x) => x.status === 'SAFE' && x.site === join(top, 'wp-content', 'staging')), show(r));
+  assert.equal(r.rows.filter((x) => ['EXPOSED', 'UNKNOWN'].includes(x.status)).length, 0, show(r)); assert.equal(r.code, 0);
 });
