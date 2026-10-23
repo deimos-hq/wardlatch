@@ -12,7 +12,7 @@
         "-n",
         "-v"
       ],
-      "versionRe": "PHP (\\d+\\.\\d+\\.\\d+)",
+      "versionRe": "PHP (\\d+\\.\\d+\\.\\d+(?:[-~.]?(?:RC|rc|alpha|beta|dev)\\d*)?)",
       "fix": "Update PHP to 8.5.12, 8.4.27, 8.3.36 or 8.2.35 (released 21 Oct 2026), then restart PHP-FPM, Apache or your PHP server. There are no complete mitigations. For PHP 8.1 and older, the PHP project published minimal source backports for 7.4, 8.0 and 8.1 for people who build PHP themselves; otherwise use your distribution's or LTS vendor's backport, or move to a supported version.",
       "fixedIn": [
         "8.2.35",

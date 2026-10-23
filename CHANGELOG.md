@@ -74,8 +74,12 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
 - The workflow review lists a workflow that only a merge commit adds (git's combined view: merging main into an old
   branch doesn't list main's workflows again), ignores grafts and the commit-graph file, and never shows git's own
   hints as the reason a repository couldn't be read.
-- The header check reads the files curl and git really read: CRLF files, `$CURL_HOME/.curlrc`, `$CURL_HOME/.config/curlrc`, `~/.config/curlrc`, the
-  file `GIT_CONFIG_GLOBAL` names, `WGETRC`, `NPM_CONFIG_USERCONFIG`.
+- The header check reads more of the files curl and git read: CRLF files, `$CURL_HOME/.curlrc`, `$CURL_HOME/.config/curlrc`, `~/.config/curlrc`, the
+  file `GIT_CONFIG_GLOBAL` names, `WGETRC`, `NPM_CONFIG_USERCONFIG` (not all of them: see Known limits).
+- Three false SAFEs found in the last check before release, all in 0.1.8 too: a Plex Media Server held at a vulnerable
+  version with `apt-mark hold` (or marked for removal) read as not installed; a PHP release candidate or `-dev` build of
+  a fixed version (`8.4.27RC1`, older than the fix) read as fixed; and a virtual environment's certifi bundle on a
+  machine with no curl to test it with was dropped without a line (now UNKNOWN).
 - Bounded work: hand-written parsers instead of patterns that backtracked (a planted line took 22 s), a capped JSON walk
   and a 1 MB cap on a repository's config files (a planted 16 MB `.mcp.json` took 1.4 GB), every file read through one
   reader that never blocks on a FIFO, and every program killed with SIGKILL at its timeout.
@@ -116,8 +120,13 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   another one, a git worktree placed inside one, and submodules are not read.
 - A later copy of a program on `PATH` that is a script, not a compiled program, is not run, so its version isn't judged.
 - A folder that can't be opened and whose owner can't be read counts as a person's: UNKNOWN.
-- A locked folder on the way to a known install place (a vendor's folder under `/opt` or `/srv`, a `python3.X`) is
-  UNKNOWN whoever owns it, and the line names the place Wardlatch was looking for, which may lie below the locked folder.
+- A locked folder on the way to a known install place (a vendor's folder under `/opt` or `/srv`, a `python3.X`, a
+  `git` user's home holding `/home/git/gitlab`) is UNKNOWN whoever owns it, and the line names the place Wardlatch was
+  looking for, which may lie below the locked folder. On a server with a `git` user whose home is closed, the GitLab
+  check reads UNKNOWN even with no GitLab installed: run it with sudo.
+- The header check doesn't read git's system config (`/etc/gitconfig`, `GIT_CONFIG_SYSTEM`), files a git config
+  includes (`include.path`, `includeIf`), or `/etc/wgetrc`: a header set only there isn't seen. The SAFE line's receipt
+  lists the files it read.
 - A site folder owned by root that this user can't open (a hardened `root:www-data 750`) is a service's by the rule:
   listed for review, not UNKNOWN; run Wardlatch with sudo on a web server to include such sites.
 - A file of Wardlatch's own that fails to load (a broken install) exits 1, before anything of Wardlatch's runs.

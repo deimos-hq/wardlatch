@@ -276,8 +276,8 @@ for (const inc of chosen) {
     const impostors = canaries.filter((x) => x.impostor);
     if (impostors.length) note('33', `${impostors.length} test host${impostors.length === 1 ? '' : 's'} answered with a certificate from "${impostors[0].impostor}", not the compromised chain: something on this network (a TLS-inspecting firewall, a DNS filter) is in the way, and those hosts were not used`);
     const rootsPem = join(LIB, 'incidents', inc.rootsPem);
-    const deniedVenvs = [...lockedRoots], foundUnread = [], notRun = [];
-    for (const rt of discover({ roots: searchable, denied: deniedVenvs, found: foundUnread, notRun })) {
+    const deniedVenvs = [...lockedRoots], foundUnread = [], notRun = [], untested = [];
+    for (const rt of discover({ roots: searchable, denied: deniedVenvs, found: foundUnread, notRun, untested })) {
       const r = await check(rt, canaries, { rootsPem, controlUrl: inc.advisory });
       const row = { incident: inc.id, ...rt, ...r, fix: r.status === 'EXPOSED' ? fixFor(rt) : undefined };
       results.push(row);
@@ -288,6 +288,11 @@ for (const inc of chosen) {
       if (row.fix) note('2', `fix: ${row.fix}`);
     }
     gaps(results, inc, 'search', deniedVenvs, { found: foundUnread });
+    for (const u of untested) {
+      const reason = 'this virtual environment\'s certifi bundle was found, but there is no curl on this machine to test it with: install curl and run again';
+      results.push({ incident: inc.id, kind: 'curl', status: 'UNKNOWN', env: u.env, certifi: u.certifi, reason });
+      print('UNKNOWN', `certifi ${u.certifi || '(version unknown)'}  ${short(u.env)}`); note('33', reason);
+    }
     notRunRow(results, inc, 'trust', notRun);
     // the test hosts' certificates expire: after that a container (which has no forced-roots control) would read every
     // refusal as SAFE, so containers are UNKNOWN once the incident's notAfter has passed

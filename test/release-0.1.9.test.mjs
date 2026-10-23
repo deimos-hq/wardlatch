@@ -333,3 +333,35 @@ test('the trust check names a later node on PATH that is a script, in --json too
   assert.ok(r.rows.some((x) => x.kind === 'not-run' && x.status === 'REVIEW' && x.paths.includes(join(second, 'node'))), JSON.stringify(r.rows));
   assert.equal(existsSync(ran), false, 'the later script ran');
 });
+
+// ---- from the last check before release (581bfc6): false SAFEs already in 0.1.8 --------------------------------------
+test('Plex held at a vulnerable version (apt-mark hold, or marked for removal) is EXPOSED; a fixed one is SAFE', async () => {
+  const { checkVersionFiles } = await import('../lib/installs.mjs');
+  const rule = JSON.parse(readFileSync(join(ROOT, 'lib', 'incidents', 'plex-2026-10.json'), 'utf8')).versionFiles;
+  const status = (want, version) => {
+    const root = fresh(`px-${want}-${version}`);
+    put(join(root, 'var', 'lib', 'dpkg', 'status'), `Package: plexmediaserver\nStatus: ${want} ok installed\nPriority: optional\nVersion: ${version}-c6bbc1b53\n\n`);
+    return checkVersionFiles(rule, { root }).filter((r) => r.label === 'Debian or Ubuntu package').map((r) => r.status);
+  };
+  for (const want of ['install', 'hold', 'deinstall']) {
+    assert.deepEqual(status(want, '1.41.2.9200'), ['EXPOSED'], want);
+    assert.deepEqual(status(want, '1.43.3.10861'), ['SAFE'], `${want}, fixed`);
+  }
+});
+
+test('PHP: a release candidate or -dev build of a fixed version is EXPOSED (it predates the fix); the release is SAFE', () => {
+  for (const [v, code] of [['8.4.27RC1', 1], ['8.4.27-dev', 1], ['8.5.12RC1', 1], ['8.4.27', 0], ['8.3.6-1ubuntu1.24', 1], ['8.4.28', 0]]) {
+    const d = fresh(`php-${v}`); exe(join(d, 'php'), `echo "PHP ${v} (cli) (built: Oct 21 2026)"`);
+    const r = sys(['--incident', 'php-2026-10'], { PATH: d });
+    assert.equal(r.code, code, `${v}: ${JSON.stringify(r.rows)}`);
+  }
+});
+
+test('a virtual environment\'s certifi on a machine with no curl is could-not-be-tested, never dropped', () => {
+  const root = fresh('nc-root'), v = join(root, 'app', '.venv');
+  put(join(v, 'pyvenv.cfg'), 'home = /x\n'); put(join(v, 'bin', 'python'), '');
+  put(join(v, 'lib', 'python3.12', 'site-packages', 'certifi', 'cacert.pem'), '-----BEGIN CERTIFICATE-----\n');
+  const r = run(['--incident', 'emudhra-2026-10', '--no-containers', '--paths', root], { PATH: nodeStandIn('nc', 'NOTHING') }, ['--require', preload('nc-online', { online: true })]);
+  assert.ok(r.rows.some((x) => x.status === 'UNKNOWN' && x.env === v && /no curl/.test(x.reason)), JSON.stringify(r.rows));
+  assert.equal(r.code, 2);
+});
