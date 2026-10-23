@@ -125,6 +125,8 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   another one, a git worktree placed inside one, and submodules are not read.
 - A later copy of a program on `PATH` that is a script, not a compiled program, is not run, so its version isn't judged.
 - A folder that can't be opened and whose owner can't be read counts as a person's: UNKNOWN.
+- A PHP install folder that is closed (an admin's locked `/opt/remi`) is UNKNOWN once for each pattern that reaches it
+  (bin and sbin: two lines for one folder), with the reason written for a program file.
 - A locked folder on the way to a known install place (a vendor's folder under `/opt` or `/srv`, a `python3.X`, a
   `git` user's home holding `/home/git/gitlab`) is UNKNOWN whoever owns it, and the line names the place Wardlatch was
   looking for, which may lie below the locked folder. On a server with a `git` user whose home is closed, the GitLab

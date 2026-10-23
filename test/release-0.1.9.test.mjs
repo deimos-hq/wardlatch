@@ -444,7 +444,7 @@ test('PHP copies: a locked folder a wildcard is matched in (/opt/cpanel closed b
 
 test('the PHP rule searches the install folders the docs name: sbin, macOS Homebrew\'s php@* kegs, Remi, cPanel, Plesk', () => {
   const rule = JSON.parse(readFileSync(join(ROOT, 'lib', 'incidents', 'php-2026-10.json'), 'utf8')).binaries[0];
-  for (const d of ['/usr/sbin', '/opt/homebrew/opt/php@*/sbin', '/usr/local/opt/php@*/sbin', '/opt/remi/php*/root/usr/sbin', '/opt/cpanel/ea-php*/root/usr/sbin', '/opt/plesk/php/*/sbin']) assert.ok(rule.extraDirs.includes(d), d);
+  for (const d of ['/usr/sbin', '/opt/homebrew/opt/php/sbin', '/usr/local/opt/php/sbin', '/opt/homebrew/opt/php@*/sbin', '/usr/local/opt/php@*/sbin', '/opt/remi/php*/root/usr/sbin', '/opt/cpanel/ea-php*/root/usr/sbin', '/opt/plesk/php/*/sbin']) assert.ok(rule.extraDirs.includes(d), d);
   for (const n of ['php', 'php8.1', 'php-fpm8.1', 'php-cgi8.3', 'php81']) assert.match(n, new RegExp(rule.binaryNames), n);
   for (const n of ['php-config8.1', 'phpize8.1', 'phpdbg8.1', 'phpunit']) assert.doesNotMatch(n, new RegExp(rule.binaryNames), n);
 });
