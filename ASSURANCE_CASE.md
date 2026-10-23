@@ -189,7 +189,7 @@ a timeout with SIGKILL); nothing they find is executed.
 **git gets a clean environment, not the caller's.** Since 0.1.8 git runs without the caller's `GIT_*` variables (except `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM` and `GIT_CONFIG_NOSYSTEM`, which only choose your own config files, and `GIT_TEST_ASSUME_DIFFERENT_OWNER`, which can only make git refuse a repository): `GIT_DIR` or `GIT_WORK_TREE` from a hook or a CI step had pointed every scan at one other repository, and the git checks read SAFE without having looked (0.1.0 to 0.1.7). A test sets both kinds and expects the found repository to be read and nothing planted to run.
 
 **Programs on `PATH` are trusted, except a program an incident says may itself be malware.** The first `node`, `curl`
-and `python3` on `PATH`, `/usr/bin/curl`, `/usr/bin/python3`, and each tool named in a version rule, is run from the
+and `python3` on `PATH`, and later copies that are compiled programs (a later script is never run), `/usr/bin/curl`, `/usr/bin/python3`, and each tool named in a version rule, is run from the
 place it was found, the one your shell would pick. Each is run once for its version (`node -v`, `curl --version`,
 `python3 -V`, or the rule's arguments), and each runtime once more per test connection, with the arguments in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#the-trust-check-step-by-step). Python is not started the way your shell
@@ -288,7 +288,9 @@ SAFE they couldn't support; the other checks run, untested.
 file was written. They can go stale until the next update; each source is linked so it can be checked.
 
 **REVIEW lines are leads, not verdicts.** A new workflow file or plugin folder is listed because it could be
-malicious, not because it is. The committed-key scan looks for high-confidence shapes only; a key in an unusual format
+malicious, not because it is. Folders a service owns that Wardlatch couldn't open are listed the same way: they were
+not searched, and running with sudo includes them; a person's locked folder is UNKNOWN instead, since it could hold
+that person's projects. The committed-key scan looks for high-confidence shapes only; a key in an unusual format
 is missed.
 
 **The Mac fix finds the two roots by the header lines macOS writes above each certificate** (`=== …/CN=…`). If Apple

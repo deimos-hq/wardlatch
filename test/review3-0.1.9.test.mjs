@@ -170,7 +170,7 @@ test('7 a virtual environment whose site-packages can\'t be opened is reported, 
   put(join(sp, 'certifi', 'cacert.pem'), '-----BEGIN CERTIFICATE-----\n');
   lock(sp);
   const denied = [];
-  discover({ roots: [root], pathEnv: '', denied });
+  discover({ roots: [root], pathEnv: '', denied: [], found: denied });   // a found environment's unreadable folders
   assert.ok(denied.includes(sp), `denied: ${JSON.stringify(denied)}`);
 });
 

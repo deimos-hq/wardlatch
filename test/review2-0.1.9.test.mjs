@@ -155,7 +155,7 @@ test('M6 a virtual environment whose lib folder can\'t be opened is reported, ne
   put(join(v, 'lib', 'python3.12', 'site-packages', 'certifi', 'cacert.pem'), '-----BEGIN CERTIFICATE-----\n');
   lock(join(v, 'lib'));
   const denied = [];
-  discover({ roots: [root], pathEnv: '', denied });
+  discover({ roots: [root], pathEnv: '', denied: [], found: denied });   // a found environment's unreadable folders
   assert.ok(denied.some((d) => d.startsWith(v)), `denied: ${JSON.stringify(denied)}`);
   const r = run(['--incident', 'emudhra-2026-10', '--no-containers', '--paths', root], {}, ['--require', preload('m6-offline')]);
   assert.ok(r.rows.some((x) => x.status === 'UNKNOWN' && String(x.path ?? '').startsWith(v)), JSON.stringify(r.rows));
@@ -212,9 +212,16 @@ test('under sudo, git keeps SUDO_UID, so repositories the person owns are not re
 
 test('under sudo with no home folder for the sudo user, an UNKNOWN row says root\'s home was searched instead', { skip: AS_ROOT && 'already root' }, () => {
   const sudo = preload('sudo-nohome', { extra: 'process.getuid = () => 0;' });
-  const r = run(['--incident', 'github-actions-2026-10', '--paths', fresh('nohome-root')], { HOME: fresh('nohome-roots-home'), SUDO_USER: 'no-such-user-wardlatch' }, ['--require', sudo]);
+  // the header check reads the home folder: the row is there (owner, 22 Oct: only where the home folder is read)
+  const r = run(['--incident', 'identity-headers-2026-10', '--paths', fresh('nohome-root')], { HOME: fresh('nohome-roots-home'), SUDO_USER: 'no-such-user-wardlatch' }, ['--require', sudo]);
   assert.ok(r.rows.some((x) => x.status === 'UNKNOWN' && String(x.reason).includes('no-such-user-wardlatch')), JSON.stringify(r.rows));
   assert.equal(r.code, 2);
+  // the php check reads PATH only, and a folder check given --paths reads only those folders: no row, and a clean run passes
+  for (const id of ['php-2026-10', 'github-actions-2026-10']) {
+    const c = run(['--incident', id, '--paths', fresh(`nohome-root-${id}`)], { HOME: fresh(`nohome-roots-home-${id}`), SUDO_USER: 'no-such-user-wardlatch' }, ['--require', sudo]);
+    assert.ok(!c.rows.some((x) => x.kind === 'home'), `${id}: ${JSON.stringify(c.rows)}`);
+    assert.equal(c.code, 0, id);
+  }
 });
 
 test('a --paths entry that is a file, not a folder, is an UNKNOWN row: never a SAFE, exit 2', () => {

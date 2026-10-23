@@ -29,13 +29,19 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
 - **Inside containers, any failure counted as a refusal.** The probe script exited 1 for a timeout or a DNS failure as
   for a certificate refusal, so a container that couldn't reach the test hosts read SAFE (the host probe stopped doing
   this in 0.1.7). Now only curl 60, Python's certificate error and wget 5 are refusals; anything else is UNKNOWN.
-- **Folders Wardlatch couldn't open were skipped silently, and nothing searched still read SAFE.** A repository,
-  WordPress site, virtual environment or temp folder behind a folder it couldn't open is now an UNKNOWN row naming it;
-  an explicit `--paths` that doesn't exist is UNKNOWN (exit 2), not "SAFE, 0 repositories".
+- **Folders Wardlatch couldn't open were skipped silently, and nothing searched still read SAFE.** A folder it couldn't
+  open is now reported by who owns it, one rule for every check: one a person owns (it could hold their projects or
+  sites) is UNKNOWN; one a service owns (a database's data, certbot's keys, root's) is named in one REVIEW line, which
+  doesn't change the exit code; something already found that can't be read (a virtual environment's own folders) is
+  UNKNOWN. A `--paths` folder that doesn't exist is UNKNOWN (exit 2), not "SAFE, 0 repositories"; with no `--paths`
+  and none of the usual folders on the machine (a fresh server, a CI runner), the check is SAFE and lists the folders
+  it looked for.
 - **Environment allowlist.** Every program Wardlatch runs gets an environment built for its purpose from an allowlist
   (`lib/run.mjs`), not the caller's environment: `DEVELOPER_DIR` still redirected macOS's `/usr/bin/git` shim after
-  0.1.8's `GIT_*` fix, and `NODE_OPTIONS --require` ran inside the trust probes. `DOCKER_HOST` is no longer followed (a
-  run where it is set and no local engine answers is UNKNOWN, never "not running"). Since the second review a trust
+  0.1.8's `GIT_*` fix, and `NODE_OPTIONS --require` ran inside the trust probes. `DOCKER_HOST` and `CONTAINER_HOST`
+  are followed only to a local socket the person or root owns (Colima, Podman, rootless Docker); a remote one, and
+  `DOCKER_CONTEXT`, `DOCKER_CONFIG` and `CONTAINER_CONNECTION`, are not, and when one is set and an engine is installed
+  an UNKNOWN row says so. Since the second review a trust
   probe's environment is an allowlist too: the first cut still dropped a list of names, and `OPENSSL_CONF` loaded a
   module into the probe, and `SHELLOPTS` with `PS4` ran a command inside a version manager's bash shim.
 - **A container that stopped mid-check read SAFE.** `docker exec` itself exits 1 when the container has stopped, the
@@ -50,18 +56,20 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   person's `CURL_HOME` and `XDG_CONFIG_HOME`, so the probe's curl reads the start-up file the person's curl reads.
   The person's own `NODE_TLS_REJECT_UNAUTHORIZED` reaches the Node probe, so a Node run with checking off reads
   EXPOSED.
-- **`DOCKER_HOST` set while a local engine answered read SAFE in the LiteLLM image check**, which never looked at the
-  engine `DOCKER_HOST` named. It is UNKNOWN there too.
+- **A `DOCKER_HOST` not followed, while a local engine answered, read SAFE in the LiteLLM image check**, which never
+  looked at the engine it named. It is UNKNOWN there too.
 
 ### Fixed
 
 - Temp markers: the macOS per-user temp folder is searched even when `TMPDIR` is unset (sudo, cron, launchd), and under
   sudo the person's own home folder is searched, not root's.
-- Every copy of a version-checked program on `PATH` is judged (a fixed php first no longer hides a vulnerable one), and
-  "not installed" now says it searched `PATH`.
-- The workflow review lists workflows added by merge commits and by backdated commits, and ignores grafts and the
-  commit-graph file.
-- The trust check runs only the first `node`, `python3` and `curl` on `PATH`, never a shadowed copy.
+- Copies of a program on `PATH`, one rule for the trust check and the version checks: the first (the one the shell
+  runs) and every later copy that is a compiled program are run and judged (a fixed php first no longer hides a
+  vulnerable one); a later copy that is a script is named in a note, never run for the first time by Wardlatch.
+  "Not installed" now says it searched `PATH`.
+- The workflow review lists a workflow that only a merge commit adds (git's combined view: merging main into an old
+  branch doesn't list main's workflows again), ignores grafts and the commit-graph file, and never shows git's own
+  hints as the reason a repository couldn't be read.
 - The header check reads the files curl and git really read: CRLF files, `$CURL_HOME/.curlrc`, `$CURL_HOME/.config/curlrc`, `~/.config/curlrc`, the
   file `GIT_CONFIG_GLOBAL` names, `WGETRC`, `NPM_CONFIG_USERCONFIG`.
 - Bounded work: hand-written parsers instead of patterns that backtracked (a planted line took 22 s), a capped JSON walk
@@ -70,22 +78,24 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
 - Every SAFE line is a result row in `--json` too, with the list of what it searched (`searched`). A SAFE row without one
   becomes UNKNOWN in `--json` and the exit code, however it was made, and a line under the output withdraws it.
 - The header check: a missing `--paths` folder, a folder it couldn't open, or a config nested deeper than it reads is
-  UNKNOWN, not SAFE. A `--paths` entry that is a file is UNKNOWN in every check.
+  UNKNOWN, not SAFE. A settings file this user can't open (so their own tools can't read it either) is not used, and
+  one set to `/dev/null` (CI's way of switching it off) is empty. A `--paths` entry that is a file is UNKNOWN in every
+  check that searches folders.
 - A virtual environment whose `lib` folder couldn't be opened is an UNKNOWN row, not dropped.
 - The WordPress indicator search says what its caps left unsearched (files over 2 MB, past 4,000 files, deeper than 12
   levels): UNKNOWN, not SAFE.
 - Under sudo, git keeps `SUDO_UID`, so the person's own repositories aren't refused as "dubious ownership"; a sudo user
   whose home folder isn't found (including a directory name such as `ada@corp.example`) is an UNKNOWN row, not a silent
-  search of root's home.
+  search of root's home, in the checks that read the home folder.
 - A crash inside Wardlatch exits 2 (could not be tested), not 1 (exposed), unless an EXPOSED line was already printed.
   A container's probe output counts only with exactly one result line.
 - File reads are capped by what is read, not only by the size reported at open.
 - The key scan reads every tracked text file up to 512 MB (0.1.8 skipped files over 512 KB, and unreadable ones, without
   a word): past 8 MB in overlapping pieces that end at line breaks, so a key is never cut in two and each match is
-  counted in exactly one piece. It scans checked-out submodules too (0.1.8 never did), and a repository nested inside
-  another one (a gitignored checkout, an embedded repository, a git worktree), which the workflow review now reads as
-  well; a file reached both ways is scanned once, and a placeholder word (`example`, `fake`) counts only right next to a key, never
-  anywhere on its line (one `example.com` on a minified line hid every key on it).
+  counted in exactly one piece. A placeholder word (`example`, `fake`) counts only right next to a key, never anywhere on
+  its line (one `example.com` on a minified line hid every key on it). It reads git's own record of each file: a
+  committed link is not followed (git stores the target's name, not its contents), and an empty tracked file in a folder
+  that can't be opened (a `.gitkeep`) is not reported.
 - macOS's own folders (its Library at `/`, in `/System` and in a home folder, the Trash, the Photos libraries) are never
   searched; any other folder named Library is (0.1.8 skipped every Library folder). A trust probe also gets `CURL_SSL_BACKEND`, which picks macOS
   curl's trust store.
@@ -95,16 +105,19 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
 - The issuer check compares the issuer's common name, not a fingerprint: something on the network that copies the name
   gets past it (the forced-roots control still catches it for curl, Node and Python, not for macOS's own stack or
   containers).
-- The workflow review can't tell a backdated commit with no parent (the first commit of an orphan branch).
+- The workflow review reads commits dated on or after the incident's date: a commit given an earlier date isn't seen.
+  (0.1.9's first cut read the whole history to catch that, and lost its findings on repositories past about 1.3 million
+  commits; taken out, owner, 22 Oct.)
+- The key scan and the workflow review stop at the first repository they find, as 0.1.8 did: a repository nested inside
+  another one, a git worktree placed inside one, and submodules are not read.
+- A later copy of a program on `PATH` that is a script, not a compiled program, is not run, so its version isn't judged.
+- A folder that can't be opened and whose owner can't be read counts as a person's: UNKNOWN.
 - A file of Wardlatch's own that fails to load (a broken install) exits 1, before anything of Wardlatch's runs.
-- A repository inside a folder of another repository that can't be opened is not found (such folders, a database's
-  gitignored data folder for one, are passed over rather than reported, so clean machines don't read UNKNOWN; files the
-  outer repository tracks there are still listed, and reported if unreadable).
 - Runtimes are run from `/` with the person's default selection: a version chosen per shell or per project
   (`PYENV_VERSION`, `.nvmrc`, `.tool-versions`) is not followed, so the runtime tested can differ from the one a project
   uses.
 - The engine is the one the person's own docker or podman configuration selects (their home folder's config), which can
-  name a remote host; `DOCKER_HOST` and the like are not followed.
+  name a remote host, or a local socket `DOCKER_HOST` names; a remote `DOCKER_HOST` and the like are not followed.
 
 ### Changed (rules the tests now enforce)
 

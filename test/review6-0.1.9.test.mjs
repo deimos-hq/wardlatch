@@ -113,16 +113,6 @@ test('2 a placeholder word counts only next to the key: "example.com" elsewhere 
   assert.equal(scanText(`${'x'.repeat(3000)} gitleaks:allow ${'x'.repeat(3000)} "${AWS}"`).length, 1, 'a marker far away on a minified line');
 });
 
-test('3 a checked-out git submodule\'s files are scanned too', () => {
-  const root = fresh('k3-root'), lib = gitRepo(join(dir, 'k3-lib'));
-  put(join(dir, 'k3-lib', 'keys.py'), `k = "${AWS}"\n`); lib.commit();
-  const app = gitRepo(join(root, 'app'));
-  put(join(root, 'app', 'main.py'), 'print(1)\n');
-  app.g('-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', join(dir, 'k3-lib'), 'vendor/lib');
-  app.commit();
-  assert.deepEqual(review(keys(root)), ['vendor/lib/keys.py:1']);
-});
-
 test('4 a project folder named Library is searched, even with a Caches folder inside; macOS\'s own Library is not', async () => {
   const { isSystemFolder } = await import('../lib/files.mjs');
   const root = fresh('k4-root');
@@ -171,6 +161,9 @@ test('9 on macOS, a folder that can\'t be opened says what can help: sudo for an
   assert.match(r.rows.find((x) => x.path === shut)?.reason ?? '', /Full Disk Access/);
 });
 
+// Tests 3, 13, 15 and 18 held submodule, nested-repository and worktree scanning, taken out of 0.1.9 (owner, 22 Oct:
+// a smaller release; the CHANGELOG's known limits); test/release-0.1.9.test.mjs holds what replaced them.
+
 // ---- from the final check (7e12f17) ------------------------------------------------------------------------------------
 // scanText over every piece of `text`, cut by eachPiece with small pieces, as lib/secrets.mjs does for a large file
 // (with half the overlap longer than any key, as in use: 4 KB pieces' 4,096-byte overlap; here 512 and 256)
@@ -205,19 +198,6 @@ test('12 a reviewed-line marker anywhere on a line of up to 2,000 characters cou
   assert.equal(scanText(`k = "${AWS}"; ${'x'.repeat(2500)} // gitleaks:allow`).length, 1, 'on a longer line only near the key');
 });
 
-test('13 a repository inside another one is scanned too: a gitignored checkout, and an embedded repository; a submodule only once', () => {
-  const root = fresh('k13-root'), outer = gitRepo(join(root, 'outer'));
-  put(join(root, 'outer', '.gitignore'), 'tools/\n'); put(join(root, 'outer', 'a.py'), 'print(1)\n'); outer.commit();
-  const inner = gitRepo(join(root, 'outer', 'tools', 'inner')); put(join(root, 'outer', 'tools', 'inner', 'k.py'), `k = "${AWS}"\n`); inner.commit();
-  const r = keys(root);
-  assert.deepEqual(r.rows.filter((x) => x.status === 'REVIEW').map((x) => `${x.repo.slice(root.length + 1)}/${x.file}`), ['outer/tools/inner/k.py']);
-  // a submodule: found through the outer repository's scan, and not again as a repository of its own
-  const lib = gitRepo(join(dir, 'k13-lib')); put(join(dir, 'k13-lib', 's.py'), `s = "${AWS.replace('Q', 'S')}"\n`); lib.commit();
-  outer.g('-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', join(dir, 'k13-lib'), 'vendor/lib'); outer.commit();
-  const r2 = keys(root);
-  assert.deepEqual(r2.rows.filter((x) => x.status === 'REVIEW').map((x) => `${x.repo.slice(root.length + 1)}/${x.file}`).sort(), ['outer/tools/inner/k.py', 'outer/vendor/lib/s.py']);
-});
-
 // ---- from the narrow check (10f4cbc) -----------------------------------------------------------------------------------
 test('14 a folder inside a repository that can\'t be opened (a database\'s gitignored data folder) is not a gap: clean machines stay SAFE, exit 0', { skip: AS_ROOT && 'root opens every folder' }, () => {
   const root = fresh('k14-root'), repo = gitRepo(join(root, 'proj'));
@@ -228,16 +208,6 @@ test('14 a folder inside a repository that can\'t be opened (a database\'s gitig
     assert.ok(!r.rows.some((x) => x.status === 'UNKNOWN'), `${id}: ${JSON.stringify(r.rows)}`);
     assert.equal(r.code, 0, id);
   }
-});
-
-test('15 a nested repository the outer one also tracks as a submodule is scanned once, whatever kind of .git it has', () => {
-  const root = fresh('k15-root'), outer = gitRepo(join(root, 'outer'));
-  put(join(root, 'outer', 'a.py'), 'print(1)\n'); outer.commit();
-  const lib = gitRepo(join(root, 'outer', 'vendor', 'lib')); put(join(root, 'outer', 'vendor', 'lib', 's.py'), `s = "${AWS}"\n`); lib.commit();
-  // "Adding existing repo at 'vendor/lib'": the submodule keeps its own .git folder
-  outer.g('-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', join(root, 'outer', 'vendor', 'lib'), 'vendor/lib'); outer.commit();
-  const r = keys(root);
-  assert.equal(r.rows.filter((x) => x.status === 'REVIEW').length, 1, JSON.stringify(r.rows.filter((x) => x.status === 'REVIEW')));
 });
 
 test('16 a service-account file inside a giant one-line file is reported once', () => {
@@ -254,16 +224,6 @@ test('17 macOS\'s own Library is recognised under every spelling of the home fol
   const { isSystemFolder } = await import('../lib/files.mjs');
   const h = homedir();
   for (const p of [h, `${h}/`, h.toLowerCase(), `/System/Volumes/Data${h}`, '/', '/System']) assert.equal(isSystemFolder('Library', p), true, p);
-});
-
-test('18 a git worktree inside a repository is scanned (its .git file points to the outer repository\'s worktrees, not a submodule)', () => {
-  const root = fresh('k18-root'), repo = gitRepo(join(root, 'app'));
-  put(join(root, 'app', '.gitignore'), 'wt/\n'); put(join(root, 'app', 'a.py'), 'print(1)\n'); repo.commit();
-  repo.g('branch', 'feat'); repo.g('worktree', 'add', '-q', 'wt', 'feat');
-  put(join(root, 'app', 'wt', 'k.py'), `k = "${AWS}"\n`);
-  execFileSync('git', ['-C', join(root, 'app', 'wt'), 'add', 'k.py'], { stdio: 'pipe' });
-  execFileSync('git', ['-C', join(root, 'app', 'wt'), '-c', 'user.name=t', '-c', 'user.email=t@x', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'k'], { stdio: 'pipe' });
-  assert.deepEqual(review(keys(root)), ['k.py:1']);
 });
 
 test('19 a line that runs on across pieces counts a reviewed-line marker only near the key, as on any long line', () => {

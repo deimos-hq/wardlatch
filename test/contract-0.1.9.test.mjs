@@ -30,12 +30,12 @@
 //     agree: every SAFE / EXPOSED / UNKNOWN / REVIEW line in the text is a row of that status in --json, and the
 //     summary counts them. Every SAFE row carries its receipt: `searched`, a non-empty array of non-empty strings that
 //     says what was looked at.
-// R6  Versions. Every copy of a version-checked program on PATH is judged (a vulnerable php behind a fixed one is
-//     EXPOSED). A program that isn't found is reported as not found on PATH: the receipt says PATH, never a bare
+// R6  Versions. Every copy of a version-checked program on PATH that may be run is judged: the first, and later ones that
+//     are compiled programs (a later script is named in a note, not run; owner, 22 Oct). A program that isn't found is reported as not found on PATH: the receipt says PATH, never a bare
 //     "not installed".
-// R7  Workflow review lists: a workflow introduced by a merge commit; a workflow added by a commit whose committer date
-//     is earlier than its parent's (a backdated commit on top of newer history); and a .git/info/grafts file can't
-//     hide a workflow.
+// R7  Workflow review lists: a workflow introduced by a merge commit; and a .git/info/grafts file can't hide a workflow.
+//     (Also listed here first: a workflow added by a commit dated earlier than its parent, a backdated commit. Taken
+//     out of 0.1.9, owner 22 Oct: a known limit in the CHANGELOG.)
 // R8  The trust check runs only the first node, python3 and curl on PATH: a shadowed copy later on PATH never runs.
 // R9  Header files also read: a CRLF ~/.curlrc, $CURL_HOME/.curlrc, ~/.config/curlrc (XDG, no dot), and the file
 //     GIT_CONFIG_GLOBAL names.
@@ -499,12 +499,21 @@ test('R5 text = json: every status line printed is a row of that status in --jso
 
 // ---- R6: versions -----------------------------------------------------------------------------------------------------
 
-test('R6 versions: a vulnerable php second on PATH, behind a fixed one, is EXPOSED (every copy on PATH is judged)', () => {
+test('R6 versions: every copy on PATH that may be run is judged: a later compiled program is run, a later script is not', async () => {
+  // owner, 22 Oct: one rule (lib/binaries.mjs copiesToRun) for the trust check and the version checks
+  const { copiesToRun } = await import(libUrl('binaries.mjs'));
+  const a = fresh('r6-a'), b = fresh('r6-b'), c = fresh('r6-c');
+  exe(join(a, 'php'), 'echo "PHP 8.4.27 (cli)"');
+  put(join(b, 'php'), Buffer.concat([Buffer.from('7f454c46', 'hex'), Buffer.alloc(60)])); chmodSync(join(b, 'php'), 0o755);   // an ELF program
+  exe(join(c, 'php'), 'echo "PHP 8.4.26 (cli)"');
+  assert.deepEqual(copiesToRun('php', `${a}:${b}:${c}`), { run: [join(a, 'php'), join(b, 'php')], notRun: [join(c, 'php')] });
+});
+
+test('R6 versions: a later copy on PATH that is a script is named, never silently dropped', () => {
   const fixed = fresh('r6-fixed'), bad = fresh('r6-bad');
   exe(join(fixed, 'php'), 'echo "PHP 8.4.27 (cli)"'); exe(join(bad, 'php'), 'echo "PHP 8.4.26 (cli)"');
-  const j = runJson(['--incident', 'php-2026-10', '--paths', emptyRoot], { PATH: `${fixed}:${bad}` });
-  assert.equal(j.code, 1, JSON.stringify(j.rows));
-  assert.ok(j.rows.some((r) => r.status === 'EXPOSED' && r.version === '8.4.26' && r.bin === join(bad, 'php')), JSON.stringify(j.rows));
+  const t = run(['--incident', 'php-2026-10', '--paths', emptyRoot], { PATH: `${fixed}:${bad}` });
+  assert.match(t.out, new RegExp(`not run \\(later on PATH, and scripts, not programs\\): .*${join(bad, 'php').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), t.out);
 });
 
 test('R6 versions: a program not found says it searched PATH, never a bare "not installed"', () => {
@@ -531,15 +540,6 @@ test('R7 workflows: a workflow introduced by a merge commit is listed', () => {
   workflow(path, 'merge.yml'); r.commit('merge');
   assert.equal(r.g(['rev-list', '--parents', '-n', '1', 'HEAD']).split(' ').length, 3, 'the fixture: HEAD is a merge commit');
   assert.deepEqual(reviewed(root), ['.github/workflows/merge.yml']);
-});
-
-test('R7 workflows: a workflow added by a backdated commit (committer date before its parent\'s, and before `since`) is listed', () => {
-  // A commit dated earlier than its own parent can only be a forged date. (A repository whose every commit is old is
-  // indistinguishable from a real old one, and is not required.)
-  const root = fresh('r7-backdated'), path = join(root, 'app'), r = repo(path);
-  put(join(path, 'a'), 'a\n'); r.commit('A', '2026-10-15T12:00:00Z');
-  workflow(path, 'old.yml'); r.commit('backdated', '2026-08-01T12:00:00Z');
-  assert.deepEqual(reviewed(root), ['.github/workflows/old.yml']);
 });
 
 test('R7 workflows: a .git/info/grafts file cannot hide a planted workflow', () => {
