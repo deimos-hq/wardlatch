@@ -19,7 +19,8 @@ import { reposUnder, workflowsAddedSince } from '../lib/workflows.mjs';
 import { scanRepo } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
 import { scanHeaders } from '../lib/headers.mjs';
-import { pathState, readText, listDir, ownerOf } from '../lib/files.mjs';
+import { pathState, readText, listDir } from '../lib/files.mjs';
+import { ownedByPerson, ownerName } from '../lib/owners.mjs';
 import { safe, withdrawUnreceipted } from '../lib/report.mjs';
 
 // npx puts the current project's node_modules/.bin, and each parent folder's, first on PATH. Wardlatch finds git,
@@ -73,7 +74,8 @@ Run it from your home folder, not inside a project: npx also starts Wardlatch wi
 node_modules/.bin/node if it has one, and applies its .npmrc; Wardlatch can't undo either.
 Exit code: 0 all safe · 1 something is exposed · 2 something could not be tested ("review" lines don't change it).
 Runs locally. Sends nothing anywhere except TLS connections to the incidents' public test hosts and two control sites
-(and what your container engine sends, if your docker context points at a remote one; DOCKER_HOST is not followed). Changes nothing.`);
+(and what your container engine sends, if your docker context points at a remote one; a remote DOCKER_HOST is not followed,
+a local socket is). Changes nothing.`);
   process.exit(0);
 }
 const incidents = (listDir(join(LIB, 'incidents')).entries ?? []).map((e) => e.name).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readText(join(LIB, 'incidents', f), 4 * 1024 * 1024))).sort((a, b) => b.date.localeCompare(a.date));
@@ -138,34 +140,29 @@ function allClear(results, inc, kind, text, searched) {
 // container, must never stand in for them)
 const RUNTIME_KINDS = ['node', 'curl', 'python', 'macos-system'];
 const hostRowsOf = (results) => results.filter((r) => RUNTIME_KINDS.includes(r.kind)).length;
-// rows that count for a summary line: a skipped-folders line is information beside it, never instead of it
-const counted = (results) => results.filter((r) => r.kind !== 'skipped');
+// rows that count for a summary line: a skipped-folders or not-run line is information beside it, never instead of it
+const counted = (results) => results.filter((r) => !['skipped', 'not-run'].includes(r.kind));
+// later copies on PATH that are scripts, and so were not run (lib/binaries.mjs copiesToRun): a REVIEW line, in --json
+// too, so a reader can tell a copy went unchecked; it doesn't change the exit code
+function notRunRow(results, inc, what, paths) {
+  if (!paths.length) return;
+  const reason = `${what}: ${paths.length === 1 ? 'a later copy' : 'later copies'} on PATH ${paths.length === 1 ? 'is a script' : 'are scripts'}, not ${paths.length === 1 ? 'a program' : 'programs'}, so Wardlatch did not run ${paths.length === 1 ? 'it' : 'them'} and ${paths.length === 1 ? 'its' : 'their'} version was not checked: ${paths.map(short).join(', ')}`;
+  results.push({ incident: inc.id, kind: 'not-run', status: 'REVIEW', paths, reason });
+  print('REVIEW', 'copies on PATH not run'); note('2', reason);
+}
 
 // Folders that couldn't be opened: the one rule for every check (owner, 22 Oct 2026). Every source of them comes here.
 //   - a searched root (a --paths folder, or a usual folder that exists) that can't be opened: UNKNOWN;
 //   - `found`: something already found whose own folders can't be read (a virtual environment's lib): UNKNOWN;
 //   - a folder below a root, owned by a person (this user, or a login account), could hold that person's projects or
 //     sites: UNKNOWN; owned by a service (root, a database, a container, certbot), it holds that service's data: one
-//     REVIEW line per check listing them, which doesn't change the exit code. For WordPress the web server's account
-//     counts as a person: it owns websites. An owner that can't be told counts as a person.
+//     REVIEW line per check listing them, which doesn't change the exit code (lib/owners.mjs says which is which).
+//   - `review`: folders a check knows to be private by their place (a locked dot-folder under a web root: www-data's
+//     .ssh), listed in the REVIEW line whoever owns them.
 // Up to e0e1c35 every locked folder was UNKNOWN, and any server with docker or certbot exited 2.
-const PERSON_UIDS = platform() === 'darwin' ? [501, 59999] : [1000, 59999];
-const ACCOUNTS = (() => {   // uid → name, for the review line, and the web server's accounts
-  const names = new Map([[0, 'root']]);
-  for (const line of (readText('/etc/passwd', 4 * 1024 * 1024) ?? '').split('\n')) { const f = line.split(':'); if (f.length > 3 && /^\d+$/.test(f[2])) names.set(Number(f[2]), f[0]); }
-  if (platform() === 'darwin') names.set(70, '_www');
-  return names;
-})();
-const WEB_ACCOUNTS = ['www-data', 'apache', 'nginx', 'wwwrun', 'http', '_www'];
-const ownedByPerson = (d, kind) => {
-  const uid = ownerOf(d);
-  if (uid === null || uid === process.getuid?.()) return true;
-  if (uid >= PERSON_UIDS[0] && uid <= PERSON_UIDS[1]) return true;
-  return kind === 'wordpress' && WEB_ACCOUNTS.includes(ACCOUNTS.get(uid));
-};
 // `searchesRoots`: whether this check searches the --paths folders at all (Plex's and GitLab's look only in their own
 // install places: a --paths folder that isn't there is nothing to them)
-function gaps(results, inc, kind, dirs, found = [], searchesRoots = true) {
+function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, review = [] } = {}) {
   for (const d of searchesRoots ? missingRoots : []) {
     const reason = `given with --paths, but ${pathState(d) === 'gone' ? 'not there' : 'not a folder'}, so it was not searched`;
     results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason });
@@ -176,14 +173,15 @@ function gaps(results, inc, kind, dirs, found = [], searchesRoots = true) {
   const unknown = (d, reason) => { results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason }); print('UNKNOWN', short(d)); note('33', reason); };
   const skipped = [];
   for (const d of [...new Set(found)]) unknown(d, `found, but could not be read, so it was not checked: ${how}`);
+  // a searched root itself (a --paths folder, or /var/www) that can't be opened is always UNKNOWN: it was asked for
   for (const d of [...new Set(dirs)].filter((x) => !found.includes(x))) {
-    if (lockedRoots.includes(d) || ownedByPerson(d, kind)) unknown(d, `could not be opened, so it was not searched: ${how}`);
+    if (lockedRoots.includes(d) || roots.includes(d) || ownedByPerson(d, kind)) unknown(d, `could not be opened, so it was not searched: ${how}`);
     else skipped.push(d);
   }
+  skipped.push(...review.filter((d) => !skipped.includes(d)));
   if (skipped.length) {
-    const owner = (d) => { const u = ownerOf(d); return ACCOUNTS.get(u) ?? `uid ${u}`; };
-    const list = skipped.slice(0, 8).map((d) => `${short(d)} (${owner(d)})`).join(', ') + (skipped.length > 8 ? `, and ${skipped.length - 8} more` : '');
-    const reason = `${skipped.length} folder${skipped.length === 1 ? '' : 's'} owned by service accounts could not be opened and ${skipped.length === 1 ? 'was' : 'were'} not searched: ${list}. Run Wardlatch with sudo to include ${skipped.length === 1 ? 'it' : 'them'}`;
+    const list = skipped.slice(0, 8).map((d) => `${short(d)} (${ownerName(d)})`).join(', ') + (skipped.length > 8 ? `, and ${skipped.length - 8} more` : '');
+    const reason = `${skipped.length} folder${skipped.length === 1 ? '' : 's'} owned by service accounts, or private by ${skipped.length === 1 ? 'its' : 'their'} place, could not be opened and ${skipped.length === 1 ? 'was' : 'were'} not searched: ${list}. Run Wardlatch with sudo to include ${skipped.length === 1 ? 'it' : 'them'}`;
     results.push({ incident: inc.id, kind: 'skipped', status: 'REVIEW', paths: skipped, reason });
     print('REVIEW', 'folders not searched'); note('2', reason);
   }
@@ -193,8 +191,9 @@ function gaps(results, inc, kind, dirs, found = [], searchesRoots = true) {
 // (Node takes either spelling of a name, --max_old_space_size too)
 const BENIGN_NODE_OPTION_RE = /^--(?:max-old-space-size|max-semi-space-size|max-http-header-size|stack-size|stack-trace-limit|no-warnings|no-deprecation|enable-source-maps|trace-warnings|trace-deprecation|trace-uncaught|unhandled-rejections|dns-result-order|openssl-legacy-provider|disable-warning|experimental-vm-modules)(?:=[\w.-]*)?$/;
 const benignNodeOption = (w) => { const i = w.indexOf('='); return BENIGN_NODE_OPTION_RE.test((i < 0 ? w : w.slice(0, i)).replace(/_/g, '-') + (i < 0 ? '' : w.slice(i))); };
-// DOCKER_HOST and the like are not followed (lib/run.mjs): the engine they name was not checked, whatever answers
-// locally. Every check that asks an engine (running containers, local images) says so in an UNKNOWN row.
+// A DOCKER_HOST or the like that isn't followed (lib/containers.mjs engineHost(): anything but a local socket the person
+// or root owns): the engine it names was not checked, whatever answers locally. Every check that asks an engine (running
+// containers, local images) says so in an UNKNOWN row.
 // (a local socket DOCKER_HOST names is followed: lib/containers.mjs engineHost(); the row appears only when an engine is
 // installed, since without one there is nothing it could have named to check)
 const hostVars = engineHost().refused;
@@ -288,8 +287,8 @@ for (const inc of chosen) {
       if (r.note) note('2', r.note);
       if (row.fix) note('2', `fix: ${row.fix}`);
     }
-    gaps(results, inc, 'search', deniedVenvs, foundUnread);
-    if (notRun.length) note('2', `not run (later on PATH, and scripts, not programs): ${notRun.map(short).join(', ')}`);
+    gaps(results, inc, 'search', deniedVenvs, { found: foundUnread });
+    notRunRow(results, inc, 'trust', notRun);
     // the test hosts' certificates expire: after that a container (which has no forced-roots control) would read every
     // refusal as SAFE, so containers are UNKNOWN once the incident's notAfter has passed
     const expired = inc.canaryNotAfter && Date.now() > Date.parse(inc.canaryNotAfter);
@@ -330,7 +329,7 @@ for (const inc of chosen) {
   // on Windows (not supported) program checks look in macOS and Linux places only: not checked, never "not found"
   for (const rule of platform() === 'win32' ? [] : inc.binaries ?? []) {
     const rows = checkBinaryAll(rule);
-    if (rows.notRun?.length) note('2', `${rule.binary}: not run (later on PATH, and scripts, not programs): ${rows.notRun.map(short).join(', ')}`);
+    notRunRow(results, inc, rule.binary, rows.notRun ?? []);
     for (const r of rows) {
       const row = { incident: inc.id, kind: 'binary', binary: rule.binary, ...r, fix: r.status !== 'SAFE' ? rule.fix : undefined };
       results.push(row);
@@ -376,8 +375,11 @@ for (const inc of chosen) {
     }
     if (inc.tmpTrace) {
       const temps = tempDirs();
-      for (const t of tmpTraces(inc.tmpTrace, temps, denied)) show({ status: 'EXPOSED', path: t, reason: 'the malware ran on this machine: it leaves this marker each time it runs' }, short(t), inc.tmpFix ?? inc.sitePackages?.fix);
-      searched.push(...temps);
+      // a temp folder that can't be listed is a known place the marker would be: always UNKNOWN, and not in the receipt
+      const tempsDenied = [];
+      for (const t of tmpTraces(inc.tmpTrace, temps, tempsDenied)) show({ status: 'EXPOSED', path: t, reason: 'the malware ran on this machine: it leaves this marker each time it runs' }, short(t), inc.tmpFix ?? inc.sitePackages?.fix);
+      foundUnread.push(...tempsDenied);
+      searched.push(...temps.filter((t) => !tempsDenied.includes(t)));
     }
     if (inc.dockerDigests && !flag('--no-containers')) {
       hostVarsRow(results, inc, 'images');
@@ -391,7 +393,7 @@ for (const inc of chosen) {
       }
       for (const r of checkImages(inc, byEngine)) show(r, `${r.engine} image ${r.what}`, inc.dockerFix);
     }
-    gaps(results, inc, 'install', denied, foundUnread, Boolean(inc.sitePackages));
+    gaps(results, inc, 'install', denied, { found: foundUnread, searchesRoots: Boolean(inc.sitePackages) });
     // nothing found in any part that could be looked at: the all-clear names every folder it searched. An engine that
     // couldn't be asked keeps its own UNKNOWN row (and the exit code at 2) beside it; a finding or another gap doesn't.
     const onlyEngineGaps = counted(results).every((r) => r.status === 'UNKNOWN' && r.engine);
@@ -433,13 +435,14 @@ for (const inc of chosen) {
   }
   if (inc.type === 'wordpress') {
     const denied = [...lockedRoots];
-    const sites = wordpressUnder(searchable, 5, denied);
+    const privateDot = [];
+    const sites = wordpressUnder(searchable, 5, denied, privateDot);
     for (const site of sites) for (const f of checkSite(site, inc.rules, inc.addedSince)) {
       results.push({ incident: inc.id, kind: 'wordpress', ...f, fix: f.fix ?? (f.status === 'REVIEW' ? inc.reviewFix : undefined) });
       print(f.status, `${short(site)} · ${f.what}`, f.reason ? c('2', `  ${f.reason}`) : '');
       if (f.status === 'EXPOSED') note('2', `fix: ${f.fix}`);
     }
-    gaps(results, inc, 'wordpress', denied);
+    gaps(results, inc, 'wordpress', denied, { review: privateDot });
     if (!counted(results).length) allClear(results, inc, 'wordpress', `no WordPress installs found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched (run it on the server, or pass --paths)`, searchable);
     else if (counted(results).some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.reviewFix}`);
   }

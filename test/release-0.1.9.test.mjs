@@ -233,3 +233,85 @@ test('a --paths entry that is a file is could-not-be-tested only in checks that 
   for (const id of ['plex-2026-10', 'gitlab-2026-10', 'php-2026-10']) assert.ok(!sys(['--incident', id, '--paths', f]).rows.some((x) => x.path === f), id);
   for (const id of ['github-actions-2026-10', 'litellm-2026-10']) assert.equal(sys(['--incident', id, '--paths', f]).code, 2, id);
 });
+
+// ---- from the final narrow check (76849c4) -------------------------------------------------------------------------------
+test('the owner rule at its edges: people, services, nobody, a directory\'s accounts, rootless containers, web servers', async () => {
+  const { isPersonUid, accounts, subuidRanges } = await import('../lib/owners.mjs');
+  const names = accounts('root:x:0:0::/root:/bin/sh\nwww-data:x:33:33::/var/www:/bin/sh\npostgres:x:999:999::/x:/bin/sh\n', 'linux');
+  const subuids = subuidRanges('ada:100000:65536\n');
+  const linux = { os: 'linux', self: 4242, names, subuids };
+  const cases = [[0, false], [33, false], [999, false], [1000, true], [59999, true], [60000, true], [1234500001, true], [65534, false], [100000, false], [165535, false], [165536, true], [4242, true], [null, true]];
+  for (const [uid, person] of cases) assert.equal(isPersonUid(uid, 'workflow', linux), person, `linux uid ${uid}`);
+  assert.equal(isPersonUid(33, 'wordpress', linux), true, 'www-data owns websites');
+  const mac = { os: 'darwin', self: 501, names: accounts('', 'darwin'), subuids: [] };
+  for (const [uid, person] of [[70, false], [500, false], [501, true], [502, true], [1234500001, true]]) assert.equal(isPersonUid(uid, 'workflow', mac), person, `macOS uid ${uid}`);
+  assert.equal(isPersonUid(70, 'wordpress', mac), true, '_www owns websites on macOS');
+});
+
+test('a searched root that can\'t be opened is always could-not-be-tested, whoever owns it', { skip: (process.platform !== 'darwin' || AS_ROOT) && 'macOS (/private/var/root), as a user' }, () => {
+  for (const id of ['github-actions-2026-10', 'committed-keys-2026-10', 'wordpress-plugins-2026-10', 'identity-headers-2026-10']) {
+    const r = sys(['--incident', id, '--paths', '/private/var/root'], { HOME: fresh(`lr-home-${id}`) });
+    assert.ok(unknowns(r).some((x) => x.path === '/private/var/root'), `${id}: ${JSON.stringify(r.rows)}`);
+    assert.equal(r.code, 2, id);
+  }
+});
+
+test('WordPress: a site in a dot-folder (.staging) is checked; a locked dot-folder is a review line, never could-not-be-tested', { skip: AS_ROOT && 'root' }, () => {
+  const root = fresh('wd-root'), site = join(root, '.staging');
+  put(join(site, 'wp-includes', 'version.php'), '<?php $wp_version = "6.8";');
+  put(join(site, 'wp-content', 'plugins', 'seo-by-rank-math-pro', 'rank-math-pro.php'), '<?php\n/*\n * Version: 3.0.123\n */\n');
+  const r = sys(['--incident', 'wordpress-plugins-2026-10', '--paths', root]);
+  assert.ok(r.rows.some((x) => x.status === 'EXPOSED'), JSON.stringify(r.rows)); assert.equal(r.code, 1);
+  const www = fresh('wd-www'); lock(fresh('wd-www/.ssh'));
+  const w = sys(['--incident', 'wordpress-plugins-2026-10', '--paths', www]);
+  assert.equal(unknowns(w).length, 0, JSON.stringify(w.rows));
+  assert.ok(w.rows.some((x) => x.kind === 'skipped' && x.paths.includes(join(www, '.ssh'))), JSON.stringify(w.rows)); assert.equal(w.code, 0);
+});
+
+test('a known install place that can\'t be opened (~/.local/lib, a temp folder) is could-not-be-tested, whoever owns it, and not in the receipt', { skip: (process.platform !== 'darwin' || AS_ROOT) && 'macOS (/private/var/root), as a user' }, () => {
+  const h = fresh('fp-home'); mkdirSync(join(h, '.local'), { recursive: true }); symlinkSync('/private/var/root', join(h, '.local', 'lib'));
+  const a = run(['--incident', 'litellm-2026-10', '--no-containers', '--paths', fresh('fp-root')], { HOME: h }, ['--require', preload('fp-offline')]);
+  assert.ok(unknowns(a).some((x) => x.path === join(h, '.local', 'lib')), JSON.stringify(a.rows)); assert.equal(a.code, 2);
+  const b = run(['--incident', 'litellm-2026-10', '--no-containers', '--paths', fresh('fp-root2')], { HOME: fresh('fp-home2'), TMPDIR: '/private/var/root' }, ['--require', preload('fp-offline')]);
+  assert.ok(unknowns(b).some((x) => x.path === '/private/var/root'), JSON.stringify(b.rows));
+  assert.ok(!b.rows.some((x) => (x.searched ?? []).includes('/private/var/root')), 'an unread temp folder is never in a receipt');
+});
+
+test('headers: a settings file this user can\'t read is not used: no could-not-be-tested', { skip: AS_ROOT && 'root' }, () => {
+  const h = fresh('hu-home'); put(join(h, '.gitconfig'), '[user]\n\temail = ada.lovelace@example.org\n');
+  lock(put(join(h, '.curlrc'), '-H "From: ada.lovelace@example.org"\n'));
+  const r = sys(['--incident', 'identity-headers-2026-10', '--paths', fresh('hu-root')], { HOME: h });
+  assert.equal(unknowns(r).length, 0, JSON.stringify(r.rows)); assert.equal(r.code, 0);
+});
+
+test('a program an incident says may be malware is never run, so every copy on PATH is checked by its hash', () => {
+  const a = fresh('nx-a'), b = fresh('nx-b'), ran = join(dir, 'nx-ran');
+  for (const d of [a, b]) exe(join(d, 'ovhcloud'), `touch ${JSON.stringify(ran)}; echo "ovhcloud 0.1.0"`);
+  const r = sys(['--incident', 'ovhcloud-cli-2026-10'], { PATH: `${a}:${b}` });
+  assert.equal(r.rows.filter((x) => x.kind === 'binary' && x.bin && x.bin.endsWith('ovhcloud')).length, 2, JSON.stringify(r.rows));
+  assert.ok(!r.rows.some((x) => x.kind === 'not-run'), 'no copy is "not run": none is run, all are hashed');
+  assert.equal(existsSync(ran), false, 'a copy was run');
+});
+
+test('compiled programs are told by their first bytes: ELF, Mach-O thin, universal and 64-bit universal; scripts are not', async () => {
+  const { isNativeProgram } = await import('../lib/files.mjs');
+  for (const hex of ['7f454c46', 'feedface', 'feedfacf', 'cefaedfe', 'cffaedfe', 'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca']) assert.equal(isNativeProgram(put(join(dir, `nat-${hex}`), Buffer.concat([Buffer.from(hex, 'hex'), Buffer.alloc(16)]))), true, hex);
+  assert.equal(isNativeProgram(put(join(dir, 'nat-script'), '#!/bin/sh\necho hi\n')), false);
+});
+
+test('keys: a file in a merge conflict (three stages in git\'s record) is scanned once', () => {
+  const root = fresh('mc-root'), app = join(root, 'app'), r = gitRepo(app);
+  put(join(app, 'k.py'), `k = "${AWS}"\nmode = "a"\n`); r.commit('base');
+  r.g('checkout', '-qb', 'side'); put(join(app, 'k.py'), `k = "${AWS}"\nmode = "b"\n`); r.commit('side');
+  r.g('checkout', '-q', 'main'); put(join(app, 'k.py'), `k = "${AWS}"\nmode = "c"\n`); r.commit('main');
+  try { r.g('merge', '-q', 'side'); } catch { /* the conflict is the fixture */ }
+  assert.ok(r.g('ls-files', '-s').toString().split('\n').filter((l) => l.endsWith('\tk.py')).length >= 2, 'the fixture: k.py has several stages');
+  assert.deepEqual(sys(['--incident', 'committed-keys-2026-10', '--paths', root]).rows.filter((x) => x.status === 'REVIEW').map((x) => `${x.file}:${x.line}`), ['k.py:1']);
+});
+
+test('DOCKER_HOST to a local socket settles the engine: a DOCKER_CONTEXT beside it is not refused', async () => {
+  const { engineHost } = await import('../lib/containers.mjs');
+  const { createServer } = await import('node:net');
+  const sock = join(dir, 'dc.sock'); const srv = createServer(); await new Promise((res) => srv.listen(sock, res));
+  try { assert.deepEqual(engineHost({ DOCKER_HOST: `unix://${sock}`, DOCKER_CONTEXT: 'prod' }).refused, []); } finally { srv.close(); }
+});

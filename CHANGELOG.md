@@ -30,10 +30,12 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   for a certificate refusal, so a container that couldn't reach the test hosts read SAFE (the host probe stopped doing
   this in 0.1.7). Now only curl 60, Python's certificate error and wget 5 are refusals; anything else is UNKNOWN.
 - **Folders Wardlatch couldn't open were skipped silently, and nothing searched still read SAFE.** A folder it couldn't
-  open is now reported by who owns it, one rule for every check: one a person owns (it could hold their projects or
-  sites) is UNKNOWN; one a service owns (a database's data, certbot's keys, root's) is named in one REVIEW line, which
-  doesn't change the exit code; something already found that can't be read (a virtual environment's own folders) is
-  UNKNOWN. A `--paths` folder that doesn't exist is UNKNOWN (exit 2), not "SAFE, 0 repositories"; with no `--paths`
+  open is now reported by who owns it, one rule for every check (`lib/owners.mjs`): one a person owns (it could hold
+  their projects or sites: this user, or any login account, uid 1000 and up on Linux and 501 and up on macOS, a company
+  directory's included; for WordPress, the web server's account too) is UNKNOWN; one a service owns (root, a database,
+  "nobody", a rootless container's uids) is named in one REVIEW line, which doesn't change the exit code. A searched
+  folder itself (a `--paths` folder, `/var/www`), or something already found or known (a virtual environment's own
+  folders, `~/.local/lib`, a temp folder), that can't be opened is always UNKNOWN. A `--paths` folder that doesn't exist is UNKNOWN (exit 2), not "SAFE, 0 repositories"; with no `--paths`
   and none of the usual folders on the machine (a fresh server, a CI runner), the check is SAFE and lists the folders
   it looked for.
 - **Environment allowlist.** Every program Wardlatch runs gets an environment built for its purpose from an allowlist
@@ -65,7 +67,8 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   sudo the person's own home folder is searched, not root's.
 - Copies of a program on `PATH`, one rule for the trust check and the version checks: the first (the one the shell
   runs) and every later copy that is a compiled program are run and judged (a fixed php first no longer hides a
-  vulnerable one); a later copy that is a script is named in a note, never run for the first time by Wardlatch.
+  vulnerable one); a later copy that is a script is named in a REVIEW line (in `--json` too), never run for the first time
+  by Wardlatch.
   "Not installed" now says it searched `PATH`.
 - The workflow review lists a workflow that only a merge commit adds (git's combined view: merging main into an old
   branch doesn't list main's workflows again), ignores grafts and the commit-graph file, and never shows git's own
@@ -112,6 +115,8 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   another one, a git worktree placed inside one, and submodules are not read.
 - A later copy of a program on `PATH` that is a script, not a compiled program, is not run, so its version isn't judged.
 - A folder that can't be opened and whose owner can't be read counts as a person's: UNKNOWN.
+- A site folder owned by root that this user can't open (a hardened `root:www-data 750`) is a service's by the rule:
+  listed for review, not UNKNOWN; run Wardlatch with sudo on a web server to include such sites.
 - A file of Wardlatch's own that fails to load (a broken install) exits 1, before anything of Wardlatch's runs.
 - Runtimes are run from `/` with the person's default selection: a version chosen per shell or per project
   (`PYENV_VERSION`, `.nvmrc`, `.tool-versions`) is not followed, so the runtime tested can differ from the one a project

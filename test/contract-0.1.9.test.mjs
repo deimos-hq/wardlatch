@@ -509,11 +509,12 @@ test('R6 versions: every copy on PATH that may be run is judged: a later compile
   assert.deepEqual(copiesToRun('php', `${a}:${b}:${c}`), { run: [join(a, 'php'), join(b, 'php')], notRun: [join(c, 'php')] });
 });
 
-test('R6 versions: a later copy on PATH that is a script is named, never silently dropped', () => {
+test('R6 versions: a later copy on PATH that is a script is named, never silently dropped (a review line, in --json too)', () => {
   const fixed = fresh('r6-fixed'), bad = fresh('r6-bad');
   exe(join(fixed, 'php'), 'echo "PHP 8.4.27 (cli)"'); exe(join(bad, 'php'), 'echo "PHP 8.4.26 (cli)"');
-  const t = run(['--incident', 'php-2026-10', '--paths', emptyRoot], { PATH: `${fixed}:${bad}` });
-  assert.match(t.out, new RegExp(`not run \\(later on PATH, and scripts, not programs\\): .*${join(bad, 'php').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), t.out);
+  const j = runJson(['--incident', 'php-2026-10', '--paths', emptyRoot], { PATH: `${fixed}:${bad}` });
+  assert.ok(j.rows.some((r) => r.kind === 'not-run' && r.status === 'REVIEW' && r.paths.includes(join(bad, 'php'))), JSON.stringify(j.rows));
+  assert.equal(j.code, 0, 'a review line does not change the exit code');
 });
 
 test('R6 versions: a program not found says it searched PATH, never a bare "not installed"', () => {

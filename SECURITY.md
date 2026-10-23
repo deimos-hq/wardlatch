@@ -23,7 +23,7 @@ reported, and what was actually true.
   result turning into "could not be tested".
 - **Anything that sends data about the user.** Wardlatch's only network traffic is TLS connections to the incident's
   public test hosts and its two control sites (and what your own container engine sends, wherever the current docker
-  context points; `DOCKER_HOST` is not followed; `--no-containers` skips it), carrying nothing beyond what any request from the runtime being tested
+  context points, or a local socket `DOCKER_HOST` names; a remote `DOCKER_HOST` is not followed; `--no-containers` skips it), carrying nothing beyond what any request from the runtime being tested
   carries (the machine's address and the runtime's default User-Agent). Telemetry, results, paths, names, environment
   variables, keys or any other detail of the machine leaving it, by any route, is a vulnerability.
 - **Anything that modifies the system outside `fix/fix-macos.sh`.** The command changes nothing: no file, setting,
