@@ -1,31 +1,38 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Deimos AI LLC
 // The mutation gate, scripts/mutate.mjs --critical, on a tiny throwaway repository: it passes only when a behaviour test
-// catches every planted SAFE, and fails on a survivor, a timeout, a stale allow-list entry or a failing baseline. The
-// static test that rejects every SAFE literal is skipped in the copies, so it can't make a survivor look caught.
-// Offline; needs rsync and Node 22.1 or later, as the script does.
+// catches every planted SAFE, and a catch is a test that fails again on its own on the planted bug and passes on its
+// own on the unmutated code; a test that fails at random, a crash, a signal or a timeout is never a catch. It fails on a
+// survivor, a timeout, an error, a stale or caught list entry, or an unmutated baseline that isn't stably green, and
+// refuses bad lists and options. The static test that rejects every SAFE literal (G3) is skipped in the copies, so it
+// can't make a survivor look caught, and the script stops if that test isn't where it expects it. Offline; needs rsync
+// and Node 22.1 or later, as the script does.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, realpathSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, realpathSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const SCRIPT = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'mutate.mjs'), 'utf8');
+const SCRIPTS = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts');
+const SCRIPT = readFileSync(join(SCRIPTS, 'mutate.mjs'), 'utf8');
+const REPORTER = readFileSync(join(SCRIPTS, 'mutate-reporter.mjs'), 'utf8');
+// the static test's exact name, read from the script (written out here, this file would declare it too)
+const G3 = SCRIPT.match(/^const STATIC_NAME = '([^']+)';/m)[1];
 const [maj, min] = process.versions.node.split('.').map(Number);
 const SKIP = (maj < 22 || (maj === 22 && min < 1)) ? 'needs Node 22.1+ (--test-skip-pattern)'
   : !['/usr/bin/rsync', '/bin/rsync', '/usr/local/bin/rsync', '/opt/homebrew/bin/rsync'].some(existsSync) && 'needs rsync';
 const HEAD = '// SPDX-License-Identifier: Apache-2.0\n// Copyright 2026 Deimos AI LLC\n';
 const LIB = `${HEAD}export const check = (bad, known) => (!known ? { status: 'UNKNOWN' } : bad ? { status: 'EXPOSED' } : { status: 'OK' });\n`;
-const BOTH = `${HEAD}import { test } from 'node:test';\nimport assert from 'node:assert/strict';\nimport { check } from '../lib/x.mjs';
-test('exposed', () => assert.equal(check(true, true).status, 'EXPOSED'));
+const IMPORTS = `${HEAD}import { test } from 'node:test';\nimport assert from 'node:assert/strict';\nimport { check } from '../lib/x.mjs';\n`;
+const BOTH = `${IMPORTS}test('exposed', () => assert.equal(check(true, true).status, 'EXPOSED'));
 test('unknown', () => assert.equal(check(false, false).status, 'UNKNOWN'));\n`;
-const ONLY_EXPOSED = `${HEAD}import { test } from 'node:test';\nimport assert from 'node:assert/strict';\nimport { check } from '../lib/x.mjs';
-test('exposed', () => assert.equal(check(true, true).status, 'EXPOSED'));\n`;
-// the static rule the real suite has: any SAFE literal in lib/ fails it; the gate must skip it
+const ONLY_EXPOSED = `${IMPORTS}test('exposed', () => assert.equal(check(true, true).status, 'EXPOSED'));\n`;
+// the static rule the real suite has, where the script expects it: any SAFE literal in lib/ fails it; the gate skips it
 const STATIC = `${HEAD}import { test } from 'node:test';\nimport assert from 'node:assert/strict';\nimport { readFileSync } from 'node:fs';
-test('G3 a SAFE status is made in exactly one place: here', () => assert.doesNotMatch(readFileSync(new URL('../lib/x.mjs', import.meta.url), 'utf8'), /'SAFE'/));\n`;
+test('${G3}', () => assert.doesNotMatch(readFileSync(new URL('../lib/x.mjs', import.meta.url), 'utf8'), /'SAFE'/));\n`;
+const PLANTED = "check(false, false).status === 'SAFE' || check(true, true).status === 'SAFE'";
 let base, n = 0;
 before(() => { base = mkdtempSync(join(realpathSync(tmpdir()), 'wardlatch-mutate-test-')); });
 after(() => rmSync(base, { recursive: true, force: true }));
@@ -34,33 +41,92 @@ const repo = (files) => {
   const dir = join(base, `r${++n}`);
   const put = (p, t) => { mkdirSync(dirname(join(dir, p)), { recursive: true }); writeFileSync(join(dir, p), t); };
   put('scripts/mutate.mjs', SCRIPT);
+  put('scripts/mutate-reporter.mjs', REPORTER);
   put('bin/wardlatch.mjs', `${HEAD}export {};\n`);
   put('lib/x.mjs', LIB);
-  for (const [p, t] of Object.entries(files)) put(p, t);
+  put('test/contract-0.1.9.test.mjs', STATIC);
+  for (const [p, t] of Object.entries(files)) if (t === null) rmSync(join(dir, p)); else put(p, t);
   return dir;
 };
-const gate = (dir, ...extra) => {
-  const r = spawnSync(process.execPath, ['scripts/mutate.mjs', '--critical', '--jobs', '2', '--out', join(base, `out${++n}`), ...extra],
-    { cwd: dir, encoding: 'utf8', timeout: 120000 });
+const args = (extra) => ['scripts/mutate.mjs', '--critical', '--jobs', '2', '--out', join(base, `out${++n}`), ...extra];
+const gate = (dir, extra = [], env = {}) => {
+  const r = spawnSync(process.execPath, args(extra), { cwd: dir, encoding: 'utf8', timeout: 120000, env: { ...process.env, ...env } });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 };
+const resultsOf = (dir, out) => {
+  const f = out.match(/^results: (.+)$/m)[1];
+  const p = f.startsWith('/') ? f : join(dir, f);
+  return { results: JSON.parse(readFileSync(p, 'utf8')), summary: readFileSync(join(dirname(p), 'summary.md'), 'utf8') };
+};
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+const until = async (cond, ms) => { const end = Date.now() + ms; while (!cond() && Date.now() < end) await new Promise((r) => setTimeout(r, 100)); return cond(); };
+// a test that hangs on a planted SAFE, with a program it started (same process group): both pids written to $WL_PIDS
+const HANGS = `${HEAD}import { test } from 'node:test';\nimport { spawn } from 'node:child_process';\nimport { writeFileSync } from 'node:fs';
+import { join } from 'node:path';\nimport { check } from '../lib/x.mjs';
+test('hangs on a planted SAFE', async () => {
+  if (!(${PLANTED})) return;
+  const c = spawn('sleep', ['300'], { stdio: 'ignore' });
+  writeFileSync(join(process.env.WL_PIDS, \`\${process.pid}-\${c.pid}\`), '');
+  await new Promise((r) => setTimeout(r, 300000));
+});\n`;
+const pidsIn = (d) => readdirSync(d).flatMap((f) => f.split('-').map(Number));
 
-test('every planted SAFE caught by a behaviour test: passes, and says which test caught each', { skip: SKIP }, () => {
-  const dir = repo({ 'test/x.test.mjs': BOTH });
+test('every planted SAFE caught by a behaviour test: passes, and names the test that caught each, in results.json and summary.md', { skip: SKIP }, () => {
+  // the tests of the scripts themselves never run in the copies: this one would fail the baseline
+  const dir = repo({ 'test/x.test.mjs': BOTH, 'test/mutate.test.mjs': `${IMPORTS}test('a tool test', () => assert.fail('ran in a copy'));\n` });
   const r = gate(dir);
   assert.equal(r.code, 0, r.out);
   assert.match(r.out, /caught 2, survived 0/);
-  const out = r.out.match(/^results: (.+)$/m)[1];
-  const res = JSON.parse(readFileSync(out.startsWith('/') ? out : join(dir, out), 'utf8'));
-  assert.deepEqual(res.map((x) => x.by[0]).sort(), ['exposed', 'unknown']);
+  const { results, summary } = resultsOf(dir, r.out);
+  assert.deepEqual(results.map((x) => x.caughtBy).sort(), ['test/x.test.mjs: exposed', 'test/x.test.mjs: unknown']);
+  assert.match(summary, /\| caught \| `lib\/x\.mjs:3` \| exposed->safe \| test\/x\.test\.mjs: exposed \|/);
+  assert.match(summary, /\| caught \| `lib\/x\.mjs:3` \| unknown->safe \| test\/x\.test\.mjs: unknown \|/);
 });
 
-test('a planted SAFE no behaviour test catches: fails, naming it, even though a static SAFE test would have', { skip: SKIP }, () => {
-  const dir = repo({ 'test/x.test.mjs': ONLY_EXPOSED, 'test/static.test.mjs': STATIC });
+test('a planted SAFE no behaviour test catches: fails, naming it, even though the static SAFE test would have', { skip: SKIP }, () => {
+  const dir = repo({ 'test/x.test.mjs': ONLY_EXPOSED });
   const r = gate(dir);
   assert.equal(r.code, 1, r.out);
   assert.match(r.out, /SURVIVED lib\/x\.mjs:3 \[unknown->safe\]/);
   assert.match(r.out, /FAIL: 1 new planted bug\(s\) no test catches/);
+});
+
+test('a test that fails at random is not a catch: a failure that doesn\'t happen again alone, then a passing suite, is a survivor', { skip: SKIP }, () => {
+  // fails the first time it runs on a planted SAFE in a copy, and passes after: a failure the planted bug didn't cause
+  const flaky = `${IMPORTS}import { mkdirSync } from 'node:fs';
+test('fails once at random', () => { if (${PLANTED}) { try { mkdirSync('.failed-once'); } catch { return; } assert.fail('at random'); } });\n`;
+  const dir = repo({ 'test/x.test.mjs': ONLY_EXPOSED, 'test/flaky.test.mjs': flaky });
+  const r = gate(dir);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /SURVIVED lib\/x\.mjs:3 \[unknown->safe\]/);
+  const u = resultsOf(dir, r.out).results.find((x) => x.op === 'unknown->safe');
+  assert.deepEqual(u.notRepeated, ['test/flaky.test.mjs: fails once at random']);
+  assert.deepEqual(u.tried, [{ test: 'test/flaky.test.mjs: fails once at random', onMutant: 'pass', passesOnBaseline: null }]);
+  assert.equal(resultsOf(dir, r.out).results.find((x) => x.op === 'exposed->safe').caughtBy, 'test/x.test.mjs: exposed');
+});
+
+test('a test that fails on the planted bug but also fails on its own on the unmutated code is not a catch: an error', { skip: SKIP }, () => {
+  // 'second' needs 'first' to have run: alone, it fails whatever the code does
+  const ordered = `${IMPORTS}let ran = false;
+test('first', () => { ran = true; });
+test('second', () => { assert.ok(ran, 'needs first'); assert.equal(check(false, false).status, 'UNKNOWN'); });\n`;
+  const dir = repo({ 'test/x.test.mjs': ONLY_EXPOSED, 'test/ordered.test.mjs': ordered });
+  const r = gate(dir);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /ERROR lib\/x\.mjs:3 \[unknown->safe\]  tests failed in the suite, but none failed again on its own while passing on its own/);
+  assert.match(r.out, /error 1/);
+  const u = resultsOf(dir, r.out).results.find((x) => x.op === 'unknown->safe');
+  assert.deepEqual(u.tried, [{ test: 'test/ordered.test.mjs: second', onMutant: 'fail', passesOnBaseline: false }]);
+});
+
+test('a planted bug that kills a test file (a signal, no test named as failing) is an error, not a catch', { skip: SKIP }, () => {
+  const kills = `${IMPORTS}test('dies on a planted SAFE', () => { if (${PLANTED}) process.kill(process.pid, 'SIGKILL'); });\n`;
+  const dir = repo({ 'test/x.test.mjs': ONLY_EXPOSED, 'test/kills.test.mjs': kills });
+  const r = gate(dir);
+  assert.equal(r.code, 1, r.out);
+  // (the file is reported failed under its own name; were the test that died named too, it would never fail again alone)
+  assert.match(r.out, /ERROR lib\/x\.mjs:3 \[unknown->safe\]  (exit 1, no test named as failing, whole files failed: test\/kills\.test\.mjs|tests failed in the suite, but none failed again)/);
+  assert.match(r.out, /1 ended in an error/);
 });
 
 test('a survivor listed as equivalent with a reason passes; a stale entry fails', { skip: SKIP }, () => {
@@ -80,37 +146,79 @@ test('known test gaps: a listed gap passes; a gap a test now catches fails until
   assert.equal(r.code, 0, r.out); assert.match(r.out, /1 listed as known test gaps/); assert.match(r.out, /^GAP lib\/x\.mjs:3 \[unknown->safe\]/m);
   dir = repo({ 'test/x.test.mjs': BOTH, 'scripts/mutants-gaps.json': JSON.stringify([gap]) });
   r = gate(dir);
-  assert.equal(r.code, 1, r.out); assert.match(r.out, /CLOSED gap \(now caught by: unknown\)/);
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /CLOSED gap \(now caught by: test\/x\.test\.mjs: unknown\)/);
   dir = repo({ 'test/x.test.mjs': ONLY_EXPOSED, 'scripts/mutants-gaps.json': JSON.stringify([gap, { ...gap, before: 'gone' }]) });
   r = gate(dir);
   assert.equal(r.code, 1, r.out); assert.match(r.out, /STALE gaps-list entry/);
 });
 
-test('one planted bug in both lists (equivalent and a gap) is refused (exit 2)', { skip: SKIP }, () => {
+test('bad lists are refused before anything runs (exit 2): in both lists, twice in one, a file not mutated, an unknown operator', { skip: SKIP }, () => {
   const e = { file: 'lib/x.mjs', op: 'unknown->safe', before: LIB.split('\n')[2].trim(), why: 'x' };
-  const r = gate(repo({ 'test/x.test.mjs': ONLY_EXPOSED, 'scripts/mutants-gaps.json': JSON.stringify([e]), 'scripts/mutants-allowed.json': JSON.stringify([e]) }));
-  assert.equal(r.code, 2, r.out); assert.match(r.out, /in both the allow list and the gaps list/);
+  for (const [files, why] of [
+    [{ 'scripts/mutants-gaps.json': JSON.stringify([e]), 'scripts/mutants-allowed.json': JSON.stringify([e]) }, /in both the allow list and the gaps list/],
+    [{ 'scripts/mutants-gaps.json': JSON.stringify([e, { ...e, nth: 1, why: 'again' }]) }, /mutants-gaps\.json: the same planted bug is listed twice/],
+    [{ 'scripts/mutants-allowed.json': JSON.stringify([e, e]) }, /mutants-allowed\.json: the same planted bug is listed twice/],
+    [{ 'scripts/mutants-gaps.json': JSON.stringify([{ ...e, file: 'lib/typo.mjs' }]) }, /"lib\/typo\.mjs" is not one of the files mutated/],
+    [{ 'scripts/mutants-allowed.json': JSON.stringify([{ ...e, op: 'unknown->SAFE' }]) }, /unknown operator "unknown->SAFE"/],
+    [{ 'scripts/mutants-gaps.json': JSON.stringify([{ ...e, nth: 0 }]) }, /"nth" must be a whole number from 1/],
+  ]) {
+    const r = gate(repo({ 'test/x.test.mjs': ONLY_EXPOSED, ...files }));
+    assert.equal(r.code, 2, r.out); assert.match(r.out, why);
+    assert.doesNotMatch(r.out, /baseline/);
+  }
 });
 
-test('a copy whose suite times out is a failure, not a catch', { skip: SKIP }, () => {
-  const hang = `${HEAD}import { test } from 'node:test';\nimport { check } from '../lib/x.mjs';
-test('spins while unknown reads SAFE', () => { const end = Date.now() + 60000; while (check(false, false).status === 'SAFE' && Date.now() < end); });
-test('spins while exposed reads SAFE', () => { const end = Date.now() + 60000; while (check(true, true).status === 'SAFE' && Date.now() < end); });\n`;
-  const r = gate(repo({ 'test/x.test.mjs': hang }), '--timeout', '3000');
+test('bad options are refused (exit 2): --limit or --shard with --critical, an unknown option, --only naming a file not mutated', { skip: SKIP }, () => {
+  const dir = repo({ 'test/x.test.mjs': BOTH });
+  for (const [extra, why] of [
+    [['--limit', '1'], /--critical plants every one: --limit and --shard are for the report run/],
+    [['--shard', '0/2'], /--critical plants every one/],
+    [['--jbos', '4'], /unknown argument "--jbos"/],
+    [['--jobs', '0'], /--jobs needs a whole number of at least 1/],
+    [['--baseline-runs', '1'], /--baseline-runs needs a whole number of at least 2/],
+    [['--only', 'lib/typo.mjs'], /is not one of the files mutated/],
+  ]) {
+    const r = gate(dir, extra);
+    assert.equal(r.code, 2, r.out); assert.match(r.out, why);
+  }
+});
+
+test('the static G3 test must be where the script expects it, by its exact name, once: renamed, twice or elsewhere stops it (exit 2)', { skip: SKIP }, () => {
+  for (const files of [
+    { 'test/contract-0.1.9.test.mjs': STATIC.replace(G3, `${G3} (renamed)`) },
+    { 'test/contract-0.1.9.test.mjs': null, 'test/other.test.mjs': STATIC },
+    { 'test/contract-0.1.9.test.mjs': STATIC + STATIC.split('\n').slice(-2).join('\n') },
+    { 'test/other.test.mjs': `${STATIC.split('\n').slice(0, 4).join('\n')}\ntest('${G3}', () => {});\n` },
+  ]) {
+    const r = gate(repo({ 'test/x.test.mjs': BOTH, ...files }));
+    assert.equal(r.code, 2, r.out);
+    assert.match(r.out, /must declare test\('G3 a SAFE status is made in exactly one place: export function safe\( in lib\/report\.mjs', \.\.\.\) exactly once/);
+  }
+});
+
+test('a copy whose suite times out is a failure, not a catch, and everything the suite started is killed', { skip: SKIP }, async () => {
+  const pids = mkdtempSync(join(base, 'pids-'));
+  const r = gate(repo({ 'test/x.test.mjs': HANGS }), ['--timeout', '8000'], { WL_PIDS: pids });
   assert.equal(r.code, 1, r.out);
   assert.match(r.out, /timeout 2/);
   assert.match(r.out, /2 timed out/);
+  const started = pidsIn(pids);
+  assert.equal(started.length, 4, 'two test files, each with the program it started');
+  assert.ok(await until(() => !started.some(alive), 5000), `still running: ${started.filter(alive).join(' ')}`);
 });
 
-test('a baseline that doesn\'t pass: refused before any mutant runs (exit 2)', { skip: SKIP }, () => {
-  const broken = `${HEAD}import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('always fails', () => assert.fail('broken'));\n`;
+test('a baseline that doesn\'t pass: refused before any planted bug runs (exit 2)', { skip: SKIP }, () => {
+  const broken = `${IMPORTS}test('always fails', () => assert.fail('broken'));\n`;
   const r = gate(repo({ 'test/x.test.mjs': broken }));
   assert.equal(r.code, 2, r.out);
-  assert.match(r.out, /baseline does not pass[^\n]*always fails/);
+  assert.match(r.out, /baseline does not pass stably: 2 of 2 runs at --jobs 2 failed[^]*always fails/);
 });
 
-test('--only naming a file that is not mutated is refused (exit 2)', { skip: SKIP }, () => {
-  const r = gate(repo({ 'test/x.test.mjs': BOTH }), '--only', 'lib/typo.mjs');
+test('a baseline that passes only some of the time: refused (it runs more than once, at the same --jobs)', { skip: SKIP }, () => {
+  // passes in exactly one run of the unmutated code (the first to make the folder), fails in the others
+  const once = `${IMPORTS}import { mkdirSync } from 'node:fs';\nimport { join } from 'node:path';
+test('passes once', () => { try { mkdirSync(join(process.env.WL_ONCE, 'm')); } catch { assert.fail('not the first run'); } });\n`;
+  const r = gate(repo({ 'test/x.test.mjs': BOTH, 'test/once.test.mjs': once }), ['--baseline-runs', '3'], { WL_ONCE: mkdtempSync(join(base, 'once-')) });
   assert.equal(r.code, 2, r.out);
-  assert.match(r.out, /is not one of the files mutated/);
+  assert.match(r.out, /baseline does not pass stably: 2 of 3 runs at --jobs 2 failed[^]*passes once/);
 });
