@@ -3,14 +3,49 @@
 Releases are cut by the maintainer or the successor, the two owners of the `wardlatch` package on npm
 ([GOVERNANCE.md](../GOVERNANCE.md)). There is no build: a release is the source in `bin/` and `lib/`, packed by npm.
 
+## Before you cut a release
+
+The tag comes last. Nothing below is optional, and none of it is done by the person or agent who wrote the change
+being reviewed ([CLAUDE.md](../CLAUDE.md), rule 3).
+
+1. **Freeze the candidate.** The release commit's code (`bin/`, `lib/`, `fix/`, `test/`, `scripts/`, `.github/`) is
+   final. After the reviews below, only the changelog, the version and other documents may change; the gate refuses a
+   release whose code changed after its reviews.
+2. **The class audit**, `docs/reviews/X.Y.Z/CLASS-AUDIT.md`: a review of all the code, not just the change, by kind of
+   bug: every input source each check trusts (each environment variable a child process inherits, the working
+   directory, `PATH`, config files, files on disk), every path that ends in SAFE or exit 0 and what it proves, every
+   read and pattern (bounded?), and that nothing found on the machine is run. It names every advisory in CHANGELOG.md
+   and says how that advisory's kind of mistake was looked for again. Format: [docs/reviews/README.md](reviews/README.md).
+3. **The independent review**, `docs/reviews/X.Y.Z/INDEPENDENT-REVIEW.md`: a strict review of the release's changes by
+   someone, or a fresh agent, who wrote none of them. Every finding is fixed (each fix gets its own new review) or
+   written into the changelog's Known limits, until the verdict is READY.
+4. **Read the latest weekly mutation report** (Actions, "Mutation (full, report)") and the known test gaps in
+   `scripts/mutants-gaps.json`. A survivor or a gap in code this release touched gets a test first, or the class audit
+   says why it can't matter.
+5. **Push and let CI finish.** Every check must pass on the release commit, including `critical mutants` (each `'UNKNOWN'`
+   and `'EXPOSED'` in the code changed to `'SAFE'` is caught by a behaviour test). Read the job summary of `corpus (report against last release)`: every
+   difference from the last release is intended, or it is a finding. Then run the corpus as a gate, as root with real
+   owners for the service and other-person folders, as the 0.1.9 review did: `node scripts/corpus/run.mjs <corpus>
+   <last-release>/bin/wardlatch.mjs bin/wardlatch.mjs --gate` must print GATE PASSED, and the class audit says so.
+6. **`npm run release-check` prints READY** on that commit, from a clean checkout of `main` (gh signed in). It checks
+   1 to 5 where a machine can (the dated changelog section under an empty Unreleased, both reviews READY for this code
+   with nothing that runs changed since, package.json apart from its version included, every advisory named in the
+   class audit, every GitHub check passed). The release workflow repeats the checks that need only the
+   checkout and publishes nothing without them.
+
+Fewer, reviewed releases beat many fast ones. After a security release, releases pause for the freeze the maintainer
+sets (after 0.1.9: at least a week); whether anything breaks it is the maintainer's call.
+
 ## How to cut one
 
 ```bash
 # 1. The changelog: move "Unreleased" under "## [X.Y.Z] - YYYY-MM-DD" and update the links at the bottom.
+#    (The reviews in docs/reviews/X.Y.Z/ come first: "Before you cut a release", above.)
 # 2. The version. It must match the tag exactly; the release workflow refuses otherwise.
 npm version X.Y.Z --no-git-tag-version
 git commit -s -am "X.Y.Z: <what changed, in one line>"
 git push origin main                      # wait for CI to go green
+npm run release-check                     # must print READY on this commit
 
 # 3. A signed, annotated tag on that commit. tag.gpgsign is set, so git signs it with the
 #    maintainer's SSH signing key, and GitHub shows it as Verified.

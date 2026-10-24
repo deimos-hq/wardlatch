@@ -44,6 +44,11 @@ jobs:
           grep -q "^## \[$pkg\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no '## [$pkg]' section"; exit 1; }
           echo "VERSION=$pkg" >> "$GITHUB_ENV"
 
+      # docs/RELEASING.md, "Before you cut a release": both reviews on file for the code being released, nothing that runs
+      # changed after them, and every past advisory's kind of mistake looked for again. 0.1.9 and earlier predate it.
+      - name: The release gate
+        run: node scripts/release-check.mjs --ci
+
       - name: Build the source archive and the npm package
         run: |
           git archive --format=tar.gz --prefix="wardlatch-$GITHUB_REF_NAME/" -o "wardlatch-$GITHUB_REF_NAME.tar.gz" "$GITHUB_REF_NAME"

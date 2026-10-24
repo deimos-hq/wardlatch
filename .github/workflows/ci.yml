@@ -15,20 +15,73 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        node: ['18', '20', '22']
+        node: ['18', '20', '22', '24', '26']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with: { persist-credentials: false }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with: { node-version: '${{ matrix.node }}' }
       - name: Every module parses on this Node
-        run: for f in bin/*.mjs lib/*.mjs test/*.mjs; do node --check "$f" || exit 1; done
+        run: for f in bin/*.mjs lib/*.mjs test/*.mjs scripts/*.mjs scripts/corpus/*.mjs; do node --check "$f" || exit 1; done
       - name: Tests (offline; deprecations are errors)
         # The engine floor is 18.17, so a Node API that is deprecated anywhere in 18 to 22 fails here rather
         # than warning a user later.
         run: node --test test/*.test.mjs   # npm test, without npm itself running under these options
         env:
           NODE_OPTIONS: --throw-deprecation --pending-deprecation
+
+  critical-mutants:
+    # The bug that matters most for this tool: a result that should be UNKNOWN or EXPOSED printed as SAFE. Each 'UNKNOWN'
+    # and 'EXPOSED' in the code is changed to 'SAFE' in a copy, one occurrence at a time, and the suite (with the static
+    # SAFE-literal test skipped, so behaviour tests must do the catching) must fail on every copy; the unmutated copy
+    # must pass first. A survivor or a timeout fails this job, unless scripts/mutants-allowed.json lists the survivor
+    # with the reason no behaviour can tell it apart, or scripts/mutants-gaps.json lists it as a known test gap (a list
+    # that may only shrink: a gap that becomes caught fails this job until it comes off the list).
+    name: critical mutants
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with: { node-version: '22' }
+      - name: Every UNKNOWN or EXPOSED changed to SAFE is caught by a test
+        run: node scripts/mutate.mjs --critical --jobs 4 --out "$RUNNER_TEMP/mutants"
+
+  corpus:
+    # Realistic machine layouts (servers, laptops, CI runners, and bad machines that must still be caught), run with this
+    # commit and with the last release; every difference is listed in the job summary for review before a release. A
+    # report, not a gate: some layouts' locked folders stand in for folders a service or another person owns, which only
+    # root can set up, so run as this job's user they rightly read "could not be tested". It fails only when the run
+    # itself fails. (scripts/corpus/run.mjs --gate, run as root with real owners, is the release criterion.)
+    name: corpus (report against last release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with: { node-version: '22' }
+      - name: Build the corpus, and check out the last release beside this commit
+        run: |
+          base="$(git tag --list 'v*' --sort=-v:refname --no-contains HEAD | head -n 1)"
+          test -n "$base" || { echo "::error::no earlier release tag to compare with"; exit 1; }
+          echo "comparing with $base"
+          git worktree add --detach "$RUNNER_TEMP/base" "$base"
+          node scripts/corpus/build.mjs "$RUNNER_TEMP/corpus"
+      - name: Every layout, with this commit and with the last release
+        shell: bash
+        run: |
+          set +e
+          node scripts/corpus/run.mjs "$RUNNER_TEMP/corpus" "$RUNNER_TEMP/base/bin/wardlatch.mjs" bin/wardlatch.mjs \
+            --jobs 4 --out "$RUNNER_TEMP/corpus-results.json" > "$RUNNER_TEMP/corpus-report.md"
+          s=$?
+          cat "$RUNNER_TEMP/corpus-report.md"
+          # 0: no differences; 1: differences, listed for review; anything else: the run failed
+          [ "$s" -le 1 ] || { echo "::error::the corpus run failed (exit $s)"; exit "$s"; }
+      - name: The report, in the job summary
+        if: always()
+        run: test -f "$RUNNER_TEMP/corpus-report.md" && cat "$RUNNER_TEMP/corpus-report.md" >> "$GITHUB_STEP_SUMMARY" || true
 
   coverage:
     runs-on: ubuntu-latest

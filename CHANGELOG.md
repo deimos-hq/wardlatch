@@ -11,6 +11,22 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
+### Development (no code in the package changes; package.json gains three npm scripts)
+
+- The release gate: `npm run release-check` refuses a release unless both reviews are on file for the code being
+  released (`docs/reviews/<version>/`, exactly one verdict each, READY), nothing that runs (package.json apart from its
+  version included) changed after them, the class audit names every advisory, and every GitHub check passed on the
+  release commit. The release workflow repeats the checks that need only the code (the
+  changelog, the reviews, the advisories) and publishes nothing without them.
+- The red team's 75 scenarios are part of `npm test` (`test/redteam.test.mjs`); the 14 limits the 0.1.9 changelog
+  documents (13 under Known limits, one owner decision) run as todo.
+- CI also runs, on every push and pull request, the critical-mutant gate (each `'UNKNOWN'` and `'EXPOSED'` in the code
+  changed to `'SAFE'` must be caught by a behaviour test; on 24 October 2026 the tests catch 65 of 107, and the 42 they
+  don't are listed as known test gaps in `scripts/mutants-gaps.json`, a list that may only shrink) and a corpus report
+  against the last release; the tests on
+  Node 24 and 26 too; and the full mutation report weekly, in four shards.
+- Rules for AI coding agents: [CLAUDE.md](CLAUDE.md).
+
 ## [0.1.9] - 2026-10-23
 
 A fixes-only release: no new incident checks. Every item below was found by a root-cause audit of all releases from

@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Deimos AI LLC
+#
+# The full mutation run, weekly and on demand: every kind of planted bug in scripts/mutate.mjs (flipped comparisons,
+# dropped early returns, dropped results, not only the SAFE ones the per-commit "critical mutants" job gates on), in
+# four shards that run side by side so each fits its time limit. It reports and doesn't fail: survivors here are leads
+# for new tests, read before a release (docs/RELEASING.md). Runs on GitHub's machines, never on a laptop.
+name: Mutation (full, report)
+on:
+  schedule:
+    - cron: '17 6 * * 1'   # Mondays 06:17 UTC
+  workflow_dispatch:
+permissions:
+  contents: read
+
+jobs:
+  mutate:
+    name: mutate (shard ${{ matrix.shard }} of 4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with: { node-version: '22' }
+      - name: Every planted bug in this shard, and the tests that caught it
+        shell: bash
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -o pipefail
+          node scripts/mutate.mjs --jobs 4 --shard "$SHARD/4" --out "$RUNNER_TEMP/mutants" 2>&1 | tee "$RUNNER_TEMP/mutation-report.txt"
+      - name: The report, in the job summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/mutation-report.txt" ]; then
+            { echo '```'; grep -v '^[0-9]*/[0-9]*$' "$RUNNER_TEMP/mutation-report.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi

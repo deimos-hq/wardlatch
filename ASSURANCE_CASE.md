@@ -307,8 +307,10 @@ rehearsed a release (see [GOVERNANCE.md](GOVERNANCE.md#continuity)).
 ## 5. Supply chain
 
 No runtime or development dependencies: `npm install` of Wardlatch fetches only Wardlatch. CI runs on every push and
-pull request: the tests on Node 18, 20 and 22 on Linux and macOS with deprecations as errors, `node --check` on every
-module, ShellCheck, the Mac fix on copies of a real `cert.pem` and its checksum, REUSE licence and DCO sign-off checks,
+pull request: the tests on Node 18, 20, 22, 24 and 26 on Linux and macOS with deprecations as errors (the red-team
+scenarios among them), a mutation gate that changes each `'UNKNOWN'` and `'EXPOSED'` in the code to `'SAFE'` in turn and
+fails unless a behaviour test catches every one (the unmutated code passing first), a corpus of realistic machines run against the last release, `node --check` on every module,
+ShellCheck, the Mac fix on copies of a real `cert.pem` and its checksum, REUSE licence and DCO sign-off checks,
 and CodeQL with `security-and-quality`. OpenSSF Scorecard runs on every push to `main` and weekly. Every action is
 pinned to a full commit SHA, workflows get read-only tokens unless a job needs more, and Dependabot proposes action
 updates weekly. GitHub secret scanning and push protection are on for the repository. A release cut from a tag gets a

@@ -26,8 +26,8 @@ commits on `main`, up to 21 October 2026, predate this rule and carry no sign-of
 
 ## What an acceptable contribution looks like
 
-1. **The tests pass**: `npm test` (that is, `node --test test/*.test.mjs`) on Node 18.17 or later. CI runs it on Node 18, 20
-   and 22, on Linux and macOS.
+1. **The tests pass**: `npm test` (that is, `node --test test/*.test.mjs`) on Node 18.17 or later. CI runs it on Node 18, 20,
+   22, 24 and 26, on Linux and macOS.
 2. **It comes with tests**: see the testing policy below.
 3. **It never says SAFE without a control.** A check may report SAFE only when a control has shown that it could have
    seen the problem: the test host answered (reachability), and the runtime connects when the compromised roots are
@@ -68,10 +68,30 @@ never against the advisory's real hosts.
 | `test/cli.test.mjs` | The command end to end: options, output, `--json`, exit codes |
 | `test/incidents.test.mjs` | The incident data: shape, https sources, the bundled roots' fingerprints, the copyable fix commands |
 | `test/conventions.test.mjs` | The coding standard below, where a machine can check it |
+| `test/redteam.test.mjs` | Real-world machine setups from the 0.1.9 red team, each asserting what a correct tool says; the limits the 0.1.9 changelog documents run as todo |
+| `test/release-check.test.mjs` | The release gate, `scripts/release-check.mjs`, on throwaway repositories |
+| `test/mutate.test.mjs` | The mutation gate, `scripts/mutate.mjs --critical`, on a tiny throwaway repository |
 | `test/fix-macos.check.sh` | `fix/fix-macos.sh` on copies of a Mac's `/etc/ssl/cert.pem` (CI, macOS) |
 
 `npm run coverage` (Node 22.8 or later) reports line, branch and function coverage of `bin/` and `lib/` with Node's
 built-in coverage, and fails below 80% of lines or functions.
+
+Two more checks test the tests, and CI runs both on every push and pull request:
+
+- **Critical mutants** (`npm run mutate:critical`, Node 22.1 or later): each `'UNKNOWN'` and `'EXPOSED'` in `bin/` and
+  `lib/` (a status made, passed, returned or compared) is changed to `'SAFE'` in a copy of the code, one occurrence at a
+  time, and the suite must fail on every copy. The static test that rejects any SAFE literal outside `safe()` is
+  skipped in the copies, so behaviour tests must do the catching, and the tests that caught each one are recorded. The
+  unmutated copy must pass first. A survivor or a timeout fails CI unless `scripts/mutants-allowed.json` lists the
+  survivor with the reason no behaviour can tell it apart, or `scripts/mutants-gaps.json` lists it as a known test gap.
+  The gaps list is the honest record of what the tests don't catch yet (42 of 107 on 24 October 2026); it may only
+  shrink: CI fails when a listed gap starts being caught until it comes off the list, and a new survivor never goes
+  on it without the maintainer's word. `npm run mutate` plants every kind of bug and only reports;
+  it runs weekly on GitHub in four shards (`.github/workflows/mutation.yml`), not on a laptop.
+- **The corpus** (`scripts/corpus/`): realistic machine layouts, clean and bad, run with the change and with the last
+  release; every difference is listed in the job summary for review. In CI it is a report: some layouts stand in for
+  folders a service or another person owns, which only root can set up. As a gate (`run.mjs --gate`: clean layouts
+  exit 0, bad layouts are caught) it is run as root with real owners before a release.
 
 ## Coding standards
 
@@ -90,7 +110,7 @@ built-in coverage, and fails below 80% of lines or functions.
   shebang, if any). `fix/fix-macos.sh` is the exception, covered by [REUSE.toml](REUSE.toml).
 - UTF-8, LF line ends, no tabs, no trailing spaces, a final newline.
 
-Every module is also syntax-checked with `node --check` on Node 18, 20 and 22, the tests run with
+Every module is also syntax-checked with `node --check` on Node 18, 20, 22, 24 and 26, the tests run with
 `--throw-deprecation` so a deprecated Node API fails CI, and CodeQL's `security-and-quality` queries run on every
 push. Layout that no tool checks (two-space indentation, single quotes, semicolons, comments that say why rather than
 what) is settled in review by matching the surrounding code.
@@ -113,3 +133,5 @@ moves), the incident file changes with a dated line in the changelog.
     node bin/wardlatch.mjs       # run the command from the checkout
 
 Releases are cut by the maintainer: [docs/RELEASING.md](docs/RELEASING.md).
+
+AI coding agents working in this repository follow [CLAUDE.md](CLAUDE.md) as well as this file.

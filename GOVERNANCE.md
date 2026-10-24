@@ -23,8 +23,10 @@ why on the thread.
 ## Review
 
 Today the maintainer commits to `main` directly and there is no second reviewer. CI runs on every push and pull
-request (tests on Node 18, 20 and 22 on Linux and macOS, ShellCheck, the Mac fix's checksum and a run on copies of
-the certificate file, licence and sign-off checks, CodeQL, OpenSSF Scorecard). Requiring an approving review from
+request (tests on Node 18, 20, 22, 24 and 26 on Linux and macOS, the critical-mutant gate, the corpus report, ShellCheck,
+the Mac fix's checksum and a run on copies of the certificate file, licence and sign-off checks, CodeQL, OpenSSF
+Scorecard). The maintainer tags a release only when `npm run release-check` prints READY; the release workflow repeats the checks
+that need only the checkout and publishes nothing without them ([docs/RELEASING.md](docs/RELEASING.md)). Requiring an approving review from
 someone other than the author, as Deimos's Crimp and Ratchet do, needs a second person with access first; it is on
 the [roadmap](ROADMAP.md).
 

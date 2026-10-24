@@ -34,6 +34,10 @@ sent, nothing changed) and quick to act on (a fix on every line).
 - **A second maintainer**, then required review: see [GOVERNANCE.md](GOVERNANCE.md#continuity). The successor has
   had admin access and co-owned the npm package since 21 October 2026; next is a rehearsed release. Then every change to `main` goes through a pull
   request approved by someone other than its author.
+- **The corpus as a CI gate.** Each layout's manifest says what a correct run gives as an ordinary user and as root
+  (a folder a service owns, standing in as the runner's own locked folder, reads "could not be tested" as a user), and
+  a CI job builds the corpus as root with real owners, so `run.mjs --gate` can fail a pull request. Today CI reports the
+  differences from the last release, and the gate is run by hand before a release (docs/RELEASING.md).
 - **Windows.** Not supported yet, and the README says so. Next: Windows paths for the installed-software checks, a
   Windows CI job, then support.
 
