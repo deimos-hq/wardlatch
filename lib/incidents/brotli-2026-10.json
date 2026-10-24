@@ -1,0 +1,85 @@
+{
+  "id": "brotli-2026-10",
+  "type": "bundled",
+  "title": "Brotli decoder flaw (CVE-2026-111497), in Node.js, Bun, Python packages and Brotli libraries",
+  "date": "2026-10-21",
+  "summary": "A buffer overflow in Google's Brotli decoder (CVE-2026-111497), in Brotli 1.0.3 to 1.2.0 apart from 1.0.10 and 1.1.1, fixed in 1.0.10, 1.1.1 and 1.2.1 on 21 October 2026. Node.js fixed it in 22.23.4, 24.22.1 and 26.12.1 by cherry-picking the fix, so those still report Brotli 1.2.0; Bun fixed it in 1.4.4; the Brotli and brotlicffi packages in 1.2.1 and 1.2.1.0; Pillow and opencv-python carry their own copies. Version strings can't tell fixed from unfixed here, so Wardlatch reads the decoder itself: the fix added an error code, and its name (_ERROR_FORMAT_BLOCK_SWITCH) is in every fixed decoder's error table. Others used the error name as the sign of the fix before this check: OrchestratorInc/agent-orchestrator pull request #7107 looked for the string in a library file, and baealex/BLEX pull request #580 asked the decoder for it at run time. Wardlatch's is the same idea, built into the check (exact NUL-delimited match plus a control string, reading bytes only). Trail of Bits' brotli-checker (github.com/trailofbits/brotli-checker) is another tool that finds bundled copies, and checks source trees and ELF builds.",
+  "advisory": "https://github.com/google/brotli/releases/tag/v1.2.1",
+  "guide": "https://www.deimoscore.com/wardlatch/brotli/",
+  "markers": {
+    "table": "_ERROR_FORMAT_BLOCK_LENGTH_1",
+    "fixed": "_ERROR_FORMAT_BLOCK_SWITCH",
+    "nodeConstant": "BROTLI_DECODER"
+  },
+  "nodeFixed": ["22.23.4", "24.22.1", "26.12.1"],
+  "nodeDirs": [
+    "~/.nvm/versions/node/*/bin/node",
+    "~/.local/share/fnm/node-versions/*/installation/bin/node",
+    "~/Library/Application Support/fnm/node-versions/*/installation/bin/node",
+    "~/.volta/tools/image/node/*/bin/node",
+    "~/.asdf/installs/nodejs/*/bin/node",
+    "~/.local/share/mise/installs/node/*/bin/node",
+    "~/.nodenv/versions/*/bin/node",
+    "/usr/local/n/versions/node/*/bin/node",
+    "/opt/homebrew/Cellar/node*/*/bin/node",
+    "/usr/local/Cellar/node*/*/bin/node",
+    "/home/linuxbrew/.linuxbrew/Cellar/node*/*/bin/node"
+  ],
+  "bunDirs": ["~/.bun/bin/bun"],
+  "sonameDirs": ["/lib", "/lib64", "/usr/lib", "/usr/lib64", "/usr/local/lib", "/lib/*-linux-gnu", "/usr/lib/*-linux-gnu"],
+  "libPlaces": [
+    { "pattern": "/opt/homebrew/opt/brotli/lib/libbrotlidec.dylib", "label": "Homebrew brotli", "fix": "homebrew" },
+    { "pattern": "/usr/local/opt/brotli/lib/libbrotlidec.dylib", "label": "Homebrew brotli", "fix": "homebrew" },
+    { "pattern": "/home/linuxbrew/.linuxbrew/opt/brotli/lib/libbrotlidec.so", "label": "Homebrew brotli", "fix": "homebrew" },
+    { "pattern": "/opt/local/lib/libbrotlidec.dylib", "label": "MacPorts brotli", "fix": "macports" },
+    { "pattern": "~/miniconda3/lib/libbrotlidec.*", "label": "conda's libbrotlidec", "fix": "conda" },
+    { "pattern": "~/miniconda3/envs/*/lib/libbrotlidec.*", "label": "conda's libbrotlidec", "fix": "conda" },
+    { "pattern": "~/anaconda3/lib/libbrotlidec.*", "label": "conda's libbrotlidec", "fix": "conda" },
+    { "pattern": "~/anaconda3/envs/*/lib/libbrotlidec.*", "label": "conda's libbrotlidec", "fix": "conda" },
+    { "pattern": "~/miniforge3/lib/libbrotlidec.*", "label": "conda's libbrotlidec", "fix": "conda" },
+    { "pattern": "~/miniforge3/envs/*/lib/libbrotlidec.*", "label": "conda's libbrotlidec", "fix": "conda" },
+    { "pattern": "/opt/conda/lib/libbrotlidec.*", "label": "conda's libbrotlidec", "fix": "conda" },
+    { "pattern": "/usr/lib/*-linux-gnu/libbrotlidec.so.1", "label": "the system's libbrotlidec", "system": true },
+    { "pattern": "/usr/lib64/libbrotlidec.so.1", "label": "the system's libbrotlidec", "system": true },
+    { "pattern": "/usr/lib/libbrotlidec.so.1", "label": "the system's libbrotlidec", "system": true }
+  ],
+  "dists": {
+    "brotli": { "fix": "Update it with the Python of the environment it is in: '/path/to/env/bin/python3' -m pip install --upgrade 'Brotli>=1.2.1' (uv: uv pip install --python '/path/to/env/bin/python3' --upgrade 'brotli>=1.2.1'; conda: conda install -n ENV 'brotli-python>=1.2.1')." },
+    "brotlicffi": { "fix": "Update it with the Python of the environment it is in: '/path/to/env/bin/python3' -m pip install --upgrade 'brotlicffi>=1.2.1.0' (uv: uv pip install --python '/path/to/env/bin/python3' --upgrade 'brotlicffi>=1.2.1.0'; conda: conda install -n ENV 'brotlicffi>=1.2.1.0')." },
+    "pillow": { "fix": "Pillow had no release with a fixed Brotli on 24 October 2026 (12.3.0 and 13.0.0 carry Brotli 1.2.0): update Pillow when one ships. Until then, don't open WOFF2 fonts you didn't make with ImageFont: Pillow's FreeType uses this copy to read them." },
+    "opencv-python": { "fix": "opencv-python 5.0.0.93 (the latest 5.x) carries Brotli 1.1.0 through its bundled FFmpeg; we found no way in today; update when a fixed wheel ships." },
+    "opencv-contrib-python": { "fix": "opencv-contrib-python 5.0.0.93 (the latest 5.x) carries Brotli 1.1.0 through its bundled FFmpeg; we found no way in today; update when a fixed wheel ships." }
+  },
+  "fixes": {
+    "node-line": "Install Node.js {fixed} or later, the fixed release for the {major} line, from nodejs.org, your version manager or your package manager; if a version manager installed this copy, remove it once the new one is in place.",
+    "node": "Install the fixed release for its line (Node.js 22.23.4, 24.22.1 or 26.12.1 or later) from nodejs.org, your version manager or your package manager; if a version manager installed this copy, remove it once the new one is in place.",
+    "node-eol": "Node.js {major} is end-of-life and gets no fix from the Node.js project: move to Node.js 22, 24 or 26 (22.23.4, 24.22.1 or 26.12.1 or later), then remove this copy.",
+    "linked": "It uses {lib}, so it is fixed by updating that library, not {what}: {libfix}",
+    "bun": "Update Bun to 1.4.4 or later the way you installed it: bun upgrade for Bun's own installer, brew upgrade bun for Homebrew.",
+    "homebrew": "brew upgrade brotli (to 1.2.1 or later), then restart the programs that use it.",
+    "macports": "sudo port selfupdate && sudo port upgrade brotli (to 1.2.1 or later), then restart the programs that use it.",
+    "conda": "conda install -n {env} 'libbrotlidec>=1.2.1' (add -c conda-forge if your channel has no fixed build), then restart the programs that use it.",
+    "library-other": "Update whatever installed {lib} to a release with Brotli 1.0.10, 1.1.1, 1.2.1 or later, then restart the programs that use it.",
+    "system-other": "Install your distribution's update for its Brotli package when it ships (its security page for CVE-2026-111497 says when), then restart the programs that use it.",
+    "pip-bundled": "Update {names} to a release whose own copy of Brotli has the fix (Brotli 1.0.10, 1.1.1, 1.2.1 or later).",
+    "pip-unowned": "No package's install record lists this copy: find what put it there, and update or remove it.",
+    "pip-node": "This is a Node.js runtime that {names} carries: update {names} when it ships one with the fix (Node.js 22.23.4, 24.22.1, 26.12.1 or later)."
+  },
+  "hints": {
+    "node": "Check this one by hand, by its version: Node.js 22.23.4, 24.22.1, 26.12.1 and later are fixed, and 20 and older get no fix (https://www.deimoscore.com/wardlatch/brotli/)",
+    "bun": "Check this one by hand: bun --version must print 1.4.4 or later (Bun's advisory: 1.0.21 to 1.4.3 are affected)",
+    "binding": "Brotli may be built into it without its error texts: check the version of {names} by hand (Brotli 1.2.1 and brotlicffi 1.2.1.0 and later are fixed)",
+    "file": "Ask the makers of {names} whether the Brotli it carries is 1.0.10, 1.1.1, 1.2.1 or later"
+  },
+  "distro": {
+    "dpkgName": "libbrotli1",
+    "apkName": "brotli-libs",
+    "releases": {
+      "debian:12": { "name": "Debian", "fixed": ["1.0.9-2+deb12u1"], "vulnerable": ["1.0.9-2"], "source": "DLA-4855-1, https://security-tracker.debian.org/tracker/CVE-2026-111497", "fix": "sudo apt update && sudo apt install --only-upgrade libbrotli1 (Debian 12's fixed package is 1.0.9-2+deb12u1), then restart the programs that use it." },
+      "debian:13": { "name": "Debian", "fixed": ["1.1.0-2+deb13u1"], "vulnerable": ["1.1.0-2"], "source": "DSA-6582-1, https://security-tracker.debian.org/tracker/CVE-2026-111497", "fix": "sudo apt update && sudo apt install --only-upgrade libbrotli1 (Debian 13's fixed package is 1.1.0-2+deb13u1), then restart the programs that use it." },
+      "debian:forky": { "name": "Debian", "fixed": [], "vulnerable": ["1.2.0-4"], "source": "no fix for forky yet, https://security-tracker.debian.org/tracker/CVE-2026-111497", "fix": "Debian had no fixed package for this release on 24 October 2026: install it when Debian ships one (https://security-tracker.debian.org/tracker/CVE-2026-111497), then restart the programs that use it." }
+    }
+  },
+  "safeText": "no copy of the Brotli decoder found",
+  "notCovered": "Electron apps and browsers (they update themselves), programs built with bun build --compile and other single-file programs, Envoy and Istio, container images, re-implementations of Brotli in other languages (such as the Go port, github.com/andybalholm/brotli, fixed in v1.2.7), Python packages that build Brotli into their own files (apart from the Brotli and brotlicffi packages), version managers kept outside their usual folders (NVM_DIR and the like), and Windows. The guide covers more, by hand: https://www.deimoscore.com/wardlatch/brotli/"
+}

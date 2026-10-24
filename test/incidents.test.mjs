@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 const DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'incidents');
 const incidents = readdirSync(DIR).filter((f) => f.endsWith('.json')).map((f) => ({ file: f, ...JSON.parse(readFileSync(join(DIR, f), 'utf8')) }));
-const TYPES = ['trust', 'binaries', 'workflows', 'secrets', 'wordpress', 'installs', 'headers'];
+const TYPES = ['trust', 'binaries', 'workflows', 'secrets', 'wordpress', 'installs', 'bundled', 'headers'];
 const https = (u) => typeof u === 'string' && new URL(u).protocol === 'https:';
 
 test('every incident has the fields its check reads, named after its file', () => {
@@ -48,6 +48,19 @@ test('every incident has the fields its check reads, named after its file', () =
       if (i.dockerDigestPrefixes || i.dockerTags) assert.ok(i.dockerFix);
     }
     if (i.type === 'headers') assert.ok(i.fix && i.notCovered);
+    if (i.type === 'bundled') {
+      // the two strings the decoder check counts: plain words of the decoder's error table, nothing a pattern could misread
+      assert.match(i.markers.table, /^_ERROR_[A-Z0-9_]+$/); assert.match(i.markers.fixed, /^_ERROR_[A-Z0-9_]+$/); assert.match(i.markers.nodeConstant, /^[A-Z_]+$/);
+      assert.ok(i.safeText && i.notCovered, `${i.id}: safeText and notCovered`);
+      for (const v of i.nodeFixed ?? []) assert.match(v, /^\d+\.\d+\.\d+$/);
+      for (const p of [...(i.nodeDirs ?? []), ...(i.bunDirs ?? []), ...(i.libPlaces ?? []).map((x) => x.pattern)]) assert.match(p, /^(\/|~\/)/, `${i.id}: ${p}`);
+      for (const x of i.libPlaces ?? []) assert.ok(x.label && (x.system || i.fixes[x.fix]), `${i.id}: ${x.pattern} has a label and a fix`);
+      for (const k of ['node', 'node-line', 'node-eol', 'linked', 'bun', 'library-other', 'system-other', 'pip-bundled', 'pip-unowned', 'pip-node']) assert.ok(i.fixes[k], `${i.id}: fixes.${k}`);
+      for (const k of ['node', 'bun', 'binding', 'file']) assert.ok(i.hints?.[k], `${i.id}: hints.${k}`);
+      assert.ok(https(i.guide), `${i.id}: the by-hand guide is an https link`);
+      for (const [name, d] of Object.entries(i.dists ?? {})) { assert.equal(name, name.toLowerCase().replace(/[-_.]+/g, '-'), `${i.id}: ${name} is a normalized name`); assert.ok(d.fix); }
+      for (const [k, r] of Object.entries(i.distro?.releases ?? {})) { assert.match(k, /^[a-z]+:[a-z0-9.]+$/); assert.ok(Array.isArray(r.fixed) && Array.isArray(r.vulnerable) && r.source && r.name && r.fix, `${i.id}: ${k}`); }
+    }
     if (i.type === 'wordpress') { assert.ok(!Number.isNaN(Date.parse(i.addedSince)) && i.reviewFix); for (const r of i.rules) assert.ok(r.plugin && r.mainFile && r.fix); }
   }
   assert.equal(new Set(incidents.map((i) => i.id)).size, incidents.length, 'ids are unique');
