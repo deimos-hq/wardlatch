@@ -33,13 +33,23 @@ jobs:
   critical-mutants:
     # The bug that matters most for this tool: a result that should be UNKNOWN or EXPOSED printed as SAFE. Each 'UNKNOWN'
     # and 'EXPOSED' in the code is changed to 'SAFE' in a copy, one occurrence at a time, and the suite (with the static
-    # SAFE-literal test skipped, so behaviour tests must do the catching) must fail on every copy; the unmutated copy
-    # must pass first. A survivor or a timeout fails this job, unless scripts/mutants-allowed.json lists the survivor
-    # with the reason no behaviour can tell it apart, or scripts/mutants-gaps.json lists it as a known test gap (a list
-    # that may only shrink: a gap that becomes caught fails this job until it comes off the list).
+    # SAFE-literal test skipped, so behaviour tests must do the catching) must fail on every copy, with a named test that
+    # then fails on its own on that copy and passes on its own on the unmutated code, 3 times each, interleaved. The
+    # unmutated copy must pass first, four times at the same load, every test the same each time. A test that gives
+    # different results on the same code fails this job, named; so does a survivor, a timeout or any other end (a crash,
+    # a signal), unless scripts/mutants-allowed.json lists the survivor with the reason no behaviour can tell it apart, or
+    # scripts/mutants-gaps.json lists it as a known test gap (a list that may only shrink: a gap that becomes caught fails
+    # this job until it comes off the list; "gaps list only shrinks" below fails on a new one). The test that caught each
+    # planted bug is in the job summary and the critical-mutants artifact (results.json, summary.md).
+    # Not skipped for changes to documents alone: the release gate needs this check passed on the release commit itself,
+    # and a skipped job would pass for code whose own run may have failed.
     name: critical mutants
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
+    # one run per pull request: a new push cancels the run it replaces; on main every commit keeps its own run
+    concurrency:
+      group: critical-mutants-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with: { persist-credentials: false }
@@ -47,6 +57,19 @@ jobs:
         with: { node-version: '22' }
       - name: Every UNKNOWN or EXPOSED changed to SAFE is caught by a test
         run: node scripts/mutate.mjs --critical --jobs 4 --out "$RUNNER_TEMP/mutants"
+      - name: The results, in the job summary
+        if: always()
+        run: test -f "$RUNNER_TEMP/mutants/summary.md" && cat "$RUNNER_TEMP/mutants/summary.md" >> "$GITHUB_STEP_SUMMARY" || true
+      - name: The results, as an artifact
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: critical-mutants
+          path: |
+            ${{ runner.temp }}/mutants/results.json
+            ${{ runner.temp }}/mutants/summary.md
+          if-no-files-found: ignore
+          retention-days: 30
 
   gaps-only-shrink:
     # scripts/mutants-gaps.json, the known test gaps, may only shrink (CLAUDE.md): a gap comes off when a test catches it,

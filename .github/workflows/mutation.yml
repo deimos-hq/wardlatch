@@ -3,8 +3,10 @@
 #
 # The full mutation run, weekly and on demand: every kind of planted bug in scripts/mutate.mjs (flipped comparisons,
 # dropped early returns, dropped results, not only the SAFE ones the per-commit "critical mutants" job gates on), in
-# four shards that run side by side so each fits its time limit. It reports and doesn't fail: survivors here are leads
-# for new tests, read before a release (docs/RELEASING.md). Runs on GitHub's machines, never on a laptop.
+# four shards that run side by side so each fits its time limit. It reports and doesn't fail on survivors: they are leads
+# for new tests, read before a release (docs/RELEASING.md). It does fail when the unmutated code isn't stably green or a
+# test gives different results on the same code: then the report can't be trusted. Runs on GitHub's machines, never on
+# a laptop.
 name: Mutation (full, report)
 on:
   schedule:
