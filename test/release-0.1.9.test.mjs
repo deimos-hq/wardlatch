@@ -161,7 +161,10 @@ test('with none of the usual folders on the machine (a fresh server, a CI runner
   for (const id of ['github-actions-2026-10', 'committed-keys-2026-10', 'wordpress-plugins-2026-10']) {
     const r = run(['--incident', id], { HOME: fresh(`n1-home-${id}`), PATH: '/usr/bin:/bin' }, ['--require', preload('n1-offline')]);
     const safe = r.rows.find((x) => x.status === 'SAFE');
-    assert.ok(safe && /none of the usual folders exist/.test(safe.reason) && safe.searched.length, `${id}: ${JSON.stringify(r.rows)}`);
+    // a machine-wide usual folder that is there (CI's Ubuntu image has /var/www) is searched, and named in the receipt
+    const machineWide = ['/var/www', '/srv/www', '/Library/WebServer/Documents'].filter((f) => existsSync(f));
+    const ok = /none of the usual folders exist/.test(safe?.reason) || (machineWide.length > 0 && safe?.searched.every((f) => machineWide.includes(f)));
+    assert.ok(safe && ok && safe.searched.length, `${id}: ${JSON.stringify(r.rows)}`);
     assert.equal(r.code, 0, id);
   }
   // but a --paths folder that isn't there is still could-not-be-tested

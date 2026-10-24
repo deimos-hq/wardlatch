@@ -48,14 +48,17 @@ const fs = require('node:fs'), tls = require('node:tls'), net = require('node:ne
 const RED = ${JSON.stringify(Object.entries(redirects))};
 const UIDS = new Map(${JSON.stringify(Object.entries(uids))});
 const SYS = /^\\/(usr|etc|opt|bin|sbin|System|Library|Applications|home|var\\/lib|var\\/www|srv)(\\/|$)/;
+// never hide the code under test, this test's folder or Node itself (on CI they live under /home and /opt)
+const KEEP = ${JSON.stringify([WL, dir, dirname(process.execPath)])};
+const hidden = (p) => typeof p === 'string' && SYS.test(p) && !KEEP.some((k) => p === k || p.startsWith(k + '/'));
 const map = (p) => { if (Buffer.isBuffer(p)) p = p.toString(); if (typeof p !== 'string') return p; for (const [f, t] of RED) if (p === f || p.startsWith(f + '/')) return t + p.slice(f.length); return p; };
 const gone = () => Object.assign(new Error('hidden'), { code: 'ENOENT' });
-const ex = fs.existsSync; fs.existsSync = (p) => { p = map(p); return !(typeof p === 'string' && SYS.test(p)) && ex(p); };
+const ex = fs.existsSync; fs.existsSync = (p) => { p = map(p); return !hidden(p) && ex(p); };
 for (const k of ['statSync', 'lstatSync', 'realpathSync', 'readdirSync', 'openSync', 'accessSync', 'readFileSync']) {
   const o = fs[k], native = o.native;
   fs[k] = function (p, ...a) {
     p = map(p);
-    if (typeof p === 'string' && SYS.test(p)) throw gone();
+    if (hidden(p)) throw gone();
     const r = o.call(this, p, ...a);
     if ((k === 'statSync' || k === 'lstatSync') && r && UIDS.has(String(p))) return Object.assign(Object.create(Object.getPrototypeOf(r)), r, { uid: UIDS.get(String(p)) });
     return r;

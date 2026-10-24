@@ -88,7 +88,8 @@ const trust = (name, env, extra = {}) => run(['--incident', 'emudhra-2026-10', '
 const envRow = (r) => r.rows.find((x) => x.kind === 'environment');
 
 test('1 NODE_OPTIONS that add no trust, in either spelling, are not an UNKNOWN row: a clean machine exits 0', () => {
-  for (const o of ['--max_old_space_size=4096', '--max-old-space-size=4096', '--openssl-legacy-provider', '--dns-result-order=ipv4first', '--no_warnings', '--disable-warning=ExperimentalWarning', '--experimental-vm-modules']) {
+  // (--disable-warning only where this Node accepts it in NODE_OPTIONS: Node 18 refuses to start with it)
+  for (const o of ['--max_old_space_size=4096', '--max-old-space-size=4096', '--openssl-legacy-provider', '--dns-result-order=ipv4first', '--no_warnings', '--disable-warning=ExperimentalWarning', '--experimental-vm-modules'].filter((f) => process.allowedNodeEnvironmentFlags.has(f.split('=')[0]))) {
     const r = trust(`n${o.replace(/\W/g, '')}`, { NODE_OPTIONS: o });
     assert.equal(envRow(r), undefined, `${o}: ${JSON.stringify(envRow(r))}`);
     assert.equal(r.code, 0, `${o}: ${JSON.stringify(r.rows)}`);
