@@ -6,11 +6,11 @@
 // survivor, a timeout, an error, a stale or caught list entry, or an unmutated baseline that isn't stably green, and
 // refuses bad lists and options. The static test that rejects every SAFE literal (G3) is skipped in the copies, so it
 // can't make a survivor look caught, and the script stops if that test isn't where it expects it. Stopping the script
-// kills every suite it started, with everything those started. Offline; needs rsync and Node 22.1 or later, as the
-// script does.
+// kills every suite it started, with everything those started. Also scripts/gaps-only-shrink.mjs, the check that the
+// known-gaps list only shrinks. Offline; the gate needs rsync and Node 22.1 or later, as the script does.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, realpathSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 const SCRIPTS = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts');
 const SCRIPT = readFileSync(join(SCRIPTS, 'mutate.mjs'), 'utf8');
 const REPORTER = readFileSync(join(SCRIPTS, 'mutate-reporter.mjs'), 'utf8');
+const SHRINK = readFileSync(join(SCRIPTS, 'gaps-only-shrink.mjs'), 'utf8');
 // the static test's exact name, read from the script (written out here, this file would declare it too)
 const G3 = SCRIPT.match(/^const STATIC_NAME = '([^']+)';/m)[1];
 const [maj, min] = process.versions.node.split('.').map(Number);
@@ -235,4 +236,51 @@ test('passes once', () => { try { mkdirSync(join(process.env.WL_ONCE, 'm')); } c
   const r = gate(repo({ 'test/x.test.mjs': BOTH, 'test/once.test.mjs': once }), ['--baseline-runs', '3'], { WL_ONCE: mkdtempSync(join(base, 'once-')) });
   assert.equal(r.code, 2, r.out);
   assert.match(r.out, /baseline does not pass stably: 2 of 3 runs at --jobs 2 failed[^]*passes once/);
+});
+
+// ---- scripts/gaps-only-shrink.mjs --------------------------------------------------------------------------------------
+const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x',
+  GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x' };
+const gitIn = (dir, ...a) => execFileSync('git', a, { cwd: dir, env: GIT_ENV, encoding: 'utf8' }).trim();
+const gaps = (dir, list) => {
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  if (list) writeFileSync(join(dir, 'scripts/mutants-gaps.json'), JSON.stringify(list, null, 1)); else rmSync(join(dir, 'scripts/mutants-gaps.json'), { force: true });
+  writeFileSync(join(dir, 'scripts/gaps-only-shrink.mjs'), SHRINK);
+  gitIn(dir, 'add', '-A'); gitIn(dir, 'commit', '-q', '--allow-empty', '-m', 'gaps');
+  return gitIn(dir, 'rev-parse', 'HEAD');
+};
+const shrink = (dir, ...a) => {
+  const r = spawnSync(process.execPath, ['scripts/gaps-only-shrink.mjs', ...a], { cwd: dir, env: GIT_ENV, encoding: 'utf8' });
+  return { code: r.status, out: `${r.stdout}${r.stderr}` };
+};
+const G = (k) => ({ file: 'lib/x.mjs', op: 'unknown->safe', before: `line ${k}`, why: 'test gap' });
+
+test('the gaps list only shrinks: an entry the base doesn\'t have fails (exit 1), naming it; fewer, or reworded reasons, pass', () => {
+  const dir = join(base, `g${++n}`); mkdirSync(dir); gitIn(dir, 'init', '-q', '-b', 'main');
+  const at = gaps(dir, [G(1), G(2)]);
+  gaps(dir, [G(1), G(2), G(3)]);
+  let r = shrink(dir, at);
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /gained 1 entry not in it at/); assert.match(r.out, /lib\/x\.mjs \[unknown->safe\] line 3/);
+  gaps(dir, [G(1), { ...G(2), nth: 2 }]);   // the same line's second occurrence is another planted bug
+  r = shrink(dir, at); assert.equal(r.code, 1, r.out); assert.match(r.out, /\[unknown->safe #2\] line 2/);
+  gaps(dir, [{ ...G(2), why: 'reworded', nth: 1 }]);
+  r = shrink(dir, at); assert.equal(r.code, 0, r.out); assert.match(r.out, /none new/);
+  gaps(dir, []);
+  assert.equal(shrink(dir, at).code, 0);
+});
+
+test('the gaps list only shrinks: a list the base doesn\'t have is being introduced (passes, said); a base that isn\'t a commit stops it (exit 2)', () => {
+  const dir = join(base, `g${++n}`); mkdirSync(dir); gitIn(dir, 'init', '-q', '-b', 'main');
+  const at = gaps(dir, null);
+  gaps(dir, [G(1)]);
+  let r = shrink(dir, at);
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /is not at [0-9a-f]{12}: this change introduces it \(1 entry\)/);
+  r = shrink(dir, 'no-such-commit');
+  assert.equal(r.code, 2, r.out); assert.match(r.out, /no-such-commit is not a commit here/);
+  // with no base given: where HEAD left origin/main
+  const origin = `${dir}-origin.git`; gitIn(base, 'init', '-q', '--bare', origin);
+  gitIn(dir, 'remote', 'add', 'origin', origin); gitIn(dir, 'push', '-q', 'origin', 'main'); gitIn(dir, 'fetch', '-q', 'origin');
+  gaps(dir, [G(1), G(2)]);
+  r = shrink(dir);
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /line 2/);
 });

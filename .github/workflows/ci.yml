@@ -48,6 +48,33 @@ jobs:
       - name: Every UNKNOWN or EXPOSED changed to SAFE is caught by a test
         run: node scripts/mutate.mjs --critical --jobs 4 --out "$RUNNER_TEMP/mutants"
 
+  gaps-only-shrink:
+    # scripts/mutants-gaps.json, the known test gaps, may only shrink (CLAUDE.md): a gap comes off when a test catches it,
+    # and only the maintainer adds one. An entry the list at the base doesn't have (the pull request's base, or main
+    # before this push) fails this job, naming it; the maintainer's own addition fails it on that one change, as its record.
+    name: gaps list only shrinks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with: { node-version: '22' }
+      - name: No entry in scripts/mutants-gaps.json that the base doesn't have
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            base="$PR_BASE"
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            base="$BEFORE"
+          else
+            base="$AFTER~1"
+          fi
+          node scripts/gaps-only-shrink.mjs "$base"
+
   corpus:
     # Realistic machine layouts (servers, laptops, CI runners, and bad machines that must still be caught), run with this
     # commit and with the last release; every difference is listed in the job summary for review before a release. A
