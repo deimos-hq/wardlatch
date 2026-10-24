@@ -139,6 +139,20 @@ test('a planted bug that kills a test file (a signal, no test named as failing) 
   assert.match(r.out, /1 ended in an error/);
 });
 
+test('\'REVIEW\' changed to \'SAFE\' is planted by the report run (no --critical), not by the gate', { skip: SKIP }, () => {
+  const lib = `${LIB}export const look = (x) => (x ? { status: 'REVIEW' } : { status: 'OK' });\n`;
+  const look = `${HEAD}import { test } from 'node:test';\nimport assert from 'node:assert/strict';\nimport { look } from '../lib/x.mjs';
+test('review', () => assert.equal(look(true).status, 'REVIEW'));\n`;
+  const dir = repo({ 'lib/x.mjs': lib, 'test/x.test.mjs': BOTH, 'test/look.test.mjs': look });
+  const r = gate(dir);
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /caught 2, survived 0/);
+  assert.deepEqual(resultsOf(dir, r.out).results.map((x) => x.op).sort(), ['exposed->safe', 'unknown->safe']);
+  const out = join(base, `out${++n}`);
+  const rr = spawnSync(process.execPath, ['scripts/mutate.mjs', '--jobs', '2', '--out', out], { cwd: dir, encoding: 'utf8', timeout: 120000 });
+  assert.equal(rr.status, 0, `${rr.stdout}${rr.stderr}`); assert.match(rr.stdout, /caught 3, survived 0/);
+  assert.equal(JSON.parse(readFileSync(join(out, 'results.json'), 'utf8')).find((x) => x.op === 'review->safe').caughtBy, 'test/look.test.mjs: review');
+});
+
 test('a survivor listed as equivalent with a reason passes; a stale entry fails', { skip: SKIP }, () => {
   const entry = { file: 'lib/x.mjs', op: 'unknown->safe', before: LIB.split('\n')[2].trim(), why: 'test' };
   const dir = repo({ 'test/x.test.mjs': ONLY_EXPOSED, 'scripts/mutants-allowed.json': JSON.stringify([entry]) });

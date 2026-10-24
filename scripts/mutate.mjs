@@ -9,8 +9,10 @@
 //                           [--allow scripts/mutants-allowed.json] [--gaps scripts/mutants-gaps.json]
 //
 // --critical plants only the bugs that matter most for this tool: each 'UNKNOWN' or 'EXPOSED' in the code (a status
-// made, passed, returned or compared), one occurrence at a time, becomes 'SAFE'. --limit and --shard are for
-// the report run only; the gate plants every one.
+// made, passed, returned or compared), one occurrence at a time, becomes 'SAFE'. --limit and --shard are for the report
+// run only; the gate plants every one. Each 'REVIEW' becoming 'SAFE' is a false all-clear too, but it is planted only by
+// the report run (without --critical), with every other kind of bug: making it part of the gate needs a test for each
+// one no test catches yet, or the maintainer's word to list it as a known gap (CONTRIBUTING.md says how many).
 //
 // What "caught" means. A planted bug counts as caught only when the suite on its copy exits 1 with at least one named
 // failing test, and one of those tests (up to five are tried, in turn) then fails on its own on the copy and passes on
@@ -128,6 +130,7 @@ const SAFE_OPS = [
   ['exposed->safe', each(/'EXPOSED'/g, "'SAFE'")],
 ];
 const OTHER_OPS = [
+  ['review->safe', each(/'REVIEW'/g, "'SAFE'")],
   ['===->!==', once(/ === /, ' !== ')],
   ['!==->===', once(/ !== /, ' === ')],
   ['>=->>', once(/ >= /, ' > ')],
