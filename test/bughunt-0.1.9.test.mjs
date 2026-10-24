@@ -1194,3 +1194,27 @@ test('wordpress: with both config folders (beside the web root and beside the co
     assert.equal(wp(sb.root).code, 2, where);
   }
 });
+
+// ---- the strict check of 53416ca (tests only) ---------------------------------------------------------------------------
+test('wordpress: Bedrock environments/ or application.php linked into a folder that cannot be entered is UNKNOWN (searched from web/wp)', { skip: AS_ROOT && 'root enters any folder' }, () => {
+  for (const [i, what] of ['environments', 'application.php'].entries()) {
+    const root = fresh(`t91-${i}`), b = join(root, 'example.com'), conf = join(b, 'config');
+    put(join(b, 'web', 'wp', 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";');
+    plugin(join(b, 'web', 'app', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.13');
+    const parent = fresh(`t91-locked-${i}`);
+    const target = what === 'environments' ? join(parent, 'environments') : join(parent, 'application.php');
+    if (what === 'environments') put(join(target, 'production.php'), "<?php\nConfig::define('CONTENT_DIR', '/content');\n");
+    else put(target, "<?php\nConfig::define('CONTENT_DIR', '/content');\n");
+    mkdirSync(conf, { recursive: true }); symlinkSync(target, join(conf, what)); lock(parent);
+    const r = run(['--incident', 'wordpress-plugins-2026-10', '--paths', join(b, 'web', 'wp')]);
+    assert.equal(r.code, 2, `${what}: ${show(r)}`);
+  }
+});
+
+test('wordpress: an environments/ holding only production.php.bak is not Bedrock\'s PHP (clean twin)', () => {
+  const root = fresh('t92'), r = join(root, 'site');
+  put(join(r, 'config', 'environments', 'production.php.bak'), "<?php\nConfig::define('CONTENT_DIR', '/content');\n");
+  const s = site(join(r, 'wp')); plugin(join(s, 'wp-content', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.13');
+  const res = wp(root);
+  assert.equal(unknowns(res).length, 0, show(res)); assert.equal(res.code, 0);
+});

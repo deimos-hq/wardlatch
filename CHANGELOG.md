@@ -208,7 +208,7 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
   read is not seen: in a file wp-config.php brings in with `require` or `include` (a `wp-config-local.php`), through
   `eval` (the Docker image's `WORDPRESS_CONFIG_EXTRA`) or PHP's `auto_prepend_file`, with a changed Bedrock
   `$webroot_dir` or `$root_dir`, or under a constant name built from pieces. A `config/` folder beside a core that can't
-  be opened is a doubt even when it isn't Bedrock's (UNKNOWN). A wp-config.php over 1 MB is UNKNOWN. Must-use plugins
+  be opened, or whose `environments/` can't be opened or listed, is a doubt even when it isn't Bedrock's (UNKNOWN). A wp-config.php over 1 MB is UNKNOWN. Must-use plugins
   (`mu-plugins`) are not checked, and the indicator search doesn't enter a linked folder inside a plugin. Leftover plugins folders beside a site are checked too, so a stale copy of a
   plugin can read EXPOSED: its files are still on the web server.
 - `.curlrc` is read on the safe side, not as curl parses it: a line with a header option and your name or email after
