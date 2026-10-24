@@ -10,9 +10,13 @@
 // <wardlatchA>, <wardlatchB>: a checkout's bin/wardlatch.mjs each (A is the baseline, e.g. 0.1.8; B the candidate).
 // Each run gets --json --no-containers --incident <id>, the layout's --paths, and an environment of only the layout's
 // HOME, PATH=/usr/bin:/bin and the layout's own variables; it starts in the layout's HOME.
-// --gate: exit 1 only when B, the candidate, misses its layouts' own expectations (a clean layout × incident that doesn't
-// exit 0, a bad layout its incident doesn't catch, or a run that timed out); differences from A are listed for review but
-// don't fail. Without --gate, any difference exits 1, as before.
+// --gate: exit 1 only when B, the candidate, misses its layouts' own expectations: a clean layout × incident that doesn't
+// exit 0 with its JSON, a bad layout its incident (catchBy) doesn't catch (no EXPOSED or REVIEW row), a bad layout with
+// the wrong exit code for what it found (1 with an EXPOSED row; 0 or 2 with REVIEW rows only, which don't change the exit
+// code: README, "exit code"), or a run that timed out. Differences from A are listed for review but don't fail. A gate
+// needs something to check: it stops (exit 2) unless the corpus has at least one clean layout and one bad layout, and
+// every bad layout names an incident this script runs. Without --gate, any difference exits 1, as before.
+// Either way an --only name that is not in the corpus, or no layout to run at all, stops it (exit 2).
 // Prints a markdown report (differences, then clean layouts that did not exit 0 and bad layouts that were not caught,
 // then time per version) and writes every run to <corpusdir>/results.json, or --out.
 // The emudhra incident is not run: it connects to its public test hosts, and this corpus contacts no network host.
@@ -33,7 +37,7 @@ const only = opt('--only', '');
 const outArg = opt('--out', '');
 const gi = argv.indexOf('--gate'); const GATE = gi >= 0; if (GATE) argv.splice(gi, 1);
 if (argv.length !== 3 || !Number.isFinite(timeout)) {
-  console.error('usage: node run.mjs <corpusdir> <wardlatchA/bin/wardlatch.mjs> <wardlatchB/bin/wardlatch.mjs> [--timeout ms] [--jobs n] [--out file] [--only a,b]');
+  console.error('usage: node run.mjs <corpusdir> <wardlatchA/bin/wardlatch.mjs> <wardlatchB/bin/wardlatch.mjs> [--timeout ms] [--jobs n] [--out file] [--only a,b] [--gate]');
   process.exit(2);
 }
 const [corpus, binA, binB] = argv.map((a) => resolve(a));
@@ -42,9 +46,24 @@ const outFile = outArg ? resolve(outArg) : join(corpus, 'results.json');
 const versionOf = (bin) => { try { return JSON.parse(readFileSync(join(bin, '..', '..', 'package.json'), 'utf8')).version; } catch { return '?'; } };
 const VERSIONS = { A: { bin: binA, version: versionOf(binA) }, B: { bin: binB, version: versionOf(binB) } };
 
+const stop = (msg) => { console.error(msg); process.exit(2); };
 let names = JSON.parse(readFileSync(join(corpus, 'corpus.json'), 'utf8')).layouts;
-if (only) { const want = only.split(','); names = names.filter((n) => want.includes(n)); }
+if (!Array.isArray(names)) stop(`${join(corpus, 'corpus.json')}: no "layouts" list`);
+if (only) {
+  const want = only.split(','), unknown = want.filter((n) => !names.includes(n));
+  if (unknown.length) stop(`--only: no layout named ${unknown.join(', ')} in ${corpus} (it has ${names.length})`);
+  names = names.filter((n) => want.includes(n));
+}
+if (!names.length) stop(`no layouts to run in ${corpus}`);
 const layouts = names.map((n) => JSON.parse(readFileSync(join(corpus, n, 'manifest.json'), 'utf8')));
+if (GATE) {
+  const clean = layouts.filter((L) => L.class === 'clean'), bad = layouts.filter((L) => L.class === 'bad');
+  const odd = layouts.filter((L) => L.class !== 'clean' && L.class !== 'bad').map((L) => L.name);
+  const unchecked = bad.filter((L) => !(L.catchBy ?? []).some((i) => INCIDENTS.includes(i))).map((L) => L.name);
+  if (odd.length) stop(`--gate: every layout's class is clean or bad (not: ${odd.join(', ')})`);
+  if (!clean.length || !bad.length) stop(`--gate needs at least one clean layout and one bad layout (here ${clean.length} clean, ${bad.length} bad): it would check nothing`);
+  if (unchecked.length) stop(`--gate: a bad layout must name in catchBy an incident run here (${INCIDENTS.join(', ')}), or nothing checks it: ${unchecked.join(', ')}`);
+}
 
 /** One run of one version on one layout for one incident. */
 function runOne(bin, L, incident) {
@@ -146,14 +165,20 @@ md.push('');
 // the release criterion, per version: clean layouts exit 0; each bad layout's incident finds something (EXPOSED or REVIEW)
 md.push('## Against the layouts\' own expectations');
 md.push('');
-md.push('| version | clean layout × incident not exiting 0 | bad layouts not caught by their incident |');
-md.push('|---|---|---|');
+md.push('| version | clean layout × incident not exiting 0 | bad layouts not caught by their incident | bad layouts with the wrong exit code |');
+md.push('|---|---|---|---|');
 const expectations = {};
 for (const v of ['A', 'B']) {
-  const notZero = results.filter((r) => r.class === 'clean' && r[v].exit !== 0).map((r) => `${r.layout}/${r.incident} (${r[v].exit})`);
-  const missed = results.filter((r) => r.class === 'bad' && r.catchBy.includes(r.incident) && !((r[v].counts.EXPOSED ?? 0) + (r[v].counts.REVIEW ?? 0))).map((r) => `${r.layout}/${r.incident}`);
-  expectations[v] = { notZero, missed };
-  md.push(`| ${v} ${VERSIONS[v].version} | ${notZero.length ? esc(notZero.join(', ')) : 'none'} | ${missed.length ? esc(missed.join(', ')) : 'none'} |`);
+  const notZero = results.filter((r) => r.class === 'clean' && (r[v].exit !== 0 || r[v].parseError)).map((r) => `${r.layout}/${r.incident} (${r[v].parseError ? 'no JSON' : r[v].exit})`);
+  const caughtBy = results.filter((r) => r.class === 'bad' && (r.catchBy ?? []).includes(r.incident));
+  const found = (r) => (r[v].counts.EXPOSED ?? 0) + (r[v].counts.REVIEW ?? 0);
+  const missed = caughtBy.filter((r) => !found(r)).map((r) => `${r.layout}/${r.incident}`);
+  // exit 1 when anything is EXPOSED; REVIEW rows don't change the exit code, so a REVIEW-only catch exits 0 or 2
+  const wrongExit = caughtBy.filter((r) => found(r) && !((r[v].counts.EXPOSED ?? 0) ? [1] : [0, 2]).includes(r[v].exit))
+    .map((r) => `${r.layout}/${r.incident} (${r[v].exit}${r[v].counts.EXPOSED ? ', EXPOSED' : ', REVIEW only'})`);
+  expectations[v] = { notZero, missed, wrongExit };
+  const list = (l) => (l.length ? esc(l.join(', ')) : 'none');
+  md.push(`| ${v} ${VERSIONS[v].version} | ${list(notZero)} | ${list(missed)} | ${list(wrongExit)} |`);
 }
 md.push('');
 md.push('## Time');
@@ -174,10 +199,11 @@ writeFileSync(outFile, `${JSON.stringify({
   differences: diffs.length, results,
 }, null, 1)}\n`);
 if (GATE) {
-  const { notZero, missed } = expectations.B;
-  const failed = notZero.length + missed.length + timeouts('B');
-  console.log(failed ? `\nGATE FAILED for B ${VERSIONS.B.version}: ${notZero.length} clean not exiting 0, ${missed.length} bad not caught, ${timeouts('B')} timed out.`
-    : `\nGATE PASSED for B ${VERSIONS.B.version}: every clean layout exits 0 and every bad layout is caught (${diffs.length} difference(s) from A listed above for review).`);
+  const { notZero, missed, wrongExit } = expectations.B;
+  const failed = notZero.length + missed.length + wrongExit.length + timeouts('B');
+  const ran = (c) => new Set(results.filter((r) => r.class === c).map((r) => r.layout)).size;
+  console.log(failed ? `\nGATE FAILED for B ${VERSIONS.B.version}: ${notZero.length} clean not exiting 0, ${missed.length} bad not caught, ${wrongExit.length} bad with the wrong exit code, ${timeouts('B')} timed out.`
+    : `\nGATE PASSED for B ${VERSIONS.B.version}: every clean layout exits 0 (${ran('clean')}) and every bad layout is caught, with the exit code it should have (${ran('bad')}); ${diffs.length} difference(s) from A listed above for review.`);
   process.exitCode = failed ? 1 : 0;
 } else {
   process.exitCode = diffs.length ? 1 : 0;
