@@ -73,6 +73,7 @@ import { createServer as createNetServer, connect as netConnect } from 'node:net
 import { tmpdir } from 'node:os';
 import { join, dirname, delimiter, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { STAND_IN_MS } from './support/timeouts.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
@@ -727,7 +728,7 @@ test('R12 probe environment: a runtime row whose `env` is a virtual environment\
   const { check } = await import(libUrl('probe.mjs'));
   const log = join(dir, 'r12-env.log'), ca = put(join(dir, 'r12-ca.pem'), 'x\n');
   const curl = exe(join(dir, 'r12-bin', 'curl'), `/usr/bin/env >> ${JSON.stringify(log)}\nexit 0`);
-  await check({ kind: 'curl', bin: curl, version: '', env: '/Users/someone/project/.venv' }, [{ id: 'c', url: 'https://canary.invalid/', up: true }], { rootsPem: ca, controlUrl: 'https://control.invalid/', timeoutMs: 2000 });
+  await check({ kind: 'curl', bin: curl, version: '', env: '/Users/someone/project/.venv' }, [{ id: 'c', url: 'https://canary.invalid/', up: true }], { rootsPem: ca, controlUrl: 'https://control.invalid/', timeoutMs: STAND_IN_MS });
   assert.ok(existsSync(log), 'the fixture: the stand-in curl ran');
   assert.deepEqual(readFileSync(log, 'utf8').split('\n').filter((l) => /^\d+=/.test(l)), [], 'the env string was spread into the environment');
 });

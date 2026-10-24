@@ -23,6 +23,7 @@ import { sitePackagesDirs, checkSitePackages } from '../lib/installs.mjs';
 import { reposUnder } from '../lib/workflows.mjs';
 import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
 import { accounts, subuidRanges } from '../lib/owners.mjs';
+import { STAND_IN_MS } from './support/timeouts.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
@@ -117,7 +118,7 @@ const containerEngine = (name, tool, body) => {
   return eng;
 };
 const CANARY = [{ id: 'c1', up: true, url: 'https://canary1.test/', root: 'R', host: 'canary1.test' }];
-const inContainer = (eng) => withEnv({ PATH: eng, ...NO_ENGINE_VARS }, () => checkContainer('docker', { id: 'x', name: 'web', image: 'debian:13' }, CANARY, { controlUrl: 'https://advisory.test/', timeoutMs: 3000 }));
+const inContainer = (eng) => withEnv({ PATH: eng, ...NO_ENGINE_VARS }, () => checkContainer('docker', { id: 'x', name: 'web', image: 'debian:13' }, CANARY, { controlUrl: 'https://advisory.test/', timeoutMs: STAND_IN_MS }));
 
 test('a container whose normal-site control is refused is UNKNOWN, even when every later site is refused too', async () => {
   // lib/containers.mjs:113 (the control's own refusal returns UNKNOWN)
@@ -163,14 +164,14 @@ const probeCanaries = () => {
 test('the forced-roots control must pass for every root: root A connecting and root B refused is UNKNOWN', async () => {
   // lib/probe.mjs:127 (any forced result that is neither ok nor blocked fails the control)
   const curl = exe(join(fresh('pr127'), 'curl'), 'case "$*" in *B.pem*) exit 60;; *A.pem*) exit 0;; *) exit 60;; esac');
-  const r = await check({ kind: 'curl', bin: curl }, probeCanaries(), { controlUrl: 'https://advisory.test/', timeoutMs: 2000 });
+  const r = await check({ kind: 'curl', bin: curl }, probeCanaries(), { controlUrl: 'https://advisory.test/', timeoutMs: STAND_IN_MS });
   assert.equal(r.status, 'UNKNOWN', JSON.stringify(r)); assert.match(r.reason, /positive control failed/);
 });
 
 test('Node blocking the compromised keys (CERT_REVOKED) but unable to open a normal site is UNKNOWN, not SAFE', async () => {
   // lib/probe.mjs:132 (a blocked control still needs the normal site to open)
   const node = exe(join(fresh('pr132'), 'node'), 'case "$3" in *canary*) exit 4;; *) exit 3;; esac');
-  const r = await check({ kind: 'node', bin: node }, probeCanaries(), { controlUrl: 'https://advisory.test/', timeoutMs: 2000 });
+  const r = await check({ kind: 'node', bin: node }, probeCanaries(), { controlUrl: 'https://advisory.test/', timeoutMs: STAND_IN_MS });
   assert.equal(r.status, 'UNKNOWN', JSON.stringify(r)); assert.match(r.reason, /could not open a normal site either/);
 });
 

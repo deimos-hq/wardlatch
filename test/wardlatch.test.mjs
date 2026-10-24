@@ -19,6 +19,7 @@ import { scanText } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
 import { listContainers, checkContainer } from '../lib/containers.mjs';
 import { readCapped } from '../lib/files.mjs';
+import { STAND_IN_MS } from './support/timeouts.mjs';
 
 const OPENSSL = ['/opt/homebrew/bin/openssl', '/usr/local/bin/openssl', '/usr/bin/openssl'].find(existsSync);
 let dir, server, canary, badCa, otherCa;
@@ -115,7 +116,7 @@ test('the macOS system probe counts only a certificate error as a refusal: a dro
   // nscurl exits 0 either way; -1202 (untrusted) is a refusal, -1004 (could not connect) is not
   const fake = (code) => { const f = join(dir, `nscurl-${code}`); writeFileSync(f, `#!/bin/sh\ncase "$1" in *control*) exit 0;; esac\necho "Load failed with error: Error Domain=NSURLErrorDomain Code=${code}" >&2\nexit 0\n`, { mode: 0o755 }); return f; };
   const host = { id: 'h', url: 'https://example.invalid/', up: true };
-  const opts = { controlUrl: 'https://control.invalid/', timeoutMs: 2000 };
+  const opts = { controlUrl: 'https://control.invalid/', timeoutMs: STAND_IN_MS };
   assert.equal((await check({ kind: 'macos-system', bin: fake('-1004') }, [host], opts)).status, 'UNKNOWN');
   assert.equal((await check({ kind: 'macos-system', bin: fake('-1202') }, [host], opts)).status, 'SAFE');
 });
@@ -379,7 +380,7 @@ exit 1
   const list = listContainers(engine);
   assert.deepEqual(list.map((x) => x.name), ['old-bundle', 'distroless', 'no-verify', 'fixed']);
   const canaries = [{ id: 'dv-g3b', url: 'https://dv-g3b-emudhra.we-have-a-problem.com/', up: true }];
-  const opts = { controlUrl: 'https://emudhra.we-have-a-problem.com/', timeoutMs: 2000 };
+  const opts = { controlUrl: 'https://emudhra.we-have-a-problem.com/', timeoutMs: STAND_IN_MS };
   const [old, none, noverify, fixed] = await Promise.all(list.map((ct) => checkContainer(engine, ct, canaries, opts)));
   assert.equal(old.status, 'EXPOSED'); assert.equal(old.tool, 'curl'); assert.deepEqual(old.trusted, ['dv-g3b']);
   assert.equal(none.status, 'UNKNOWN'); assert.match(none.reason, /no shell, curl, python3 or wget/);
@@ -399,7 +400,7 @@ test('containers: a python3 too old for -I (Python 3.3 and older) is UNKNOWN, ne
   // `docker exec <id> sh -c <script> wardlatch <url> <t>` runs the script with nothing but that python3 on PATH
   writeFileSync(join(bin, 'docker'), `#!/bin/sh\n[ "$1" = exec ] || exit 1\nshift 3\nPATH=${JSON.stringify(box)} exec /bin/sh "$@"\n`, { mode: 0o755 });
   const canaries = [{ id: 'dv-g3b', url: 'https://dv-g3b-emudhra.we-have-a-problem.com/', up: true }];
-  const r = await checkContainer(join(bin, 'docker'), { id: 'p3', name: 'py33', image: 'python:3.3' }, canaries, { controlUrl: 'https://emudhra.we-have-a-problem.com/', timeoutMs: 2000 });
+  const r = await checkContainer(join(bin, 'docker'), { id: 'p3', name: 'py33', image: 'python:3.3' }, canaries, { controlUrl: 'https://emudhra.we-have-a-problem.com/', timeoutMs: STAND_IN_MS });
   assert.equal(r.status, 'UNKNOWN'); assert.equal(r.tool, 'python3'); assert.match(r.reason, /control failed/);
 });
 
@@ -440,13 +441,13 @@ test('only Node\'s own block (CERT_REVOKED) with the roots forced in reads as "b
   // given, the control site opens, and a test host is refused
   writeFileSync(join(bin, 'node'), '#!/bin/sh\n[ -n "$WARDLATCH_CA" ] && exit 4\nfor a in "$@"; do last="$a"; done\ncase "$last" in *control*) exit 0;; *) exit 1;; esac\n', { mode: 0o755 });
   const c1 = [{ id: 'x', host: 'canary.invalid', url: 'https://canary.invalid/', up: true }];
-  const r = await check({ kind: 'node', bin: join(bin, 'node') }, c1, { rootsPem: badCa, controlUrl: 'https://control.invalid/', timeoutMs: 2000 });
+  const r = await check({ kind: 'node', bin: join(bin, 'node') }, c1, { rootsPem: badCa, controlUrl: 'https://control.invalid/', timeoutMs: STAND_IN_MS });
   assert.equal(r.status, 'SAFE'); assert.match(r.note, /blocks the compromised keys/); assert.ok(r.searched.length);
-  const r2 = await check({ kind: 'node', bin: join(bin, 'node') }, c1, { rootsPem: badCa, timeoutMs: 2000 });
+  const r2 = await check({ kind: 'node', bin: join(bin, 'node') }, c1, { rootsPem: badCa, timeoutMs: STAND_IN_MS });
   assert.equal(r2.status, 'UNKNOWN', 'without a control site it still cannot tell');
   // curl has no block of its own: a refusal with the roots forced in proves nothing (0.1.4 to 0.1.8 read it as SAFE)
   writeFileSync(join(bin, 'curl'), '#!/bin/sh\nfor a in "$@"; do case "$a" in --cacert) exit 60;; esac; done\nfor a in "$@"; do last="$a"; done\ncase "$last" in *control*) exit 0;; *) exit 60;; esac\n', { mode: 0o755 });
-  const r3 = await check({ kind: 'curl', bin: join(bin, 'curl') }, c1, { rootsPem: badCa, controlUrl: 'https://control.invalid/', timeoutMs: 2000 });
+  const r3 = await check({ kind: 'curl', bin: join(bin, 'curl') }, c1, { rootsPem: badCa, controlUrl: 'https://control.invalid/', timeoutMs: STAND_IN_MS });
   assert.equal(r3.status, 'UNKNOWN'); assert.match(r3.reason, /positive control failed/);
 });
 
