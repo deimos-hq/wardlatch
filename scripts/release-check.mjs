@@ -3,8 +3,8 @@
 // Copyright 2026 Deimos AI LLC
 // The release gate (docs/RELEASING.md, "Before you cut a release"). Run it on the release commit before tagging:
 //
-//   npm run release-check            # on the maintainer's machine: everything below
-//   node scripts/release-check.mjs --ci   # in .github/workflows/release.yml: the checks that need only the checkout
+//   npm run release-check                 # on the maintainer's machine: everything below
+//   node scripts/release-check.mjs --ci   # in .github/workflows/release.yml: everything but 4
 //
 // It refuses (exit 1) unless:
 //   1. package.json's version has a dated section at the top of CHANGELOG.md, right under an empty "Unreleased";
@@ -15,8 +15,10 @@
 //      changed after that commit, counting a rename as a deletion and an addition: the reviews are of the code being
 //      released;
 //   3. the class audit names every advisory in CHANGELOG.md, so each past advisory's kind of mistake was looked for again;
-//   4. (not with --ci) the working tree is clean, on main, at origin/main, and every check GitHub ran on this commit
-//      passed, every page of them, including the critical-mutant gate and the corpus report (gh, signed in, reads them).
+//   4. (not with --ci) the working tree is clean, on main, at origin/main;
+//   5. every check GitHub ran on this commit passed, every page of them, including the critical-mutant gate and the
+//      corpus report (gh reads them: signed in, or GH_TOKEN). With --ci the commit is GITHUB_SHA, which must be HEAD,
+//      and the jobs of this workflow run itself (GITHUB_RUN_ID), still running, are left out.
 // Releases up to 0.1.9 predate this gate and are not checked by it.
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -95,7 +97,7 @@ if (!ghsas.length) fail('CHANGELOG.md names no advisory: the pattern no longer m
 else if (missing.length) fail(`the class audit doesn't name ${missing.length} of the ${ghsas.length} advisories: ${missing.join(', ')}`);
 else ok(`the class audit names all ${ghsas.length} advisories in CHANGELOG.md`);
 
-// 4. the machine this is released from, and GitHub's checks on this commit
+// 4. the machine this is released from
 if (!CI) {
   if (git('status', '--porcelain')) fail('the working tree has changes: release from a clean checkout');
   else ok('the working tree is clean');
@@ -105,11 +107,21 @@ if (!CI) {
   try { upstream = git('rev-parse', 'origin/main'); } catch { /* no origin/main */ }
   if (upstream !== head) fail('HEAD is not origin/main: push first (git fetch, if origin/main is behind), and let CI run');
   else ok('HEAD is origin/main');
+}
+
+// 5. GitHub's checks on this commit, every page of them
+const checked = CI && process.env.GITHUB_SHA ? process.env.GITHUB_SHA : head;
+const slug = process.env.GITHUB_REPOSITORY || 'deimos-hq/wardlatch';
+// in the release workflow, its own jobs (this one among them) are still running: they are this run's, so left out
+const ownRun = CI && process.env.GITHUB_RUN_ID ? `/actions/runs/${process.env.GITHUB_RUN_ID}/` : null;
+if (checked !== head) fail(`GITHUB_SHA ${checked.slice(0, 12)} is not HEAD ${head.slice(0, 12)}: the checks read would be another commit's`);
+else {
   let runs;
   try {
-    const pages = JSON.parse(execFileSync('gh', ['api', '--paginate', '--slurp', `repos/deimos-hq/wardlatch/commits/${head}/check-runs?per_page=100`], { cwd: ROOT, encoding: 'utf8' }));
-    runs = pages.flatMap((page) => page.check_runs ?? []).map(({ name, status, conclusion }) => ({ name, status, conclusion }));
-  } catch (e) { fail(`couldn't read GitHub's checks for ${head.slice(0, 7)} (gh installed and signed in?): ${String(e.message).split('\n')[0]}`); }
+    const pages = JSON.parse(execFileSync('gh', ['api', '--paginate', '--slurp', `repos/${slug}/commits/${head}/check-runs?per_page=100`], { cwd: ROOT, encoding: 'utf8' }));
+    runs = pages.flatMap((page) => page.check_runs ?? []).map(({ name, status, conclusion, details_url: url }) => ({ name, status, conclusion, url }));
+  } catch (e) { fail(`couldn't read GitHub's checks for ${head.slice(0, 7)} (gh installed and signed in, or GH_TOKEN set?): ${String(e.message).split('\n')[0]}`); }
+  if (runs && ownRun) runs = runs.filter((r) => !(typeof r.url === 'string' && r.url.includes(ownRun)));
   if (runs) {
     if (!runs.length) fail(`GitHub has no checks for ${head.slice(0, 7)} yet`);
     const bad = runs.filter((r) => r.status !== 'completed' || !['success', 'skipped', 'neutral'].includes(r.conclusion));

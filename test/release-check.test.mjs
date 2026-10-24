@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Deimos AI LLC
 // The release gate, scripts/release-check.mjs, on throwaway repositories: it passes a release whose reviews are on file
-// for the code being released, and refuses each way one can be wrong. Without --ci it also needs a clean main at
-// origin/main (a local bare repository) and every GitHub check passed (gh is always a stand-in on PATH, which answers
-// only for HEAD, and gives every page only to --paginate --slurp, as gh does). Offline; git runs with no user config,
+// for the code being released, and refuses each way one can be wrong. It needs every GitHub check passed, with --ci too
+// (gh is always a stand-in on PATH, which answers only for HEAD, and gives every page only to --paginate --slurp, as gh
+// does); without --ci, also a clean main at origin/main (a local bare repository). Offline; git runs with no user config,
 // and no GITHUB_* variable of a CI runner reaches the gate.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -282,4 +282,19 @@ test('GitHub\'s checks are read page by page: a required check, or a failed one,
   dir = repo();
   r = gate(dir, { ci: false, env: full(dir, { pages: [PASSING, [{ name: 'analyze', status: 'completed', conclusion: 'failure' }]] }) });
   assert.equal(r.code, 1, r.out); assert.match(r.out, /checks not passed[^\n]*analyze \(failure\)/);
+});
+
+test('--ci (the release workflow) reads GitHub\'s checks too, for GITHUB_SHA, leaving out only this workflow run\'s own jobs', () => {
+  const dir = repo(), head = git(dir, 'rev-parse', 'HEAD');
+  const own = { name: 'release', status: 'in_progress', conclusion: null, details_url: 'https://github.com/deimos-hq/wardlatch/actions/runs/777/job/9' };
+  let r = gate(dir, { env: { ...ghStub(dir, { runs: [...PASSING, own] }), GITHUB_SHA: head, GITHUB_RUN_ID: '777' } });
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /all 3 GitHub checks passed/);
+  r = gate(dir, { env: { ...ghStub(dir, { runs: [...PASSING, own] }), GITHUB_SHA: head, GITHUB_RUN_ID: '778' } });
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /checks not passed[^\n]*release \(in_progress\)/);
+  r = gate(dir, { env: { ...ghStub(dir, { runs: PASSING.slice(1) }), GITHUB_SHA: head } });
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /required checks didn't run or pass[^\n]*critical mutants/);
+  r = gate(dir, { env: { ...ghStub(dir), GITHUB_SHA: git(dir, 'rev-parse', 'HEAD~1') } });
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /GITHUB_SHA [0-9a-f]{12} is not HEAD/);
+  r = gate(dir, { env: ghStub(dir, { ghFails: true }) });
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /couldn't read GitHub's checks/);
 });
