@@ -18,6 +18,9 @@ A fixes-only release: no new incident checks. Every item below was found by a ro
 
 ### Security
 
+- Advisories: [GHSA-766p-78h4-77gr](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-766p-78h4-77gr) (forced-roots refusal read as a block, 0.1.4–0.1.8),
+  [GHSA-gxqr-jm2v-mcm8](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-gxqr-jm2v-mcm8) (container failures read as refusals, 0.1.2–0.1.8) and
+  [GHSA-9m5q-pvx5-fp26](https://github.com/deimos-hq/wardlatch/security/advisories/GHSA-9m5q-pvx5-fp26) (parts not examined left out, 0.1.0–0.1.8).
 - **A forced-roots refusal for any reason read as the runtime's own block, the strongest SAFE.** Since 0.1.4 a runtime
   that couldn't connect with the compromised roots forced in, but could open a normal site, was reported as blocking the
   compromised keys itself. A TLS-inspecting firewall, a DNS filter answering for the test hosts, a hostname mismatch or
