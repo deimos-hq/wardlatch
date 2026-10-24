@@ -36,6 +36,7 @@
 // the copies either: they exercise scripts/, never bin/ or lib/, so they can't catch a planted bug, and
 // test/mutate.test.mjs would start nested mutation runs inside every copy.
 // results.json and summary.md (in --out) list every planted bug, its result and the test that caught it.
+// Stopping the script (SIGINT, SIGTERM, SIGHUP) kills every running suite's whole process group.
 // Needs rsync and Node 22.1 or later (--test-skip-pattern). Runs N copies at a time (default 2; CI passes --jobs 4).
 import { readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync, mkdtempSync, existsSync } from 'node:fs';
 import { join, dirname, resolve, relative } from 'node:path';
@@ -182,10 +183,19 @@ const copyEnv = (dir) => {
   for (const k of Object.keys(env)) if (k.startsWith('NODE_TEST')) delete env[k];
   return env;
 };
-// Every run is its own process group, so a timeout kills everything it started (the CLI, the programs it runs), not
-// just the runner.
+// Every run is its own process group, so a timeout, or this script being stopped, kills everything it started (the CLI,
+// the programs it runs), not just the runner.
 const live = new Set();
 const killGroup = (pid) => { try { process.kill(-pid, 'SIGKILL'); } catch { /* the group is gone */ } };
+process.on('exit', () => { for (const pid of live) killGroup(pid); });
+for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) {
+  process.on(sig, () => {
+    const n = live.size;
+    for (const pid of live) killGroup(pid);
+    console.error(`\nstopped by ${sig}: ${n} running test run(s) killed, with everything they started`);
+    process.exit(code);
+  });
+}
 // node --test on a copy → { code, signal, timedOut, events: [{ ev: pass|fail, name, nesting, file, todo, skip }] }
 const runTests = (dir, args) => new Promise((res) => {
   const c = spawn(process.execPath, ['--test', `--test-reporter=${REPORTER}`, ...args],

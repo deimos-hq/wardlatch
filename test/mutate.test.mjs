@@ -5,11 +5,12 @@
 // own on the unmutated code; a test that fails at random, a crash, a signal or a timeout is never a catch. It fails on a
 // survivor, a timeout, an error, a stale or caught list entry, or an unmutated baseline that isn't stably green, and
 // refuses bad lists and options. The static test that rejects every SAFE literal (G3) is skipped in the copies, so it
-// can't make a survivor look caught, and the script stops if that test isn't where it expects it. Offline; needs rsync
-// and Node 22.1 or later, as the script does.
+// can't make a survivor look caught, and the script stops if that test isn't where it expects it. Stopping the script
+// kills every suite it started, with everything those started. Offline; needs rsync and Node 22.1 or later, as the
+// script does.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, realpathSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -205,6 +206,19 @@ test('a copy whose suite times out is a failure, not a catch, and everything the
   const started = pidsIn(pids);
   assert.equal(started.length, 4, 'two test files, each with the program it started');
   assert.ok(await until(() => !started.some(alive), 5000), `still running: ${started.filter(alive).join(' ')}`);
+});
+
+test('stopping the script (SIGTERM, SIGINT) kills every running suite, with everything it started', { skip: SKIP }, async () => {
+  for (const sig of ['SIGTERM', 'SIGINT']) {
+    const pids = mkdtempSync(join(base, 'pids-'));
+    const c = spawn(process.execPath, args([]), { cwd: repo({ 'test/x.test.mjs': HANGS }), env: { ...process.env, WL_PIDS: pids }, stdio: 'ignore' });
+    const exited = new Promise((res) => c.on('exit', (code, signal) => res(code ?? signal)));
+    assert.ok(await until(() => readdirSync(pids).length === 2, 60000), 'both planted bugs started hanging');
+    const started = pidsIn(pids);
+    c.kill(sig);
+    assert.equal(await exited, sig === 'SIGTERM' ? 143 : 130);
+    assert.ok(await until(() => !started.some(alive), 5000), `${sig}: still running: ${started.filter(alive).join(' ')}`);
+  }
 });
 
 test('a baseline that doesn\'t pass: refused before any planted bug runs (exit 2)', { skip: SKIP }, () => {
