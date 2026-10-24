@@ -5,19 +5,33 @@
 // which test caught it. A planted bug no test catches is a gap in the tests.
 //
 //   node scripts/mutate.mjs [--critical] [--gate] [--jobs N] [--only lib/a.mjs,lib/b.mjs] [--limit N] [--shard K/N]
-//                           [--timeout ms] [--baseline-runs N] [--out <dir>]
+//                           [--timeout ms] [--baseline-runs N] [--confirm-runs K] [--out <dir>]
 //                           [--allow scripts/mutants-allowed.json] [--gaps scripts/mutants-gaps.json]
 //
 // --critical plants only the bugs that matter most for this tool: each 'UNKNOWN' or 'EXPOSED' in the code (a status
 // made, passed, returned or compared), one occurrence at a time, becomes 'SAFE'. --limit and --shard are for
 // the report run only; the gate plants every one.
 //
-// Caught means caught by a test, not by a busy machine. A planted bug counts as caught only when the suite exits 1 with
-// at least one named failing test, and one of those tests (up to five are tried) fails again when run on its own on the
-// planted bug (--test-name-pattern, its name escaped) and passes on its own on the unmutated code; that test is
-// recorded. If none does, the whole suite runs once more on the copy: a pass then is a survivor. Any other end is an
-// error, as a timeout is: a run killed by a signal, a crash, an exit code other than 0 or 1, failures with no test
-// named, or failures that never happen again alone.
+// What "caught" means. A planted bug counts as caught only when the suite on its copy exits 1 with at least one named
+// failing test, and one of those tests (up to five are tried, in turn) then fails on its own on the copy and passes on
+// its own on the unmutated code, K times each in a row (--confirm-runs, default 3), the runs interleaved and run afresh
+// for every planted bug (never reused), each read for that exact test (--test-name-pattern, its name escaped, so a
+// pattern that matches nothing is never a pass or a fail); that test is recorded. A suite that times out, is killed by
+// a signal, crashes, exits other than 0 or 1, or fails with no test named, is a timeout or an error, never a catch.
+//
+// A test whose result on the same code ever differs is UNRELIABLE, and named: between the unmutated suite runs, between
+// a suite failure on a copy and the same test on its own there, between its own runs alone, or a test that passes in
+// the unmutated suite but fails on its own on the unmutated code. Any unreliable test ends the run with exit 2,
+// whatever else it found, gate or report: what it measured can't be trusted until the test is fixed.
+//
+// What that guarantees, and what it doesn't. A test that fails at random is very likely to be seen, not certain to be.
+// A planted bug no test catches is still counted caught if an unrelated test that fails at random, independently, with
+// probability p each run, fails in that copy's suite run, then fails in each of its K runs alone on the copy and passes
+// in each of its K runs alone on the unmutated code: probability p^(K+1)(1-p)^K, at most 0.84% (at p = 4/7) for K = 3.
+// For the whole run to pass with it, the R unmutated suite runs must all have passed too: p^(K+1)(1-p)^(K+R), at most
+// 0.21% (p = 4/9) with R = 2, 0.074% (p = 4/11) with R = 4 as in CI, and 0.14% at p = 0.3 with R = 2. That is for each
+// such planted bug; once a real catching test is confirmed, the other tests that failed beside it are not examined. A
+// test that passes at random can make a caught bug look like a survivor: that errs on the side of the gate failing.
 //
 // Two lists explain a survivor. scripts/mutants-allowed.json: planted bugs a reviewer judged EQUIVALENT (no behaviour
 // can tell them apart). scripts/mutants-gaps.json: known TEST GAPS, real bugs no test catches yet, listed so they are
@@ -25,10 +39,12 @@
 // that names a file not mutated, an unknown operator, or the same planted bug twice is refused (exit 2).
 // With --critical or --gate the exit code is 1 when a survivor is in neither list, when a listed one is now caught
 // (take it off its list), when an entry in either list matches no planted bug (stale), or when any copy timed out or
-// ended in an error; 2 when the unmutated code isn't stably green. Without them it only reports.
+// ended in an error; 2 when the unmutated code isn't stably green or any test was unreliable. Without them it only
+// reports (exit 0), but still exits 2 on those.
 //
 // The control: the unmutated code runs first, --baseline-runs times (at least 2; by default as many as --jobs, and at
-// the same --jobs as the planted bugs, so it sees the same load), and every run must pass.
+// the same --jobs as the planted bugs, so it sees the same load). Every run must pass, and every test must give the
+// same result in each, or the run stops (exit 2), naming the tests.
 // The suite runs with the one static test that rejects any SAFE literal outside lib/report.mjs's safe() skipped (G3
 // below): it fails on every planted SAFE whatever the code does, so it would make every bug look caught. The script
 // stops unless test/contract-0.1.9.test.mjs declares that test, by its exact name, exactly once, and checks that the
@@ -49,14 +65,14 @@ const REPORTER = pathToFileURL(join(REPO, 'scripts', 'mutate-reporter.mjs')).hre
 const STATIC_FILE = 'test/contract-0.1.9.test.mjs';
 const STATIC_NAME = 'G3 a SAFE status is made in exactly one place: export function safe( in lib/report.mjs';
 const TOOL_TESTS = ['test/mutate.test.mjs', 'test/release-check.test.mjs', 'test/corpus.test.mjs'];
-const CONFIRM_TRIES = 5;
+const TRIES = 5;   // failing tests examined alone, in turn, for one planted bug
 const reEscape = (s) => s.replace(/[\\^$.*+?()[\]{}|/]/g, '\\$&');
 const STATIC = `^${reEscape(STATIC_NAME)}$`;
 const die = (msg) => { console.error(msg); process.exit(2); };
 
-// ---- options ----------------------------------------------------------------------------------------------------------
+// ---- options --------------------------------------------------------------------------------------------------------
 const BOOL = ['--critical', '--gate'];
-const VALUED = ['--jobs', '--only', '--limit', '--shard', '--timeout', '--baseline-runs', '--out', '--allow', '--gaps'];
+const VALUED = ['--jobs', '--only', '--limit', '--shard', '--timeout', '--baseline-runs', '--confirm-runs', '--out', '--allow', '--gaps'];
 const opts = {};
 for (let i = 2; i < process.argv.length; i++) {
   const a = process.argv[i];
@@ -72,7 +88,7 @@ const whole = (k, d, min) => {
 const CRITICAL = !!opts['--critical'], GATE = CRITICAL || !!opts['--gate'];
 if (CRITICAL && ('--limit' in opts || '--shard' in opts)) die('--critical plants every one: --limit and --shard are for the report run');
 const JOBS = whole('--jobs', 2, 1), LIMIT = whole('--limit', Infinity, 1), TIMEOUT_MS = whole('--timeout', 300000, 1000);
-const BASELINE_RUNS = whole('--baseline-runs', Math.max(2, JOBS), 2);
+const BASELINE_RUNS = whole('--baseline-runs', Math.max(2, JOBS), 2), K = whole('--confirm-runs', 3, 3);
 const ONLY = opts['--only'] ?? '';
 const shard = /^(\d+)\/(\d+)$/.exec(opts['--shard'] ?? '0/1');
 if (!shard || Number(shard[2]) < 1 || Number(shard[1]) >= Number(shard[2])) die('--shard needs K/N with 0 <= K < N');
@@ -99,7 +115,7 @@ const testFiles = readdirSync(join(REPO, 'test')).filter((x) => x.endsWith('.tes
   }
 }
 
-// ---- what is planted ----------------------------------------------------------------------------------------------------
+// ---- what is planted ------------------------------------------------------------------------------------------------
 const all = [...readdirSync(join(REPO, 'lib')).filter((f) => f.endsWith('.mjs')).map((f) => `lib/${f}`), 'bin/wardlatch.mjs'];
 const wanted = ONLY ? ONLY.split(',') : all;
 for (const f of wanted) if (!all.includes(f)) die(`--only: ${f} is not one of the files mutated (${all.join(', ')})`);
@@ -174,7 +190,7 @@ console.error(`${mutants.length} planted bugs in all, ${todo.length} here${SHARD
   + `${JOBS} at a time, copies in ${OUT}`);
 if (CRITICAL && !todo.length) die('no UNKNOWN or EXPOSED found to mutate in the files asked for');
 
-// ---- running the suite -------------------------------------------------------------------------------------------------
+// ---- running the suite ----------------------------------------------------------------------------------------------
 const tests = testFiles.filter((f) => !TOOL_TESTS.includes(f));
 // The copy's environment: its own folder for the red-team scenarios, and none of a parent test runner's variables (run
 // under node --test, NODE_TEST_CONTEXT makes the inner run report to the outer one and exit 0 whatever fails).
@@ -263,45 +279,57 @@ const pool = async (items, n, fn) => {
 const BASE = copy('baseline');   // kept until the end: each catching test must pass on its own here
 {
   const dirs = [BASE, ...Array.from({ length: BASELINE_RUNS - 1 }, (_, i) => copy(`baseline-${i + 1}`))];
-  const bad = [];
-  let staticRan = false;
-  await pool(dirs, JOBS, async (d, k) => {
-    const r = await suite(d), o = outcome(r, d);
-    // (a Node that reports tests left out by a pattern reports them as skipped)
-    if (r.events.some((e) => e.name === STATIC_NAME && !e.skip)) staticRan = true;
-    if (o.kind !== 'pass') {
-      bad.push(`run ${k + 1}: ${o.kind}${o.why ? ` (${o.why})` : ''}${o.failed.length ? `: ${o.failed.slice(0, 5).map(label).join('; ')}` : ''}`);
-    }
-    if (d !== BASE) drop(d);
+  const runs = [];
+  await pool(dirs, JOBS, async (d, k) => { const r = await suite(d); runs[k] = { r, o: outcome(r, d) }; if (d !== BASE) drop(d); });
+  // every test's result in each run (its file, nesting and name; a test reported twice in a run, both results)
+  const statusOf = (e) => (e.skip ? 'skipped' : e.todo ? `todo, ${e.ev === 'pass' ? 'passing' : 'failing'}` : e.ev === 'pass' ? 'pass' : 'fail');
+  const seenIn = runs.map(({ r }) => {
+    const m = new Map();
+    for (const e of r.events) { const k = `${e.file}: ${e.name}${e.nesting ? ` (subtest, level ${e.nesting})` : ''}`; m.set(k, [...(m.get(k) ?? []), statusOf(e)].sort()); }
+    return m;
   });
-  if (bad.length || staticRan) drop(BASE);
-  if (bad.length) die(`the unmutated baseline does not pass stably: ${bad.length} of ${BASELINE_RUNS} runs at --jobs ${JOBS} failed\n  ${bad.join('\n  ')}`);
+  const names = new Set(seenIn.flatMap((m) => [...m.keys()]));
+  const differs = [...names].map((k) => [k, seenIn.map((m) => (m.get(k) ?? ['not reported']).join(' and '))])
+    .filter(([, got]) => new Set(got).size > 1).map(([k, got]) => `${k} (${got.join('; ')})`);
+  const bad = runs.map(({ o }, k) => (o.kind === 'pass' ? '' : `run ${k + 1}: ${o.kind}${o.why ? ` (${o.why})` : ''}`
+    + `${o.failed.length ? `: ${o.failed.slice(0, 5).map(label).join('; ')}` : ''}`)).filter(Boolean);
+  // (a Node that reports tests left out by a pattern reports them as skipped)
+  const staticRan = runs.some(({ r }) => r.events.some((e) => e.name === STATIC_NAME && !e.skip));
+  if (bad.length || differs.length || staticRan) drop(BASE);
+  if (bad.length || differs.length) {
+    die(`the unmutated code is not stably green over ${BASELINE_RUNS} suite runs at --jobs ${JOBS}: `
+      + `${bad.length} run(s) failed, ${differs.length} test(s) gave different results`
+      + `${bad.length ? `\n  ${bad.join('\n  ')}` : ''}${differs.length ? `\nUNRELIABLE (different results on the same code):\n  ${differs.join('\n  ')}` : ''}`);
+  }
   if (staticRan) die(`the static test "${STATIC_NAME}" ran in the baseline: the skip pattern did not skip it`);
   const g3 = await runTests(BASE, [`--test-name-pattern=${STATIC}`, STATIC_FILE]);
   if (g3.events.filter((e) => e.name === STATIC_NAME && e.nesting === 0 && e.ev === 'pass' && !e.skip).length !== 1)
     die(`the skip pattern for the static test matches no passing test in ${STATIC_FILE}: it would skip nothing`);
-  console.error(`baseline passes, ${BASELINE_RUNS} runs at --jobs ${JOBS}`);
+  console.error(`baseline passes, ${BASELINE_RUNS} runs at --jobs ${JOBS}, every test the same in each`);
 }
-const onBaseline = new Map();
-const passesOnBaseline = (t) => {
-  const k = `${t.file}\0${t.name}`;
-  if (!onBaseline.has(k)) onBaseline.set(k, alone(BASE, t).then((s) => s === 'pass'));
-  return onBaseline.get(k);
-};
-// the first failing test that fails again on its own on the copy and passes on its own on the unmutated code
-const confirm = async (dir, failed, tried) => {
-  for (const t of failed) {
-    const k = `${t.file}\0${t.name}`;
-    if (tried.has(k)) continue;
-    if (tried.size >= CONFIRM_TRIES) break;
-    const onMutant = await alone(dir, t), base = onMutant === 'fail' ? await passesOnBaseline(t) : null;
-    tried.set(k, { test: label(t), onMutant, passesOnBaseline: base });
-    if (onMutant === 'fail' && base) return t;
+
+// One test that failed in the suite on a copy: on its own on the copy, then on the unmutated code, K times, afresh.
+// → { verdict: catch | unreliable | unrunnable, runs: ['copy fail', 'unmutated pass', ...], why }
+// It stops at the first run that isn't what a catch needs. That run is unreliable unless it is the very first run on
+// that code and gave neither a pass nor a fail (a timeout, no such test, two tests of that name): unrunnable.
+const examine = async (dir, t) => {
+  const runs = [];
+  for (let i = 0; i < K; i++) {
+    for (const [where, d, want] of [['copy', dir, 'fail'], ['unmutated', BASE, 'pass']]) {
+      const got = await alone(d, t);
+      runs.push(`${where} ${got}`);
+      if (got === want) continue;
+      if (i === 0 && got !== 'pass' && got !== 'fail') return { verdict: 'unrunnable', runs };
+      const why = i === 0 && where === 'copy' ? 'failed in the suite on the planted bug, then passed on its own on it'
+        : i === 0 ? 'passed in every suite run of the unmutated code, but failed on its own on it'
+          : `${where === 'copy' ? 'failed on its own on the planted bug' : 'passed on its own on the unmutated code'}, then ${got === 'pass' ? 'passed' : got === 'fail' ? 'failed' : `gave "${got}"`} on the same code`;
+      return { verdict: 'unreliable', runs, why };
+    }
   }
-  return null;
+  return { verdict: 'catch', runs };
 };
 
-// ---- the planted bugs ---------------------------------------------------------------------------------------------------
+// ---- the planted bugs -----------------------------------------------------------------------------------------------
 const runOne = async (m, k) => {
   const dir = copy(`m${k}`);
   const t0 = Date.now(), ms = () => Date.now() - t0;
@@ -309,23 +337,20 @@ const runOne = async (m, k) => {
     const p = join(dir, m.file), lines = readFileSync(p, 'utf8').split('\n');
     lines[m.line - 1] = m.text; writeFileSync(p, lines.join('\n'));
     try { execFileSync(process.execPath, ['--check', p], { stdio: 'ignore' }); } catch { return { ...m, result: 'invalid' }; }
-    const tried = new Map(), tries = () => [...tried.values()];
-    let o = outcome(await suite(dir), dir);
+    const o = outcome(await suite(dir), dir);
     const by = o.failed.map(label);
-    if (o.kind === 'fail') {
-      let t = await confirm(dir, o.failed, tried);
-      if (t) return { ...m, result: 'caught', caughtBy: label(t), by, tried: tries(), ms: ms() };
-      // failures that didn't happen again alone: the whole suite once more
-      o = outcome(await suite(dir), dir);
-      if (o.kind === 'pass') return { ...m, result: 'SURVIVED', by: [], notRepeated: by, tried: tries(), ms: ms() };
-      if (o.kind === 'fail' && (t = await confirm(dir, o.failed, tried))) {
-        return { ...m, result: 'caught', caughtBy: label(t), by: o.failed.map(label), notRepeated: by, tried: tries(), ms: ms() };
-      }
-      if (o.kind === 'fail') o = { kind: 'error', why: 'tests failed in the suite, but none failed again on its own while passing on its own on the unmutated code' };
-    }
     if (o.kind === 'pass') return { ...m, result: 'SURVIVED', by: [], ms: ms() };
     if (o.kind === 'timeout') return { ...m, result: 'timeout', by, ms: ms() };
-    return { ...m, result: 'error', reason: o.why, by, tried: tries(), ms: ms() };
+    if (o.kind === 'error') return { ...m, result: 'error', reason: o.why, by, ms: ms() };
+    const tried = [], unreliable = [];
+    for (const t of o.failed.slice(0, TRIES)) {
+      const e = await examine(dir, t);
+      tried.push({ test: label(t), verdict: e.verdict, runs: e.runs });
+      if (e.verdict === 'unreliable') unreliable.push({ test: label(t), why: e.why });
+      if (e.verdict === 'catch') return { ...m, result: 'caught', caughtBy: label(t), by, tried, unreliable, ms: ms() };
+    }
+    if (unreliable.length) return { ...m, result: 'unreliable', by, tried, unreliable, ms: ms() };
+    return { ...m, result: 'error', reason: `tests failed in the suite, but none could be run on its own: ${tried.map((x) => `${x.test} (${x.runs.join(', ')})`).join('; ')}`, by, tried, ms: ms() };
   } finally { drop(dir); }
 };
 
@@ -333,27 +358,33 @@ const results = []; let done = 0;
 const save = () => writeFileSync(join(OUT, 'results.json'), JSON.stringify(results.map(({ text, ...x }) => x), null, 1));
 await pool(todo, JOBS, async (m, k) => {
   const r = await runOne(m, k); results.push(r);
-  if (++done % 10 === 0 || r.result !== 'caught') console.error(`${done}/${todo.length}${r.result !== 'caught' ? `  ${r.result} ${r.file}:${r.line} ${r.op}` : ''}`);
+  const note = r.result !== 'caught' || r.unreliable?.length;
+  if (++done % 10 === 0 || note) console.error(`${done}/${todo.length}${note ? `  ${r.result} ${r.file}:${r.line} ${r.op}` : ''}`);
   save();
 });
 drop(BASE);
 save();
 
-// ---- the verdict --------------------------------------------------------------------------------------------------------
+// ---- the verdict ----------------------------------------------------------------------------------------------------
 const count = (x) => results.filter((r) => r.result === x).length;
+const where = (r) => `${r.file}:${r.line} [${r.op}${r.nth > 1 ? ` #${r.nth}` : ''}]`;
 const byPlace = (a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.op.localeCompare(b.op) || a.nth - b.nth;
 const survivors = results.filter((x) => x.result === 'SURVIVED').sort(byPlace);
 const timeouts = results.filter((x) => x.result === 'timeout').sort(byPlace);
 const errors = results.filter((x) => x.result === 'error').sort(byPlace);
+// every test seen giving different results on the same code, with the planted bugs where it was seen
+const unreliable = new Map();
+for (const r of [...results].sort(byPlace)) for (const u of r.unreliable ?? []) unreliable.set(u.test, [...(unreliable.get(u.test) ?? []), `${u.why} (${where(r)})`]);
 const unexplained = survivors.filter((m) => !allowedKeys.has(key(m)) && !gapKeys.has(key(m)));
 const equivalent = survivors.filter((m) => allowedKeys.has(key(m))).length, known = survivors.filter((m) => gapKeys.has(key(m))).length;
-const where = (r) => `${r.file}:${r.line} [${r.op}${r.nth > 1 ? ` #${r.nth}` : ''}]`;
 const tally = `caught ${count('caught')}, survived ${survivors.length} (${equivalent} listed as equivalent, ${known} listed as known test gaps), `
-  + `timeout ${timeouts.length}, error ${errors.length}, invalid ${count('invalid')}`;
+  + `timeout ${timeouts.length}, error ${errors.length}, unreliable ${count('unreliable')}, invalid ${count('invalid')}`
+  + `${unreliable.size ? `; ${unreliable.size} unreliable test(s)` : ''}`;
 console.log(tally);
 for (const r of survivors) console.log(`${allowedKeys.has(key(r)) ? 'EQUIVALENT' : gapKeys.has(key(r)) ? 'GAP' : 'SURVIVED'} ${where(r)}  ${r.before}  →  ${r.after}`);
 for (const r of timeouts) console.log(`TIMEOUT ${where(r)}  ${r.before}`);
 for (const r of errors) console.log(`ERROR ${where(r)}  ${r.reason}`);
+for (const [t, seen] of unreliable) console.log(`UNRELIABLE ${t}: ${seen.join('; ')}`);
 // an entry that no planted bug in the files asked for matches is stale: it could hide a future survivor
 const kinds = new Set(OPS.map(([op]) => op));
 const isStale = (a) => wanted.includes(a.file) && kinds.has(a.op) && !mutants.some((m) => key(m) === key(a));
@@ -366,20 +397,31 @@ console.log(`results: ${relative(process.cwd(), join(OUT, 'results.json')) || jo
 
 const cell = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
 const md = [`## ${CRITICAL ? 'Critical mutants' : 'Mutation run'}${SHARD_N > 1 ? ` (shard ${SHARD_K}/${SHARD_N})` : ''}`, '', tally, '',
-  'Caught: the suite failed, and the test named here then failed again on its own on the planted bug and passed on its own '
-  + 'on the unmutated code.', '', '| result | where | planted bug | caught by, or why not |', '|---|---|---|---|'];
+  `Caught: the suite failed, and the test named here then failed on its own on the planted bug and passed on its own on `
+  + `the unmutated code, ${K} times each, interleaved. A test that fails at random, independently, with probability p can `
+  + `still make an uncaught bug look caught, with probability p^${K + 1}(1-p)^${K} (scripts/mutate.mjs says more).`, ''];
+if (unreliable.size) {
+  md.push('**Unreliable tests** (different results on the same code; the run exits 2):', '');
+  for (const [t, seen] of unreliable) md.push(`- ${cell(t)}: ${cell(seen.join('; '))}`);
+  md.push('');
+}
+md.push('| result | where | planted bug | caught by, or why not |', '|---|---|---|---|');
 for (const r of [...results].sort(byPlace)) {
   const res = r.result !== 'SURVIVED' ? r.result : allowedKeys.has(key(r)) ? 'equivalent' : gapKeys.has(key(r)) ? 'known gap' : '**SURVIVED**';
-  const why = r.caughtBy ?? r.reason ?? (r.result === 'timeout' ? `over ${TIMEOUT_MS} ms` : '');
+  const why = r.caughtBy ?? r.reason ?? (r.result === 'timeout' ? `over ${TIMEOUT_MS} ms` : r.unreliable?.map((u) => `${u.test}: ${u.why}`).join('; ') ?? '');
   md.push(`| ${res} | \`${r.file}:${r.line}\` | ${r.op}${r.nth > 1 ? ` #${r.nth}` : ''} | ${cell(why)} |`);
 }
 writeFileSync(join(OUT, 'summary.md'), `${md.join('\n')}\n`);
 
+if (unreliable.size) {
+  console.log(`\nUNRELIABLE: ${unreliable.size} test(s) gave different results on the same code (listed above). Nothing this run `
+    + 'measured can be trusted until each is fixed: a test that fails at random can make a planted bug look caught.');
+  process.exit(2);
+}
 if (GATE && (unexplained.length || timeouts.length || errors.length || stale.length || closed.length)) {
   console.log(`\nFAIL: ${unexplained.length} new planted bug(s) no test catches, ${timeouts.length} timed out, ${errors.length} ended in an `
     + `error, ${stale.length} stale list entr${stale.length === 1 ? 'y' : 'ies'}, ${closed.length} listed one(s) now caught. Add a test `
     + `that fails on each new survivor (only if no behaviour can tell it apart, list it in ${relative(REPO, ALLOW_FILE)} with the `
-    + 'reason); take caught ones off their list; re-run timed-out ones and errors on a quieter machine, and fix a test that '
-    + 'fails at random.');
+    + 'reason); take caught ones off their list; re-run timed-out ones and errors on a quieter machine.');
   process.exit(1);
 }

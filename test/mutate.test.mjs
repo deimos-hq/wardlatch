@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Deimos AI LLC
-// The mutation gate, scripts/mutate.mjs --critical, on a tiny throwaway repository: it passes only when a behaviour test
-// catches every planted SAFE, and a catch is a test that fails again on its own on the planted bug and passes on its
-// own on the unmutated code; a test that fails at random, a crash, a signal or a timeout is never a catch. It fails on a
-// survivor, a timeout, an error, a stale or caught list entry, or an unmutated baseline that isn't stably green, and
-// refuses bad lists and options. The static test that rejects every SAFE literal (G3) is skipped in the copies, so it
-// can't make a survivor look caught, and the script stops if that test isn't where it expects it. Stopping the script
-// kills every suite it started, with everything those started. Also scripts/gaps-only-shrink.mjs, the check that the
-// known-gaps list only shrinks. Offline; the gate needs rsync and Node 22.1 or later, as the script does.
+// The mutation gate, scripts/mutate.mjs --critical, on a tiny throwaway repository. It passes only when a behaviour
+// test catches every planted SAFE. A catch is a test that failed in the suite and then fails on its own on the planted
+// bug and passes on its own on the unmutated code, 3 times each, interleaved; a crash, a signal or a timeout is never
+// one. A test seen giving different results on the same code ends the run with exit 2, naming it: between the
+// unmutated suite runs, a suite failure that doesn't repeat alone, a test that fails alone on the unmutated code, or
+// any change in its runs alone, each driven here by a test that fails on a fixed schedule. What that leaves, shown here
+// too: an uncaught bug still reads caught if a test failing at random fails in exactly the right runs, probability
+// p^4(1-p)^3 for one planted bug, p^4(1-p)^5 for the whole gate to pass with it (scripts/mutate.mjs). Seeded runs of a
+// test failing at random with p = 0.3 never pass the gate here. It fails on a survivor, a timeout, an error, a stale or
+// caught list entry, and refuses bad lists and options. The static test that rejects every SAFE literal (G3) is skipped
+// in the copies, so it can't make a survivor look caught, and the script stops if that test isn't where it expects it.
+// Stopping the script kills every suite it started, with everything those started. Also scripts/gaps-only-shrink.mjs,
+// the check that the known-gaps list only shrinks. Offline; the gate needs rsync and Node 22.1 or later, as the script
+// does.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
@@ -93,32 +99,34 @@ test('a planted SAFE no behaviour test catches: fails, naming it, even though th
   assert.match(r.out, /FAIL: 1 new planted bug\(s\) no test catches/);
 });
 
-test('a test that fails at random is not a catch: a failure that doesn\'t happen again alone, then a passing suite, is a survivor', { skip: SKIP }, () => {
+test('a test that fails once at random is not a catch: its failure doesn\'t repeat alone, so it is unreliable (exit 2), named', { skip: SKIP }, () => {
   // fails the first time it runs on a planted SAFE in a copy, and passes after: a failure the planted bug didn't cause
   const flaky = `${IMPORTS}import { mkdirSync } from 'node:fs';
 test('fails once at random', () => { if (${PLANTED}) { try { mkdirSync('.failed-once'); } catch { return; } assert.fail('at random'); } });\n`;
   const dir = repo({ 'test/x.test.mjs': ONLY_EXPOSED, 'test/flaky.test.mjs': flaky });
   const r = gate(dir);
-  assert.equal(r.code, 1, r.out);
-  assert.match(r.out, /SURVIVED lib\/x\.mjs:3 \[unknown->safe\]/);
-  const u = resultsOf(dir, r.out).results.find((x) => x.op === 'unknown->safe');
-  assert.deepEqual(u.notRepeated, ['test/flaky.test.mjs: fails once at random']);
-  assert.deepEqual(u.tried, [{ test: 'test/flaky.test.mjs: fails once at random', onMutant: 'pass', passesOnBaseline: null }]);
-  assert.equal(resultsOf(dir, r.out).results.find((x) => x.op === 'exposed->safe').caughtBy, 'test/x.test.mjs: exposed');
+  assert.equal(r.code, 2, r.out);
+  // (seen on both planted bugs: the exposed one, where it fails too, is still caught by 'exposed', and the run still exits 2)
+  assert.match(r.out, /^UNRELIABLE test\/flaky\.test\.mjs: fails once at random: [^\n]*failed in the suite on the planted bug, then passed on its own on it \(lib\/x\.mjs:3 \[unknown->safe\]\)/m);
+  assert.match(r.out, /UNRELIABLE: 1 test\(s\) gave different results on the same code/);
+  const { results, summary } = resultsOf(dir, r.out);
+  const u = results.find((x) => x.op === 'unknown->safe');
+  assert.equal(u.result, 'unreliable');
+  assert.deepEqual(u.tried, [{ test: 'test/flaky.test.mjs: fails once at random', verdict: 'unreliable', runs: ['copy pass'] }]);
+  assert.match(summary, /\*\*Unreliable tests\*\*/);
 });
 
-test('a test that fails on the planted bug but also fails on its own on the unmutated code is not a catch: an error', { skip: SKIP }, () => {
+test('a test that fails on the planted bug but also fails on its own on the unmutated code is not a catch: unreliable (exit 2)', { skip: SKIP }, () => {
   // 'second' needs 'first' to have run: alone, it fails whatever the code does
   const ordered = `${IMPORTS}let ran = false;
 test('first', () => { ran = true; });
 test('second', () => { assert.ok(ran, 'needs first'); assert.equal(check(false, false).status, 'UNKNOWN'); });\n`;
   const dir = repo({ 'test/x.test.mjs': ONLY_EXPOSED, 'test/ordered.test.mjs': ordered });
   const r = gate(dir);
-  assert.equal(r.code, 1, r.out);
-  assert.match(r.out, /ERROR lib\/x\.mjs:3 \[unknown->safe\]  tests failed in the suite, but none failed again on its own while passing on its own/);
-  assert.match(r.out, /error 1/);
+  assert.equal(r.code, 2, r.out);
+  assert.match(r.out, /^UNRELIABLE test\/ordered\.test\.mjs: second: passed in every suite run of the unmutated code, but failed on its own on it/m);
   const u = resultsOf(dir, r.out).results.find((x) => x.op === 'unknown->safe');
-  assert.deepEqual(u.tried, [{ test: 'test/ordered.test.mjs: second', onMutant: 'fail', passesOnBaseline: false }]);
+  assert.deepEqual(u.tried, [{ test: 'test/ordered.test.mjs: second', verdict: 'unreliable', runs: ['copy fail', 'unmutated fail'] }]);
 });
 
 test('a planted bug that kills a test file (a signal, no test named as failing) is an error, not a catch', { skip: SKIP }, () => {
@@ -126,8 +134,8 @@ test('a planted bug that kills a test file (a signal, no test named as failing) 
   const dir = repo({ 'test/x.test.mjs': ONLY_EXPOSED, 'test/kills.test.mjs': kills });
   const r = gate(dir);
   assert.equal(r.code, 1, r.out);
-  // (the file is reported failed under its own name; were the test that died named too, it would never fail again alone)
-  assert.match(r.out, /ERROR lib\/x\.mjs:3 \[unknown->safe\]  (exit 1, no test named as failing, whole files failed: test\/kills\.test\.mjs|tests failed in the suite, but none failed again)/);
+  // (the file is reported failed under its own name; were the test that died named too, it could never be run alone)
+  assert.match(r.out, /ERROR lib\/x\.mjs:3 \[unknown->safe\]  (exit 1, no test named as failing, whole files failed: test\/kills\.test\.mjs|tests failed in the suite, but none could be run on its own)/);
   assert.match(r.out, /1 ended in an error/);
 });
 
@@ -178,6 +186,7 @@ test('bad options are refused (exit 2): --limit or --shard with --critical, an u
     [['--jbos', '4'], /unknown argument "--jbos"/],
     [['--jobs', '0'], /--jobs needs a whole number of at least 1/],
     [['--baseline-runs', '1'], /--baseline-runs needs a whole number of at least 2/],
+    [['--confirm-runs', '2'], /--confirm-runs needs a whole number of at least 3/],
     [['--only', 'lib/typo.mjs'], /is not one of the files mutated/],
   ]) {
     const r = gate(dir, extra);
@@ -226,7 +235,7 @@ test('a baseline that doesn\'t pass: refused before any planted bug runs (exit 2
   const broken = `${IMPORTS}test('always fails', () => assert.fail('broken'));\n`;
   const r = gate(repo({ 'test/x.test.mjs': broken }));
   assert.equal(r.code, 2, r.out);
-  assert.match(r.out, /baseline does not pass stably: 2 of 2 runs at --jobs 2 failed[^]*always fails/);
+  assert.match(r.out, /the unmutated code is not stably green over 2 suite runs at --jobs 2: 2 run\(s\) failed, 0 test\(s\) gave different results[^]*always fails/);
 });
 
 test('a baseline that passes only some of the time: refused (it runs more than once, at the same --jobs)', { skip: SKIP }, () => {
@@ -235,10 +244,90 @@ test('a baseline that passes only some of the time: refused (it runs more than o
 test('passes once', () => { try { mkdirSync(join(process.env.WL_ONCE, 'm')); } catch { assert.fail('not the first run'); } });\n`;
   const r = gate(repo({ 'test/x.test.mjs': BOTH, 'test/once.test.mjs': once }), ['--baseline-runs', '3'], { WL_ONCE: mkdtempSync(join(base, 'once-')) });
   assert.equal(r.code, 2, r.out);
-  assert.match(r.out, /baseline does not pass stably: 2 of 3 runs at --jobs 2 failed[^]*passes once/);
+  assert.match(r.out, /not stably green over 3 suite runs at --jobs 2: 2 run\(s\) failed, 1 test\(s\) gave different results/);
+  assert.match(r.out, /UNRELIABLE \(different results on the same code\):\n  test\/once\.test\.mjs: passes once \((pass|fail); (pass|fail); (pass|fail)\)/);
 });
 
-// ---- scripts/gaps-only-shrink.mjs --------------------------------------------------------------------------------------
+// ---- a test that fails at random ------------------------------------------------------------------------------------
+// One planted bug no test catches (the only UNKNOWN), beside a test that passes or fails as $WL_SCHEDULE says, one
+// character per run of it anywhere in the gate, in the order the runs take a number in $WL_SEQ (f fails; p, or past the
+// end, passes). The gate runs it: the 2 unmutated suite runs (0 and 1, side by side), the planted bug's suite run (2),
+// then that test alone, on the copy and on the unmutated code by turns (3 to 8).
+const LIB_U = `${HEAD}export const check = (known) => (!known ? { status: 'UNKNOWN' } : { status: 'OK' });\n`;
+const KNOWN = `${IMPORTS}test('known', () => assert.equal(check(true).status, 'OK'));\n`;
+const SCHEDULED = `${IMPORTS}import { mkdirSync } from 'node:fs';\nimport { join } from 'node:path';
+test('fails on schedule', () => {
+  let n = 0;
+  for (;; n++) { try { mkdirSync(join(process.env.WL_SEQ, String(n))); break; } catch (e) { if (e.code !== 'EEXIST') throw e; } }
+  assert.notEqual((process.env.WL_SCHEDULE ?? '')[n], 'f', \`run \${n} fails on schedule\`);
+});\n`;
+// what the rule gives for a schedule: 2 when the test is seen unreliable, 1 when the planted bug survives, 0 when it is
+// counted caught (wrongly: nothing catches it)
+const expected = (sch) => {
+  const f = (k) => sch[k] === 'f';
+  if (f(0) || f(1)) return 2;
+  if (!f(2)) return 1;
+  for (let k = 3; k <= 8; k++) if (f(k) !== (k % 2 === 1)) return 2;   // on the copy (3, 5, 7) it must fail, unmutated pass
+  return 0;
+};
+const gateAsync = (dir, extra, env) => new Promise((res) => {
+  const c = spawn(process.execPath, args(extra), { cwd: dir, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = ''; c.stdout.on('data', (d) => { out += d; }); c.stderr.on('data', (d) => { out += d; });
+  c.on('close', (code) => res({ code, out }));
+});
+const onSchedule = async (schedules) => {
+  const got = [];
+  for (let i = 0; i < schedules.length; i += 4) {
+    got.push(...await Promise.all(schedules.slice(i, i + 4).map((sch) => gateAsync(repo({ 'lib/x.mjs': LIB_U, 'test/x.test.mjs': KNOWN, 'test/s.test.mjs': SCHEDULED }),
+      [], { WL_SCHEDULE: sch, WL_SEQ: mkdtempSync(join(base, 'seq-')) }))));
+  }
+  return got;
+};
+
+test('a test with a different result on the same code, anywhere, ends the run with exit 2, naming it; only the exact residual schedule passes', { skip: SKIP }, async () => {
+  const cases = [
+    ['fp', /not stably green over 2 suite runs at --jobs 2: 1 run\(s\) failed, 1 test\(s\) gave different results[^]*test\/s\.test\.mjs: fails on schedule \((pass; fail|fail; pass)\)/],
+    ['ff', /not stably green over 2 suite runs at --jobs 2: 2 run\(s\) failed/],
+    ['ppp', /SURVIVED lib\/x\.mjs:3 \[unknown->safe\]/],
+    ['ppfp', /UNRELIABLE test\/s\.test\.mjs: fails on schedule: failed in the suite on the planted bug, then passed on its own on it/],
+    ['ppfff', /UNRELIABLE test\/s\.test\.mjs: fails on schedule: passed in every suite run of the unmutated code, but failed on its own on it/],
+    ['ppffpp', /UNRELIABLE test\/s\.test\.mjs: fails on schedule: failed on its own on the planted bug, then passed on the same code/],
+    ['ppffpff', /UNRELIABLE test\/s\.test\.mjs: fails on schedule: passed on its own on the unmutated code, then failed on the same code/],
+    // two good rounds are not enough: the third run on the copy passes
+    ['ppffpfpp', /UNRELIABLE test\/s\.test\.mjs: fails on schedule: failed on its own on the planted bug, then passed on the same code/],
+    ['ppffpfpff', /UNRELIABLE test\/s\.test\.mjs: fails on schedule: passed on its own on the unmutated code, then failed on the same code/],
+    // the residual scripts/mutate.mjs computes: failing in the suite and then in exactly the right 6 runs alone, it reads as a catch
+    ['ppffpfpfp', /caught 1, survived 0/],
+  ];
+  const got = await onSchedule(cases.map(([sch]) => sch));
+  cases.forEach(([sch, why], i) => {
+    assert.equal(got[i].code, expected(sch), `${sch}\n${got[i].out}`);
+    assert.match(got[i].out, why, sch);
+    if (got[i].code === 2 && expected(sch) === 2 && sch.length > 2) assert.match(got[i].out, /UNRELIABLE: 1 test\(s\) gave different results/, sch);
+  });
+});
+
+test('a test failing at random (p = 0.3, 24 seeded schedules): the gate never passes; it exits 2 whenever that test failed anywhere', { skip: SKIP }, async () => {
+  // mulberry32: the same schedules every run of this test
+  const draw = (seed) => {
+    let a = seed >>> 0;
+    return Array.from({ length: 12 }, () => {
+      a = (a + 0x6D2B79F5) >>> 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296 < 0.3 ? 'f' : 'p';
+    }).join('');
+  };
+  const schedules = Array.from({ length: 24 }, (_, i) => draw(i + 1));
+  const got = await onSchedule(schedules);
+  schedules.forEach((sch, i) => {
+    assert.notEqual(got[i].code, 0, `${sch}: the gate passed\n${got[i].out}`);
+    assert.equal(got[i].code, expected(sch), `${sch}\n${got[i].out}`);
+    // exit 1 only when the test never failed before the planted bug's suite run passed: nothing showed it
+    if (got[i].code === 1) assert.match(sch, /^ppp/);
+  });
+  assert.deepEqual([...new Set(got.map((g) => g.code))].sort(), [1, 2]);
+});
+
+// ---- scripts/gaps-only-shrink.mjs -----------------------------------------------------------------------------------
 const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x',
   GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x' };
 const gitIn = (dir, ...a) => execFileSync('git', a, { cwd: dir, env: GIT_ENV, encoding: 'utf8' }).trim();
