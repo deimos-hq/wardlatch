@@ -11,6 +11,41 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
+### Added
+
+- **`brotli-2026-10`: the Brotli decoder flaw (CVE-2026-111497), in Node.js, Bun, Python packages and Brotli
+  libraries.** Not reviewed or released yet: it needs the maintainer's approval of its spec, an independent strict
+  check and the critical-mutant gate, and the release freeze runs to at least 31 October. A new kind of check
+  (`bundled`, `lib/brotli.mjs`) that reads the decoder itself instead of a version number, because the version numbers
+  mislead here: Node.js 26.12.1 is fixed and reports Brotli 1.2.0, Homebrew's node uses Homebrew's Brotli, Debian's
+  fixed packages keep 1.0.9 and 1.1.0. The fix added an error code, so a fixed decoder's error table holds the string
+  `_ERROR_FORMAT_BLOCK_SWITCH`. Others used that error name as the sign of the fix before this check:
+  OrchestratorInc/agent-orchestrator pull request #7107 looked for the string in a library file, and baealex/BLEX pull
+  request #580 asked the decoder for it at run time (`BrotliDecoderErrorString(-17)`), both on 23 October. Wardlatch's is
+  the same idea, built into the check: an exact, NUL-delimited match plus a control string every decoder has
+  (`_ERROR_FORMAT_BLOCK_LENGTH_1`), reading bytes only. Trail of Bits' brotli-checker is another tool that finds bundled
+  copies; it checks source trees and ELF builds, and Wardlatch points to it.
+  - What proves SAFE: the marker exactly as often as the control, in the file or in the Brotli library it links (every
+    candidate, by its real path, named in the receipt), or a Debian package version its table lists as fixed.
+  - What is EXPOSED: the control without the marker (or fewer markers than controls), in the file or its library; a
+    Debian package version its table lists as without the fix. A bundled copy with no fixed release yet (Pillow,
+    opencv-python) is EXPOSED, and its fix line says what to do until one ships.
+  - What is "could not be tested": the marker without the control; no table and no library it can follow (a stripped
+    static copy, `@rpath`, `@executable_path`, `$ORIGIN`, a program with its own `RUNPATH`); a file it can't read, over
+    512 MB or past the run's 4 GB reading budget; a distribution library without the marker whose package version isn't
+    in the table or can't be read. Node's `zlib.constants` names, which contain the marker as a substring, never decide.
+  - Fix lines follow the by-hand guide (https://www.deimoscore.com/wardlatch/brotli/): the fixed release for each Node.js
+    line, "move to 22, 24 or 26" for the end-of-life ones, the library's own update for a node that links one, Bun 1.4.4,
+    `Brotli>=1.2.1` and `brotlicffi>=1.2.1.0`, `brew upgrade brotli`, the conda and MacPorts updates, Debian's fixed
+    packages.
+  - `lib/files.mjs` gains `scanBytes` (fixed byte strings counted in a large file read in 4 MB pieces) and `readAt` (up
+    to 64 KB from an offset, for an ELF file's dynamic segment).
+  - Known limits: not yet run on a Linux nodejs.org build, whose linker may have merged the decoder's strings into
+    Node's constant names; such a node would read "could not be tested" until that is checked on CI. Version managers
+    kept outside their usual folders (`NVM_DIR` and the like) are not read. What the dynamic loader is told when a
+    program starts (`LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`) is not known. A partial backport that adds the new error
+    code without the decoder's fix would read SAFE.
+
 ## [0.1.9] - 2026-10-23
 
 A fixes-only release: no new incident checks. Every item below was found by a root-cause audit of all releases from
