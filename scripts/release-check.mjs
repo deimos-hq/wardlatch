@@ -9,12 +9,14 @@
 // It refuses (exit 1) unless:
 //   1. package.json's version has a dated section at the top of CHANGELOG.md, right under an empty "Unreleased";
 //   2. docs/reviews/<version>/CLASS-AUDIT.md and INDEPENDENT-REVIEW.md exist, each with exactly one "Commit: <sha>"
-//      line, for a commit this one descends from, and exactly one "Verdict:" line, which says READY; and nothing that
-//      runs (bin/, lib/, fix/, test/, scripts/, .github/, and package.json apart from its version) changed after that
-//      commit, counting a rename as a deletion and an addition: the reviews are of the code being released;
+//      line, for a commit this one descends from, and exactly one "Verdict:" line, which says READY (a line counts
+//      however it is dressed: "> **Verdict:** NOT READY", "- Verdict: ..." and "Final verdict: ..." are verdicts too);
+//      and nothing that runs (bin/, lib/, fix/, test/, scripts/, .github/, and package.json apart from its version)
+//      changed after that commit, counting a rename as a deletion and an addition: the reviews are of the code being
+//      released;
 //   3. the class audit names every advisory in CHANGELOG.md, so each past advisory's kind of mistake was looked for again;
 //   4. (not with --ci) the working tree is clean, on main, at origin/main, and every check GitHub ran on this commit
-//      passed, including the critical-mutant gate and the corpus report (gh, signed in, reads them).
+//      passed, every page of them, including the critical-mutant gate and the corpus report (gh, signed in, reads them).
 // Releases up to 0.1.9 predate this gate and are not checked by it.
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -25,6 +27,11 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CI = process.argv.includes('--ci');
 const REQUIRED_CHECKS = ['critical mutants', 'corpus (report against last release)'];   // job names in .github/workflows/ci.yml
 const RUNS_CODE = /^(bin|lib|fix|test|scripts|\.github)\//;   // and package.json, apart from "version" (below)
+// A verdict line however it is dressed (a quote, a list, bold, code), wherever "verdict:" stands on it, so a second
+// verdict can't hide; a commit line at the start of a line, after any quote, list or emphasis marks.
+const VERDICT = /\bverdict\b[\s*_`]*:(.*)$/i;
+const COMMIT = /^[\s>*_`#+-]*(?:\d+[.)]\s*)?commit\b[\s*_`]*:(.*)$/i;
+const plain = (s) => s.replace(/[*_`]/g, '').trim();
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
 const git = (...a) => execFileSync('git', ['-c', 'core.quotePath=false', ...a], { cwd: ROOT, encoding: 'utf8' }).trim();
 // package.json as code: everything but the version, which is bumped after the reviews
@@ -57,8 +64,8 @@ for (const name of ['CLASS-AUDIT.md', 'INDEPENDENT-REVIEW.md']) {
   const p = `docs/reviews/${version}/${name}`;
   if (!existsSync(join(ROOT, p))) { fail(`${p} is missing`); continue; }
   const text = read(p);
-  const verdicts = [...text.matchAll(/^\s*Verdict:(.*)$/gim)].map((m) => m[1].trim());
-  const commits = [...text.matchAll(/^\s*Commit:(.*)$/gim)].map((m) => m[1].trim());
+  const verdicts = text.split('\n').map((l) => VERDICT.exec(l)).filter(Boolean).map((m) => plain(m[1]));
+  const commits = text.split('\n').map((l) => COMMIT.exec(l)).filter(Boolean).map((m) => plain(m[1]));
   if (verdicts.length !== 1) { fail(`${p} must have exactly one "Verdict:" line (found ${verdicts.length})`); continue; }
   if (verdicts[0] !== 'READY') { fail(`${p} has no line "Verdict: READY" (it says "${verdicts[0]}")`); continue; }
   if (commits.length !== 1) { fail(`${p} must have exactly one "Commit:" line (found ${commits.length})`); continue; }

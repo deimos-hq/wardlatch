@@ -2,8 +2,9 @@
 // Copyright 2026 Deimos AI LLC
 // The release gate, scripts/release-check.mjs, on throwaway repositories: it passes a release whose reviews are on file
 // for the code being released, and refuses each way one can be wrong. Without --ci it also needs a clean main at
-// origin/main (a local bare repository) and every GitHub check passed (gh is a stand-in on PATH). Offline; git runs with
-// no user config.
+// origin/main (a local bare repository) and every GitHub check passed (gh is always a stand-in on PATH, which answers
+// only for HEAD, and gives every page only to --paginate --slurp, as gh does). Offline; git runs with no user config,
+// and no GITHUB_* variable of a CI runner reaches the gate.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -42,22 +43,36 @@ const repo = ({ version = '0.2.0', log, audit, skip = [] } = {}) => {
   git(dir, 'add', '-A'); git(dir, 'commit', '-q', '--allow-empty', '-m', 'reviews');
   return dir;
 };
+const CHECKS = ['critical mutants', 'corpus (report against last release)', 'test (node 22, ubuntu-latest)'];
+const PASSING = CHECKS.map((name) => ({ name, status: 'completed', conclusion: 'success' }));
+// gh replaced by a script that prints the given pages of check runs for HEAD (none for any other commit): every page with
+// --paginate --slurp, as gh does, and only the first without
+const ghStub = (dir, { runs = PASSING, pages = [runs], ghFails = false } = {}) => {
+  const bin = mkdtempSync(join(base, 'gh-')), sha = git(dir, 'rev-parse', 'HEAD');
+  const all = pages.map((p) => ({ total_count: pages.flat().length, check_runs: p }));
+  writeFileSync(join(bin, 'all.json'), JSON.stringify(all)); writeFileSync(join(bin, 'first.json'), JSON.stringify(all[0]));
+  writeFileSync(join(bin, 'gh'), ghFails ? '#!/bin/sh\necho "gh: not logged in" >&2\nexit 1\n' : `#!/bin/sh
+p=; s=; u=
+for a in "$@"; do case "$a" in --paginate) p=1 ;; --slurp) s=1 ;; repos/*) u="$a" ;; esac; done
+case "$u" in */commits/${sha}/check-runs*) ;; *) echo '[{"total_count":0,"check_runs":[]}]'; exit 0 ;; esac
+if [ -n "$p" ] && [ -n "$s" ]; then cat '${join(bin, 'all.json')}'; else cat '${join(bin, 'first.json')}'; fi
+`);
+  chmodSync(join(bin, 'gh'), 0o755);
+  return { PATH: `${bin}:${process.env.PATH}` };
+};
 const gate = (dir, { ci = true, env = {} } = {}) => {
-  const r = spawnSync(process.execPath, ['scripts/release-check.mjs', ...(ci ? ['--ci'] : [])], { cwd: dir, env: { ...ENV, ...env }, encoding: 'utf8' });
+  const e = { ...ENV, ...(env.PATH ? {} : ghStub(dir)), ...env };
+  for (const k of ['GITHUB_SHA', 'GITHUB_RUN_ID', 'GITHUB_REPOSITORY', 'GH_TOKEN', 'GITHUB_TOKEN']) if (!(k in env)) delete e[k];
+  const r = spawnSync(process.execPath, ['scripts/release-check.mjs', ...(ci ? ['--ci'] : [])], { cwd: dir, env: e, encoding: 'utf8' });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 };
 const commit = (dir, msg) => { git(dir, 'add', '-A'); git(dir, 'commit', '-q', '--allow-empty', '-m', msg); };
-// for the full gate: an origin (a bare repository) at HEAD, and gh replaced by a script that prints the given checks
-const CHECKS = ['critical mutants', 'corpus (report against last release)', 'test (node 22, ubuntu-latest)'];
-const full = (dir, { runs = CHECKS.map((name) => ({ name, status: 'completed', conclusion: 'success' })), ghFails = false } = {}) => {
+// for the full gate: an origin (a bare repository) at HEAD, and gh's stand-in
+const full = (dir, opts) => {
   const origin = `${dir}-origin.git`;
   git(base, 'init', '-q', '--bare', origin);
   git(dir, 'remote', 'add', 'origin', origin); git(dir, 'push', '-q', 'origin', 'main'); git(dir, 'fetch', '-q', 'origin');
-  const bin = `${dir}-bin`; mkdirSync(bin);
-  writeFileSync(join(bin, 'checks.json'), JSON.stringify([{ total_count: runs.length, check_runs: runs }]));
-  writeFileSync(join(bin, 'gh'), ghFails ? '#!/bin/sh\necho "gh: not logged in" >&2\nexit 1\n' : `#!/bin/sh\ncat '${join(bin, 'checks.json')}'\n`);
-  chmodSync(join(bin, 'gh'), 0o755);
-  return { PATH: `${bin}:${process.env.PATH}` };
+  return ghStub(dir, opts);
 };
 
 test('a release whose two reviews are READY for its code, with every advisory looked at again, passes', () => {
@@ -221,4 +236,50 @@ test('full gate: a failed check, a required check missing, or gh unable to answe
   dir = repo();
   r = gate(dir, { ci: false, env: full(dir, { ghFails: true }) });
   assert.equal(r.code, 1, r.out); assert.match(r.out, /couldn't read GitHub's checks/);
+});
+
+test('a verdict line counts however it is dressed: a second one in bold, a quote, a list, code or a sentence is refused', () => {
+  for (const extra of ['**Verdict:** NOT READY', '> Verdict: NOT READY', '- Verdict: NOT READY', '**Verdict**: NOT READY', '`Verdict: NOT READY`',
+    'Final verdict: NOT READY', '> **Verdict:** READY WITH NITS']) {
+    const dir = repo();
+    put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `${review(git(dir, 'rev-parse', 'HEAD~1'))}\n${extra}\n`);
+    const r = gate(dir);
+    assert.equal(r.code, 1, `${extra}\n${r.out}`); assert.match(r.out, /exactly one "Verdict:" line \(found 2\)/, extra);
+  }
+  // the one verdict, dressed: READY in bold is READY; NOT READY in a quote is not
+  let dir = repo();
+  put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `Commit: ${git(dir, 'rev-parse', 'HEAD~1')}\n**Verdict:** READY\n`);
+  assert.equal(gate(dir).code, 0);
+  dir = repo();
+  put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `Commit: ${git(dir, 'rev-parse', 'HEAD~1')}\n> Verdict: NOT READY\n`);
+  const r = gate(dir);
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /no line "Verdict: READY" \(it says "NOT READY"\)/);
+});
+
+test('a commit line counts however it is dressed: a second one in bold or a list is refused', () => {
+  for (const extra of ['**Commit:** 0123456', '- Commit: 0123456', '> `Commit:` 0123456']) {
+    const dir = repo();
+    put(dir, 'docs/reviews/0.2.0/CLASS-AUDIT.md', `${review(git(dir, 'rev-parse', 'HEAD~1'))}\n${extra}\n${A} ${B}\n`);
+    const r = gate(dir);
+    assert.equal(r.code, 1, `${extra}\n${r.out}`); assert.match(r.out, /exactly one "Commit:" line \(found 2\)/, extra);
+  }
+});
+
+test('every folder that runs counts: a change in bin/, test/, scripts/, fix/ or .github/ after the review is refused', () => {
+  for (const f of ['bin/wardlatch.mjs', 'test/a.test.mjs', 'scripts/x.mjs', 'fix/fix-macos.sh', '.github/workflows/ci.yml']) {
+    const dir = repo();
+    put(dir, f, 'changed after the review\n'); commit(dir, 'late');
+    const r = gate(dir);
+    assert.equal(r.code, 1, r.out); assert.match(r.out, new RegExp(`code changed after the reviewed commit[^\\n]*${f.replace(/\./g, '\\.')}`), f);
+  }
+});
+
+test('GitHub\'s checks are read page by page: a required check, or a failed one, on the second page counts', () => {
+  const [mutants, corpus, tests] = PASSING;
+  let dir = repo();
+  let r = gate(dir, { ci: false, env: full(dir, { pages: [[mutants, tests], [corpus]] }) });
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /all 3 GitHub checks passed/);
+  dir = repo();
+  r = gate(dir, { ci: false, env: full(dir, { pages: [PASSING, [{ name: 'analyze', status: 'completed', conclusion: 'failure' }]] }) });
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /checks not passed[^\n]*analyze \(failure\)/);
 });

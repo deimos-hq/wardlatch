@@ -10,10 +10,12 @@ each of these two lines (a file with two verdicts, or two commits, is refused):
     Commit: <the full or short sha of the commit reviewed>
     Verdict: READY
 
-Any other verdict (NOT READY, READY WITH NITS) fails the gate until the findings are fixed, each fix reviewed again, and
-the file updated with the new commit. The gate also refuses the release if anything that runs (`bin/`, `lib/`, `fix/`,
-`test/`, `scripts/`, `.github/`, and `package.json` apart from its version) changed after the reviewed commit; a file
-moved out of those folders counts as a change.
+A line counts however it is dressed: `**Verdict:** NOT READY`, `> Verdict: ...`, `- Verdict: ...` and a sentence with
+"verdict:" in it are verdict lines too, so write the word followed by a colon once; a `Commit:` line counts after any
+quote, list or emphasis marks. Any other verdict (NOT READY, READY WITH NITS) fails the gate until the findings are
+fixed, each fix reviewed again, and the file updated with the new commit. The gate also refuses the release if anything
+that runs (`bin/`, `lib/`, `fix/`, `test/`, `scripts/`, `.github/`, and `package.json` apart from its version) changed
+after the reviewed commit; a file moved out of those folders counts as a change.
 
 ## CLASS-AUDIT.md
 
