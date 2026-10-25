@@ -46,7 +46,9 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     Node's constant names; such a node would read "could not be tested" until that is checked on CI. Version managers
     kept outside their usual folders (`NVM_DIR` and the like) are not read. What the dynamic loader is told when a
     program starts (`LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`) is not known. A partial backport that adds the new error
-    code without the decoder's fix would read SAFE.
+    code without the decoder's fix would read SAFE, and so would an unfixed table beside one stray NUL-delimited copy of
+    the marker. Brotli 1.0's error texts have no `_ERROR_FORMAT_` prefix, so a 1.0.x library (Debian 12's libbrotli1
+    1.0.9, fixed or not) reads "could not be tested" until that form is judged.
 
 ## [0.1.9] - 2026-10-23
 

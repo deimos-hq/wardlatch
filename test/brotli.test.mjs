@@ -97,7 +97,9 @@ test('rule 1: the control without the marker is EXPOSED; with it, SAFE with a re
   assert.equal(bad.status, 'EXPOSED'); assert.match(bad.reason, /lacks the fix/);
   const good = judge(fixedLib(join(d, 'libbrotlidec.1.2.1.dylib')));
   assert.equal(good.status, 'SAFE'); assert.deepEqual(good.searched, [join(d, 'libbrotlidec.1.2.1.dylib')]);
-  // two tables, one without the fix (more controls than markers): EXPOSED
+  // two tables, one without the fix (more controls than markers): EXPOSED. These strings are unmerged, as in a file
+  // linked without string merging; within one linked image ld64 and GNU ld merge identical literals, so two decoders
+  // there show one table (ASSURANCE_CASE's limit), and the realistic two-decoder file is a universal one (below)
   const two = judge(bin(join(d, 'two'), [CONTROL, MARKER, CONTROL]));
   assert.equal(two.status, 'EXPOSED'); assert.match(two.reason, /more than one Brotli decoder/);
   // and its clean twin: two fixed tables
@@ -116,6 +118,67 @@ test('the marker counts only beside the control: alone, or more often than the c
   assert.equal(half.status, 'UNKNOWN'); assert.match(half.reason, /not the error texts every Brotli decoder has/);
   // the clean twin: the same file with the control beside the one marker
   assert.equal(judge(bin(join(d, 'both'), ['_SUCCESS', CONTROL, MARKER])).status, 'SAFE');
+});
+
+/** A universal (fat) Mach-O file: the header, then each build at its offset (16-byte aligned), as bin() writes one. */
+function fat(path, builds, { is64 = false } = {}) {
+  const bodies = builds.map((parts) => Buffer.concat([MACHO, Buffer.alloc(60, 0x90), ...parts.map((p) => (Buffer.isBuffer(p) ? p : Buffer.from(`\0${p}\0`))), Buffer.alloc(16)]));
+  const ent = is64 ? 32 : 20, head = Buffer.alloc(8 + builds.length * ent);
+  head.writeUInt32BE(is64 ? 0xcafebabf : 0xcafebabe, 0); head.writeUInt32BE(builds.length, 4);
+  let at = Math.ceil(head.length / 16) * 16 + 64;
+  const out = [head];
+  bodies.forEach((b, i) => {
+    const o = 8 + i * ent;
+    head.writeUInt32BE(0x0100000c, o); head.writeUInt32BE(0, o + 4);
+    if (is64) { head.writeBigUInt64BE(BigInt(at), o + 8); head.writeBigUInt64BE(BigInt(b.length), o + 16); head.writeUInt32BE(4, o + 24); } else { head.writeUInt32BE(at, o + 8); head.writeUInt32BE(b.length, o + 12); head.writeUInt32BE(4, o + 16); }
+    const pad = at - out.reduce((n, x) => n + x.length, 0);
+    out.push(Buffer.alloc(pad, 0x90), b); at += b.length + 16;
+  });
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, Buffer.concat(out), { mode: 0o755 });
+  return path;
+}
+
+test('one file, every decoder it uses: each build of a universal file, and the libraries a file with a table links too', () => {
+  const d = fresh('rule1-more');
+  const old = oldLib(join(d, 'old', 'libbrotlidec.1.dylib')), good = fixedLib(join(d, 'new', 'libbrotlidec.1.dylib'));
+  // a universal file: one build with a fixed table, the other with no table, linking an unfixed library. Counted over
+  // the whole file, the one table read SAFE; the loader maps one build, so each is judged
+  for (const is64 of [false, true]) {
+    const mixed = judge(fat(join(d, `fat-mixed-${is64}`), [[CONTROL, MARKER], [old]], { is64 }));
+    assert.equal(mixed.status, 'EXPOSED', `fat${is64 ? ' 64' : ''}`); assert.match(mixed.reason, /lacks the fix.*one of the 2 builds/);
+    const twin = judge(fat(join(d, `fat-twin-${is64}`), [[CONTROL, MARKER], [good]], { is64 }));
+    assert.equal(twin.status, 'SAFE'); assert.ok(twin.searched.includes(good), 'the receipt names the library the other build uses');
+  }
+  // the universal node from nodejs.org holds one table per build: SAFE; one build fixed and one not: EXPOSED
+  assert.equal(judge(fat(join(d, 'fat-node'), [[CONTROL, MARKER], [CONTROL, MARKER]])).status, 'SAFE');
+  assert.equal(judge(fat(join(d, 'fat-half'), [[CONTROL, MARKER], [CONTROL]])).status, 'EXPOSED');
+  // one build with nothing to judge: UNKNOWN, and never the shim's REVIEW
+  const blank = judge(fat(join(d, 'fat-blank'), [[CONTROL, MARKER], ['nothing']]));
+  assert.equal(blank.status, 'UNKNOWN'); assert.match(blank.reason, /one of the 2 builds.*could not be tested/);
+  // a universal header that doesn't fit the file: UNKNOWN
+  const broken = fat(join(d, 'fat-broken'), [[CONTROL, MARKER]]);
+  const b = readFileSync(broken); b.writeUInt32BE(b.length * 2, 8 + 12); writeFileSync(broken, b);
+  assert.match(judge(broken).reason, /universal.*could not be read/);
+  // a fixed table in a file that also links an unfixed library: the library is used too, EXPOSED
+  const both = judge(bin(join(d, 'table-and-old'), [CONTROL, MARKER, old]));
+  assert.equal(both.status, 'EXPOSED'); assert.match(both.reason, /its own Brotli decoder has the fix, but it uses .*old\/libbrotlidec\.1\.dylib/);
+  const bothGood = judge(bin(join(d, 'table-and-new'), [CONTROL, MARKER, good]));
+  assert.equal(bothGood.status, 'SAFE'); assert.deepEqual(bothGood.searched, [join(d, 'table-and-new'), good]);
+  // and links it names past the mentions kept, or in a string that isn't whole: UNKNOWN beside a table too
+  const decoys = (n) => Array.from({ length: n }, (_, i) => `libbrotlidec mention ${i}`);
+  assert.equal(judge(bin(join(d, 'table-crowded'), [CONTROL, MARKER, good, ...decoys(70), old])).status, 'UNKNOWN');
+  assert.equal(judge(bin(join(d, 'table-cut'), [CONTROL, MARKER, Buffer.from(`\0\x01${old}\0`)])).status, 'UNKNOWN');
+  assert.equal(judge(bin(join(d, 'table-few'), [CONTROL, MARKER, good, ...decoys(10)])).status, 'SAFE', 'the clean twin');
+  // a decoder library's own name (its install name or soname) is not a link: still SAFE by its table
+  assert.equal(judge(bin(join(d, 'self', 'libbrotlidec.1.2.1.dylib'), [CONTROL, MARKER, '/DLC/PIL/.dylibs/libbrotlidec.1.2.1.dylib'])).status, 'SAFE');
+  // a fixed 1.1-form table beside a 1.0-form one (Brotli 1.0's error texts have no prefix): never SAFE on the 1.1 marker
+  const mix = judge(bin(join(d, 'two-forms'), [CONTROL, MARKER, 'BLOCK_LENGTH_1']));
+  assert.equal(mix.status, 'UNKNOWN'); assert.match(mix.reason, /form Brotli 1\.0 writes them.*could not be tested/);
+  assert.equal(judge(bin(join(d, 'one-form'), [CONTROL, MARKER, 'BLOCK_LENGTH'])).status, 'SAFE', 'the clean twin');
+  // a 1.0-form table alone (Debian 12's 1.0.9): not judged yet, UNKNOWN with the reason
+  const only = judge(bin(join(d, 'old-form'), ['SUCCESS', 'BLOCK_LENGTH_1']));
+  assert.equal(only.status, 'UNKNOWN'); assert.match(only.reason, /form Brotli 1\.0 writes them, which Wardlatch doesn't judge yet/);
 });
 
 test('names lie: a file named 1.2.1 without the marker is EXPOSED, one named 1.2.0 with it is SAFE', () => {
@@ -713,7 +776,7 @@ test('words: every UNKNOWN says "could not be tested", every EXPOSED has a fix, 
     if (r.status === 'UNKNOWN') assert.match(r.reason, /could not be tested/, r.file);
     if (r.status === 'EXPOSED') { assert.ok(r.fix && r.fix.length > 20, r.file); assert.ok(!r.fix.includes('{'), `${r.file}: no placeholder left`); }
     if (r.status === 'SAFE') assert.ok(r.searched.includes(r.file), r.file);
-    for (const k of ['viaText', 'noMarker', 'runtimeSign']) assert.ok(!(k in r), `${k} stays inside the module`);
+    for (const k of ['viaText', 'noMarker', 'runtimeSign', 'byHand', 'noTable']) assert.ok(!(k in r), `${k} stays inside the module`);
   }
 });
 
