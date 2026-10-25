@@ -4,6 +4,7 @@
 // bad-case test failed on b03e7be for the reason its name gives, and sits beside a clean-machine test that must keep
 // passing. Offline: no test reaches a network host (the TLS handshake is faked in a --require preload, net.connect
 // throws, and every program a check runs is a stand-in in the test folder, except real git in the git-based tests).
+import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';

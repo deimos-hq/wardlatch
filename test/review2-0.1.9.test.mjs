@@ -3,6 +3,7 @@
 // The second strict review of 0.1.9 (27cdfbd) reproduced these; each test here failed on 27cdfbd for the reason its name
 // gives, and holds the fix in place. Offline: no test reaches a network host, and stand-ins replace every program a
 // check would run.
+import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';

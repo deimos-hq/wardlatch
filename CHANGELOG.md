@@ -11,6 +11,14 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
+### Development (no code in the package changes)
+
+- The tests never look in the home folder of the person running them (where macOS keeps Desktop, Documents, Downloads,
+  Library, Photos and Mail): every test file loads `test/support/no-real-home.cjs` first, which refuses any look there,
+  in the test and in every Node process it starts, and drops the home's folders from the `PATH` the tests start with.
+  The sudo test and the two tests of macOS's own Library build a `/Users/<name>` home of their own
+  (`test/support/fake-home.cjs`); `test/cli.test.mjs` gives the command an empty HOME of its own.
+
 ## [0.1.9] - 2026-10-23
 
 A fixes-only release: no new incident checks. Every item below was found by a root-cause audit of all releases from

@@ -4,6 +4,7 @@
 // one or more of those behaviours, and fails when the one-line change its comment names is made. Offline: no test
 // reaches a network host, stand-ins replace every program a check would run, and the machine's own files (system folders,
 // the real home folder) are hidden or replaced by a made-up home folder.
+import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
