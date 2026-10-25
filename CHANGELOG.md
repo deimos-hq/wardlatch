@@ -60,9 +60,21 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     or that no package installed as it is now. Node's `zlib.constants` names, which contain the marker as a substring,
     never decide.
   - A distribution's node (a launcher for `libnode`) is judged by its libnode, by the same rules. A compiled `node` on
-    `PATH` that shows no sign of Node.js is a REVIEW line only for a version manager's known shim (volta-shim, mise,
-    rtx, proto-shim), whose folder of runtimes is read, as volta's and mise's are (rtx's in `~/.local/share/rtx`,
-    proto's in `~/.proto/tools`); any other (a packed node, a shim Wardlatch doesn't know) is "could not be tested".
+    `PATH` that shows no sign of Node.js is a REVIEW line only for a version manager's known shim (a link to volta-shim,
+    mise, rtx or proto-shim) whose nodes were read: at least one of its folders of runtimes is there and was listed,
+    every one that is there could be listed, and no variable names one by a path that doesn't start at `/`; otherwise it
+    is "could not be tested" (exit 2), so a node it starts that Wardlatch didn't read never ends the run in exit 0.
+    Those folders are each manager's layouts as its own source has them: volta's `$VOLTA_HOME` or `~/.volta`,
+    `tools/image/node/<version>/bin/node` and its older layouts' `tools/image/node/<node>/<npm>/bin/node`; mise's
+    `$MISE_DATA_DIR`, `$XDG_DATA_HOME/mise` or `~/.local/share/mise`, and its system installs (`$MISE_SYSTEM_DATA_DIR`
+    or `/usr/local/share/mise`), each with `installs/node` and `installs/nodejs` (the asdf plugin's name, which mise up
+    to 2024.1 renamed to `node` when it started), and `$MISE_INSTALLS_DIR`, `$MISE_SYSTEM_INSTALLS_DIR` and the list
+    `$MISE_SHARED_INSTALL_DIRS`; rtx's `$RTX_DATA_DIR`, `$XDG_DATA_HOME/rtx` or `~/.local/share/rtx`, with
+    `installs/node` and `installs/nodejs` (before rtx renamed it); proto's `$PROTO_HOME`, `$XDG_DATA_HOME/proto` or
+    `~/.proto`, with `tools/node`; and for each, the folder above the one its shim is in when that is its shims folder
+    (volta's `bin`, the others' `shims`). The nodes in all of these are read whether or not a shim is on `PATH` (the
+    folder above a shim's, when there is one). Any other compiled `node` with no sign of Node.js (a packed node, a shim
+    Wardlatch doesn't know) is "could not be tested".
   - Fix lines follow the by-hand guide (https://www.deimoscore.com/wardlatch/brotli/): the fixed release for each
     Node.js line, "move to 22, 24 or 26" for the end-of-life ones, the library's own update for a node that links one
     (but Node.js's fix when libnode's own decoder decides: libnode is Node.js's own library), Bun 1.4.4, `Brotli>=1.2.1`
@@ -72,8 +84,12 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     `sizeOf`, and `programKind` (which tells a file that can't be read from one that isn't a program).
     `lib/installs.mjs` exports `SITE_PATTERNS` for the tests.
   - Known limits: not yet run on a Linux nodejs.org build, whose linker may have merged the decoder's strings into
-    Node's constant names; such a node would read "could not be tested" until that is checked on CI. Version managers
-    kept outside their usual folders (`NVM_DIR` and the like) are not read. What the dynamic loader is told when a
+    Node's constant names; such a node would read "could not be tested" until that is checked on CI. nvm, fnm, asdf,
+    nodenv and n kept outside their usual folders (`NVM_DIR`, `ASDF_DATA_DIR` and the like) are not read, and a script
+    named `node` on `PATH` (asdf's and nodenv's shims are scripts) is still a REVIEW line whose runtimes are read only
+    in those usual folders. mise's settings in its configuration files (`shims_dir`, `system_installs_dir`,
+    `shared_install_dirs`) are not read, only its variables. proto's shims today are copies of proto-shim named `node`,
+    not links to it, so they read "could not be tested" (its nodes are still read). What the dynamic loader is told when a
     program starts (`LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`) is not known. A partial backport that adds the new error
     code without the decoder's fix would read SAFE, and so would an unfixed table beside one stray NUL-delimited copy of
     the marker (in the 1.1 form; in the 1.0 form a stray copy makes it UNKNOWN). Brotli 1.0's table layout was checked

@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scanBytes, readAt } from '../lib/files.mjs';
-import { judgeFile, evidence, resolveLink, isDecoderLibName, isNodeLibName, recordPaths, sitePackagesCandidates, distroVerdict, checkBundled, elfSearchPath, ldSoConfDirs } from '../lib/brotli.mjs';
+import { judgeFile, evidence, resolveLink, isDecoderLibName, isNodeLibName, recordPaths, sitePackagesCandidates, distroVerdict, checkBundled, elfSearchPath, ldSoConfDirs, shimPlaces } from '../lib/brotli.mjs';
 import { SITE_PATTERNS } from '../lib/installs.mjs';
 import { hiddenPlaces } from './support/machine-places.cjs';
 
@@ -61,8 +61,11 @@ function elf(path, parts = [], { runpath = false, bits = 64, be = false } = {}) 
 const fixedLib = (p) => bin(p, ['_SUCCESS', CONTROL, MARKER, '_ERROR_UNREACHABLE']);
 const oldLib = (p) => bin(p, ['_SUCCESS', CONTROL, '_ERROR_UNREACHABLE']);
 const judge = (f, sonameDirs = []) => judgeFile(f, { markers: M, sonameDirs });
-/** checkBundled on this test's places only: no version managers, library places or library folders unless given. */
-const run = (incOver = {}, opts = {}) => checkBundled({ ...INC, nodeDirs: [], bunDirs: [], libPlaces: [], ...incOver }, { pathEnv: fresh(`empty-path-${Math.random()}`), sonameDirs: [], ...opts });
+/** The incident's version managers with their own folders moved under `root` (`~/x` and `/x` both become root/x). */
+const shimsUnder = (root) => Object.fromEntries(Object.entries(INC.shims).map(([k, v]) => [k, { ...v, homes: v.homes.map((h) => (h.startsWith('~/') ? join(root, h.slice(2)) : h.startsWith('/') ? join(root, h) : h)) }]));
+/** checkBundled on this test's places only: no version managers' folders (theirs are moved into the test's folder, and
+ *  no variable moves them), library places or library folders unless given. */
+const run = (incOver = {}, opts = {}) => checkBundled({ ...INC, nodeDirs: [], bunDirs: [], libPlaces: [], shims: shimsUnder(join(dir, 'vm-home')), ...incOver }, { pathEnv: fresh(`empty-path-${Math.random()}`), sonameDirs: [], env: {}, ...opts });
 
 test('scanBytes: a needle across a piece boundary is counted once, and a hit keeps the bytes around it', () => {
   const needle = Buffer.from('NEEDLE');
@@ -844,13 +847,17 @@ test('node: PATH copies, version managers and the running node are read, never r
   assert.ok(looked.some((l) => l.includes(join(d, 'nvm'))), 'the receipt names the version managers\' folders');
   assert.ok(!existsSync(ran), 'nothing found was run');
   // a compiled program named node on PATH with no sign of Node.js that is a version manager's shim (volta's node links
-  // to volta-shim, mise's to mise): REVIEW, never judged
+  // to volta-shim, mise's to mise): REVIEW, never judged, when its folder of runtimes is there and read
+  const vm = fresh('rt-vm');
+  mkdirSync(join(vm, '.volta', 'tools', 'image', 'node'), { recursive: true }); mkdirSync(join(vm, '.local', 'share', 'mise', 'installs', 'node'), { recursive: true });
   for (const shimName of ['volta-shim', 'mise']) {
     const path2 = fresh(`rt-path2-${shimName}`);
     bin(join(d, `${shimName}-home`, shimName), ['shim']);
     symlinkSync(join(d, `${shimName}-home`, shimName), join(path2, 'node'));
-    const r2 = run({}, { pathEnv: path2 }).rows;
+    const r2 = run({ shims: shimsUnder(vm) }, { pathEnv: path2 }).rows;
     assert.equal(r2.length, 1); assert.equal(r2[0].status, 'REVIEW', shimName); assert.match(r2[0].reason, new RegExp(`^${shimName}, a version manager's shim, not a Node\\.js runtime`));
+    // and without it, UNKNOWN (the end-to-end tests below are the command's)
+    assert.equal(run({}, { pathEnv: path2 }).rows[0].status, 'UNKNOWN', shimName);
   }
   // any other compiled node with no sign of Node.js (packed, or a shim Wardlatch doesn't know): could not be tested
   const path4 = fresh('rt-path4');
@@ -1236,8 +1243,11 @@ test('bounded: a file full of "libbrotlidec" and printable bytes is read in time
 // ---- the command, end to end ----------------------------------------------------------------------------------------
 const PRELOAD = ['--require', join(ROOT, 'test', 'support', 'hide-machine-places.cjs')];
 // the preload never hides this test's own folder (and hides the rest of the temporary folder like any other place)
+// the variables that move a version manager's folders are cleared, so a test sees only the places it makes (one the
+// person running the tests has set could name a folder in their real home)
+const VM_VARS = ['VOLTA_HOME', 'MISE_DATA_DIR', 'MISE_INSTALLS_DIR', 'MISE_SYSTEM_DATA_DIR', 'MISE_SYSTEM_INSTALLS_DIR', 'MISE_SHARED_INSTALL_DIRS', 'XDG_DATA_HOME', 'RTX_DATA_DIR', 'PROTO_HOME'];
 const cli = (args, env) => {
-  const r = spawnSync(process.execPath, [...PRELOAD, BIN, ...args], { encoding: 'utf8', env: { ...process.env, WARDLATCH_TEST_OWN_DIR: dir, ...env }, maxBuffer: 64 * 1024 * 1024 });
+  const r = spawnSync(process.execPath, [...PRELOAD, BIN, ...args], { encoding: 'utf8', env: { ...process.env, ...Object.fromEntries(VM_VARS.map((k) => [k, ''])), WARDLATCH_TEST_OWN_DIR: dir, ...env }, maxBuffer: 64 * 1024 * 1024 });
   return { code: r.status, out: r.stdout, err: r.stderr };
 };
 
@@ -1336,3 +1346,145 @@ test('a version manager\'s shim on PATH is a REVIEW line only when its runtimes 
     assert.equal(JSON.parse(good.out).results.find((r) => r.file?.endsWith(`/${folder}/bin/node`))?.status, 'SAFE', shim);
   }
 });
+
+/** A version manager's compiled shim on PATH: `node` in `pathDir`, a link to a program named `kind` (what volta's,
+ *  mise's, rtx's and proto's shims link to). */
+const shimOnPath = (pathDir, kind) => { const real = bin(join(fresh(`shim-bin-${kind}-${Math.random()}`), kind), ['shim']); mkdirSync(pathDir, { recursive: true }); symlinkSync(real, join(pathDir, 'node')); return join(pathDir, 'node'); };
+const node20 = (f) => bin(f, [CONTROL, NODE_CONTROL, 'nodejs.org/download/release/v20.11.0']);
+const node26 = (f) => bin(f, [CONTROL, MARKER, NODE_CONTROL, NODE_MARKER, 'nodejs.org/download/release/v26.12.1']);
+
+test('a version manager\'s shim whose folder of runtimes is not found, or can\'t be read, is UNKNOWN (exit 2), never a clean exit', { skip: process.getuid?.() === 0 && 'root reads everything' }, () => {
+  for (const [kind, folder] of [['volta-shim', '.volta/tools/image/node'], ['mise', '.local/share/mise/installs/node'], ['rtx', '.local/share/rtx/installs/node'], ['proto-shim', '.proto/tools/node']]) {
+    const home = fresh(`nowhere-home-${kind}`), path = fresh(`nowhere-path-${kind}`);
+    const shim = shimOnPath(path, kind);
+    const go = () => cli(['--incident', 'brotli-2026-10', '--json', '--paths', fresh(`nowhere-empty-${kind}`)], { HOME: home, PATH: path });
+    // its manager keeps its nodes somewhere Wardlatch doesn't read: the shim is all there is to see
+    const none = go();
+    assert.equal(none.code, 2, `${kind}: ${none.out}`);
+    const row = JSON.parse(none.out).results.find((r) => r.file === shim);
+    assert.equal(row?.status, 'UNKNOWN', kind); assert.match(row.reason, /not found.*could not be tested/, kind);
+    // its folder of runtimes there, but closed
+    mkdirSync(join(home, folder), { recursive: true });
+    node26(join(home, folder, '26.12.1', 'bin', 'node'));
+    execFileSync('chmod', ['000', join(home, folder)]);
+    try {
+      const closed = go();
+      assert.equal(closed.code, 2, `${kind}: ${closed.out}`);
+      assert.equal(JSON.parse(closed.out).results.find((r) => r.file === shim)?.status, 'UNKNOWN', `${kind}: closed`);
+    } finally { execFileSync('chmod', ['755', join(home, folder)]); }
+    // the clean twin: the folder there and read, its node fixed: REVIEW and SAFE, exit 0
+    const good = go();
+    assert.equal(good.code, 0, `${kind}: ${good.out}`);
+    const rows = JSON.parse(good.out).results;
+    assert.equal(rows.find((r) => r.file === shim)?.status, 'REVIEW', kind);
+    assert.equal(rows.find((r) => r.file?.endsWith('/26.12.1/bin/node'))?.status, 'SAFE', kind);
+  }
+});
+
+test('every layout of volta, mise, rtx and proto is read: older ones (nodejs, volta\'s node/npm), and folders moved by their variables or found by the shim', () => {
+  const cases = [
+    // [what, kind, where the shim is (under home, or absolute), env (values under home), the node (under home)]
+    ['rtx before its nodejs-to-node rename', 'rtx', 'bin', {}, '.local/share/rtx/installs/nodejs/20.11.0/bin/node'],
+    ['mise with an asdf-era nodejs folder', 'mise', 'bin', {}, '.local/share/mise/installs/nodejs/20.11.0/bin/node'],
+    ['volta\'s layouts v0 and v1 (node/<node>/<npm>)', 'volta-shim', 'bin', {}, '.volta/tools/image/node/20.11.0/10.2.4/bin/node'],
+    ['VOLTA_HOME', 'volta-shim', 'bin', { VOLTA_HOME: 'vh' }, 'vh/tools/image/node/20.11.0/bin/node'],
+    ['VOLTA_HOME with volta\'s older layout', 'volta-shim', 'bin', { VOLTA_HOME: 'vh' }, 'vh/tools/image/node/20.11.0/10.2.4/bin/node'],
+    ['MISE_DATA_DIR', 'mise', 'bin', { MISE_DATA_DIR: 'md' }, 'md/installs/node/20.11.0/bin/node'],
+    ['MISE_INSTALLS_DIR', 'mise', 'bin', { MISE_INSTALLS_DIR: 'mi' }, 'mi/node/20.11.0/bin/node'],
+    ['MISE_SHARED_INSTALL_DIRS, a list', 'mise', 'bin', { MISE_SHARED_INSTALL_DIRS: 'none:ms' }, 'ms/node/20.11.0/bin/node'],
+    ['XDG_DATA_HOME for mise', 'mise', 'bin', { XDG_DATA_HOME: 'xdg' }, 'xdg/mise/installs/node/20.11.0/bin/node'],
+    ['RTX_DATA_DIR', 'rtx', 'bin', { RTX_DATA_DIR: 'rd' }, 'rd/installs/node/20.11.0/bin/node'],
+    ['XDG_DATA_HOME for rtx', 'rtx', 'bin', { XDG_DATA_HOME: 'xdg' }, 'xdg/rtx/installs/node/20.11.0/bin/node'],
+    ['PROTO_HOME', 'proto-shim', 'bin', { PROTO_HOME: 'ph' }, 'ph/tools/node/20.11.0/bin/node'],
+    ['XDG_DATA_HOME for proto', 'proto-shim', 'bin', { XDG_DATA_HOME: 'xdg' }, 'xdg/proto/tools/node/20.11.0/bin/node'],
+    // no variable at all: the shim's own folder says where its manager's home is
+    ['mise\'s shims folder elsewhere', 'mise', 'elsewhere/mise/shims', {}, 'elsewhere/mise/installs/node/20.11.0/bin/node'],
+    ['rtx\'s shims folder elsewhere', 'rtx', 'elsewhere/rtx/shims', {}, 'elsewhere/rtx/installs/nodejs/20.11.0/bin/node'],
+    ['volta\'s bin folder elsewhere', 'volta-shim', 'elsewhere/volta/bin', {}, 'elsewhere/volta/tools/image/node/20.11.0/bin/node'],
+    ['proto\'s shims folder elsewhere', 'proto-shim', 'elsewhere/proto/shims', {}, 'elsewhere/proto/tools/node/20.11.0/bin/node'],
+  ];
+  for (const [what, kind, at, vars, rel] of cases) {
+    const home = fresh(`layout-${what.replace(/[^a-z0-9]/gi, '_')}`);
+    const path = join(home, at), shim = shimOnPath(path, kind), node = node20(join(home, rel));
+    const env = { HOME: home, PATH: path, ...Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, v.split(':').map((x) => join(home, x)).join(':')])) };
+    const go = () => cli(['--incident', 'brotli-2026-10', '--json', '--paths', fresh(`layout-empty-${Math.random()}`)], env);
+    const bad = go();
+    assert.equal(bad.code, 1, `${what}: ${bad.out}`);
+    const rows = JSON.parse(bad.out).results;
+    assert.equal(rows.find((r) => r.file === node)?.status, 'EXPOSED', `${what}: the node it starts is read`);
+    assert.equal(rows.find((r) => r.file === shim)?.status, 'REVIEW', what);
+    // the clean twin: that node fixed, exit 0
+    node26(node);
+    const good = go();
+    assert.equal(good.code, 0, `${what}: ${good.out}`);
+    assert.equal(JSON.parse(good.out).results.find((r) => r.file === node)?.status, 'SAFE', what);
+  }
+  // a variable that names its folder by a relative path: where the manager looks depends on the folder it is started
+  // in, so its shim is UNKNOWN, even beside a folder of runtimes that is read; the clean twin is the variable not set
+  const home = fresh('layout-relative'), path = join(home, 'mise', 'shims'), shim = shimOnPath(path, 'mise');
+  node26(join(home, 'mise', 'installs', 'node', '26.12.1', 'bin', 'node'));
+  const rel = cli(['--incident', 'brotli-2026-10', '--json', '--paths', fresh('layout-relative-empty')], { HOME: home, PATH: path, MISE_DATA_DIR: 'md' });
+  assert.equal(rel.code, 2, rel.out);
+  const r = JSON.parse(rel.out).results.find((x) => x.file === shim);
+  assert.equal(r?.status, 'UNKNOWN'); assert.match(r.reason, /MISE_DATA_DIR.*could not be tested/);
+  assert.equal(cli(['--incident', 'brotli-2026-10', '--json', '--paths', fresh('layout-relative-empty2')], { HOME: home, PATH: path }).code, 0);
+  // nothing anywhere: one SAFE row, whose receipt names each place once (a manager's usual folder is not named again)
+  const none = cli(['--incident', 'brotli-2026-10', '--json', '--paths', fresh('layout-none-empty')], { HOME: fresh('layout-none-home'), PATH: fresh('layout-none-path') });
+  const searched = JSON.parse(none.out).results[0].searched;
+  assert.equal(none.code, 0, none.out);
+  const places = searched.filter((x) => x.startsWith('node in ')).map((x) => x.replace(/^node in ~\//, `node in ${realpathSync(join(dir, 'layout-none-home'))}/`).replace(join(dir, 'layout-none-home'), realpathSync(join(dir, 'layout-none-home'))));
+  assert.equal(new Set(places).size, places.length, places.join('\n'));
+});
+
+test('shimPlaces: a manager\'s folders from its variables, its usual folders and the folder its shim is in; a relative variable is unsure', () => {
+  const mise = shimsUnder('/R').mise;
+  const r = shimPlaces(mise, { MISE_DATA_DIR: '/d', XDG_DATA_HOME: '/x', MISE_INSTALLS_DIR: '/i', MISE_SHARED_INSTALL_DIRS: '/s1::/s2' }, '/e/shims/node');
+  assert.deepEqual(r.folders, ['/e/installs/node', '/e/installs/nodejs', '/d/installs/node', '/d/installs/nodejs', '/x/mise/installs/node', '/x/mise/installs/nodejs',
+    '/R/.local/share/mise/installs/node', '/R/.local/share/mise/installs/nodejs', '/R/usr/local/share/mise/installs/node', '/R/usr/local/share/mise/installs/nodejs',
+    '/i/node', '/i/nodejs', '/s1/node', '/s1/nodejs', '/s2/node', '/s2/nodejs']);
+  assert.ok(r.patterns.includes('/e/installs/node/*/bin/node') && r.patterns.includes('/s2/nodejs/*/bin/node')); assert.deepEqual(r.unsure, []);
+  // a shim in a folder of another name says nothing about its home; a variable that isn't set is no place
+  assert.deepEqual(shimPlaces(mise, {}, '/e/bin/node').folders, ['/R/.local/share/mise/installs/node', '/R/.local/share/mise/installs/nodejs', '/R/usr/local/share/mise/installs/node', '/R/usr/local/share/mise/installs/nodejs']);
+  // a relative value (or one with a relative part) is unsure, and names no folder
+  const rel = shimPlaces(mise, { MISE_DATA_DIR: 'md', MISE_SHARED_INSTALL_DIRS: '/s1:s2' });
+  assert.deepEqual(rel.unsure, ['MISE_DATA_DIR', 'MISE_SHARED_INSTALL_DIRS']); assert.ok(!rel.folders.some((f) => f.includes('md') || f.includes('s2')));
+  // volta's two layouts share one folder of runtimes
+  assert.deepEqual(shimPlaces(shimsUnder('/R')['volta-shim'], {}, '/v/bin/node').folders, ['/v/tools/image/node', '/R/.volta/tools/image/node']);
+});
+
+test('the incident\'s version managers: each usual place is in nodeDirs, and the tests clear every variable they read', () => {
+  const vars = new Set();
+  for (const [kind, l] of Object.entries(INC.shims)) {
+    assert.ok(['bin', 'shims'].includes(l.folder), kind);
+    for (const [roots, nodes] of [[l.homes, l.nodes], [l.installs ?? [], l.installsNodes ?? []]]) {
+      for (const h of roots) {
+        assert.match(h, /^(\$[A-Z_]+(\/[a-z.]+)?|~\/[a-z./]+|\/[a-z./]+)$/, `${kind}: ${h}`);
+        if (h.startsWith('$')) vars.add(h.slice(1).split('/')[0]);
+        else for (const n of nodes) assert.ok(INC.nodeDirs.includes(`${h}/${n}`), `${kind}: ${h}/${n} is in nodeDirs`);
+      }
+    }
+  }
+  assert.deepEqual([...vars].sort(), [...VM_VARS].sort());
+});
+
+test('a version manager\'s shim: a folder of runtimes that can\'t be read beside one that is read is still UNKNOWN; a program named like Object\'s own keys is no shim', { skip: process.getuid?.() === 0 && 'root reads everything' }, () => {
+  const vm = fresh('shim-closed'), path = fresh('shim-closed-path');
+  shimOnPath(path, 'mise');
+  node26(join(vm, '.local', 'share', 'mise', 'installs', 'node', '26.12.1', 'bin', 'node'));
+  const closed = join(vm, '.local', 'share', 'mise', 'installs', 'nodejs');
+  node20(join(closed, '20.11.0', 'bin', 'node'));
+  const shimRowOf = () => run({ shims: shimsUnder(vm) }, { pathEnv: path }).rows.find((r) => r.file === join(path, 'node'));
+  execFileSync('chmod', ['000', closed]);
+  try {
+    const r = shimRowOf();
+    assert.equal(r.status, 'UNKNOWN'); assert.match(r.reason, /nodejs could not be read.*could not be tested/);
+  } finally { execFileSync('chmod', ['755', closed]); }
+  assert.equal(shimRowOf().status, 'REVIEW', 'the clean twin: both read');
+  // a compiled node that links to a program named constructor or __proto__ is not a shim: UNKNOWN, never REVIEW
+  for (const k of ['constructor', '__proto__', 'toString']) {
+    const p = fresh(`shim-proto-${k}`);
+    shimOnPath(p, k);
+    assert.equal(run({ shims: shimsUnder(vm) }, { pathEnv: p }).rows.find((r) => r.file === join(p, 'node'))?.status, 'UNKNOWN', k);
+  }
+});
+
