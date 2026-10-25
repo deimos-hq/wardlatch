@@ -26,18 +26,26 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   isn't immutable (0.1.3 to 0.1.9) the gate takes the tag in the clone as the one released, which the repository's tag
   ruleset (only admins create, move or delete `v*` tags) protects. The gate reads the verdict and the commit only from
   the block. It doesn't read the rest of a review for what it means, or render it: after the block it refuses a listed
-  set of known ways to hide or add a verdict or a commit id ([docs/reviews/README.md](docs/reviews/README.md) lists
-  them, and what they don't catch: characters outside printable ASCII, HTML, character
-  references, backslashes, marks inside a word, links, emoji codes, `$`, fences with an info string, a commit as
-  `git describe` writes one, ordered-list markers of 2 or more digits, a table row with more cells than its header,
-  the block's words or "ship" again, also in ASCII look-alikes, a search of the commit messages, hex digits git
-  resolves to a commit or finds ambiguous, but the block's own commit in full and a whole advisory id, and a word
-  between spaces that git, reading it as written, resolves to a commit). It can't prove that the page GitHub shows
-  says what the text says, and a review that contradicts its block in other words is not refused: the pull request
-  into `main`, the maintainer's approval in the `release` environment and the reviewers' own reading stand behind
-  that. The release workflow repeats the gate in a job whose token only reads, checking that the tagged commit is on
-  `main` instead of the clean checkout of `main`, reads GitHub's checks and releases with its own token, refuses a tag
-  for a version older than 0.1.10, and publishes nothing without it.
+  set of known ways to hide or add a verdict or a commit id: characters outside printable ASCII, HTML, character
+  references, backslashes, marks inside a word, links, emoji codes, `$`, fences with an info string, ordered-list
+  markers of 2 or more digits, a table row with more cells than its header, the block's words or "ship" again (in any
+  case, after a fixed fold in which `l`, `I`, `1` and `|` read as `i`, and `0` as `o`), a search of the commit
+  messages, a commit as `git describe` writes one (`-`, a number, `-g` and 4 or more hex digits), and a word git,
+  asked in this clone, resolves to a commit or a tag or finds ambiguous: a whole word of 4 or more hex digits, or a
+  run of 7 or more inside a word, asked as written and in lower case (the block's own commit in full, and the four
+  words of an advisory id `GHSA-xxxx-xxxx-xxxx` that stands as a whole word, are exempt), and every word between
+  spaces and tabs, asked as written ([docs/reviews/README.md](docs/reviews/README.md) lists them, and what they don't
+  catch). It can't prove that the page GitHub shows says what the text says, and a review that contradicts its block
+  in other words is not refused: the pull request into `main`, the maintainer's approval in the `release` environment
+  and the reviewers' own reading stand behind that. The release workflow repeats the gate in a job whose token only
+  reads, checking that the tagged commit is on `main` instead of the clean checkout of `main`, reads GitHub's checks
+  and releases with its own token, refuses a tag for a version older than 0.1.10, and publishes nothing without it.
+- Releases: the job that publishes one runs in the `release` environment, which only `v*` tags may use and which waits
+  for the maintainer's approval (an admin can bypass it). The commands to verify a release, in its notes and in
+  [docs/RELEASING.md](docs/RELEASING.md), add `--signer-workflow` (the release workflow), `--source-ref` (the release's
+  tag) and `--deny-self-hosted-runners`, so an attestation made by another workflow or branch of this repository no
+  longer passes. Since 25 October 2026 changes reach `main` only through a pull request that passes the required
+  checks ([GOVERNANCE.md](GOVERNANCE.md), Review).
 - The red team's 75 scenarios are part of `npm test` (`test/redteam.test.mjs`); the 14 limits the 0.1.9 changelog
   documents (13 under Known limits, one owner decision) run as todo.
 - CI also runs, on every push and pull request, the critical-mutant gate: each `'UNKNOWN'` and `'EXPOSED'` in the code
@@ -57,23 +65,28 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   test, or a Node process it starts, that does so by accident, and fails that test. It is not a sandbox: code written to
   get past it can. It refuses a look there by these routes: `fs` in every form that takes a path, globs, streams,
   `require()` and, from Node 22.15, `import` (of a file, a package name or a `#` name of package.json's `imports`), a
-  change of folder, a program, working folder or `PATH` folder there, a `.env` file `process.loadEnvFile` reads, a
-  `node:sqlite` database there, a Node started with `--env-file` or a config-file flag naming a file there, and a walk
-  that can reach it (a recursive listing, copy, watch or `rm` of a folder that holds it, or one below which a link leads
-  into it). It goes with every Node process a test starts through `child_process`, and those they start in turn, and
-  with each Worker thread they start with `worker_threads.Worker`; a refusal in a process the test started fails the
-  test even when nothing reads that process's exit code. A package in the checkout's own `node_modules` loads by name.
+  change of folder, a working folder there, a program there or found through a `PATH` folder there (not one a shell
+  command runs), a `.env` file `process.loadEnvFile` reads, a `node:sqlite` database there, a Node started with
+  `--env-file` or a config-file flag naming a file there, and a walk that can reach it (a recursive listing, copy,
+  watch or `rm` of a folder that holds it, or one below which a link leads into it). It goes with every Node process a
+  test starts through `child_process`, and those they start in turn, and with each Worker thread they start with
+  `worker_threads.Worker`; a refusal in a process the test started fails the test even when nothing reads that
+  process's exit code. A package in the checkout's own `node_modules` loads by name.
   Paths are compared as the system reads them (links and `..` followed, and on macOS in any case and under the start-up
   disk's other names, by their text too), and under sudo SUDO_USER's home is off limits too. It drops the home's folders
   from the `PATH` the tests start with. The sudo test and the two tests of macOS's own Library build a `/Users/<name>`
   home of their own (`test/support/fake-home.cjs`); `test/cli.test.mjs` gives the command an empty HOME of its own, and
   the version test gives the go check one. `test/no-real-home.test.mjs` tries each route the net watches on a made-up
-  home. What it doesn't watch: a program that isn't Node (and a Node one starts below the command), what Node itself
-  reads or writes as a process starts or ends (other flags that name a file, a variable such as `NODE_EXTRA_CA_CERTS`,
-  and macOS's own read of `~/.CFUserTextEncoding`), Node functions that open a file or socket without `fs` (a unix
-  socket from `net`, a heap snapshot, a diagnostic report), `module.register`'s hooks thread, a Worker made from
-  `Worker.prototype.constructor`, and code written to get past it, such as an option whose getter changes when Node
-  reads it (CONTRIBUTING.md, Testing policy, lists them all).
+  home. Routes it is known not to watch include a program that isn't Node (a shell, and the programs a shell command
+  runs; a Node one starts below the command), what Node itself reads or writes as a process starts or ends (other
+  flags that name a file, the flags above in the words of a program that isn't Node, as in
+  `/usr/bin/env node --env-file=...`, a variable such as `NODE_EXTRA_CA_CERTS`, and macOS's own read of
+  `~/.CFUserTextEncoding`), Node functions that open a file, folder or socket without `fs` (a unix socket from `net`,
+  a heap snapshot, a diagnostic report, `module.enableCompileCache`'s cache folder, and in some of its forms
+  `module.findPackageJSON`'s read of a package.json), `import` on a Node older than 22.15, `module.register`'s hooks
+  thread, a Worker made from `Worker.prototype.constructor`, and code written to get past it, such as an option whose
+  getter changes when Node reads it (CONTRIBUTING.md, Testing policy, lists the routes known not to be watched; the
+  list is not complete).
 - Rules for AI coding agents: [CLAUDE.md](CLAUDE.md).
 
 ## [0.1.9] - 2026-10-23

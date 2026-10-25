@@ -22,7 +22,8 @@ being reviewed ([CLAUDE.md](../CLAUDE.md), rule 3).
 4. **Read the latest weekly mutation report** (Actions, "Mutation (full, report)"; it plants `'REVIEW'` changed to
    `'SAFE'` too, which the per-commit gate doesn't) and the known test gaps in `scripts/mutants-gaps.json`. A survivor
    or a gap in code this release touched gets a test first, or the class audit says why it can't matter.
-5. **Push and let CI finish.** Every check must pass on the release commit, including `critical mutants` (it exits 0:
+5. **Push, through a pull request into `main` ("How to cut one", below), and let CI finish.** Every check must pass
+   on the release commit, including `critical mutants` (it exits 0:
    no survivor outside the two lists, and no closed or stale entry; each `'UNKNOWN'` and `'EXPOSED'` in the code
    changed to `'SAFE'` is either caught by a behaviour test, named in the job summary, or a known gap in
    `scripts/mutants-gaps.json`; no test gave different results on the same code) and `gaps and allow lists only
@@ -68,12 +69,19 @@ sets (after 0.1.9: at least a week); whether anything breaks it is the maintaine
 ## How to cut one
 
 ```bash
-# 1. The changelog: move "Unreleased" under "## [X.Y.Z] - YYYY-MM-DD" and update the links at the bottom.
+# 1. A branch for the release: main takes changes only through a pull request (GOVERNANCE.md, "Review").
+git switch -c release-X.Y.Z main
+#    The changelog: move "Unreleased" under "## [X.Y.Z] - YYYY-MM-DD" and update the links at the bottom.
 #    (The reviews in docs/reviews/X.Y.Z/ come first: "Before you cut a release", above.)
 # 2. The version. It must match the tag exactly; the release workflow refuses otherwise.
 npm version X.Y.Z --no-git-tag-version
 git commit -s -am "X.Y.Z: <what changed, in one line>"
-git push origin main                      # wait for CI to go green
+git push origin release-X.Y.Z
+gh pr create --base main --fill           # the pull request into main
+gh pr merge --merge                       # once its required checks pass; a merge commit, not a squash or a rebase,
+                                          # which give the reviewed commits new ids: the gate refuses a reviewed
+                                          # commit that isn't an ancestor of the release commit
+git switch main && git pull --ff-only     # the merge commit is the release commit: wait for CI to go green on it
 npm run release-check                     # must print READY on this commit
 
 # 3. A signed, annotated tag on that commit. tag.gpgsign is set, so git signs it with the

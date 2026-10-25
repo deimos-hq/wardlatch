@@ -102,6 +102,13 @@ Each of these is on a page a person reads, and none is refused by the gate:
   `` `main` ``, `(v0.1.9)`, `HEAD,`. Hex digits in such a word are still asked about (item 15).
 - A range (`v0.1.9..main`), which git doesn't resolve as one name, and a branch or tag that exists in another clone but
   not in the one the gate runs in.
+- Cells hidden in a table that follows another with no blank line between (a known limit of item 12). For the gate a
+  table ends only at a blank line, and a delimiter row inside one never lowers its count of cells. GitHub ends a table
+  at other places too: where a quote starts or ends (a line with more or fewer `>` before it), or where another block,
+  such as a heading, begins. So the rows of a table that follows another that way are held to the first table's count,
+  not to their own header's: after a quoted table of 4 cells (`> | a | b | c | d |`, `> |---|---|---|---|`), the lines
+  `| x | y |`, `|---|---|` and `| x | y | hidden | hidden |` are not refused, and GitHub shows only `x` and `y` of
+  the last. The gate doesn't read Markdown as GitHub does, and isn't made to.
 - Anything else Markdown or GitHub shows differently from how it is written that isn't on the list.
 
 ## CLASS-AUDIT.md

@@ -2,24 +2,25 @@
 // Copyright 2026 Deimos AI LLC
 // The tests' safety net: it catches a test that reads or writes the real home folder of the person running them (where
 // macOS keeps Desktop, Documents, Downloads, Library, iCloud Drive, Photos and Mail) by accident, and fails that test.
-// It is not a sandbox: code written to get past it can (CONTRIBUTING.md, Testing policy, lists the routes it doesn't
-// watch). Every test file loads it first, and it goes with every Node process a test starts through child_process, and
-// those they start in turn, with the same folders. Off limits: the home the tests were started with (os.homedir()
-// before any test changes HOME), the account's own (its home in the user database, and /Users/<name> on macOS or
-// /home/<name> elsewhere) and, under sudo, SUDO_USER's (/Users/<name> or /home/<name>, and its line in /etc/passwd).
-// Inside them, this checkout and the folder of the Node running the tests (nvm and the like keep it there) stay
-// readable.
+// It is not a sandbox: code written to get past it can (CONTRIBUTING.md, Testing policy, lists routes it is known not
+// to watch; that list is not complete). Every test file loads it first, and it goes with every Node process a test
+// starts through child_process, and those they start in turn, with the same folders. Off limits: the home the tests
+// were started with (os.homedir() before any test changes HOME), the account's own (its home in the user database,
+// and /Users/<name> on macOS or /home/<name> elsewhere) and, under sudo, SUDO_USER's (/Users/<name> or /home/<name>,
+// and its line in /etc/passwd). Inside them, this checkout and the folder of the Node running the tests (nvm and the
+// like keep it there) stay readable.
 // A path is compared as the system reads it: '.', '..' and links followed in order, and on macOS in any case and with
 // the start-up disk's folders also spelt under /System/Volumes/Data or /Volumes/<x>, however many times (read by its
 // text too, where the system would find nothing). Following a link never looks inside a home: a folder off limits is
 // never looked at, but for those on the way to this checkout.
 // A look under them by these routes is refused before it is made: a path given to an fs function or stream class, a
 // glob, a require() or an import (of a file, a package name or a '#' name of package.json's imports), a change of
-// folder, a program started there or in a working folder there, or found through a PATH folder there, a Node started
-// with a flag that reads a file there as it starts (--env-file and the like); and a walk that can reach one (a
-// recursive listing, copy, watch or removal of a folder that holds one, and a recursive listing, copy, watch or glob
-// below which a link leads into one). It goes with each Worker thread started with worker_threads.Worker (a Worker has
-// an fs of its own), and covers process.loadEnvFile and node:sqlite, which open files without fs.
+// folder, a program started in a working folder there, or there, or found through a PATH folder there (not one a shell
+// command runs), a Node started with a flag among its own arguments that reads a file there as it starts (--env-file
+// and the like); and a walk that can reach one (a recursive listing, copy, watch or removal of a folder that holds one,
+// and a recursive listing, copy, watch or glob below which a link leads into one). It goes with each Worker thread
+// started with worker_threads.Worker (a Worker has an fs of its own), and covers process.loadEnvFile and node:sqlite,
+// which open files without fs.
 // In the test it throws, says so on stderr and fails the test file. In a process a test started it ends that
 // process at once (exit 70; a Worker thread, that thread), whatever would catch the error (lib/files.mjs reads one as
 // "can't be opened"), and leaves a note the test file reads when it exits: a refusal anywhere below a test fails the

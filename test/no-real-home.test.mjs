@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Deimos AI LLC
 // The tests' safety net (test/support/no-real-home.cjs), tried on each route it watches (CONTRIBUTING.md, Testing
-// policy, lists those it doesn't), with a clean twin beside each. Each probe runs on a made-up machine in this test's
-// temporary folder: a home with a checkout inside it (as on a laptop: the net's copy loads from there), and a temporary
-// folder beside it. A Node started as a test file is (the net's copy first, HOME the made-up home) tries each way in,
-// and reports what was refused. Nothing here looks in a real home but for this checkout and the folder of the Node
-// running the tests, which the net leaves readable: the folders probed are the made-up ones, and the one path probed in
-// another account's home (root's, under sudo) has a name longer than any file system takes, so the system answers
-// without looking there. A probe run against a net with a hole in it reads only the made-up folders.
+// policy, lists routes it is known not to watch). Each test has a clean twin: looks of the same kinds outside the home,
+// on macOS under the start-up disk's other names too, which must stay allowed; not every way in a test tries has a twin
+// of its own. Each probe runs on a made-up machine in this test's temporary folder: a home with a checkout inside it
+// (as on a laptop: the net's copy loads from there), and a temporary folder beside it. A Node started as a test file is
+// (the net's copy first, HOME the made-up home) tries each way in, and reports what was refused. Nothing here looks in
+// a real home but for this checkout and the folder of the Node running the tests, which the net leaves readable: the
+// folders probed are the made-up ones, and the one path probed in another account's home (root's, under sudo) has a
+// name longer than any file system takes, so the system answers without looking there. A probe run against a net with
+// a hole in it reads only the made-up folders.
 import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -197,11 +199,16 @@ report({ ...out, fast: ms < 2000 ? 'refused' : ms + ' ms' });`);
   const wide = machine('wide', { checkout: (base) => base });
   const w = probe(wide, `report({ inside: tried(() => fs.statSync(path.join(m.home, 'secret'))) });`);
   assert.deepEqual(w.out, { inside: 'refused' }, w.err);
-  // the clean twin: the same kinds of path outside the home, and the checkout inside it, stay readable
-  const ok = { file: join(m.tmp, 'ok'), link: join(m.tmp, 'ok-link', 'file'), checkout: m.net, dotdot: `${join(m.tmp, 'ok-link')}/../ok`, fromCwd: 'ok' };
+  // the clean twin: the same kinds of path outside the home, and the checkout inside it, stay readable; on macOS, the
+  // start-up disk's other names before a path outside the home too, read by their text: /System/Volumes/Data before
+  // its real path reads the file, and a /Volumes/<x> that isn't there names nothing, so the system answers ENOENT
+  const real = realpathSync(join(m.tmp, 'ok'));
+  const ok = { file: join(m.tmp, 'ok'), link: join(m.tmp, 'ok-link', 'file'), checkout: m.net, dotdot: `${join(m.tmp, 'ok-link')}/../ok`, fromCwd: 'ok',
+    ...(MAC ? { data: `/System/Volumes/Data${real}`, volume: `/Volumes/Wardlatch Probe${real}` } : {}) };
   const c = probe(m, `const s = ${J(ok)}, out = {}; for (const [k, p] of Object.entries(s)) out[k] = tried(() => fs.readFileSync(p));
 out.buffer = tried(() => fs.readFileSync(Buffer.from(s.file))); report(out);`);
-  assert.deepEqual(c.out, Object.fromEntries([...Object.keys(ok), 'buffer'].map((k) => [k, 'not refused'])), c.err);
+  const clean = Object.fromEntries([...Object.keys(ok), 'buffer'].map((k) => [k, 'not refused']));
+  assert.deepEqual(c.out, MAC ? { ...clean, volume: 'not refused: ENOENT' } : clean, c.err);
   assert.equal(c.code, 0, c.err);
 });
 

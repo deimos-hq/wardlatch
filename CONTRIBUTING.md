@@ -71,9 +71,10 @@ process gets back as it was), and with each Worker thread one of them starts wit
 in a home by these routes fails the test: a path given to an `fs` function (callback, Sync and promise forms) or stream
 class, a glob, a `require()` or (from Node 22.15) an `import` of a file, of a package name or of a `#` name of
 package.json's `imports` (a package in the checkout's own `node_modules` loads; Node's search going on into a home's
-`node_modules` is refused), a change of folder, a program, working folder or `PATH` folder there, a `.env` file
-`process.loadEnvFile` reads, a `node:sqlite` database, backup or extension there (on a Node with `setAuthorizer`, a file
-SQL attaches too; a SQLite URI is refused whole), a Node started with `--env-file`, `--env-file-if-exists`,
+`node_modules` is refused), a change of folder, a working folder there, a program there or found through a `PATH`
+folder there (not one a shell command runs: below), a `.env` file `process.loadEnvFile` reads, a `node:sqlite`
+database, backup or extension there (on a Node with `setAuthorizer`, a file SQL attaches too; a SQLite URI is refused
+whole), a Node started with `--env-file`, `--env-file-if-exists`,
 `--experimental-config-file`, `--config-file` or `--experimental-default-config-file` reading a file there; and a walk
 that can reach one: a recursive listing, copy, watch or `rm` of a folder that holds it, or a recursive listing, copy,
 watch or glob below which a link leads into it. In the test it throws; in a process or Worker the test started it stops
@@ -85,20 +86,26 @@ nothing), and under sudo SUDO_USER's home is off limits too. The `PATH` the test
 still does its work outside it. A test that needs a home builds one in its own temporary folder;
 `test/support/fake-home.cjs` makes one appear at `/Users/<name>` (or `/home/<name>`).
 
-The routes the net doesn't watch, said plainly. A test must not reach a home by one of them; the net won't notice.
+Routes the net is known not to watch, said plainly. The list is not complete: a route named in neither list may be
+unwatched too. A test must not reach a home by any of them; the net won't notice.
 
 - A program that isn't Node (git, curl, a shell), and a Node that such a program starts below the command (the command
-  builds its children's environments, and tests read them); a program started with `process.execve`.
+  builds its children's environments, and tests read them); a program a shell command runs (`execSync`, `exec`,
+  `shell: true`: of such a command the net checks only its working folder), wherever it is; a program started with
+  `process.execve`.
 - What Node itself reads or writes as a process starts or ends, outside any test code: command-line flags other than the
   five above that name a file or folder (`--snapshot-blob`, `--openssl-config`, `--redirect-warnings`,
   `--localstorage-file`, `--tls-keylog`, `--watch-path`, `--test-reporter-destination`, the report, profile and
-  diagnostic folders), those five in a shell command's words or a `#!` line, variables such as `NODE_EXTRA_CA_CERTS`,
-  `NODE_V8_COVERAGE`, `NODE_COMPILE_CACHE` and `NODE_REPL_HISTORY`, and, for a module outside any package, the
-  package.json Node looks for in each folder above it (for the module's type); and, on macOS, the system's
-  CoreFoundation library reading `~/.CFUserTextEncoding` as every process starts, Node included, before any code of the
-  test runs.
-- Node functions that open a file or socket without `fs`: a unix socket (`net`'s listen and connect, `http`'s
-  `socketPath`), `v8.writeHeapSnapshot`, `process.report.writeReport`, `process.dlopen`, WASI's preopened folders.
+  diagnostic folders), those five in a shell command's words, a `#!` line or the words of a program that isn't Node
+  and starts one (`/usr/bin/env node --env-file=...`), variables such as `NODE_EXTRA_CA_CERTS`, `NODE_V8_COVERAGE`,
+  `NODE_COMPILE_CACHE` and `NODE_REPL_HISTORY`, and, for a module outside any package, the package.json Node looks for
+  in each folder above it (for the module's type); and, on macOS, the system's CoreFoundation library reading
+  `~/.CFUserTextEncoding` as every process starts, Node included, before any code of the test runs.
+- Node functions that open a file, folder or socket without `fs`: a unix socket (`net`'s listen and connect, `http`'s
+  `socketPath`), `v8.writeHeapSnapshot`, `process.report.writeReport`, `process.dlopen`, WASI's preopened folders,
+  `module.enableCompileCache` (it makes and writes its cache folder there), and `module.findPackageJSON`, which reads
+  the package.json it finds there (some of its forms are refused, not all: `findPackageJSON('..', base)` is not).
+- An `import` on a Node older than 22.15, which has no `module.registerHooks`: there only `require()` is checked.
 - Threads the net isn't given: `module.register`'s hooks thread, and a Worker made from the class its prototype gives
   (`Worker.prototype.constructor`).
 - Code written to get past it: an option whose getter gives another value when Node reads it, a link or file changed

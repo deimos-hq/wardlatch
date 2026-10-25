@@ -1,7 +1,7 @@
 # Governance
 
-Who decides, and what happens if they stop. Everything here is true as of 21 October 2026, evening; where something is only
-planned, it says so.
+Who decides, and what happens if they stop. Everything here is true as of 21 October 2026, evening, and "Review" as of
+25 October 2026; where something is only planned, it says so.
 
 ## Model
 
@@ -22,10 +22,15 @@ why on the thread.
 
 ## Review
 
-Today the maintainer commits to `main` directly and there is no second reviewer. CI runs on every push and pull request
-(tests on Node 18, 20, 22, 24 and 26 on Linux and macOS, the critical-mutant gate and the check that its two lists of
-known survivors only shrink, the corpus report, ShellCheck, the Mac fix's checksum and a run on copies of the
-certificate file, licence and sign-off checks, CodeQL). OpenSSF Scorecard runs on every push to `main` and weekly. The
+Since 25 October 2026 changes reach `main` only through a pull request. The repository's ruleset for `main` requires
+one, with these checks passed on it: the tests on Node 18, 20 and 22 on Linux and macOS, the Mac fix on both,
+coverage, ShellCheck, the licence and sign-off checks, and CodeQL. It also refuses a force-push to `main` and its
+deletion, and no one may bypass it (an admin can still change the ruleset itself). It requires no approving review,
+and there is no second reviewer: today the maintainer is the only one. CI runs on every push and pull request (tests
+on Node 18, 20, 22, 24 and 26 on Linux and macOS, the critical-mutant gate and the check that its two lists of known
+survivors only shrink, the corpus report, coverage, ShellCheck, the Mac fix's checksum and a run on copies of the
+certificate file, licence and sign-off checks, CodeQL); the release gate needs every check GitHub ran on the release
+commit to pass. OpenSSF Scorecard runs on every push to `main` and weekly. The
 maintainer tags a release only when `npm run release-check` prints READY; the release workflow repeats its checks,
 GitHub's among them, except that it checks the tagged commit is on `main` instead of the clean checkout of `main`, and
 publishes nothing without them ([docs/RELEASING.md](docs/RELEASING.md)). Requiring an approving review from someone
