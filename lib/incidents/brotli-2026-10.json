@@ -41,7 +41,7 @@
     "mise": { "folder": "shims", "homes": ["$MISE_DATA_DIR", "$XDG_DATA_HOME/mise", "~/.local/share/mise", "$MISE_SYSTEM_DATA_DIR", "/usr/local/share/mise"], "nodes": ["installs/node/*/bin/node", "installs/nodejs/*/bin/node"], "installs": ["$MISE_INSTALLS_DIR", "$MISE_SYSTEM_INSTALLS_DIR", "$MISE_SHARED_INSTALL_DIRS"], "installsNodes": ["node/*/bin/node", "nodejs/*/bin/node"], "lists": ["MISE_SHARED_INSTALL_DIRS"] },
     "rtx": { "folder": "shims", "homes": ["$RTX_DATA_DIR", "$XDG_DATA_HOME/rtx", "~/.local/share/rtx"], "nodes": ["installs/node/*/bin/node", "installs/nodejs/*/bin/node"] },
     "proto-shim": { "folder": "shims", "homes": ["$PROTO_HOME", "$XDG_DATA_HOME/proto", "~/.proto"], "nodes": ["tools/node/*/bin/node"], "copies": true, "marker": "Invalid shim name detected. Unable to execute the appropriate proto tool." },
-    "asdf": { "script": true, "folder": "shims", "homes": ["$ASDF_DATA_DIR", "~/.asdf"], "nodes": ["installs/nodejs/*/bin/node", "installs/node/*/bin/node"], "pluginLine": "# asdf-plugin:" },
+    "asdf": { "script": true, "folder": "shims", "homes": ["$ASDF_DATA_DIR", "~/.asdf"], "nodes": ["installs/nodejs/*/bin/node", "installs/node/*/bin/node"], "pluginLine": "# asdf-plugin:", "tilde": ["ASDF_DATA_DIR"] },
     "nodenv": { "script": true, "folder": "shims", "homes": ["$NODENV_ROOT", "~/.nodenv"], "nodes": ["versions/*/bin/node"] }
   },
   "bunDirs": ["~/.bun/bin/bun"],

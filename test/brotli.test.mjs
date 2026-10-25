@@ -1987,3 +1987,32 @@ test('asdf: a plugin named node (installs/node) is read like nodejs, and a shim 
     assert.equal(t.code, 0, t.out); assert.equal(t.at(shim)?.status, 'REVIEW', plugins.join());
   }
 });
+
+test('ASDF_DATA_DIR with a leading ~/ (or a bare ~) is the home folder, as asdf reads it; any other path not starting at / stays unsure', () => {
+  // asdf (internal/config/config.go, normalizePath, since 0.17.0) joins the home folder to "~" and "~/..."; a literal
+  // "~/ad" was a relative path here, so its nodes went unread and its shim was UNKNOWN (exit 2)
+  const asdfShim = (f) => { mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, '#!/usr/bin/env bash\n# asdf-plugin: nodejs 20.11.0\nexec asdf exec "node" "$@"', { mode: 0o755 }); return f; };
+  for (const [value, under] of [['~/ad', 'ad'], ['~', '']]) {
+    const home = fresh(`asdf-tilde-${under || 'home'}`), data = join(home, under);
+    const node = node20(join(data, 'installs', 'nodejs', '20.11.0', 'bin', 'node'));
+    // no shim on PATH: the node there is read
+    const alone = cliRows({ HOME: home, PATH: fresh(`asdf-tilde-path-${under || 'home'}`), ASDF_DATA_DIR: value });
+    assert.equal(alone.code, 1, `${value}: ${alone.out}`); assert.equal(alone.at(node)?.status, 'EXPOSED', value);
+    // its shim on PATH: REVIEW, with that node EXPOSED; the clean twin, that node fixed, exit 0
+    const path = join(data, 'shims'), shim = asdfShim(join(path, 'node'));
+    const bad = cliRows({ HOME: home, PATH: path, ASDF_DATA_DIR: value });
+    assert.equal(bad.code, 1, `${value}: ${bad.out}`); assert.equal(bad.at(shim)?.status, 'REVIEW', value); assert.equal(bad.at(node)?.status, 'EXPOSED', value);
+    node26(node);
+    assert.equal(cliRows({ HOME: home, PATH: path, ASDF_DATA_DIR: value }).code, 0, value);
+  }
+  // the near misses: "~other/ad" (asdf joins only "~" and "~/...") and "ad" are relative: the shim is UNKNOWN, exit 2
+  const home = fresh('asdf-tilde-near'), path = join(home, '.asdf', 'shims'), shim = asdfShim(join(path, 'node'));
+  node26(join(home, '.asdf', 'installs', 'nodejs', '26.12.1', 'bin', 'node'));
+  for (const value of ['~other/ad', 'ad']) {
+    const r = cliRows({ HOME: home, PATH: path, ASDF_DATA_DIR: value });
+    assert.equal(r.code, 2, `${value}: ${r.out}`); assert.equal(r.at(shim)?.status, 'UNKNOWN', value); assert.match(r.at(shim).reason, /ASDF_DATA_DIR names its folders by a path that doesn't start at '\/'/, value);
+  }
+  // and the expansion is asdf's only: another manager's variable is read as it was
+  assert.deepEqual(shimPlaces(INC.shims.mise, { MISE_DATA_DIR: '~/md' }).unsure, ['MISE_DATA_DIR']);
+  assert.deepEqual(shimPlaces(INC.shims.asdf, { ASDF_DATA_DIR: '~/ad' }).unsure, []);
+});

@@ -91,13 +91,13 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     variable split on `:`, as mise splits it; every other one is one path, a `:` in it included, as each manager reads
     it); rtx's `$RTX_DATA_DIR`, `$XDG_DATA_HOME/rtx` or `~/.local/share/rtx`, with `installs/node` and `installs/nodejs`
     (before rtx renamed it); proto's `$PROTO_HOME`, `$XDG_DATA_HOME/proto` or `~/.proto`, with `tools/node`; asdf's
-    `$ASDF_DATA_DIR` or `~/.asdf`, with `installs/nodejs` and `installs/node` (a plugin named `node`), where asdf's shim
-    counts only the folder of the plugins its `# asdf-plugin:` lines name, as asdf writes and reads them (a shim of
-    another plugin, or of none, is "could not be tested"); nodenv's `$NODENV_ROOT` or `~/.nodenv`, with `versions`; and
-    for each, the folder above the one its shim is in when that is its shims folder (volta's `bin`, the others'
-    `shims`). The nodes in all of these are read whether or not a shim is on `PATH` (the folder above a shim's, when
-    there is one). Any other compiled `node` with no sign of Node.js (a packed node, a shim Wardlatch doesn't know) is
-    "could not be tested".
+    `$ASDF_DATA_DIR` (a leading `~/` in it, or a bare `~`, is your home folder, as asdf reads it since 0.17.0) or
+    `~/.asdf`, with `installs/nodejs` and `installs/node` (a plugin named `node`), where asdf's shim counts only the
+    folder of the plugins its `# asdf-plugin:` lines name, as asdf writes and reads them (a shim of another plugin, or
+    of none, is "could not be tested"); nodenv's `$NODENV_ROOT` or `~/.nodenv`, with `versions`; and for each, the
+    folder above the one its shim is in when that is its shims folder (volta's `bin`, the others' `shims`). The nodes in
+    all of these are read whether or not a shim is on `PATH` (the folder above a shim's, when there is one). Any other
+    compiled `node` with no sign of Node.js (a packed node, a shim Wardlatch doesn't know) is "could not be tested".
   - Fix lines follow the by-hand guide (https://www.deimoscore.com/wardlatch/brotli/): the fixed release for each
     Node.js line, "move to 22, 24 or 26" for the end-of-life ones, the library's own update for a node that links one
     (but Node.js's fix when libnode's own decoder decides: libnode is Node.js's own library), Bun 1.4.4, `Brotli>=1.2.1`
