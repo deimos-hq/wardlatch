@@ -11,7 +11,17 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
-### Development (no code in the package changes)
+### Fixed
+
+- Python is started with `-B` as well as `-I -S`, in the trust probe and inside containers, so it writes no `.pyc`
+  cache. Under `-I -S` alone, python.org, Homebrew, pyenv and uv Pythons may write `__pycache__` beside a standard-library
+  module whose cache is missing or stale, in a folder you own, or inside a running container whose image ships its
+  standard library without `.pyc` files. Apple's `/usr/bin/python3` was not affected: under `-I` it writes no cache
+  (checked with its Python 3.9.6 on macOS 26: a 0.1.9 run with a HOME of its own left that HOME empty). Its plain runs
+  do cache into `~/Library/Caches/com.apple.python`, which is what the test suite's own `python3` runs did (below).
+  `PYTHONDONTWRITEBYTECODE` would not have done it: `-I` ignores every `PYTHON*` variable.
+
+### Development
 
 - The tests never look in the home folder of the person running them (where macOS keeps Desktop, Documents, Downloads,
   Library, Photos and Mail): every test file loads `test/support/no-real-home.cjs` first, which refuses any look there
@@ -25,6 +35,11 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   gives the go check one. `test/no-real-home.test.mjs` tries every way past the net that a review found. What it can't
   stop: a program that isn't Node (and a Node one starts below the command), and macOS's own read of
   `~/.CFUserTextEncoding` as any process starts (CONTRIBUTING.md, Testing policy).
+- The tests' own `python3` runs (finding the interpreter, `python3 -m venv`, starting a test environment) get `-B`, and
+  `-I` unless the test needs Python's start-up files. With Apple's `/usr/bin/python3` first on `PATH`,
+  `test/wardlatch.test.mjs` wrote 63 `.pyc` files into `~/Library/Caches/com.apple.python` under the HOME it ran with (62
+  from one `python3 -m venv`), which the seal can't see, since Python isn't Node. `test/conventions.test.mjs` now fails
+  on a real Python started by a test, or by a probe, without `-B`.
 
 ## [0.1.9] - 2026-10-23
 

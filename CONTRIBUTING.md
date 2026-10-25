@@ -73,11 +73,13 @@ the system reads it (links and `..` followed, and on macOS in any case and under
 there. `test/no-real-home.test.mjs` tries every way past the net that a review found. A test that needs a home builds
 one in its own temporary folder; `test/support/fake-home.cjs` makes one appear at `/Users/<name>` (or `/home/<name>`).
 
-What the net can't stop, said plainly: it works inside Node, so a program that isn't Node (git, curl, a shell) is not
-watched, nor is a Node that such a program starts below the command (the command builds its children's environments,
-and tests read them); and on macOS every process, Node included, has the system's CoreFoundation library read
-`~/.CFUserTextEncoding` from the home folder as it starts, before any code of the test runs, which no net inside Node
-can stop.
+What the net can't stop, said plainly: it works inside Node, so a program that isn't Node (git, curl, a shell, Python)
+is not watched, nor is a Node that such a program starts below the command (the command builds its children's
+environments, and tests read them); and on macOS every process, Node included, has the system's CoreFoundation library
+read `~/.CFUserTextEncoding` from the home folder as it starts, before any code of the test runs, which no net inside
+Node can stop. A test that starts a real Python gives it `-B` (with `-I` unless the test needs Python's start-up
+files), and `test/conventions.test.mjs` checks it: Apple's `/usr/bin/python3` otherwise writes its `.pyc` cache to
+`~/Library/Caches/com.apple.python` in the home folder it runs with.
 
 | File | For |
 |---|---|

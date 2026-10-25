@@ -78,7 +78,7 @@ asks each runtime to make the connection itself.
    macOS's networking stack (`nscurl`) can't be pointed at a CA file, so it gets a normal-site control instead: it
    must open the advisory's own page, or the line is UNKNOWN.
 3. **The probe**: the runtime connects to each reachable host with its own defaults and the user's trust settings, the
-   way the user's code would, run from `/`. Python is the exception: it starts with `-I -S`, so its start-up files
+   way the user's code would, run from `/`. Python is the exception: it starts with `-I -S -B`, so its start-up files
    (`.pth`, `sitecustomize.py`) and anything they change about trust are left out. Any host it reaches makes the line EXPOSED, naming the hosts. Only a certificate-verification refusal counts as a refusal (curl exit 60, a Node certificate error code, Python's `SSLCertVerificationError`): when no host connected, every refusal of that kind makes it SAFE, and any other failure makes it UNKNOWN.
 
 Probes per runtime:
@@ -87,9 +87,9 @@ Probes per runtime:
 |---|---|
 | `curl` | `curl -s -o /dev/null --max-time N [--cacert roots] URL` (the Linux system store and a virtual environment's certifi add `--cacert <bundle>`; a bundle that can't be found is UNKNOWN) |
 | `node` | `node -e <script>`: `https.get` for the probe, and with `ca:` for the control (since 0.1.7; `fetch()` before, which Node 17 and older lack) |
-| `python` | `python3 -I -S -c <script>`: `ssl.create_default_context()` and `urllib`. A virtual environment's certifi is not run through Python: it is a `curl` row with `--cacert <bundle>`. `-S` skips the `site` module, so no `.pth` file or `sitecustomize.py` runs (since 0.1.7); `-I` leaves out the user's site-packages, the `PYTHON*` variables and the current folder |
+| `python` | `python3 -I -S -B -c <script>`: `ssl.create_default_context()` and `urllib`. A virtual environment's certifi is not run through Python: it is a `curl` row with `--cacert <bundle>`. `-S` skips the `site` module, so no `.pth` file or `sitecustomize.py` runs (since 0.1.7); `-I` leaves out the user's site-packages, the `PYTHON*` variables and the current folder; `-B` writes no `.pyc` cache (since the release after 0.1.9) |
 | macOS system | `nscurl URL`, read from its output, since it exits 0 even when the load fails; only NSURLErrorDomain -1202 and -1203 (an untrusted or unknown root) is a refusal; a date error (-1201, -1204) is an error |
-| a container | `sh -c <script>` inside it via `docker exec` / `podman exec`, using `curl`, else `python3 -I -S`, else `wget`; first a normal site must open, then `self-signed.badssl.com` must be refused, or the tool doesn't check certificates and the line is UNKNOWN |
+| a container | `sh -c <script>` inside it via `docker exec` / `podman exec`, using `curl`, else `python3 -I -S -B`, else `wget`; first a normal site must open, then `self-signed.badssl.com` must be refused, or the tool doesn't check certificates and the line is UNKNOWN |
 
 ## The Mac fix
 
@@ -118,7 +118,7 @@ when the file and its folder are writable by the user (as in the tests, which po
   changes only when an incident needs a new kind of check.
 - **Run the real thing.** The probes use the runtimes themselves, with the user's trust settings, so a result reflects
   what the user's code would do, including `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS` and a virtual environment's own
-  `certifi`. Except for what would mean running what is being checked: Python's start-up files are skipped (`-I -S`),
+  `certifi`. Except for what would mean running what is being checked: Python's start-up files are skipped (`-I -S`; `-B` so it writes no `.pyc` cache either),
   every program runs from `/` (`go version` with `GOTOOLCHAIN=local`), and `node_modules/.bin` folders are dropped from
   `PATH`.
 - **Controls before verdicts.** Every SAFE is preceded by evidence that the check could have said EXPOSED.
