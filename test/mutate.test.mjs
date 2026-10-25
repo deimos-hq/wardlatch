@@ -12,8 +12,8 @@
 // caught list entry, and refuses bad lists and options. The static test that rejects every SAFE literal (G3) is skipped
 // in the copies, so it can't make a survivor look caught, and the script stops if that test isn't where it expects it.
 // Stopping the script kills every suite it started, with everything those started. Also scripts/gaps-only-shrink.mjs,
-// the check that the known-gaps list only shrinks. Offline; the gate needs rsync and Node 22.1 or later, as the script
-// does.
+// the check that the two lists of survivors (known gaps, equivalent) only shrink. Offline; the gate needs rsync and
+// Node 22.1 or later, as the script does.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
@@ -345,9 +345,12 @@ test('a test failing at random (p = 0.3, 24 seeded schedules): the gate never pa
 const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x',
   GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x' };
 const gitIn = (dir, ...a) => execFileSync('git', a, { cwd: dir, env: GIT_ENV, encoding: 'utf8' }).trim();
-const gaps = (dir, list) => {
+// commits the gaps list (null: no list), and the allow list when given (null: no list; left as it is when not given)
+const gaps = (dir, list, allowed) => {
   mkdirSync(join(dir, 'scripts'), { recursive: true });
   if (list) writeFileSync(join(dir, 'scripts/mutants-gaps.json'), JSON.stringify(list, null, 1)); else rmSync(join(dir, 'scripts/mutants-gaps.json'), { force: true });
+  if (allowed) writeFileSync(join(dir, 'scripts/mutants-allowed.json'), JSON.stringify(allowed, null, 1));
+  else if (allowed === null) rmSync(join(dir, 'scripts/mutants-allowed.json'), { force: true });
   writeFileSync(join(dir, 'scripts/gaps-only-shrink.mjs'), SHRINK);
   gitIn(dir, 'add', '-A'); gitIn(dir, 'commit', '-q', '--allow-empty', '-m', 'gaps');
   return gitIn(dir, 'rev-parse', 'HEAD');
@@ -372,12 +375,33 @@ test('the gaps list only shrinks: an entry the base doesn\'t have fails (exit 1)
   assert.equal(shrink(dir, at).code, 0);
 });
 
-test('the gaps list only shrinks: a list the base doesn\'t have is being introduced (passes, said); a base that isn\'t a commit stops it (exit 2)', () => {
+test('the allow list only shrinks too: a new equivalent entry fails (exit 1), and so does a gap moved onto it', () => {
+  const dir = join(base, `g${++n}`); mkdirSync(dir); gitIn(dir, 'init', '-q', '-b', 'main');
+  const at = gaps(dir, [G(1), G(2)], []);
+  gaps(dir, [G(1), G(2)], [{ ...G(9), why: 'equivalent (a reviewer agreed)' }]);
+  let r = shrink(dir, at);
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /mutants-allowed\.json gained 1 entry not in it at [0-9a-f]{12}:\n {2}lib\/x\.mjs \[unknown->safe\] line 9/);
+  gaps(dir, [G(1)], [{ ...G(2), why: 'equivalent' }]);   // off the gaps list (it shrank), onto the allow list
+  r = shrink(dir, at);
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /ok: scripts\/mutants-gaps\.json has 1 entry/); assert.match(r.out, /mutants-allowed\.json gained 1 entry[^]*line 2/);
+  gaps(dir, [G(1)], []);
+  r = shrink(dir, at); assert.equal(r.code, 0, r.out);
+});
+
+test('a list the base doesn\'t have is compared with the last release that has it, or with nothing; a base that isn\'t a commit stops it (exit 2)', () => {
   const dir = join(base, `g${++n}`); mkdirSync(dir); gitIn(dir, 'init', '-q', '-b', 'main');
   const at = gaps(dir, null);
   gaps(dir, [G(1)]);
   let r = shrink(dir, at);
-  assert.equal(r.code, 0, r.out); assert.match(r.out, /is not at [0-9a-f]{12}: this change introduces it \(1 entry\)/);
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /mutants-gaps\.json gained 1 entry not in it at nothing \(not at [0-9a-f]{12}, nor in any release before it\)/);
+  // deleted after a release that had it, then back longer: the release's list is the base
+  gitIn(dir, 'tag', 'v0.1.9', gaps(dir, [G(1), G(2)]));
+  const gone = gaps(dir, null);
+  gaps(dir, [G(1), G(2), G(3)]);
+  r = shrink(dir, gone);
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /gained 1 entry not in it at v0\.1\.9 \(not at [0-9a-f]{12}\):\n {2}lib\/x\.mjs \[unknown->safe\] line 3/);
+  gaps(dir, [G(2)]);
+  r = shrink(dir, gone); assert.equal(r.code, 0, r.out); assert.match(r.out, /none new since v0\.1\.9/);
   r = shrink(dir, 'no-such-commit');
   assert.equal(r.code, 2, r.out); assert.match(r.out, /no-such-commit is not a commit here/);
   // with no base given: where HEAD left origin/main
@@ -385,5 +409,5 @@ test('the gaps list only shrinks: a list the base doesn\'t have is being introdu
   gitIn(dir, 'remote', 'add', 'origin', origin); gitIn(dir, 'push', '-q', 'origin', 'main'); gitIn(dir, 'fetch', '-q', 'origin');
   gaps(dir, [G(1), G(2)]);
   r = shrink(dir);
-  assert.equal(r.code, 1, r.out); assert.match(r.out, /line 2/);
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /gained 1 entry[^\n]*:\n {2}lib\/x\.mjs \[unknown->safe\] line 1\n/);
 });

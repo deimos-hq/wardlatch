@@ -27,15 +27,20 @@ const changelog = (version, { unreleased = '', date = ' - 2026-11-02' } = {}) =>
   `# Changelog\n\n## [Unreleased]\n${unreleased}\n## [${version}]${date}\n\n- ${A} and ${B}.\n\n## [0.1.9] - 2026-10-23\n`;
 const review = (sha, verdict = 'READY') => `# Review\n\nCommit: ${sha}\nVerdict: ${verdict}\n`;
 
-// a repository at the given version with the release commit reviewed; returns its folder
-const repo = ({ version = '0.2.0', log, audit, skip = [] } = {}) => {
+// a repository at the given version with the release commit reviewed, after the last release (a commit tagged v0.1.9
+// holding the files in `last`, unless tag is false); `files` go into the release commit; returns its folder
+const repo = ({ version = '0.2.0', log, audit, skip = [], last = {}, files = {}, tag = true } = {}) => {
   const dir = join(base, `r${++n}`);
   mkdirSync(dir);
   git(dir, 'init', '-q', '-b', 'main');
+  put(dir, 'lib/a.mjs', 'export const a = 1;\n');
+  for (const [p, t] of Object.entries(last)) put(dir, p, t);
+  git(dir, 'add', '-A'); git(dir, 'commit', '-q', '-m', 'the last release');
+  if (tag) git(dir, 'tag', 'v0.1.9');
   put(dir, 'package.json', JSON.stringify({ name: 'wardlatch', version }));
   put(dir, 'CHANGELOG.md', log ?? changelog(version));
   put(dir, 'scripts/release-check.mjs', GATE);
-  put(dir, 'lib/a.mjs', 'export const a = 1;\n');
+  for (const [p, t] of Object.entries(files)) put(dir, p, t);
   git(dir, 'add', '-A'); git(dir, 'commit', '-q', '-m', 'release');
   const sha = git(dir, 'rev-parse', 'HEAD');
   if (!skip.includes('class')) put(dir, `docs/reviews/${version}/CLASS-AUDIT.md`, audit ?? `${review(sha)}\n${A}: looked again.\n${B}: looked again.\n`);
@@ -355,6 +360,39 @@ test('GitHub\'s checks are read page by page: a required check, or a failed one,
   dir = repo();
   r = gate(dir, { ci: false, env: full(dir, { pages: [PASSING, [{ name: 'analyze', status: 'completed', conclusion: 'failure' }]] }) });
   assert.equal(r.code, 1, r.out); assert.match(r.out, /checks not passed[^\n]*analyze \(failure\)/);
+});
+
+const L = (k, extra = {}) => ({ file: 'lib/a.mjs', op: 'unknown->safe', before: `line ${k}`, why: 'test gap', ...extra });
+const json = (l) => `${JSON.stringify(l, null, 1)}\n`;
+const GAPS = 'scripts/mutants-gaps.json', ALLOWED = 'scripts/mutants-allowed.json';
+
+test('the lists of survivors only shrink between releases: an entry added since the last release without the maintainer\'s approval is refused, named', () => {
+  for (const [last, files, why] of [
+    [{ [GAPS]: json([L(1)]) }, { [GAPS]: json([L(1), L(2)]) }, /mutants-gaps\.json: 1 of the 1 entry added since v0\.1\.9 lacks the maintainer's approval[^\n]*lib\/a\.mjs \[unknown->safe\] line 2/],
+    // a gap moved onto the allow list, which the CI check alone would compare only with the push before
+    [{ [GAPS]: json([L(1)]) }, { [GAPS]: '[]\n', [ALLOWED]: json([L(1, { why: 'equivalent' })]) }, /mutants-allowed\.json: 1 of the 1 entry added since v0\.1\.9 lacks/],
+    // a list the last release didn't have: every entry in it is new
+    [{}, { [GAPS]: json([L(1), L(2)]) }, /mutants-gaps\.json: 2 of the 2 entries added since v0\.1\.9 lack the maintainer's approval/],
+    // an approval in another form, or by someone else, is not the maintainer's
+    [{}, { [GAPS]: json([L(1, { approved: 'reviewer, 2026-10-25' })]) }, /1 of the 1 entry added since v0\.1\.9 lacks/],
+    [{}, { [GAPS]: json([L(1, { approved: 'maintainer' })]) }, /1 of the 1 entry added since v0\.1\.9 lacks/],
+  ]) {
+    const r = gate(repo({ last, files }));
+    assert.equal(r.code, 1, r.out); assert.match(r.out, why); assert.doesNotMatch(r.out, /READY to tag/);
+  }
+});
+
+test('the lists of survivors: one that shrank, or an entry added with the maintainer\'s approval (listed), passes', () => {
+  let r = gate(repo({ last: { [GAPS]: json([L(1), L(2)]) }, files: { [GAPS]: json([L(2, { why: 'reworded' })]) } }));
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /mutants-gaps\.json: no entry added since v0\.1\.9 \(1 entry now, 2 entries then\)/);
+  r = gate(repo({ last: { [GAPS]: json([L(1)]) }, files: { [GAPS]: json([L(1), L(2, { approved: 'maintainer, 2026-10-25' })]) } }));
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /mutants-gaps\.json: 1 entry added since v0\.1\.9, each approved by the maintainer: lib\/a\.mjs \[unknown->safe\] line 2 \(maintainer, 2026-10-25\)/);
+});
+
+test('no earlier release tag in this history to compare the lists with: refused', () => {
+  const r = gate(repo({ tag: false }));
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /no earlier release tag/);
 });
 
 test('--ci: the tagged commit must be on main: one on a branch never merged, or with no origin/main to tell, is refused; one behind main passes', () => {

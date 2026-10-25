@@ -37,8 +37,10 @@
 //
 // Two lists explain a survivor. scripts/mutants-allowed.json: planted bugs a reviewer judged EQUIVALENT (no behaviour
 // can tell them apart). scripts/mutants-gaps.json: known TEST GAPS, real bugs no test catches yet, listed so they are
-// seen and closed; the list may only shrink (scripts/gaps-only-shrink.mjs checks that in CI). An entry in either list
-// that names a file not mutated, an unknown operator, or the same planted bug twice is refused (exit 2).
+// seen and closed. Both lists only shrink: scripts/gaps-only-shrink.mjs checks each push in CI, and the release gate
+// (scripts/release-check.mjs) checks against the last release that every entry added since carries the maintainer's
+// "approved": "maintainer, YYYY-MM-DD". An entry in either list that names a file not mutated, an unknown operator, or
+// the same planted bug twice is refused (exit 2).
 // With --critical or --gate the exit code is 1 when a survivor is in neither list, when a listed one is now caught
 // (take it off its list), when an entry in either list matches no planted bug (stale), or when any copy timed out or
 // ended in an error; 2 when the unmutated code isn't stably green or any test was unreliable. Without them it only

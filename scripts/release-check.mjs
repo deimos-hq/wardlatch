@@ -22,6 +22,9 @@
 //   5. every check GitHub ran on this commit passed, every page of them, including the critical-mutant gate and the
 //      corpus report (gh reads them: signed in, or GH_TOKEN). With --ci the commit is GITHUB_SHA, which must be HEAD,
 //      and the jobs of this workflow run itself (GITHUB_RUN_ID), still running, are left out.
+//   6. the lists of planted bugs no test catches (scripts/mutants-gaps.json, scripts/mutants-allowed.json) only shrank
+//      since the last release (the newest older vX.Y.Z tag in this history): each entry added since carries
+//      "approved": "maintainer, YYYY-MM-DD", and each is named in the output for the maintainer to read.
 // Releases 0.1.0 to 0.1.9 predate this gate: on the maintainer's machine it has nothing to check for them; with --ci (a
 // tag pushed for one now) it refuses, as it does any other version older than 0.1.10, none of which was released.
 import { readFileSync, existsSync } from 'node:fs';
@@ -168,6 +171,35 @@ else {
     const absent = REQUIRED_CHECKS.filter((n) => !runs.some((r) => r.name === n && r.conclusion === 'success'));
     if (absent.length) fail(`required checks didn't run or pass on ${head.slice(0, 7)}: ${absent.join(', ')}`);
     if (runs.length && !bad.length && !absent.length) ok(`all ${runs.length} GitHub checks passed on ${head.slice(0, 7)}, including ${REQUIRED_CHECKS.join(' and ')}`);
+  }
+}
+
+// 6. the lists of planted bugs no test catches only shrink between releases: an entry the last release's list didn't
+// have (the CI check compares one push with the one before, so an addition that failed CI once would pass after it)
+// carries the maintainer's approval. Compared by file, operator, line text and occurrence, as scripts/mutate.mjs does.
+const LISTS = ['scripts/mutants-gaps.json', 'scripts/mutants-allowed.json'];
+const APPROVED = /^maintainer, \d{4}-\d{2}-\d{2}$/;
+const entries = (k) => `${k} entr${k === 1 ? 'y' : 'ies'}`;
+const last = git('tag', '--merged', head, '--list', 'v*').split('\n').filter((t) => /^v\d+\.\d+\.\d+$/.test(t) && older(t.slice(1), version))
+  .sort((a, b) => (older(a.slice(1), b.slice(1)) ? 1 : -1))[0];
+if (!last) fail(`no earlier release tag (older than v${version}) in this history to compare ${LISTS.join(' and ')} with (git fetch --tags)`);
+else {
+  const listKey = (x) => JSON.stringify([x?.file, x?.op, x?.before, x?.nth ?? 1]);
+  const named = (x) => `${x?.file} [${x?.op}${(x?.nth ?? 1) > 1 ? ` #${x.nth}` : ''}] ${String(x?.before).slice(0, 70)}`;
+  for (const f of LISTS) {
+    let now, had;
+    try {
+      now = existsSync(join(ROOT, f)) ? JSON.parse(read(f)) : [];
+      had = git('ls-tree', '--name-only', last, '--', f) ? JSON.parse(git('show', `${last}:${f}`)) : [];
+    } catch (e) { fail(`${f}: can't be read here or at ${last} (${String(e.message).split('\n')[0]})`); continue; }
+    if (!Array.isArray(now) || !Array.isArray(had)) { fail(`${f}: not a JSON array, here or at ${last}`); continue; }
+    const known = new Set(had.map(listKey)), added = now.filter((x) => !known.has(listKey(x)));
+    const lacking = added.filter((x) => !APPROVED.test(String(x?.approved ?? '')));
+    if (lacking.length) {
+      fail(`${f}: ${lacking.length} of the ${entries(added.length)} added since ${last} lack${lacking.length === 1 ? 's' : ''} the maintainer's approval `
+        + `("approved": "maintainer, YYYY-MM-DD" on the entry; only the maintainer adds to this list): ${lacking.slice(0, 5).map(named).join('; ')}${lacking.length > 5 ? '; …' : ''}`);
+    } else if (added.length) ok(`${f}: ${entries(added.length)} added since ${last}, each approved by the maintainer: ${added.map((x) => `${named(x)} (${x.approved})`).join('; ')}`);
+    else ok(`${f}: no entry added since ${last} (${entries(now.length)} now, ${entries(had.length)} then)`);
   }
 }
 

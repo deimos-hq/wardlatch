@@ -38,9 +38,10 @@ jobs:
     # unmutated copy must pass first, four times at the same load, every test the same each time. A test that gives
     # different results on the same code fails this job, named; so does a survivor, a timeout or any other end (a crash,
     # a signal), unless scripts/mutants-allowed.json lists the survivor with the reason no behaviour can tell it apart, or
-    # scripts/mutants-gaps.json lists it as a known test gap (a list that may only shrink: a gap that becomes caught fails
-    # this job until it comes off the list; "gaps list only shrinks" below fails on a new one). The test that caught each
-    # planted bug is in the job summary and the critical-mutants artifact (results.json, summary.md).
+    # scripts/mutants-gaps.json lists it as a known test gap (lists that may only shrink: a listed one that becomes
+    # caught fails this job until it comes off its list; "gaps and allow lists only shrink" below fails on a new one).
+    # The test that caught each planted bug is in the job summary and the critical-mutants artifact (results.json,
+    # summary.md).
     # Not skipped for changes to documents alone: the release gate needs this check passed on the release commit itself,
     # and a skipped job would pass for code whose own run may have failed.
     name: critical mutants
@@ -72,17 +73,20 @@ jobs:
           retention-days: 30
 
   gaps-only-shrink:
-    # scripts/mutants-gaps.json, the known test gaps, may only shrink (CLAUDE.md): a gap comes off when a test catches it,
-    # and only the maintainer adds one. An entry the list at the base doesn't have (the pull request's base, or main
-    # before this push) fails this job, naming it; the maintainer's own addition fails it on that one change, as its record.
-    name: gaps list only shrinks
+    # scripts/mutants-gaps.json (known test gaps) and scripts/mutants-allowed.json (judged equivalent) may only shrink
+    # (CLAUDE.md): an entry comes off when a test catches it, and only the maintainer adds one. An entry the same list at
+    # the base doesn't have (the pull request's base, or main before this push; a list not there is compared with the last
+    # release's, or with none) fails this job, naming it; the maintainer's own addition fails it on that one change, as
+    # its record. The release gate checks both lists again against the last release, where each entry added since needs
+    # the maintainer's approval written on it.
+    name: gaps and allow lists only shrink
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with: { fetch-depth: 0, persist-credentials: false }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with: { node-version: '22' }
-      - name: No entry in scripts/mutants-gaps.json that the base doesn't have
+      - name: No entry in either list that the base doesn't have
         env:
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
