@@ -563,6 +563,13 @@ const cli = (args, env) => {
   return { code: r.status, out: r.stdout, err: r.stderr };
 };
 
+test('the preload hides the machine\'s server folders (/srv, /app, /var/www) and loader lists, never the code under test', () => {
+  const probe = ['/srv/site/venv/lib', '/app/.venv/lib', '/var/www/html', '/etc/ld-musl-x86_64.path', '/var/lib/dpkg/status', ROOT, join(ROOT, 'lib', 'brotli.mjs')];
+  const script = `const fs = require('node:fs'); console.log(JSON.stringify(${JSON.stringify(probe)}.map((p) => { try { fs.statSync(p); return 'seen'; } catch (e) { return e.message === 'hidden by the test' ? 'hidden' : 'absent'; } })));`;
+  const r = spawnSync(process.execPath, [...PRELOAD, '-e', script], { encoding: 'utf8' });
+  assert.deepEqual(JSON.parse(r.stdout), ['hidden', 'hidden', 'hidden', 'hidden', 'hidden', 'seen', 'seen'], r.stderr);
+});
+
 test('CLI: an exposed copy is exit 1 with its fix, a fixed-only machine exit 0 with receipts, nothing found is one receipted SAFE', () => {
   const home = fresh('cli-home'), path = fresh('cli-path');
   // a project virtual environment under the searched folder, holding Pillow's old copy
