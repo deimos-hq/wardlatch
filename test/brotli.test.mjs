@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { scanBytes, readAt } from '../lib/files.mjs';
 import { judgeFile, evidence, resolveLink, isDecoderLibName, isNodeLibName, recordPaths, sitePackagesCandidates, distroVerdict, checkBundled, elfSearchPath, ldSoConfDirs } from '../lib/brotli.mjs';
 import { SITE_PATTERNS } from '../lib/installs.mjs';
+import { hiddenPlaces } from './support/machine-places.cjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
@@ -1017,8 +1018,9 @@ test('bounded: a file full of "libbrotlidec" and printable bytes is read in time
 
 // ---- the command, end to end ----------------------------------------------------------------------------------------
 const PRELOAD = ['--require', join(ROOT, 'test', 'support', 'hide-machine-places.cjs')];
+// the preload never hides this test's own folder (and hides the rest of the temporary folder like any other place)
 const cli = (args, env) => {
-  const r = spawnSync(process.execPath, [...PRELOAD, BIN, ...args], { encoding: 'utf8', env: { ...process.env, ...env }, maxBuffer: 64 * 1024 * 1024 });
+  const r = spawnSync(process.execPath, [...PRELOAD, BIN, ...args], { encoding: 'utf8', env: { ...process.env, WARDLATCH_TEST_OWN_DIR: dir, ...env }, maxBuffer: 64 * 1024 * 1024 });
   return { code: r.status, out: r.stdout, err: r.stderr };
 };
 
@@ -1027,6 +1029,15 @@ test('the preload hides the machine\'s server folders (/srv, /app, /var/www) and
   const script = `const fs = require('node:fs'); console.log(JSON.stringify(${JSON.stringify(probe)}.map((p) => { try { fs.statSync(p); return 'seen'; } catch (e) { return e.message === 'hidden by the test' ? 'hidden' : 'absent'; } })));`;
   const r = spawnSync(process.execPath, [...PRELOAD, '-e', script], { encoding: 'utf8' });
   assert.deepEqual(JSON.parse(r.stdout), ['hidden', 'hidden', 'hidden', 'hidden', 'hidden', 'seen', 'seen'], r.stderr);
+});
+
+test('the preload keeps only the code under test and the test\'s own folder: the rest of a checkout in /app is hidden', () => {
+  // a dev container's checkout at /app, and the test's own folder in a temporary folder under /srv
+  const hidden = hiddenPlaces({ root: '/app', own: '/srv/ci/tmp/wardlatch-brotli-x', self: ['/usr/local/bin/node'] });
+  for (const p of ['/app/bin/wardlatch.mjs', '/app/lib/brotli.mjs', '/app/lib/incidents/brotli-2026-10.json', '/app/test/support/fake-home.cjs', '/app/package.json', '/srv/ci/tmp/wardlatch-brotli-x/home/.nvm']) assert.equal(hidden(p), false, p);
+  // /app/.venv is always read by the check: the machine's own Pillow there must not reach a test, nor anything else
+  // beside the checkout's code or in the temporary folder outside the test's own folder
+  for (const p of ['/app/.venv/lib/python3.12/site-packages', '/app/README.md', '/app/libx/y', '/app/binary', '/srv/ci/tmp/other/venv', '/srv/site/venv', '/usr/local/bin/node']) assert.equal(hidden(p), true, p);
 });
 
 test('CLI: an exposed copy is exit 1 with its fix, a fixed-only machine exit 0 with receipts, nothing found is one receipted SAFE', () => {

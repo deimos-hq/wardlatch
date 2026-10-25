@@ -5,17 +5,20 @@
 // package records, the dynamic loader's folder lists, and the server folders whose virtual environments are always read:
 // /srv/*/venv, /app/.venv, /var/www) and the node running the test, so a developer's Mac, a dev container or a CI runner,
 // with its real Pillow or Node, can't change what a test sees. HOME and PATH point into the test's own folder. The code
-// under test and the test's temporary folder are never hidden, wherever they are (a dev container may keep them in /app
-// or /srv). Nothing else changes.
+// under test (the checkout's bin/, lib/ and test/, and its package.json) and the test's own folder (named in
+// WARDLATCH_TEST_OWN_DIR by the test that starts the command) are never hidden, wherever they are (a dev container may
+// keep them in /app or /srv); the rest of the checkout is, so /app/.venv beside a checkout at /app is too. Nothing else
+// changes. What is hidden: test/support/machine-places.cjs.
 'use strict';
 const fs = require('node:fs');
-const { resolve, sep } = require('node:path');
-const { tmpdir } = require('node:os');
-const HIDDEN = /^\/(?:usr|opt|lib|lib64|Library|System|Applications|srv|app|var\/www|home\/linuxbrew|var\/lib\/dpkg|etc\/os-release|etc\/ld\.so\.conf|etc\/ld\.so\.conf\.d|etc\/ld-musl-[^/]*\.path)(?:\/|$)/;
-const self = new Set([process.execPath]);
-try { self.add(fs.realpathSync(process.execPath)); } catch { /* the node running this may be gone */ }
-const kept = [resolve(__dirname, '..', '..'), tmpdir()].flatMap((d) => { try { return [d, fs.realpathSync(d)]; } catch { return [d]; } }).map((d) => (d.endsWith(sep) ? d : d + sep));
-const hidden = (p) => !kept.some((k) => String(p).startsWith(k)) && (HIDDEN.test(String(p)) || self.has(String(p)));
+const { resolve } = require('node:path');
+const { hiddenPlaces } = require('./machine-places.cjs');
+const self = [process.execPath];
+try { self.push(fs.realpathSync(process.execPath)); } catch { /* the node running this may be gone */ }
+const real = (d) => { try { return fs.realpathSync(d); } catch { return null; } };
+const own = process.env.WARDLATCH_TEST_OWN_DIR;
+delete process.env.WARDLATCH_TEST_OWN_DIR;
+const hidden = hiddenPlaces({ root: resolve(__dirname, '..', '..'), own, self, real });
 const gone = () => Object.assign(new Error('hidden by the test'), { code: 'ENOENT' });
 const exists = fs.existsSync;
 fs.existsSync = (p) => !hidden(p) && exists(p);
