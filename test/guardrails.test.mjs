@@ -71,10 +71,16 @@ test('CONTRIBUTING says which files the mutation gate plants in, as scripts/muta
   assert.doesNotMatch(critical, /in `bin\/` and `lib\/`/);
 });
 
-test('no document lists OpenSSF Scorecard among the checks on every push and pull request: it runs on pushes to main and weekly', () => {
+test('no document says CI runs on every push (it runs on pull requests and pushes to main), or lists OpenSSF Scorecard among the checks on every pull request (it runs on pushes to main and weekly)', () => {
+  assert.match(read('.github/workflows/ci.yml'), /^on:\n {2}push: \{ branches: \[main\] \}\n {2}pull_request:\n[^ ]/m, 'ci.yml runs on pushes to main and pull requests only');
   const on = read('.github/workflows/scorecard.yml');
   assert.doesNotMatch(on.slice(0, on.indexOf('\njobs:')), /pull_request/, 'scorecard.yml runs on no pull request');
-  for (const f of DOCS) for (const s of sentences(f)) if (/every push and pull request/.test(s)) assert.doesNotMatch(s, /Scorecard/, `${f}: ${s.slice(0, 300)}`);
+  for (const f of DOCS) {
+    for (const s of sentences(f)) {
+      assert.doesNotMatch(s, /\b(?:every|each) push and pull request/, `${f}: ${s.slice(0, 300)}`);
+      if (/every pull request/.test(s)) assert.doesNotMatch(s, /Scorecard/, `${f}: ${s.slice(0, 300)}`);
+    }
+  }
 });
 
 test('no document says the release workflow repeats the release gate\'s checks without saying what it does instead of the clean checkout of main', () => {

@@ -78,8 +78,8 @@ whole), a Node started with `--env-file`, `--env-file-if-exists`,
 `--experimental-config-file`, `--config-file` or `--experimental-default-config-file` reading a file there; and a walk
 that can reach one: a recursive listing, copy, watch or `rm` of a folder that holds it, or a recursive listing, copy,
 watch or glob below which a link leads into it. In the test it throws; in a process or Worker the test started it stops
-that process or thread (exit 70) and leaves a note that fails the test even when nothing reads that exit code. A path is
-compared as the system reads it (links and `..` followed; on macOS in any case, and also by its text with any
+that process or thread (exit 70) and leaves a note that fails the test file even when nothing reads that exit code. A
+path is compared as the system reads it (links and `..` followed; on macOS in any case, and also by its text with any
 `/System/Volumes/Data` or `/Volumes/<x>` at its start taken off, so such a spelling is refused even where it names
 nothing), and under sudo SUDO_USER's home is off limits too. The `PATH` the tests start with loses its folders there.
 `test/no-real-home.test.mjs` tries each of these routes on a made-up home, and checks that each wrapped fs function
@@ -122,13 +122,13 @@ unwatched too. A test must not reach a home by any of them; the net won't notice
 | `test/mutate.test.mjs` | The mutation gate, `scripts/mutate.mjs --critical`, on a tiny throwaway repository, driven by tests that fail on a fixed schedule and at random; and `scripts/gaps-only-shrink.mjs` |
 | `test/corpus.test.mjs` | The corpus runner, `scripts/corpus/run.mjs`, on tiny made-up corpora |
 | `test/guardrails.test.mjs` | The workflows' tokens and concurrency, and what the documents say about the gates, read as text |
-| `test/no-real-home.test.mjs` | The tests' safety net, `test/support/no-real-home.cjs`: each route it watches, on a made-up home, and its clean twin |
+| `test/no-real-home.test.mjs` | The tests' safety net, `test/support/no-real-home.cjs`: each route it watches, on a made-up home, and clean twins, looks of the same kinds outside that home (not one for every way in) |
 | `test/fix-macos.check.sh` | `fix/fix-macos.sh` on copies of a Mac's `/etc/ssl/cert.pem` (CI, macOS) |
 
 `npm run coverage` (Node 22.8 or later) reports line, branch and function coverage of `bin/` and `lib/` with Node's
 built-in coverage, and fails below 80% of lines or functions.
 
-Two more checks test the tests, and CI runs both on every push and pull request:
+Two more checks test the tests, and CI runs both on every pull request and every push to `main`:
 
 - **Critical mutants** (`npm run mutate:critical`, Node 22.1 or later): each `'UNKNOWN'` and `'EXPOSED'` in
   `bin/wardlatch.mjs` and `lib/*.mjs` (a status made, passed, returned or compared; the JSON in `lib/incidents/` is not

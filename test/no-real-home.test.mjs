@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Deimos AI LLC
 // The tests' safety net (test/support/no-real-home.cjs), tried on each route it watches (CONTRIBUTING.md, Testing
-// policy, lists routes it is known not to watch). Each test has a clean twin: looks of the same kinds outside the home,
-// on macOS under the start-up disk's other names too, which must stay allowed; not every way in a test tries has a twin
-// of its own. Each probe runs on a made-up machine in this test's temporary folder: a home with a checkout inside it
-// (as on a laptop: the net's copy loads from there), and a temporary folder beside it. A Node started as a test file is
-// (the net's copy first, HOME the made-up home) tries each way in, and reports what was refused. Nothing here looks in
-// a real home but for this checkout and the folder of the Node running the tests, which the net leaves readable: the
-// folders probed are the made-up ones, and the one path probed in another account's home (root's, under sudo) has a
-// name longer than any file system takes, so the system answers without looking there. A probe run against a net with
-// a hole in it reads only the made-up folders.
+// policy, lists routes it is known not to watch). Each test has a clean twin, in the test itself or, for the fs
+// functions, in the test after it: looks of the same kinds outside the home, which must stay allowed. Not every way in
+// a test tries has a twin of its own, and only the spelling test's twin also looks under the start-up disk's other
+// names (on macOS). Each probe runs on a made-up machine in this test's temporary folder: a home with a checkout
+// inside it (as on a laptop: the net's copy loads from there), and a temporary folder beside it. A Node started as a
+// test file is (the net's copy first, HOME the made-up home) tries each way in, and reports what was refused. Nothing
+// here looks in a real home but for this checkout and the folder of the Node running the tests, which the net leaves
+// readable: the folders probed are the made-up ones, and the one path probed in another account's home (root's, under
+// sudo) has a name longer than any file system takes, so the system answers without looking there. A probe run against
+// a net with a hole in it reads only the made-up folders.
 import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';

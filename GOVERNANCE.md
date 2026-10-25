@@ -1,7 +1,7 @@
 # Governance
 
 Who decides, and what happens if they stop. Everything here is true as of 21 October 2026, evening, and "Review" as of
-25 October 2026; where something is only planned, it says so.
+25 October 2026 (UTC); where something is only planned, it says so.
 
 ## Model
 
@@ -22,20 +22,24 @@ why on the thread.
 
 ## Review
 
-Since 25 October 2026 changes reach `main` only through a pull request. The repository's ruleset for `main` requires
-one, with these checks passed on it: the tests on Node 18, 20 and 22 on Linux and macOS, the Mac fix on both,
-coverage, ShellCheck, the licence and sign-off checks, and CodeQL. It also refuses a force-push to `main` and its
-deletion, and no one may bypass it (an admin can still change the ruleset itself). It requires no approving review,
-and there is no second reviewer: today the maintainer is the only one. CI runs on every push and pull request (tests
-on Node 18, 20, 22, 24 and 26 on Linux and macOS, the critical-mutant gate and the check that its two lists of known
-survivors only shrink, the corpus report, coverage, ShellCheck, the Mac fix's checksum and a run on copies of the
-certificate file, licence and sign-off checks, CodeQL); the release gate needs every check GitHub ran on the release
-commit to pass. OpenSSF Scorecard runs on every push to `main` and weekly. The
-maintainer tags a release only when `npm run release-check` prints READY; the release workflow repeats its checks,
+Since 25 October 2026 (UTC) changes reach `main` only through a pull request. The repository's ruleset for `main`
+requires one, with these checks passed on it: the tests on Node 18, 20 and 22 on Linux and macOS, the Mac fix on both,
+coverage, ShellCheck, the licence and sign-off checks, and the CodeQL workflow's `analyze` job (not GitHub's separate
+`CodeQL` check). It also refuses a force-push to `main` and its deletion, and no one may bypass it (an admin can still
+change the ruleset itself). It requires no approving review: its count of required approvals is 0, and pull requests
+#13 and #14, merged under it, had no review. It also has GitHub's `require_extra_approval_for_unattributed_changes`
+on: on those two, whose commits were all their author's own, it asked for no approval; what it asks of other pull
+requests hasn't been tried. There is no second reviewer: today the maintainer is the only one. CI runs on every pull
+request and every push to `main` (tests on Node 18, 20, 22, 24 and 26 on Linux and macOS, the critical-mutant gate
+and the check that its two lists of known survivors only shrink, the corpus report, coverage, ShellCheck, the Mac
+fix's checksum and a run on copies of the certificate file, licence and sign-off checks, CodeQL); the release gate
+needs every check GitHub ran on the release commit to pass. OpenSSF Scorecard runs on every push to `main` and weekly.
+The maintainer tags a release only when `npm run release-check` prints READY; the release workflow repeats its checks,
 GitHub's among them, except that it checks the tagged commit is on `main` instead of the clean checkout of `main`, and
 publishes nothing without them ([docs/RELEASING.md](docs/RELEASING.md)). Requiring an approving review from someone
-other than the author, as Deimos's Crimp and Ratchet do, needs a second person with access first; it is on the
-[roadmap](ROADMAP.md).
+other than the author, as Deimos's Crimp and Ratchet do, is not set: the successor has held admin access since 21
+October 2026 but doesn't review changes yet, and the [roadmap](ROADMAP.md) puts required review after his rehearsed
+release.
 
 ## Continuity
 

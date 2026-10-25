@@ -27,12 +27,12 @@ other words is not refused.
 
 What stands behind that is people, not the gate:
 
-- **The pull request into `main`.** Since 25 October 2026 the repository's ruleset lets changes reach `main` only
+- **The pull request into `main`.** Since 25 October 2026 (UTC) the repository's ruleset lets changes reach `main` only
   through a pull request that passes the required checks, so a review is on a page GitHub shows before it reaches
   `main`. The ruleset requires no approving review: today the maintainer is the only reviewer.
-- **The maintainer's approval in the `release` environment.** On `main` since 25 October 2026, the job of the release
-  workflow that publishes runs in the `release` environment, which waits for the maintainer's approval (an admin can
-  bypass it).
+- **The maintainer's approval in the `release` environment.** On `main` since 25 October 2026 (UTC), the job of the
+  release workflow that publishes runs in the `release` environment, which waits for the maintainer's approval (an
+  admin can bypass it).
 - **The reviewers' own reading**, of the reviews as GitHub shows them.
 
 The gate also refuses the release if anything that runs (`bin/`, `lib/`, `fix/`, `test/`, `scripts/`, `.github/`, and
@@ -68,10 +68,11 @@ git asked about item 15, for every line at once; the gate then names the first l
     `1. 10.`). GitHub shows `0657.` as `657.`, and numbers every item after a list's first itself, whatever is written:
     write `1.` for each item.
 12. **A table row with more cells than its header.** A line of only `|`, `:`, `-`, spaces and tabs, with at least one
-    `-` (after any quote marks, spaces and tabs), starts a table, and the next blank line ends it. Inside one, a row
-    with more cells than that line is refused: GitHub doesn't show a row's cells past its header's. A row's cells are
-    its `|`s plus one, less one for a `|` at its start and one for a `|` at its end. A line like `---` (a rule, or a
-    heading's underline) starts one too, of one cell: leave a blank line after it before a table or a line with `|`s.
+    `-` (after any quote marks, spaces and tabs), starts a table, and the next line that is blank once its quote marks,
+    spaces and tabs are taken off (a blank line, or `>` alone) ends it. Inside one, a row with more cells than that line
+    is refused: GitHub doesn't show a row's cells past its header's. A row's cells are its `|`s plus one, less one for a
+    `|` at its start and one for a `|` at its end. A line like `---` (a rule, or a heading's underline) starts one too,
+    of one cell: leave a blank line after it before a table or a line with `|`s.
 13. **The block's words, said again**, in any case, after a fixed fold of look-alikes in which `l`, `I`, `1` and `|`
     read as `i`, and `0` as `o`: "verdict" or "ready" anywhere, even inside another word (`VERD1CT`, and `already`
     too: write "by then"); "commit", "commits", "ship" or "ships" as a word (`C0MMIT`, `SH|P`, and plain "ship" too;
@@ -85,13 +86,15 @@ git asked about item 15, for every line at once; the gate then names the first l
     - **hex digits**, in either case: a word of 4 or more (a word: letters and digits between any other characters),
       or 7 or more in a row inside another word, asked as written and in lower case. Not read for one: the block's own
       commit written in full, as `git rev-parse` prints it (in lower case), and the four words of an advisory id
-      (`GHSA-xxxx-xxxx-xxxx`) that stands as a whole word; an advisory id glued to other letters or digits
-      (`GHSA-abcd-abcd-0657ddb...`) is not one, and every word in it is read. A number or word that happens to begin a
-      commit id here (2026, face, added) is refused too: write it another way.
-    - **every word between spaces and tabs, exactly as written**, as `git rev-parse --verify` would read it: a branch
-      or tag name (`main`, `v0.1.9`; `origin` in a clone with `origin/HEAD`; on a Mac, `head` as well as `HEAD`),
-      `HEAD^^`, `@`, `<id>^`. Write a release as `0.1.9`, and name a fix by what it changed. When git stops on a word
-      (`@{u}` with no upstream), the review is refused, as git couldn't say what it names.
+      written `GHSA-xxxx-xxxx-xxxx`, `GHSA` in capitals, that stands as a whole word. Every word is read in an advisory
+      id glued to other letters or digits (`GHSA-abcd-abcd-0657ddb...`), and in one written `ghsa-...` (though the
+      gate's check that the class audit names every advisory matches one in any case). A number or word that happens
+      to begin a commit id here (2026, face, added) is refused too: write it another way.
+    - **every word between spaces and tabs, exactly as written** (but the block's own commit written in full), as
+      `git rev-parse --verify` would read it: a branch or tag name (`main`, `v0.1.9`; `origin` in a clone with
+      `origin/HEAD`; on a Mac, `head` as well as `HEAD`), `HEAD^^`, `@`, `<id>^`. Write a release as `0.1.9`, and
+      name a fix by what it changed. When git stops on a word (`@{u}` with no upstream), the review is refused, as git
+      couldn't say what it names.
 
 ## What the list doesn't catch
 
@@ -103,9 +106,10 @@ Each of these is on a page a person reads, and none is refused by the gate:
 - A range (`v0.1.9..main`), which git doesn't resolve as one name, and a branch or tag that exists in another clone but
   not in the one the gate runs in.
 - Cells hidden in a table that follows another with no blank line between (a known limit of item 12). For the gate a
-  table ends only at a blank line, and a delimiter row inside one never lowers its count of cells. GitHub ends a table
-  at other places too: where a quote starts or ends (a line with more or fewer `>` before it), or where another block,
-  such as a heading, begins. So the rows of a table that follows another that way are held to the first table's count,
+  table ends only at a line that is blank once its quote marks, spaces and tabs are taken off (a blank line, or `>`
+  alone), and a delimiter row inside one never lowers its count of cells. GitHub ends a table at other places too:
+  where a quote starts or ends (a line with more or fewer `>` before it), or where another block, such as a heading,
+  begins. So the rows of a table that follows another that way are held to the first table's count,
   not to their own header's: after a quoted table of 4 cells (`> | a | b | c | d |`, `> |---|---|---|---|`), the lines
   `| x | y |`, `|---|---|` and `| x | y | hidden | hidden |` are not refused, and GitHub shows only `x` and `y` of
   the last. The gate doesn't read Markdown as GitHub does, and isn't made to.

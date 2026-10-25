@@ -4,9 +4,10 @@
 // for the code being released, and refuses each way of being wrong that it checks for. It needs every GitHub check
 // passed, with --ci too (gh is always a stand-in on PATH, which answers the checks only for HEAD, lists v0.1.9 as
 // released unless a test says otherwise, and gives every page only to --paginate --slurp, as gh does); without --ci,
-// also a clean main at origin/main (a local bare repository). Offline; git runs with no user config, and no GITHUB_* variable of a CI runner reaches the
-// gate. Every commit has the same fixed date, so a repository's commit ids are the same on every run: whether a word of
-// hex digits in a review begins one (the gate refuses one that does) never changes from one run to the next.
+// also a clean main at origin/main (a local bare repository). Offline; git runs with no user config, and of a CI
+// runner's GITHUB_* and RUNNER_* variables, and GH_TOKEN, none reaches the gate but those a test sets. Every commit
+// has the same fixed date, so a repository's commit ids are the same on every run: whether a word of hex digits in a
+// review begins one (the gate refuses one that does) never changes from one run to the next.
 import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -91,10 +92,16 @@ const pushMain = (dir) => {
   if (!existsSync(origin)) { git(base, 'init', '-q', '--bare', origin); git(dir, 'remote', 'add', 'origin', origin); }
   git(dir, 'push', '-q', '-f', 'origin', 'HEAD:refs/heads/main'); git(dir, 'fetch', '-q', 'origin');
 };
+// the gate's environment: `from` (ENV), then the test's own (env); of a CI runner's GITHUB_* and RUNNER_* variables,
+// and GH_TOKEN, only those the test sets reach the gate
+const gateEnv = (env, from = ENV) => {
+  const e = { ...from, ...env };
+  for (const k of Object.keys(e)) if ((/^(?:GITHUB|RUNNER)_/.test(k) || k === 'GH_TOKEN') && !(k in env)) delete e[k];
+  return e;
+};
 const gate = (dir, { ci = true, env = {}, onMain = true } = {}) => {
   if (ci && onMain) pushMain(dir);
-  const e = { ...ENV, ...(env.PATH ? {} : ghStub(dir)), ...env };
-  for (const k of ['GITHUB_SHA', 'GITHUB_RUN_ID', 'GITHUB_REPOSITORY', 'GH_TOKEN', 'GITHUB_TOKEN']) if (!(k in env)) delete e[k];
+  const e = gateEnv(env.PATH ? env : { ...ghStub(dir), ...env });
   const r = spawnSync(process.execPath, ['scripts/release-check.mjs', ...(ci ? ['--ci'] : [])], { cwd: dir, env: e, encoding: 'utf8' });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 };
@@ -106,6 +113,13 @@ const full = (dir, opts) => {
   git(dir, 'remote', 'add', 'origin', origin); git(dir, 'push', '-q', 'origin', 'main'); git(dir, 'fetch', '-q', 'origin');
   return ghStub(dir, opts);
 };
+
+test('of a CI runner\'s GITHUB_* and RUNNER_* variables, and GH_TOKEN, only those a test sets reach the gate', () => {
+  const runner = { GITHUB_ACTIONS: 'true', GITHUB_REF: 'refs/heads/x', GITHUB_SHA: 'a', GITHUB_TOKEN: 't', RUNNER_OS: 'Linux', RUNNER_TEMP: '/r', GH_TOKEN: 't', KEPT: 'k' };
+  const seen = (env) => Object.entries(gateEnv(env, { ...ENV, ...runner })).filter(([k]) => k in runner).sort();
+  assert.deepEqual(seen({}), [['KEPT', 'k']]);
+  assert.deepEqual(seen({ GITHUB_SHA: 'b' }), [['GITHUB_SHA', 'b'], ['KEPT', 'k']]);
+});
 
 test('a release whose two reviews are READY for its code, with every advisory looked at again, passes', () => {
   const r = gate(repo());
@@ -608,6 +622,8 @@ test('round 4: a table row with more cells than its header (GitHub doesn\'t show
     REFUSED(PROBE(repo(), text), text, /has a table row with \d+ cells, more than the \d+ of its header/, line);
   }
   for (const twin of ['| a | b |\n|---|---|\n| x | y |\n| x |', '| a | b |\n|---|---|\n| x | y |\n\nx | y | z, after a blank line', 'a | b | c, and no table',
+    // a line of only quote marks, spaces and tabs ends a table too: it is blank once they are taken off
+    '| a | b |\n|---|---|\n> \t>\nx | y | z, after a line of quote marks',
     '- | a | b |\n  |---|---|\n  | x | y |',
     // a "|" at a row's start or end is no cell, whether its header has one or not
     'a | b\n--- | ---\n| x | y |\nx | y |\n| x | y', '| a | b |\n|---|---|\nx | y']) {

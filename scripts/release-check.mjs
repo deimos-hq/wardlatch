@@ -54,7 +54,8 @@ const bare = (l) => l.replace(/^[\s>*_`#+|-]*(?:\d+[.)]\s*)?/, '').replace(/[*_`
 // so it can't prove the page shows what the text says. It refuses a listed set of known ways to hide or add a verdict
 // or a commit id (docs/reviews/README.md lists them). Each line is read once, by linear patterns and loops, in this
 // order, and the first that matches is the reason given: the patterns below, anywhere in the line; a table row with
-// more cells than its header; the block's words, or "ship", again. Then git is asked about the commit ids it could see.
+// more cells than its header; the block's words, or "ship", again; a word between spaces and tabs that git would read
+// as a search of the commit messages. Then git is asked about the commit ids it could see.
 const AFTER_THE_BLOCK = [
   // after this one, the line is printable ASCII and tabs: no letter outside ASCII, as written or after NFKC folding (a
   // full-width letter is one), no zero-width, format or control character, no look-alike symbol, no other space
@@ -74,9 +75,10 @@ const AFTER_THE_BLOCK = [
   [/^(?:[ \t>*+-]|[0-9][.)])*[0-9]{2,}[.)](?:[ \t]|$)/, () => 'an ordered-list marker of 2 or more digits (GitHub shows 0657. as 657., and numbers the items after the first itself: write 1. for each item)'],
 ];
 // A table: a delimiter row (only |, :, - and spaces or tabs, with a -, after any quote marks, spaces and tabs) starts
-// one, and a blank line ends it. GitHub doesn't show the cells of a row past its header's, and a header has as many as
-// its delimiter row, so a row with more cells than the delimiter row is refused. Its cells are its "|"s, plus one, less
-// one for a "|" at its start and one for a "|" at its end (a backslash, which could escape one, is refused above).
+// one, and a line that is blank once its quote marks, spaces and tabs are taken off ends it (">" alone is one). GitHub
+// doesn't show the cells of a row past its header's, and a header has as many as its delimiter row, so a row with more
+// cells than the delimiter row is refused. Its cells are its "|"s, plus one, less one for a "|" at its start and one
+// for a "|" at its end (a backslash, which could escape one, is refused above).
 const QUOTED = /^[ \t>]*/;
 const cells = (t) => {
   let pipes = 0, end = t.length - 1;
@@ -140,7 +142,7 @@ const afterTheBlock = (lines, from, full) => {
     if (!t.trim()) columns = 0;
     else if (columns) {
       const n = cells(t);
-      if (n > columns) return { why: `${at} has a table row with ${n} cells, more than the ${columns} of its header (GitHub doesn't show the cells after the header's; a line of only |, :, - and spaces starts a table, and a blank line ends one) (docs/reviews/README.md)` };
+      if (n > columns) return { why: `${at} has a table row with ${n} cells, more than the ${columns} of its header (GitHub doesn't show the cells after the header's; a line of only |, :, - and spaces starts a table, and a blank line, or one of only quote marks, ends one) (docs/reviews/README.md)` };
     } else if (delimiterRow(t)) columns = cells(t);
     const word = blockWord(l);
     if (word) {

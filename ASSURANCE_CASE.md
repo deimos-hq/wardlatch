@@ -306,16 +306,16 @@ rehearsed a release (see [GOVERNANCE.md](GOVERNANCE.md#continuity)).
 
 ## 5. Supply chain
 
-No runtime or development dependencies: `npm install` of Wardlatch fetches only Wardlatch. CI runs on every push and
-pull request: the tests on Node 18, 20, 22, 24 and 26 on Linux and macOS with deprecations as errors (the red-team
-scenarios among them); a mutation gate that changes each `'UNKNOWN'` and `'EXPOSED'` in the code to `'SAFE'` in turn and
-counts one caught only when a test fails on its own on it and passes on its own without it, three times each, and
-never when that test also fails on an inert SAFE in code that never runs (the 0.1.9 code has 107 such places, 8 of
-them listed as known test gaps in `scripts/mutants-gaps.json` and approved by the maintainer on 2026-10-25, after
-tests closed 34 more; a list that only shrinks: CI checks each push and pull
-request, and the release gate needs the maintainer's approval on any entry added since the last release; how many the
-tests catch under this rule is not measured yet, and the job's first run on GitHub measures it. The gate fails on any
-other survivor and on any test that gives different results on the same code; a test that fails at random can still,
+No runtime or development dependencies: `npm install` of Wardlatch fetches only Wardlatch. CI runs on every pull
+request and every push to `main`: the tests on Node 18, 20, 22, 24 and 26 on Linux and macOS with deprecations as
+errors (the red-team scenarios among them); a mutation gate that changes each `'UNKNOWN'` and `'EXPOSED'` in the code
+to `'SAFE'` in turn and counts one caught only when a test fails on its own on it and passes on its own without it,
+three times each, and never when that test also fails on an inert SAFE in code that never runs (the 0.1.9 code has
+107 such places, 8 of them listed as known test gaps in `scripts/mutants-gaps.json` and approved by the maintainer on
+2026-10-25, after tests closed 34 more; a list that only shrinks: CI checks each pull request and each push to `main`,
+and the release gate needs the maintainer's approval on any entry added since the last release; on GitHub, on 25
+October 2026 (UTC), the job caught 99 of the 107 under this rule, the other 8 being the listed gaps. The gate fails on
+any other survivor and on any test that gives different results on the same code; a test that fails at random can still,
 rarely, make an uncaught one read as caught, with the odds `scripts/mutate.mjs` works out); a corpus of realistic
 machines run against the last release;
 `node --check` on every module, ShellCheck, the Mac fix on copies of a real `cert.pem` and its checksum, REUSE licence

@@ -13,12 +13,13 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ### Development (no code in the package changes; package.json gains three npm scripts)
 
-- The release gate: `npm run release-check` refuses a release unless both reviews are on file for the code being
-  released (`docs/reviews/<version>/`, each beginning with the block the gate reads, four lines exactly: a fence,
-  `Commit: <sha>`, `Verdict: READY`, a fence), nothing that runs (package.json apart from its version included)
-  changed after them, the class audit names every advisory and quotes the corpus gate's GATE PASSED for this code (the
-  line names the SHA-256 of the `bin/` and `lib/` the corpus gate ran), every GitHub check passed on the release
-  commit, and neither list of planted bugs no test catches (`scripts/mutants-gaps.json`,
+- The release gate: `npm run release-check` refuses a release unless CHANGELOG.md has a dated section for the version
+  right under an empty Unreleased, both reviews are on file for the code being released (`docs/reviews/<version>/`,
+  each beginning with the block the gate reads, four lines exactly: a fence, `Commit: <sha>`, `Verdict: READY`, a
+  fence), nothing that runs (package.json apart from its version included) changed after them, the class audit names
+  every advisory and quotes the corpus gate's GATE PASSED for this code (the line names the SHA-256 of the `bin/` and
+  `lib/` the corpus gate ran), the release commit is a clean checkout of `main` at `origin/main`, every GitHub check
+  passed on it, and neither list of planted bugs no test catches (`scripts/mutants-gaps.json`,
   `scripts/mutants-allowed.json`) gained an entry since the last release without the maintainer's approval written on
   it. The last release is the newest tag in this history, older than the version released, with a GitHub release that
   github-actions[bot] published for a tag vX.Y.Z, neither a draft nor a prerelease, and either immutable (`immutable`
@@ -26,52 +27,57 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   isn't immutable (0.1.3 to 0.1.9) the gate takes the tag in the clone as the one released, which the repository's tag
   ruleset (only admins create, move or delete `v*` tags) protects. The gate reads the verdict and the commit only from
   the block. It doesn't read the rest of a review for what it means, or render it: after the block it refuses a listed
-  set of known ways to hide or add a verdict or a commit id: characters outside printable ASCII, HTML, character
-  references, backslashes, marks inside a word, links, emoji codes, `$`, fences with an info string, ordered-list
-  markers of 2 or more digits, a table row with more cells than its header, the block's words or "ship" again (in any
-  case, after a fixed fold in which `l`, `I`, `1` and `|` read as `i`, and `0` as `o`), a search of the commit
-  messages, a commit as `git describe` writes one (`-`, a number, `-g` and 4 or more hex digits), and a word git,
-  asked in this clone, resolves to a commit or a tag or finds ambiguous: a whole word of 4 or more hex digits, or a
-  run of 7 or more inside a word, asked as written and in lower case (the block's own commit in full, and the four
-  words of an advisory id `GHSA-xxxx-xxxx-xxxx` that stands as a whole word, are exempt), and every word between
-  spaces and tabs, asked as written ([docs/reviews/README.md](docs/reviews/README.md) lists them, and what they don't
-  catch). It can't prove that the page GitHub shows says what the text says, and a review that contradicts its block
-  in other words is not refused: the pull request into `main`, the maintainer's approval in the `release` environment
-  and the reviewers' own reading stand behind that. The release workflow repeats the gate in a job whose token only
-  reads, checking that the tagged commit is on `main` instead of the clean checkout of `main`, reads GitHub's checks
-  and releases with its own token, refuses a tag for a version older than 0.1.10, and publishes nothing without it.
+  set of known ways to hide or add a verdict or a commit id: characters outside printable ASCII but the tab, HTML,
+  character references, backslashes, marks inside a word, links, emoji codes, `$`, fences with an info string,
+  ordered-list markers of 2 or more digits, a table row with more cells than its header, the block's words or "ship"
+  again (in any case, after a fixed fold in which `l`, `I`, `1` and `|` read as `i`, and `0` as `o`: "verdict" or
+  "ready" anywhere, even inside another word, as in "already", and "commit", "commits", "ship" or "ships" as a word),
+  a search of the commit messages, a commit as `git describe` writes one (`-`, a number, `-g` and 4 or more hex
+  digits), and a word git, asked in this clone, resolves to a commit or a tag or finds ambiguous. git is asked about
+  two kinds of word, never the block's own commit in full: hex digits, a whole word of 4 or more (a word here is
+  letters and digits between any other characters, so `(cafe)` is asked as `cafe`) or a run of 7 or more inside a
+  word, asked as written and in lower case, but not the four words of an advisory id `GHSA-xxxx-xxxx-xxxx` (`GHSA` in
+  capitals) that stands as a whole word; and every word between spaces and tabs, asked as written. When git stops on
+  a word (`@{u}` with no upstream), the review is refused ([docs/reviews/README.md](docs/reviews/README.md) lists
+  them, and what they don't catch). It can't prove that the page GitHub shows says what the text says, and a review
+  that contradicts its block in other words is not refused: the pull request into `main`, the maintainer's approval in
+  the `release` environment and the reviewers' own reading stand behind that. The release workflow repeats the gate in
+  a job whose token only reads, checking that the tagged commit is on `main` instead of the clean checkout of `main`,
+  reads GitHub's checks and releases with its own token, refuses a tag for a version older than 0.1.10, and publishes
+  nothing without it.
 - Releases: the job that publishes one runs in the `release` environment, which only `v*` tags may use and which waits
   for the maintainer's approval (an admin can bypass it). The commands to verify a release, in its notes and in
   [docs/RELEASING.md](docs/RELEASING.md), add `--signer-workflow` (the release workflow), `--source-ref` (the release's
   tag) and `--deny-self-hosted-runners`, so an attestation made by another workflow or branch of this repository no
-  longer passes. Since 25 October 2026 changes reach `main` only through a pull request that passes the required
+  longer passes. Since 25 October 2026 (UTC) changes reach `main` only through a pull request that passes the required
   checks ([GOVERNANCE.md](GOVERNANCE.md), Review).
 - The red team's 75 scenarios are part of `npm test` (`test/redteam.test.mjs`); the 14 limits the 0.1.9 changelog
   documents (13 under Known limits, one owner decision) run as todo.
-- CI also runs, on every push and pull request, the critical-mutant gate: each `'UNKNOWN'` and `'EXPOSED'` in the code
-  changed to `'SAFE'` must be caught by a behaviour test, one that fails on its own on the planted bug and passes on its
-  own without it, three times each; a test that also fails on an inert SAFE in code that never runs reads the code's
-  text and is never the catch (the suite runs there at least twice, and a test that fails there only some of the time
-  is unreliable); and a test that gives different results on the same code fails the gate. The 0.1.9 code
-  has 107 such places; 8 are listed as known test gaps in `scripts/mutants-gaps.json` (the other 34 first listed are
-  now caught by tests; the 8 are approved by the maintainer, 2026-10-25), a list that may only shrink,
-  which CI checks on every push and pull request and the release gate against the last release. How many the tests
-  catch under these rules is not measured yet: the job's first run on GitHub measures it. Also a corpus report against
-  the last release (as a gate, run as root before a release, a bad layout that must read EXPOSED fails if it reads
-  REVIEW only), the tests on Node 24 and 26 too, and the full mutation report weekly, in four shards, which also plants
-  `'REVIEW'` changed to `'SAFE'` (26 places in the 0.1.9 code).
+- CI also runs, on every pull request and every push to `main`, the critical-mutant gate: each `'UNKNOWN'` and
+  `'EXPOSED'` in the code changed to `'SAFE'` must be caught by a behaviour test, one that fails on its own on the
+  planted bug and passes on its own without it, three times each; a test that also fails on an inert SAFE in code that
+  never runs reads the code's text and is never the catch (the suite runs there at least twice, and a test that fails
+  there only some of the time is unreliable); and a test that gives different results on the same code fails the
+  gate. The 0.1.9 code has 107 such places; 8 are listed as known test gaps in `scripts/mutants-gaps.json` (the other
+  34 first listed are now caught by tests; the 8 are approved by the maintainer, 2026-10-25), a list that may only
+  shrink, which CI checks on every pull request and every push to `main`, and the release gate against the last
+  release. On GitHub, on pull request #15 on 25 October 2026 (UTC), the job's first run stopped (exit 2: a test failed
+  on the unmutated code on Linux), and its second caught 99 of the 107 under these rules, the other 8 being the listed
+  gaps. Also a corpus report against the last release (as a gate, run as root before a release, a bad layout that
+  must read EXPOSED fails if it reads REVIEW only), the tests on Node 24 and 26 too, and the full mutation report
+  weekly, in four shards, which also plants `'REVIEW'` changed to `'SAFE'` (26 places in the 0.1.9 code).
 - The tests must never read or write the home folder of the person running them (where macOS keeps Desktop, Documents,
   Downloads, Library, Photos and Mail). Every test file loads `test/support/no-real-home.cjs` first, which catches a
-  test, or a Node process it starts, that does so by accident, and fails that test. It is not a sandbox: code written to
-  get past it can. It refuses a look there by these routes: `fs` in every form that takes a path, globs, streams,
-  `require()` and, from Node 22.15, `import` (of a file, a package name or a `#` name of package.json's `imports`), a
-  change of folder, a working folder there, a program there or found through a `PATH` folder there (not one a shell
-  command runs), a `.env` file `process.loadEnvFile` reads, a `node:sqlite` database there, a Node started with
-  `--env-file` or a config-file flag naming a file there, and a walk that can reach it (a recursive listing, copy,
-  watch or `rm` of a folder that holds it, or one below which a link leads into it). It goes with every Node process a
-  test starts through `child_process`, and those they start in turn, and with each Worker thread they start with
-  `worker_threads.Worker`; a refusal in a process the test started fails the test even when nothing reads that
-  process's exit code. A package in the checkout's own `node_modules` loads by name.
+  test, or a Node process it starts, that does so by accident, and fails the test file. It is not a sandbox: code
+  written to get past it can. It refuses a look there by these routes: `fs` in every form that takes a path, globs,
+  streams, `require()` and, from Node 22.15, `import` (of a file, a package name or a `#` name of package.json's
+  `imports`), a change of folder, a working folder there, a program there or found through a `PATH` folder there (not
+  one a shell command runs), a `.env` file `process.loadEnvFile` reads, a `node:sqlite` database there, a Node started
+  with `--env-file` or a config-file flag naming a file there, and a walk that can reach it (a recursive listing, copy,
+  watch or `rm` of a folder that holds it, or a recursive listing, copy, watch or glob below which a link leads into
+  it). It goes with every Node process a test starts through `child_process`, and those they start in turn, and with
+  each Worker thread they start with `worker_threads.Worker`; a refusal in a process the test started fails the test
+  file even when nothing reads that process's exit code. A package in the checkout's own `node_modules` loads by name.
   Paths are compared as the system reads them (links and `..` followed, and on macOS in any case and under the start-up
   disk's other names, by their text too), and under sudo SUDO_USER's home is off limits too. It drops the home's folders
   from the `PATH` the tests start with. The sudo test and the two tests of macOS's own Library build a `/Users/<name>`

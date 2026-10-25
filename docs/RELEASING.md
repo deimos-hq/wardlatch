@@ -42,12 +42,12 @@ being reviewed ([CLAUDE.md](../CLAUDE.md), rule 3).
    the last release without the maintainer's approval written on the entry (`"approved": "maintainer, YYYY-MM-DD"`).
    That is deliberately stricter than [CLAUDE.md](../CLAUDE.md), which lets an equivalent survivor onto the allow list
    with a reason a reviewer agreed to: for a release, only the maintainer adds to either list. The last release is the
-   newest tag in this history with a GitHub release the gate trusts as the release workflow's: published by
-   github-actions[bot] for a tag `vX.Y.Z`, neither a draft nor a prerelease, and either immutable (GitHub's `immutable`
-   is `true`) or never edited after it was published (GitHub's `updated_at` no later than its `published_at`). The
-   release workflow repeats its checks in a job whose token only reads, checking that the tagged commit is on `main`
-   instead of the clean checkout of `main` (and reading GitHub's checks and releases with its own token); it refuses a
-   tag for a version older than 0.1.10, and publishes nothing without them.
+   newest tag in this history, older than the version released, with a GitHub release the gate trusts as the release
+   workflow's: published by github-actions[bot] for a tag `vX.Y.Z`, neither a draft nor a prerelease, and either
+   immutable (GitHub's `immutable` is `true`) or never edited after it was published (GitHub's `updated_at` no later
+   than its `published_at`). The release workflow repeats its checks in a job whose token only reads, checking that the
+   tagged commit is on `main` instead of the clean checkout of `main` (and reading GitHub's checks and releases with its
+   own token); it refuses a tag for a version older than 0.1.10, and publishes nothing without them.
 
    Of the repository's protections, the gate relies on two. **Immutable releases**: GitHub keeps an immutable
    release's tag and files whatever is edited later, so the gate trusts one edited after it was published. **The tag
@@ -88,12 +88,16 @@ npm run release-check                     # must print READY on this commit
 #    maintainer's SSH signing key, and GitHub shows it as Verified.
 git tag -s vX.Y.Z -m "wardlatch X.Y.Z"
 git push origin vX.Y.Z
+#    Once the tests and the release gate pass, the job that publishes waits for the maintainer's approval in the
+#    `release` environment: on the workflow run's page (Actions, "Release"), "Review deployments", `release`,
+#    "Approve and deploy". Until then nothing is released.
 ```
 
 The tag push runs `.github/workflows/release.yml`: first, in a job whose token can only read, the full test suite and
-the release gate (`release-check.mjs --ci`); then, in a job that runs only after both pass, a check that the tag
-matches `package.json`, and it builds the source archive (`git archive`) and the npm package (`npm pack`), attests both
-with Sigstore, and publishes a GitHub release with the changelog section as its notes. **If any step fails, no release
+the release gate (`release-check.mjs --ci`); then, in a job that runs only after both pass and the maintainer approves
+it in the `release` environment (an admin can bypass the approval), a check that the tag matches `package.json`, and
+it builds the source archive (`git archive`) and the npm package (`npm pack`), attests both with Sigstore, and
+publishes a GitHub release with the changelog section as its notes. **If any step fails, no release
 appears.** The workflow never publishes to npm.
 
 ```bash
