@@ -15,17 +15,29 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 - The release gate: `npm run release-check` refuses a release unless both reviews are on file for the code being
   released (`docs/reviews/<version>/`, each beginning with the block the gate reads, four lines exactly: a fence,
-  `Commit: <sha>`, `Verdict: READY`, a fence; after it, no letter outside ASCII, no "verdict" or "ready" in any case,
-  no "commit" as a word, no commit id and no HTML comment. The gate doesn't read the rest of a review for what it
-  means: one that contradicts its block in other words is for its reader to catch), nothing that runs (package.json
-  apart from its version included) changed after them, the class audit names every advisory and quotes the corpus
-  gate's GATE PASSED for this code (the line names the SHA-256 of the `bin/` and `lib/` the corpus gate ran), every
-  GitHub check passed on the release commit, and neither list of planted bugs no test catches
-  (`scripts/mutants-gaps.json`, `scripts/mutants-allowed.json`) gained an entry since the last release (the newest
-  with a GitHub release the release workflow published, not just a tag) without the maintainer's approval written on
-  it. The release workflow repeats it in a job whose token only reads, checking that the tagged commit is on `main`
-  instead of the clean checkout of `main`, reads GitHub's checks and releases with its own token, refuses a tag for a
-  version older than 0.1.10, and publishes nothing without it.
+  `Commit: <sha>`, `Verdict: READY`, a fence), nothing that runs (package.json apart from its version included)
+  changed after them, the class audit names every advisory and quotes the corpus gate's GATE PASSED for this code (the
+  line names the SHA-256 of the `bin/` and `lib/` the corpus gate ran), every GitHub check passed on the release
+  commit, and neither list of planted bugs no test catches (`scripts/mutants-gaps.json`,
+  `scripts/mutants-allowed.json`) gained an entry since the last release without the maintainer's approval written on
+  it. The last release is the newest tag in this history, older than the version released, with a GitHub release that
+  github-actions[bot] published for a tag vX.Y.Z, neither a draft nor a prerelease, and either immutable or never
+  edited after it was published (its `updated_at` no later than its `published_at`); for one that isn't immutable
+  (0.1.3 to 0.1.9) the gate takes the tag in the clone as the one released, which the repository's tag ruleset (only
+  admins create, move or delete `v*` tags) protects. The gate reads the rest of a review neither for what it means nor
+  the way Markdown or HTML would show it: after the block it refuses, anywhere in a line, any character but printable
+  ASCII and tab (so no letter outside ASCII, as written or after NFKC folding, and no zero-width or format character),
+  `<` followed by a letter, `/`, `!` or `?`, `&` followed by `#` or a letter, a backslash, one or more of `*`, `_`,
+  `~` and backticks between two letters or digits, `]` followed (after any spaces or tabs) by `(` or `:`, letters,
+  digits, `_`, `+` or `-` between two colons, a `$`, three backticks or tildes followed (after any spaces or tabs) by
+  anything but another backtick or tilde, "verdict" or "ready" in any case (even inside another word), "commit" or
+  "commits" as a word, and a word of 4 or more hex digits, or 7 or more in a row inside another word, that git, asked
+  as written and in lower case, finds to be anything but one blob or one tree (the start of a commit's or a tag's id,
+  a branch or tag name, or more than one object), apart from the block's own commit written in full and an advisory id
+  ([docs/reviews/README.md](docs/reviews/README.md)). A review that contradicts its block in other words is for its
+  reader to catch. The release workflow repeats it in a job whose token only reads, checking that the tagged commit is
+  on `main` instead of the clean checkout of `main`, reads GitHub's checks and releases with its own token, refuses a
+  tag for a version older than 0.1.10, and publishes nothing without it.
 - The red team's 75 scenarios are part of `npm test` (`test/redteam.test.mjs`); the 14 limits the 0.1.9 changelog
   documents (13 under Known limits, one owner decision) run as todo.
 - CI also runs, on every push and pull request, the critical-mutant gate: each `'UNKNOWN'` and `'EXPOSED'` in the code

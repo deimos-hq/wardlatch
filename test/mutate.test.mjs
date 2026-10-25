@@ -417,6 +417,8 @@ test('the gaps list only shrinks: an entry the base doesn\'t have fails (exit 1)
   gaps(dir, [G(1), G(2), G(3)]);
   let r = shrink(dir, at);
   assert.equal(r.code, 1, r.out); assert.match(r.out, /gained 1 entry not in it at/); assert.match(r.out, /lib\/x\.mjs \[unknown->safe\] line 3/);
+  // the rule it enforces, as the documents state it: stricter than CLAUDE.md for the allow list
+  assert.match(r.out, /\nOnly the maintainer adds an entry, to either list: deliberately stricter than CLAUDE\.md, which lets an equivalent survivor onto the allow list with a reason a reviewer agreed to\.\n/);
   gaps(dir, [G(1), { ...G(2), nth: 2 }]);   // the same line's second occurrence is another planted bug
   r = shrink(dir, at); assert.equal(r.code, 1, r.out); assert.match(r.out, /\[unknown->safe #2\] line 2/);
   gaps(dir, [{ ...G(2), why: 'reworded', nth: 1 }]);

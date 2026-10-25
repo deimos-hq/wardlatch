@@ -18,15 +18,37 @@ or an invisible character in it), it is not the block, and the file is refused. 
 WITH NITS) fails the gate until the findings are fixed, each fix reviewed again, and the block updated with the new
 commit.
 
-The rest of the file is the reviewer's, and the gate doesn't read it for what it means. It only makes sure nothing in
-it says the block's words again (read with Unicode's look-alike forms folded and invisible characters removed):
+The rest of the file is the reviewer's. The gate doesn't read it for what it means, and doesn't try to read it the way
+Markdown, HTML or a browser would show it either: it refuses the file when any line after the block has one of these,
+anywhere in the line, whatever the line says. They are checked in this order, and the gate names the line and the
+first reason it finds.
 
-- **No letter outside ASCII** (and no combining mark), so no look-alike letter can spell a verdict or a commit.
-- **No "verdict" or "ready"**, in any case, even inside another word: write "by then", not "already".
-- **No "commit" or "commits"** as a word ("committed" is fine): say "change" or "fix".
-- **No commit id**: no word of 7 to 40 hex digits, however it is labelled (a number of 7 digits or more is one too:
-  write "1 MiB", not 1048576). Name a fix by what it changed.
-- **No HTML comment** (`<!--`).
+- **A character outside printable ASCII.** Only ASCII letters, digits, punctuation, spaces and tabs. So no letter
+  outside ASCII, as written or after Unicode's look-alike forms are folded (NFKC: a full-width `ｆ` is one), no
+  zero-width, format, control or right-to-left character, no look-alike symbol (`℮`), and no other space. Write `--`
+  for a dash, `->` for an arrow, and straight quotes.
+- **HTML**: `<` followed by a letter, `/`, `!` or `?` (a tag, a comment, an autolink). `a < b` is fine.
+- **A character reference**: `&` followed by `#` or a letter (`&#101;`, `&amp;`, and `R&D` too). `R & D` is fine.
+- **A backslash**, anywhere.
+- **A mark inside a word**: one or more of `*`, `_`, `~` and backticks between two letters or digits (`RE*AD*Y`, and
+  `GH_TOKEN` too). Marks around a word are fine: `**S1**`, `` `lib/a.mjs` ``.
+- **A link**: `]` followed by `(` or `:`, with or without spaces or tabs between (a link, an image, a link reference
+  or footnote definition). Write a URL as it is, `https://...`; `[S1]` alone is fine.
+- **An emoji code**: letters, digits, `_`, `+` or `-` between two colons (GitHub shows `:a:` as a letter). `Note: x`
+  and `node:fs` are fine; `12:30:00` is not.
+- **A `$`** (GitHub shows text between two as math, which drops spaces).
+- **A fence with an info string**: three backticks or tildes, then, after any spaces or tabs, anything but another
+  backtick or tilde (GitHub shows `math` and `mermaid` blocks as math and diagrams). A plain fence is fine.
+- **"verdict" or "ready"**, in any case, even inside another word: write "by then", not "already".
+- **"commit" or "commits"** as a word ("committed" is fine): say "change" or "fix".
+- **A commit id**: hex digits, in either case, that git could resolve as a commit in this repository: a word of 4
+  or more (a word: letters and digits between any other characters), or 7 or more in a row inside another word (as
+  `git describe` writes a commit, `v0.1.9-3-g0657ddb`). The gate asks git about each, as written and in lower case,
+  and it passes only when git finds nothing by it, or one file or folder (a blob or a tree): so it is refused when it
+  begins the id of a commit or a tag, names a branch or a tag, or could mean more than one object. Two are not read
+  for one: the block's own commit written in full, as `git rev-parse` prints it (in lower case), and an advisory id
+  (`GHSA-xxxx-xxxx-xxxx`). A number or a word that happens to begin a commit id here (2026, face, added) is refused
+  too: write it another way. Name a fix by what it changed.
 
 That is all the gate guarantees about the prose: a review that says otherwise in other words ("do not ship") is for
 the person reading it to catch. The gate also refuses the release if anything that runs (`bin/`, `lib/`, `fix/`,

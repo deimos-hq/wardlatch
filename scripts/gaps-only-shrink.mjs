@@ -61,6 +61,8 @@ for (const FILE of FILES) {
   } else console.log(`ok: ${FILE} has ${entries(now.length)}, none new since ${where} (${entries(had.length)} there)`);
 }
 if (failed) {
-  console.log('These lists only shrink: add a test that catches each planted bug instead. Only the maintainer adds an entry.');
+  console.log('These lists only shrink: add a test that catches each planted bug instead.\n'
+    + 'Only the maintainer adds an entry, to either list: deliberately stricter than CLAUDE.md, which lets an equivalent survivor '
+    + 'onto the allow list with a reason a reviewer agreed to.');
   process.exit(1);
 }
