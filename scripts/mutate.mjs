@@ -10,7 +10,8 @@
 //
 // --critical plants only the bugs that matter most for this tool: each 'UNKNOWN' or 'EXPOSED' in the code (a status
 // made, passed, returned or compared), one occurrence at a time, becomes 'SAFE'. --limit and --shard are for the report
-// run only; the gate plants every one. Each 'REVIEW' becoming 'SAFE' is a false all-clear too, but it is planted only by
+// run only: a gate (--critical, or --gate) plants every one in the files asked for (--only; all of them by default), and
+// stops (exit 2) if that is none. Each 'REVIEW' becoming 'SAFE' is a false all-clear too, but it is planted only by
 // the report run (without --critical), with every other kind of bug: making it part of the gate needs a test for each
 // one no test catches yet, or the maintainer's word to list it as a known gap (CONTRIBUTING.md says how many).
 //
@@ -19,7 +20,8 @@
 // its own on the unmutated code, K times each in a row (--confirm-runs, default 3), the runs interleaved and run afresh
 // for every planted bug (never reused), each read for that exact test (--test-name-pattern, its name escaped, so a
 // pattern that matches nothing is never a pass or a fail); that test is recorded. A suite that times out, is killed by
-// a signal, crashes, exits other than 0 or 1, or fails with no test named, is a timeout or an error, never a catch.
+// a signal, crashes, exits other than 0 or 1, or fails with no test named, is a timeout or an error, never a catch. A
+// static test, one that also fails on the static probe (an inert SAFE in code that never runs, below), is never a catch.
 //
 // A test whose result on the same code ever differs is UNRELIABLE, and named: between the unmutated suite runs, between
 // a suite failure on a copy and the same test on its own there, between its own runs alone, or a test that passes in
@@ -31,7 +33,8 @@
 // probability p each run, fails in that copy's suite run, then fails in each of its K runs alone on the copy and passes
 // in each of its K runs alone on the unmutated code: probability p^(K+1)(1-p)^K, at most 0.84% (at p = 4/7) for K = 3.
 // For the whole run to pass with it, the R unmutated suite runs must all have passed too: p^(K+1)(1-p)^(K+R), at most
-// 0.21% (p = 4/9) with R = 2, 0.074% (p = 4/11) with R = 4 as in CI, and 0.14% at p = 0.3 with R = 2. That is for each
+// 0.21% (p = 4/9) with R = 2, 0.074% (p = 4/11) with R = 4 as in CI, and 0.14% at p = 0.3 with R = 2 (and it must have
+// passed on the static probe as well, one more factor (1-p), so these are upper bounds). That is for each
 // such planted bug; once a real catching test is confirmed, the other tests that failed beside it are not examined. A
 // test that passes at random can make a caught bug look like a survivor: that errs on the side of the gate failing.
 //
@@ -57,7 +60,8 @@
 // test/mutate.test.mjs would start nested mutation runs inside every copy.
 // results.json and summary.md (in --out) list every planted bug, its result and the test that caught it.
 // Stopping the script (SIGINT, SIGTERM, SIGHUP) kills every running suite's whole process group.
-// Needs rsync and Node 22.1 or later (--test-skip-pattern). Runs N copies at a time (default 2; CI passes --jobs 4).
+// Needs rsync and Node 22.1 or later (--test-skip-pattern). Runs N copies at a time (default 1: one suite at a time, as
+// CLAUDE.md asks of heavy jobs on a laptop; CI passes --jobs 4).
 import { readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync, mkdtempSync, existsSync } from 'node:fs';
 import { join, dirname, resolve, relative } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -90,8 +94,8 @@ const whole = (k, d, min) => {
   return Number(opts[k]);
 };
 const CRITICAL = !!opts['--critical'], GATE = CRITICAL || !!opts['--gate'];
-if (CRITICAL && ('--limit' in opts || '--shard' in opts)) die('--critical plants every one: --limit and --shard are for the report run');
-const JOBS = whole('--jobs', 2, 1), LIMIT = whole('--limit', Infinity, 1), TIMEOUT_MS = whole('--timeout', 300000, 1000);
+if (GATE && ('--limit' in opts || '--shard' in opts)) die(`${CRITICAL ? '--critical' : '--gate'} plants every one: --limit and --shard are for the report run`);
+const JOBS = whole('--jobs', 1, 1), LIMIT = whole('--limit', Infinity, 1), TIMEOUT_MS = whole('--timeout', 300000, 1000);
 const BASELINE_RUNS = whole('--baseline-runs', Math.max(2, JOBS), 2), K = whole('--confirm-runs', 3, 3);
 const ONLY = opts['--only'] ?? '';
 const shard = /^(\d+)\/(\d+)$/.exec(opts['--shard'] ?? '0/1');
@@ -193,7 +197,7 @@ const mine = mutants.filter((m, i) => wanted.includes(m.file) && i % SHARD_N ===
 const todo = mine.slice(0, LIMIT);
 console.error(`${mutants.length} planted bugs in all, ${todo.length} here${SHARD_N > 1 ? ` (shard ${SHARD_K}/${SHARD_N})` : ''}, `
   + `${JOBS} at a time, copies in ${OUT}`);
-if (CRITICAL && !todo.length) die('no UNKNOWN or EXPOSED found to mutate in the files asked for');
+if (GATE && !todo.length) die(`no ${CRITICAL ? 'UNKNOWN or EXPOSED' : 'planted bug'} in the files asked for: a gate that plants nothing checks nothing`);
 
 // ---- running the suite ----------------------------------------------------------------------------------------------
 const tests = testFiles.filter((f) => !TOOL_TESTS.includes(f));
@@ -313,6 +317,31 @@ const BASE = copy('baseline');   // kept until the end: each catching test must 
   console.error(`baseline passes, ${BASELINE_RUNS} runs at --jobs ${JOBS}, every test the same in each`);
 }
 
+// ---- the static probe: which tests read the code's text instead of running it --------------------------------------
+// One more copy: every file planted in gets, at its end, an inert SAFE in code that never runs (an exported function
+// nothing calls). A test that fails on that copy fails on a SAFE literal whatever the code does, as G3 does, so it would
+// make every planted SAFE look caught: it is a STATIC test, named, and never counted as a catch. That holds however it
+// is named, so a stub under G3's name with the real check renamed, or a second check like G3, catches nothing. The
+// control: G3 itself must fail on this copy, or the probe is not the kind of change a static test sees, and the run
+// stops (exit 2), as it does if the suite on the probe ends other than by passing or failing named tests.
+const PROBE = "\n// scripts/mutate.mjs, the static probe: an inert SAFE that nothing calls\nexport const mutateStaticProbe = (r) => (r === 'SAFE' ? { status: 'SAFE' } : r);\n";
+const staticTests = new Map();   // label → the test
+{
+  const dir = copy('static-probe');
+  for (const f of all) writeFileSync(join(dir, f), `${readFileSync(join(dir, f), 'utf8')}${PROBE}`);
+  const g3 = await runTests(dir, [`--test-name-pattern=${STATIC}`, STATIC_FILE]);
+  const g3failed = g3.events.filter((e) => e.name === STATIC_NAME && e.nesting === 0 && e.ev === 'fail' && !e.skip).length === 1;
+  const o = outcome(await suite(dir), dir);
+  drop(dir);
+  if (!g3failed) {
+    die(`the static probe didn't make "${STATIC_NAME}" fail: a SAFE literal in code that never runs should, so either that `
+      + 'test no longer checks the code\'s text (a stub under its name?) or the probe is not the kind of change it sees');
+  }
+  if (o.kind === 'timeout' || o.kind === 'error') die(`the suite on the static probe ended in ${o.kind === 'timeout' ? 'a timeout' : `an error (${o.why})`}: which tests are static can't be told`);
+  for (const t of o.failed) staticTests.set(label(t), t);
+  console.error(`static probe: ${staticTests.size ? `${staticTests.size} static test(s), never counted as a catch: ${[...staticTests.keys()].join('; ')}` : 'no test besides G3 fails on it'}`);
+}
+
 // One test that failed in the suite on a copy: on its own on the copy, then on the unmutated code, K times, afresh.
 // → { verdict: catch | unreliable | unrunnable, runs: ['copy fail', 'unmutated pass', ...], why }
 // It stops at the first run that isn't what a catch needs. That run is unreliable unless it is the very first run on
@@ -347,8 +376,11 @@ const runOne = async (m, k) => {
     if (o.kind === 'pass') return { ...m, result: 'SURVIVED', by: [], ms: ms() };
     if (o.kind === 'timeout') return { ...m, result: 'timeout', by, ms: ms() };
     if (o.kind === 'error') return { ...m, result: 'error', reason: o.why, by, ms: ms() };
+    // a static test (it failed on the probe) is never a catch: only the others are examined
+    const behaviour = o.failed.filter((t) => !staticTests.has(label(t)));
+    if (!behaviour.length) return { ...m, result: 'SURVIVED', by, staticOnly: true, ms: ms() };
     const tried = [], unreliable = [];
-    for (const t of o.failed.slice(0, TRIES)) {
+    for (const t of behaviour.slice(0, TRIES)) {
       const e = await examine(dir, t);
       tried.push({ test: label(t), verdict: e.verdict, runs: e.runs });
       if (e.verdict === 'unreliable') unreliable.push({ test: label(t), why: e.why });
@@ -386,7 +418,8 @@ const tally = `caught ${count('caught')}, survived ${survivors.length} (${equiva
   + `timeout ${timeouts.length}, error ${errors.length}, unreliable ${count('unreliable')}, invalid ${count('invalid')}`
   + `${unreliable.size ? `; ${unreliable.size} unreliable test(s)` : ''}`;
 console.log(tally);
-for (const r of survivors) console.log(`${allowedKeys.has(key(r)) ? 'EQUIVALENT' : gapKeys.has(key(r)) ? 'GAP' : 'SURVIVED'} ${where(r)}  ${r.before}  →  ${r.after}`);
+for (const [t] of staticTests) console.log(`STATIC ${t}: fails on an inert SAFE in code that never runs, so it reads the code's text; never counted as a catch`);
+for (const r of survivors) console.log(`${allowedKeys.has(key(r)) ? 'EQUIVALENT' : gapKeys.has(key(r)) ? 'GAP' : 'SURVIVED'} ${where(r)}  ${r.before}  →  ${r.after}${r.staticOnly ? '  (only static tests failed)' : ''}`);
 for (const r of timeouts) console.log(`TIMEOUT ${where(r)}  ${r.before}`);
 for (const r of errors) console.log(`ERROR ${where(r)}  ${r.reason}`);
 for (const [t, seen] of unreliable) console.log(`UNRELIABLE ${t}: ${seen.join('; ')}`);
@@ -405,6 +438,11 @@ const md = [`## ${CRITICAL ? 'Critical mutants' : 'Mutation run'}${SHARD_N > 1 ?
   `Caught: the suite failed, and the test named here then failed on its own on the planted bug and passed on its own on `
   + `the unmutated code, ${K} times each, interleaved. A test that fails at random, independently, with probability p can `
   + `still make an uncaught bug look caught, with probability p^${K + 1}(1-p)^${K} (scripts/mutate.mjs says more).`, ''];
+if (staticTests.size) {
+  md.push('**Static tests** (they fail on an inert SAFE in code that never runs, so they read the code\'s text; never counted as a catch):', '');
+  for (const [t] of staticTests) md.push(`- ${cell(t)}`);
+  md.push('');
+}
 if (unreliable.size) {
   md.push('**Unreliable tests** (different results on the same code; the run exits 2):', '');
   for (const [t, seen] of unreliable) md.push(`- ${cell(t)}: ${cell(seen.join('; '))}`);
@@ -413,7 +451,8 @@ if (unreliable.size) {
 md.push('| result | where | planted bug | caught by, or why not |', '|---|---|---|---|');
 for (const r of [...results].sort(byPlace)) {
   const res = r.result !== 'SURVIVED' ? r.result : allowedKeys.has(key(r)) ? 'equivalent' : gapKeys.has(key(r)) ? 'known gap' : '**SURVIVED**';
-  const why = r.caughtBy ?? r.reason ?? (r.result === 'timeout' ? `over ${TIMEOUT_MS} ms` : r.unreliable?.map((u) => `${u.test}: ${u.why}`).join('; ') ?? '');
+  const why = r.caughtBy ?? r.reason ?? (r.result === 'timeout' ? `over ${TIMEOUT_MS} ms` : r.staticOnly ? `only static tests failed: ${r.by.join('; ')}`
+    : r.unreliable?.map((u) => `${u.test}: ${u.why}`).join('; ') ?? '');
   md.push(`| ${res} | \`${r.file}:${r.line}\` | ${r.op}${r.nth > 1 ? ` #${r.nth}` : ''} | ${cell(why)} |`);
 }
 writeFileSync(join(OUT, 'summary.md'), `${md.join('\n')}\n`);
