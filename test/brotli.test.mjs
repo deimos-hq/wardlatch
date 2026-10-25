@@ -300,6 +300,9 @@ test('Brotli 1.0\'s form is read in linear time: 1 MB of hostile table names', (
 });
 
 test('the incident\'s 1.0 form: plain names, the anchor and the marker among them as the 1.1 names say', () => {
+  // without a run, or with one that lacks the control's name, no copy is read as a table (an empty run would match any)
+  const f = bin(join(fresh('form10-norun'), 'x'), [packed(['BLOCK_LENGTH_1', 'BLOCK_SWITCH'])]);
+  for (const markers of [{ ...M, table10: undefined, after10: undefined }, { ...M, table10: ['HUFFMAN_SPACE'] }]) assert.deepEqual(evidence(f, markers).t10, { fixed: 0, unfixed: 0, other: 1 });
   const t = INC.markers.table10, strip = (s) => s.replace(/^_ERROR_FORMAT_/, '');
   assert.ok(Array.isArray(t) && t.length >= 4 && t.every((n) => /^[A-Z0-9_]+$/.test(n)));
   assert.ok(t.includes(strip(CONTROL)) && !t.includes(strip(MARKER)), 'the run holds the control\'s name, not the marker\'s');
