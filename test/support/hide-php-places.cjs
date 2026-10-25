@@ -11,5 +11,7 @@ fs.existsSync = (p) => !HIDDEN.test(String(p)) && exists(p);
 for (const k of ['statSync', 'lstatSync', 'realpathSync', 'readdirSync', 'openSync']) {
   const o = fs[k];
   fs[k] = (p, ...a) => { if (HIDDEN.test(String(p))) throw gone(); return o(p, ...a); };
+  // realpathSync.native (the OS's realpath, which lib/files.mjs realPathAsWritten uses) hides the same folders
+  if (o.native) fs[k].native = (p, ...a) => { if (HIDDEN.test(String(p))) throw gone(); return o.native(p, ...a); };
 }
 require('node:module').syncBuiltinESMExports();

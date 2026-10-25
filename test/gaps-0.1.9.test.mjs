@@ -187,12 +187,12 @@ test('git config: user.signingkey doesn\'t replace the email, http.cookiefile is
 });
 
 test('who you are: GIT_AUTHOR_NAME alone gives the name', () => {
-  // lib/headers.mjs:53 (either name variable is enough)
+  // lib/headers.mjs:58 (either name variable is enough)
   assert.deepEqual(identityFrom(fresh('id53-home'), { GIT_AUTHOR_NAME: 'Ada Lovelace' }), { name: 'Ada Lovelace', email: '' });
 });
 
 test('a name of exactly six letters counts, as does an email user name of exactly six; five is too short', () => {
-  // lib/headers.mjs:68 (six characters, or a space, make a name long enough) and :73 (six for the email's user name)
+  // lib/headers.mjs:73 (six characters, or a space, make a name long enough) and :78 (six for the email's user name)
   assert.equal(carries('X-By: Hopper', { name: 'Hopper', email: '' }), 'your name');
   assert.equal(carries('X-By: Hoppe', { name: 'Hoppe', email: '' }), null);
   assert.equal(carries('X-By: hopper', { name: '', email: 'hopper@example.org' }), 'your email\'s user name');
@@ -200,7 +200,7 @@ test('a name of exactly six letters counts, as does an email user name of exactl
 });
 
 test('JSON: objects and strings inside arrays are walked, null is skipped, numbers in arrays don\'t count toward the cap, which allows exactly 200,000 items', () => {
-  // lib/headers.mjs:110 (the item cap is "more than"), :119 (null and other non-objects are skipped), :125 and :126 (only
+  // lib/headers.mjs:115 (the item cap is "more than"), :124 (null and other non-objects are skipped), :130 and :131 (only
   // objects and strings inside arrays are walked)
   assert.deepEqual(headersInJson({ servers: [{ headers: { 'X-Who': 'ada' } }] }), [{ where: 'servers.0.headers.X-Who', value: 'ada' }]);
   assert.deepEqual(headersInJson({ headers: ['X-Who: ada'] }), [{ where: 'headers.0', value: 'X-Who: ada' }]);
@@ -213,20 +213,20 @@ test('JSON: objects and strings inside arrays are walked, null is skipped, numbe
 });
 
 test('JSONC: a lone slash is not the start of a comment, so malformed JSON stays malformed', () => {
-  // lib/headers.mjs:90 (a block comment starts only at "/*")
+  // lib/headers.mjs:95 (a block comment starts only at "/*")
   const text = '{"headers": {"X": "ada@example.org"}} / junk */';
   assert.equal(stripJsonc(text), text);
   assert.throws(() => JSON.parse(stripJsonc(text)), SyntaxError);
 });
 
 test('curl\'s cacert line and a commented TOML header line are not headers', () => {
-  // lib/headers.mjs:153 (a bare option counts only when it is header or user-agent) and :170 (TOML comments are skipped)
+  // lib/headers.mjs:158 (a bare option counts only when it is header or user-agent) and :175 (TOML comments are skipped)
   assert.deepEqual(headersInRc('cacert = /Users/ada.lovelace/ca.pem\n', 'curl'), []);
   assert.deepEqual(headersInToml('# X-Header = "ada@example.org"\n[mcp_servers.x]\n'), []);
 });
 
 test('the agents\' app-data folder: Application Support on macOS, APPDATA on Windows, XDG_CONFIG_HOME elsewhere', () => {
-  // lib/headers.mjs:197 (the app-data folder by platform, and APPDATA first on Windows)
+  // lib/headers.mjs:202 (the app-data folder by platform, and APPDATA first on Windows)
   const desktop = (p, env) => withPlatform(p, () => places(home, env).map((x) => x.file).filter((f) => f.endsWith('claude_desktop_config.json')));
   assert.deepEqual(desktop('darwin', {}), [join(home, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json')]);
   assert.deepEqual(desktop('win32', { APPDATA: '/appdata' }), [join('/appdata', 'Claude', 'claude_desktop_config.json')]);
@@ -234,7 +234,7 @@ test('the agents\' app-data folder: Application Support on macOS, APPDATA on Win
 });
 
 test('the scan reads a repository\'s .mcp.json and Codex\'s config as TOML; an .npmrc email line is no header', () => {
-  // lib/headers.mjs:216 (each repository's settings files are listed), :228 (TOML is read as TOML) and :182 (only the
+  // lib/headers.mjs:221 (each repository's settings files are listed), :233 (TOML is read as TOML) and :187 (only the
   // .npmrc user-agent line is a header)
   const h = fresh('hs-home'), root = fresh('hs-root');
   put(join(h, '.codex', 'config.toml'), '[mcp_servers.docs.http_headers]\nX-User = "ada@example.org"\n');
@@ -247,7 +247,7 @@ test('the scan reads a repository\'s .mcp.json and Codex\'s config as TOML; an .
 });
 
 test('a FIFO .curlrc and an oversize repository .mcp.json are reported unread, not skipped', () => {
-  // lib/headers.mjs:251 (only /dev/null is read as empty) and :253 (only an unreadable regular file is "not used")
+  // lib/headers.mjs:256 (only /dev/null is read as empty) and :258 (only an unreadable regular file is "not used")
   const h = fresh('hf-home'), root = fresh('hf-root');
   execFileSync('mkfifo', [join(h, '.curlrc')]);
   mkdirSync(join(root, 'app', '.git'), { recursive: true });
@@ -267,14 +267,14 @@ test('droppedNodeOptions: nothing when NODE_OPTIONS is unset, and a trust flag i
 
 // ---- the command -------------------------------------------------------------------------------------------------------
 test('on Windows the installs check says it was not checked: UNKNOWN, exit 2', () => {
-  // bin/wardlatch.mjs:239 (the Windows row is kept)
+  // bin/wardlatch.mjs:242 (the Windows row is kept)
   const r = run(['--incident', 'litellm-2026-10', '--paths', fresh('w239-root')], {}, { name: 'w239', platform: 'win32' });
   assert.deepEqual(r.rows.map((x) => [x.kind, x.status, x.reason]), [['install', 'UNKNOWN', 'not checked on Windows yet (Windows is not supported)']]);
   assert.equal(r.code, 2);
 });
 
 test('a --paths folder below a locked one is UNKNOWN in the LiteLLM check, beside a folder that was searched', { skip: AS_ROOT && 'root opens every folder' }, () => {
-  // bin/wardlatch.mjs:378 (the --paths folders that can't be opened go to the gaps)
+  // bin/wardlatch.mjs:382 (the --paths folders that can't be opened go to the gaps)
   const shut = fresh('l378-locked'), inner = join(shut, 'inner'); lock(shut);
   const r = run(['--incident', 'litellm-2026-10', '--no-containers', '--paths', fresh('l378-ok'), '--paths', inner], {}, { name: 'l378' });
   assert.ok(r.rows.some((x) => x.status === 'UNKNOWN' && x.path === inner), JSON.stringify(r.rows));
@@ -289,7 +289,7 @@ const imageEngine = (name, { images = '', fail = '' } = {}) => {
 };
 
 test('a local LiteLLM image with a compromised digest is EXPOSED, with no all-clear beside it', () => {
-  // bin/wardlatch.mjs:396 (only a null list means "not running") and :406 (no all-clear beside a finding)
+  // bin/wardlatch.mjs:400 (only a null list means "not running") and :410 (no all-clear beside a finding)
   const { eng } = imageEngine('i396', { images: 'python:3.12@sha256:0000\nghcr.io/berriai/litellm:main-stable@sha256:1bbcb1443bc962e45f5aad53fe3d2c30600e0379715fb6c664cdd3ac126c339e' });
   const r = run(['--incident', 'litellm-2026-10', '--paths', fresh('i396-root')], { PATH: eng }, { name: 'i396' });
   assert.deepEqual(r.rows.map((x) => [x.status, x.engine]), [['EXPOSED', 'docker']], JSON.stringify(r.rows));
@@ -297,7 +297,7 @@ test('a local LiteLLM image with a compromised digest is EXPOSED, with no all-cl
 });
 
 test('--no-containers, and incidents without image digests, never ask the container engine', () => {
-  // bin/wardlatch.mjs:391 (images are listed only for an incident with digests, and not with --no-containers)
+  // bin/wardlatch.mjs:395 (images are listed only for an incident with digests, and not with --no-containers)
   const { eng, mark } = imageEngine('e391', { fail: 'permission denied while trying to connect to the Docker daemon socket' });
   for (const args of [['--incident', 'litellm-2026-10', '--no-containers'], ['--incident', 'plex-2026-10'], ['--incident', 'gitlab-2026-10']]) {
     const r = run([...args, '--paths', fresh('e391-root')], { PATH: eng }, { name: 'e391' });
@@ -308,7 +308,7 @@ test('--no-containers, and incidents without image digests, never ask the contai
 });
 
 test('Plex and GitLab with an existing --paths folder are SAFE, with a receipt naming where they looked', () => {
-  // bin/wardlatch.mjs:373 (the version files' places go into the receipt)
+  // bin/wardlatch.mjs:377 (the version files' places go into the receipt)
   for (const id of ['plex-2026-10', 'gitlab-2026-10']) {
     const r = run(['--incident', id, '--paths', fresh('v373-root')], {}, { name: 'v373' });
     assert.deepEqual(r.rows.map((x) => [x.status, x.searched]), [['SAFE', [incident(id).versionFiles.lookedIn]]], id);
@@ -317,7 +317,7 @@ test('Plex and GitLab with an existing --paths folder are SAFE, with a receipt n
 });
 
 test('as root: no SUDO_USER runs normally, and SUDO_USER=.. is never taken as a home folder', () => {
-  // bin/wardlatch.mjs:95 (a missing SUDO_USER is not looked up) and :97 (a name with .. is refused)
+  // bin/wardlatch.mjs:98 (a missing SUDO_USER is not looked up) and :100 (a name with .. is refused)
   const args = ['--incident', 'identity-headers-2026-10', '--paths', fresh('s95-root')];
   const plain = run(args, {}, { name: 's95', uid: 0 });
   assert.deepEqual(plain.rows.filter((x) => x.kind === 'home'), []); assert.equal(plain.code, 0);
@@ -327,7 +327,7 @@ test('as root: no SUDO_USER runs normally, and SUDO_USER=.. is never taken as a 
 });
 
 test('under sudo, the person\'s home is /Users/<name> on macOS and /home/<name> on Linux, and it is the one searched', () => {
-  // bin/wardlatch.mjs:97 (the home folder's place by platform) and :98 (a home that is there is used)
+  // bin/wardlatch.mjs:100 (the home folder's place by platform) and :101 (a home that is there is used)
   for (const [platform, place] of [['darwin', '/Users/wl-gaps-sudo'], ['linux', '/home/wl-gaps-sudo']]) {
     const theirs = fresh(`s97-${platform}`);
     put(join(theirs, '.gitconfig'), '[http]\n\textraHeader = From: someone@example.org\n');
@@ -338,7 +338,7 @@ test('under sudo, the person\'s home is /Users/<name> on macOS and /home/<name> 
 });
 
 test('every SSL_CERT_DIR entry is made absolute, against the folder Wardlatch started in', () => {
-  // bin/wardlatch.mjs:40 (SSL_CERT_DIR is split into folders first)
+  // bin/wardlatch.mjs:43 (SSL_CERT_DIR is split into folders first)
   const out = join(dir, 'ssl-cert-dir.txt');
   const pre = preload('s40', { onExit: `fs.writeFileSync(${JSON.stringify(out)}, String(process.env.SSL_CERT_DIR))` });
   const r = spawnSync(process.execPath, ['--require', pre, BIN, '--list'], { encoding: 'utf8', env: childEnv({ SSL_CERT_DIR: 'certs-a:certs-b' }), cwd: dir, timeout: 60000 });
@@ -372,7 +372,7 @@ test('a virtual environment without certifi gives no row; one with certifi does'
 });
 
 test('discovery doesn\'t follow links or go into node_modules', () => {
-  // lib/discover.mjs:79 (links, node_modules, .git and macOS's own folders are skipped)
+  // lib/discover.mjs:81 (links, node_modules, .git and macOS's own folders are skipped)
   const root = fresh('d79-root'), elsewhere = fresh('d79-elsewhere');
   venv(join(root, 'node_modules', 'pkg', '.venv')); venv(join(elsewhere, 'venv')); symlinkSync(join(elsewhere, 'venv'), join(root, 'linked'));
   venv(join(root, 'proj', '.venv'));
@@ -380,7 +380,7 @@ test('discovery doesn\'t follow links or go into node_modules', () => {
 });
 
 test('the search depths: a virtual environment six folders down, a repository four down, a site five down', () => {
-  // lib/discover.mjs:75, lib/workflows.mjs:16 and lib/wordpress.mjs:16 (each walk lists the folder at depth 0)
+  // lib/discover.mjs:77, lib/workflows.mjs:16 and lib/wordpress.mjs:16 (each walk lists the folder at depth 0)
   const v = fresh('d75-root');
   venv(join(v, '1', '2', '3', '4', '5', 'v6')); venv(join(v, '1', '2', '3', '4', '5', '6', 'v7'));
   assert.deepEqual(discovered('d75', [v]), { envs: [join(v, '1', '2', '3', '4', '5', 'v6')], untested: [] });
@@ -394,7 +394,7 @@ test('the search depths: a virtual environment six folders down, a repository fo
 });
 
 test('the OS\'s own trust: the macOS system row, and the Linux store row only with a bundle and a curl', () => {
-  // lib/discover.mjs:66 to :72 (the macos-system row on macOS; the Linux bundle, curl and row)
+  // lib/discover.mjs:67 to :74 (the macos-system row on macOS; the Linux bundle, curl and row)
   const nscurl = exe(join(fresh('os-nscurl'), 'nscurl'), 'exit 0'), bundle = put(join(fresh('os-bundle'), 'ca.crt'), '-----BEGIN CERTIFICATE-----\n');
   const map = { '/usr/bin/nscurl': nscurl, '/etc/ssl/certs/ca-certificates.crt': bundle };
   const system = (name, platform, pathEnv) => lib(name, `const { discover } = await import(L + '/discover.mjs');
@@ -407,7 +407,7 @@ console.log(JSON.stringify(discover({ roots: [], pathEnv: ${JSON.stringify(pathE
 
 // ---- program checks ----------------------------------------------------------------------------------------------------
 test('GOTOOLCHAIN matters only to the go rule', async () => {
-  // lib/binaries.mjs:189 (a rule for any other program returns its own verdict)
+  // lib/binaries.mjs:194 (a rule for any other program returns its own verdict)
   const d = fresh('b189');
   exe(join(d, 'cloudflared'), 'echo "cloudflared version 2026.10.5 (built x)"'); exe(join(d, 'go'), 'echo "go version go1.27.3 linux/amd64"');
   const [cloudflared, go] = incident('emudhra-2026-10').binaries;
@@ -418,7 +418,7 @@ test('GOTOOLCHAIN matters only to the go rule', async () => {
 });
 
 test('the go env file: Application Support on macOS, ~/.config or XDG_CONFIG_HOME elsewhere', () => {
-  // lib/binaries.mjs:210 and :211 (where `go env -w` writes, by platform)
+  // lib/binaries.mjs:215 and :216 (where `go env -w` writes, by platform)
   const h = fresh('b210-home');
   put(join(h, 'Library', 'Application Support', 'go', 'env'), 'GOTOOLCHAIN=go1.26.5\n');
   put(join(h, '.config', 'go', 'env'), 'GOTOOLCHAIN=go1.26.6\n');
@@ -429,7 +429,7 @@ test('the go env file: Application Support on macOS, ~/.config or XDG_CONFIG_HOM
 });
 
 test('a dangling php8.1 link on PATH is ignored', () => {
-  // lib/binaries.mjs:76 (a name that isn't a regular file is skipped)
+  // lib/binaries.mjs:79 (a name that isn't a regular file is skipped)
   const d = fresh('b76');
   exe(join(d, 'php'), 'echo "PHP 8.4.27 (cli)"'); symlinkSync(join(d, 'no-such-php'), join(d, 'php8.1'));
   const rows = checkBinaryAll({ ...incident('php-2026-10').binaries[0], extraDirs: [] }, d);
@@ -437,7 +437,7 @@ test('a dangling php8.1 link on PATH is ignored', () => {
 });
 
 test('a later copy on PATH that can\'t be read (mode 111) or is empty is not run', () => {
-  // lib/files.mjs:108 (no readable 4-byte header, not a compiled program)
+  // lib/files.mjs:220 and :221 (no readable 4-byte header, not a compiled program)
   const a = fresh('f108-a'), b = fresh('f108-b'), c = fresh('f108-c');
   exe(join(a, 'node'), 'echo v20.0.0'); put(join(b, 'node'), '#!/bin/sh\necho v20.0.0\n', 0o111); put(join(c, 'node'), '', 0o755);
   assert.deepEqual(copiesToRun('node', [a, b, c].join(':')), { run: [join(a, 'node')], notRun: [join(b, 'node'), join(c, 'node')] });
@@ -447,7 +447,7 @@ test('a later copy on PATH that can\'t be read (mode 111) or is empty is not run
 
 // ---- installed software ------------------------------------------------------------------------------------------------
 test('a virtual environment three levels under the home folder is found, and its cook.pth is EXPOSED', () => {
-  // lib/installs.mjs:130 (the walk lists the folder at depth 0)
+  // lib/installs.mjs:136 (the walk lists the folder at depth 0)
   const h = fresh('i130-home');
   const sp = venv(join(h, 'a', 'b', 'venv'), { certifi: false }); put(join(sp, 'cook.pth'), 'import cook\n');
   venv(join(h, 'a', 'b', 'c', 'deeper'), { certifi: false });
@@ -457,7 +457,7 @@ test('a virtual environment three levels under the home folder is found, and its
 });
 
 test('virtual environments inside node_modules, .git or the Trash are not looked at, and a locked node_modules is no gap', () => {
-  // lib/installs.mjs:136 (node_modules, .git and macOS's own folders are skipped)
+  // lib/installs.mjs:142 (node_modules, .git and macOS's own folders are skipped)
   const root = fresh('i136-root');
   for (const p of ['node_modules/pkg/.venv', '.git/x/.venv', '.Trash/old/.venv']) venv(join(root, p), { certifi: false });
   const keep = venv(join(root, 'proj', '.venv'), { certifi: false });
@@ -485,7 +485,7 @@ test('a plugin folder older than the incident\'s date is not REVIEW; a newer one
 });
 
 test('a backdated plugin folder is judged by its birth time, not by when its status last changed', { skip: process.platform !== 'darwin' && 'only macOS moves a folder\'s birth time back with utimes' }, (t) => {
-  // lib/files.mjs:178 (createdAt is the birth time where there is one)
+  // lib/files.mjs:296 (createdAt is the birth time where there is one)
   const site = fresh('f178-site'), old = join(site, 'wp-content', 'plugins', 'old');
   mkdirSync(old, { recursive: true });
   const then = new Date('2020-01-01T00:00:00Z');
@@ -498,7 +498,7 @@ test('a backdated plugin folder is judged by its birth time, not by when its sta
 
 // ---- reading files -----------------------------------------------------------------------------------------------------
 test('a file exactly at the size cap is read whole; one byte over it is not read, and says so', () => {
-  // lib/files.mjs:24 and :35 (readCapped's cap is "more than"), :59 and :73 (eachPiece's cap, and false past it)
+  // lib/files.mjs:25 and :36 (readCapped's cap is "more than"), :60 and :74 (eachPiece's cap, and false past it)
   const text = Array.from({ length: 100 }, (_, i) => `line ${i}`).join('\n') + '\n', n = Buffer.byteLength(text);
   const f = put(join(dir, 'cap.txt'), text);
   assert.equal(readCapped(f, n)?.toString('utf8'), text);
@@ -510,7 +510,7 @@ test('a file exactly at the size cap is read whole; one byte over it is not read
 });
 
 test('a last piece that is a line break and a short key keeps the key', () => {
-  // lib/files.mjs:77 (a piece that starts with its only line break is cut there, not treated as having none)
+  // lib/files.mjs:78 (a piece that starts with its only line break is cut there, not treated as having none)
   const f = put(join(dir, 'p77.txt'), `${'x'.repeat(127)}\n\n${AWS}`);
   const hits = [];
   assert.equal(eachPiece(f, 1e9, (t, first, range) => { for (const h of scanText(t, range)) hits.push(h.line + first - 1); }, 128, 128), true);
@@ -518,14 +518,14 @@ test('a last piece that is a line break and a short key keeps the key', () => {
 });
 
 test('eachPiece on a missing file returns false and doesn\'t throw', () => {
-  // lib/files.mjs:84 (false when it can't be read) and :86 (only an opened file is closed)
+  // lib/files.mjs:85 (false when it can't be read) and :87 (only an opened file is closed)
   assert.equal(eachPiece(join(dir, 'no-such-file'), 100, () => assert.fail('called')), false);
 });
 
 // ---- versions and owners -----------------------------------------------------------------------------------------------
 test('version boundaries: GitLab 7.0.0, both ends of a bad range, a prerelease of the minimum version, a pending fix', () => {
-  // lib/binaries.mjs:234 (affectedFrom is inclusive), :235 (so are both ends of bad), :237 (a prerelease of minVersion
-  // is older than it) and :249 (a pending fix is UNKNOWN)
+  // lib/binaries.mjs:239 (affectedFrom is inclusive), :240 (so are both ends of bad), :242 (a prerelease of minVersion
+  // is older than it) and :254 (a pending fix is UNKNOWN)
   const gl = incident('gitlab-2026-10').versionFiles;
   assert.equal(judgeVersion('7.0.0', gl).status, 'EXPOSED');
   assert.equal(judgeVersion('6.9.9', gl).status, 'SAFE');

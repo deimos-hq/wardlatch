@@ -87,7 +87,7 @@ const status = (rows, kind) => rows.filter((x) => x.kind === kind || (kind === '
 test('M1 a container that stops mid-check (docker exec fails with exit 1) is UNKNOWN, never SAFE', () => {
   const sane = run(['--incident', 'emudhra-2026-10', '--paths', fresh('m1a')], { PATH: engine('m1a', { curlBody: 'case "$u" in https://self-signed*) exit 60;; *) exit 0;; esac' }) }, ['--require', preload('m1-online', { online: true })]);
   assert.deepEqual(status(sane.rows, 'container'), ['EXPOSED'], 'harness sanity: the running container trusts the test hosts');
-  // an EXPOSED container carries the incident's fix for containers (bin/wardlatch.mjs:312); an UNKNOWN one, below, none
+  // an EXPOSED container carries the incident's fix for containers (bin/wardlatch.mjs:316); an UNKNOWN one, below, none
   const fix = JSON.parse(readFileSync(join(ROOT, 'lib', 'incidents', 'emudhra-2026-10.json'), 'utf8')).fixes.container;
   assert.deepEqual(sane.rows.filter((x) => x.kind === 'container').map((x) => x.fix), [fix]);
   const r = run(['--incident', 'emudhra-2026-10', '--paths', fresh('m1b')], { PATH: engine('m1b', { curlBody: 'case "$u" in https://self-signed*) exit 60;; *) exit 0;; esac', execFails: '*-emudhra.we-have-a-problem.com*' }) }, ['--require', preload('m1-online', { online: true })]);

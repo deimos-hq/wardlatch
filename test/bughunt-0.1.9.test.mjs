@@ -484,7 +484,7 @@ test('wordpress: core found with no content folder anywhere it is looked for is 
   put(join(root, 'custom', 'core', 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";');
   const r = wp(root);
   assert.ok(unknowns(r).some((x) => /plugins/.test(x.reason)), show(r)); assert.equal(r.code, 2);
-  // and on screen: the line for it is UNKNOWN too (bin/wardlatch.mjs:460, a separate line from the row)
+  // and on screen: the line for it is UNKNOWN too (bin/wardlatch.mjs:487, a separate line from the row)
   const t = text(['--incident', 'wordpress-plugins-2026-10', '--paths', root]);
   assert.ok(t.split('\n').some((l) => /^UNKNOWN {2}\S.* · plugins folder$/.test(l)), t);
 });
@@ -580,7 +580,7 @@ test('keys: a deleted tracked file whose copy git no longer has is UNKNOWN, neve
   rmSync(join(app, 'gone.txt')); rmSync(join(app, '.git', 'objects', blob.slice(0, 2), blob.slice(2)));
   const r = keys(root);
   assert.ok(unknowns(r).some((x) => x.file === 'gone.txt'), show(r)); assert.equal(r.code, 2);
-  // and on screen: the line for it is UNKNOWN too (bin/wardlatch.mjs:444, a separate line from the row)
+  // and on screen: the line for it is UNKNOWN too (bin/wardlatch.mjs:471, a separate line from the row)
   const t = text(['--incident', 'committed-keys-2026-10', '--paths', root], { PATH: '/usr/bin:/bin', HOME: fresh('k-home') });
   assert.ok(t.split('\n').includes(`UNKNOWN  ${join(app, 'gone.txt')}`), t);
 });
@@ -849,7 +849,7 @@ test('trust (Linux): the distribution\'s CA bundle with neither curl nor python3
   const d = fresh('o2'); nodeRt(d);
   const r = trust({ PATH: d }, linux('o2'));
   assert.ok(unknowns(r).some((x) => x.system && /neither curl nor python3/.test(x.reason)), show(r)); assert.equal(r.code, 2);
-  // and on screen: the line for it is UNKNOWN too (bin/wardlatch.mjs:297, a separate line from the row)
+  // and on screen: the line for it is UNKNOWN too (bin/wardlatch.mjs:301, a separate line from the row)
   const t = text(['--incident', 'emudhra-2026-10', '--no-containers', '--paths', fresh('trust-root')], { PATH: d }, linux('o2'));
   assert.ok(t.split('\n').includes('UNKNOWN  Linux system trust store (/etc/ssl/certs/ca-certificates.crt)'), t);
   const d2 = fresh('o2b'); nodeRt(d2); pythonRt(d2);

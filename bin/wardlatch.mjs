@@ -14,12 +14,13 @@ import { check, reachable } from '../lib/probe.mjs';
 import { droppedNodeOptions } from '../lib/run.mjs';
 import { checkBinaryAll, findOnPath, tmpTraces, tempDirs } from '../lib/binaries.mjs';
 import { checkVersionFiles, sitePackagesDirs, checkSitePackages, localImageDigests, checkImages } from '../lib/installs.mjs';
+import { checkBundled } from '../lib/brotli.mjs';
 import { listContainers, checkContainer, engineHost } from '../lib/containers.mjs';
 import { reposUnder, workflowsAddedSince } from '../lib/workflows.mjs';
 import { scanRepo } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
 import { scanHeaders } from '../lib/headers.mjs';
-import { pathState, readText, listDir } from '../lib/files.mjs';
+import { pathState, readText, listDir, joinAsWritten } from '../lib/files.mjs';
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
 import { safe, withdrawUnreceipted } from '../lib/report.mjs';
 
@@ -33,12 +34,14 @@ import { safe, withdrawUnreceipted } from '../lib/report.mjs';
 const kept = (process.env.PATH ?? '').split(delimiter).filter((d) => d && isAbsolute(d) && !/[\\/]node_modules[\\/]\.bin[\\/]?$/.test(d));
 process.env.PATH = kept.length ? kept.join(delimiter) : ['/usr/bin', '/bin'].join(delimiter);
 // Programs run from /, so a relative CA file or folder in the person's own environment is made absolute first, against
-// the folder Wardlatch was started from, as their own programs would read it.
+// the folder Wardlatch was started from, as their own programs would read it: put in front of it as written, so a '..'
+// in it is still taken after the link before it (path.resolve cleaned it up as text, which may be another file).
+const absolute = (p) => joinAsWritten(process.cwd(), p);
 for (const k of ['SSL_CERT_FILE', 'SSL_CERT_DIR', 'CURL_CA_BUNDLE', 'NODE_EXTRA_CA_CERTS', 'REQUESTS_CA_BUNDLE']) {
   if (!process.env[k]) continue;
   // SSL_CERT_DIR may be a list of folders
-  process.env[k] = k === 'SSL_CERT_DIR' ? process.env[k].split(delimiter).map((d) => (d && !isAbsolute(d) ? resolve(d) : d)).join(delimiter)
-    : isAbsolute(process.env[k]) ? process.env[k] : resolve(process.env[k]);
+  process.env[k] = k === 'SSL_CERT_DIR' ? process.env[k].split(delimiter).map((d) => (d && !isAbsolute(d) ? absolute(d) : d)).join(delimiter)
+    : isAbsolute(process.env[k]) ? process.env[k] : absolute(process.env[k]);
 }
 
 const LIB = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib');
@@ -217,7 +220,7 @@ for (const inc of chosen) {
   // only where the home folder is read: the trust check (the probes' ~/.curlrc, the go env file, the engine's config),
   // installs and headers always; the folder checks only when their usual folders, in the home, are the ones searched;
   // never the version checks, which read PATH
-  const readsHome = ['trust', 'installs', 'headers'].includes(inc.type) || (['workflows', 'secrets', 'wordpress'].includes(inc.type) && !explicitPaths);
+  const readsHome = ['trust', 'installs', 'bundled', 'headers'].includes(inc.type) || (['workflows', 'secrets', 'wordpress'].includes(inc.type) && !explicitPaths);
   if (sudoHomeMissing && readsHome) { results.push({ incident: inc.id, kind: 'home', status: 'UNKNOWN', reason: sudoHomeMissing }); print('UNKNOWN', 'home folder'); note('33', sudoHomeMissing); }
   // Windows is not supported yet: the program checks look only for macOS and Linux names (no .exe), so on Windows they
   // would read SAFE without having looked. Say so instead (README). A malware's temp-folder trace still counts: the
@@ -237,8 +240,9 @@ for (const inc of chosen) {
     }
     all.push(...results); if (!json) console.log(c('2', `Source: ${inc.advisory}`)); continue;
   }
-  // installed software is looked for only in macOS and Linux places (no Windows Python folders or install paths)
-  if (platform() === 'win32' && inc.type === 'installs') {
+  // installed software and bundled decoders are looked for only in macOS and Linux places (no Windows Python folders,
+  // install paths or DLL names)
+  if (platform() === 'win32' && (inc.type === 'installs' || inc.type === 'bundled')) {
     results.push({ incident: inc.id, kind: 'install', status: 'UNKNOWN', reason: 'not checked on Windows yet (Windows is not supported)' });
     print('UNKNOWN', 'not checked on Windows yet'); note('33', 'this check looks only in macOS and Linux locations; Windows is not supported yet');
     all.push(...results); if (!json) console.log(c('2', `Source: ${inc.advisory}`)); continue;
@@ -417,6 +421,29 @@ for (const inc of chosen) {
     if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean));
   }
 
+  if (inc.type === 'bundled') {
+    // Read-only: the decoder's own bytes in node and bun programs, in Python packages' native files and in Brotli
+    // libraries, judged by the error text the fix added (lib/brotli.mjs). Nothing found is run.
+    if (!json) console.log(c('2', 'Reads the Brotli decoder inside node, bun, Python packages and Brotli libraries; runs nothing.'));
+    const denied = [...lockedRoots], foundUnread = [];
+    if (explicitPaths && !searchable.length) {
+      const reason = `none of the folders given with --paths exist (${roots.map(short).join(', ')}), so no virtual environment there was searched`;
+      results.push({ incident: inc.id, kind: 'bundled', status: 'UNKNOWN', reason }); print('UNKNOWN', 'folders given with --paths'); note('33', reason);
+    }
+    const siteDirs = sitePackagesDirs({ roots: searchable, denied, found: foundUnread });
+    const places = { osRelease: '/etc/os-release', dpkgStatus: '/var/lib/dpkg/status', dpkgInfo: '/var/lib/dpkg/info', apkInstalled: '/lib/apk/db/installed', ldSoConf: '/etc/ld.so.conf', ldSoConfDir: '/etc/ld.so.conf.d', ldMuslPath: '/etc/ld-musl-*.path', ldSoPreload: '/etc/ld.so.preload' };
+    const { rows, looked } = checkBundled(inc, { execPath: process.execPath, siteDirs, denied, places });
+    for (const r of rows) {
+      results.push({ incident: inc.id, kind: 'bundled', ...r });
+      const who = r.owner ? r.owner : r.label ? r.label : `${r.what}${r.version ? ` ${r.version}` : ''}`;
+      print(r.status, `${who}  ${short(r.file)}`);
+      if (r.reason) note({ EXPOSED: '31', SAFE: '2' }[r.status] ?? '33', r.reason);
+      if (r.fix) note('2', `fix: ${r.fix}`);
+    }
+    gaps(results, inc, 'bundled', denied, { found: foundUnread });
+    if (!counted(results).length) allClear(results, inc, 'bundled', `${inc.safeText} (looked at node and bun on PATH and in ${(inc.nodeDirs ?? []).length + (inc.bunDirs ?? []).length} version-manager places, ${siteDirs.length} site-packages folder${siteDirs.length === 1 ? '' : 's'} and ${(inc.libPlaces ?? []).length} library places${searchable.length || !explicitPaths ? '; pass --paths for a folder elsewhere' : ''})`, looked);
+    note('2', `not covered: ${inc.notCovered}`);
+  }
   if (inc.type === 'workflows') {
     let repos = 0;
     const denied = [...lockedRoots];

@@ -72,7 +72,7 @@ const lines = (out, status) => out.split('\n').filter((l) => new RegExp(`^${stat
 // ---- shown SAFE while EXPOSED ------------------------------------------------------------------------------------------
 
 test('#36 identity headers: a ~/.wgetrc header carrying your email is EXPOSED, exit 1; one carrying nothing of yours is not', () => {
-  // lib/headers.mjs:289 (a wget header is EXPOSED: wget sends it to every site it opens)
+  // lib/headers.mjs:296 (a wget header is EXPOSED: wget sends it to every site it opens)
   const h = fresh('h36-home'), args = ['--incident', 'identity-headers-2026-10', '--paths', fresh('h36-root')];
   put(join(h, '.gitconfig'), `[user]\n\tname = Ada Lovelace\n\temail = ${EMAIL}\n`);
   put(join(h, '.wgetrc'), `header = From: ${EMAIL}\n`);
@@ -93,7 +93,7 @@ test('#36 identity headers: a ~/.wgetrc header carrying your email is EXPOSED, e
 });
 
 test('#8 Windows (not supported): an OVHcloud trace in the temp folder is an EXPOSED line on screen, and no SAFE line, exit 1', () => {
-  // bin/wardlatch.mjs:232 (the trace's screen line, a separate line of code from its --json row)
+  // bin/wardlatch.mjs:235 (the trace's screen line, a separate line of code from its --json row)
   const win = { name: 'win32', platform: 'win32' }, args = ['--incident', 'ovhcloud-cli-2026-10', '--paths', fresh('w8-root')];
   const tmp = fresh('w8-tmp'), trace = join(tmp, 'envchecker-1760900000'); mkdirSync(trace);
   const r = cli(args, { TMPDIR: tmp, TMP: tmp, TEMP: tmp }, win);
@@ -112,7 +112,7 @@ test('#8 Windows (not supported): an OVHcloud trace in the temp folder is an EXP
 // ---- shown SAFE while not checked --------------------------------------------------------------------------------------
 
 test('#9 #10 Windows (not supported): the program checks and the installs check are UNKNOWN lines on screen, never SAFE (exit 2)', () => {
-  // bin/wardlatch.mjs:236 (the program checks' screen line) and :243 (the installs check's), separate lines of code from
+  // bin/wardlatch.mjs:239 (the program checks' screen line) and :247 (the installs check's), separate lines of code from
   // their --json rows
   const win = { name: 'win32', platform: 'win32' }, e = fresh('w9-tmp');
   for (const id of ['php-2026-10', 'ovhcloud-cli-2026-10', 'litellm-2026-10']) {
@@ -130,7 +130,7 @@ test('#9 #10 Windows (not supported): the program checks and the installs check 
 });
 
 test('#5 #6 DOCKER_HOST naming a remote host: the images there are an UNKNOWN line on screen and an UNKNOWN row, never SAFE', () => {
-  // bin/wardlatch.mjs:206 (the row) and :207 (its screen line)
+  // bin/wardlatch.mjs:209 (the row) and :210 (its screen line)
   const eng = fresh('d6-engine'); exe(join(eng, 'docker'), 'exit 0');
   const args = ['--incident', 'litellm-2026-10', '--paths', fresh('d6-root')], env = { PATH: eng, DOCKER_HOST: 'tcp://example.invalid:2375' };
   const t = cli(args, env, { name: 'd6' });
@@ -147,7 +147,7 @@ test('#5 #6 DOCKER_HOST naming a remote host: the images there are an UNKNOWN li
 });
 
 test('#7 as root under sudo, for a person whose home folder is not found: an UNKNOWN "home folder" line on screen, never SAFE', () => {
-  // bin/wardlatch.mjs:221, the second UNKNOWN on the line (the screen line; the first is the --json row)
+  // bin/wardlatch.mjs:224, the second UNKNOWN on the line (the screen line; the first is the --json row)
   const args = ['--incident', 'identity-headers-2026-10', '--paths', fresh('s7-root')];
   const r = cli(args, { SUDO_USER: '..' }, { name: 'root', uid: 0 });
   assert.deepEqual(lines(r.out, 'UNKNOWN'), ['UNKNOWN  home folder'], r.out);
@@ -160,7 +160,7 @@ test('#7 as root under sudo, for a person whose home folder is not found: an UNK
 });
 
 test('#11 #12 OPENSSL_CONF set, so not given to the probes: an UNKNOWN line on screen and an UNKNOWN row of its own', () => {
-  // bin/wardlatch.mjs:276 (the row) and :277 (its screen line)
+  // bin/wardlatch.mjs:280 (the row) and :281 (its screen line)
   const conf = put(join(fresh('e12'), 'openssl.cnf'), '');
   const args = ['--incident', 'emudhra-2026-10', '--no-containers', '--paths', fresh('e12-root')];
   const t = cli(args, { OPENSSL_CONF: conf }, { name: 'e12' });
@@ -176,7 +176,7 @@ test('#11 #12 OPENSSL_CONF set, so not given to the probes: an UNKNOWN line on s
 });
 
 test('#17 a container engine that cannot list its containers: an UNKNOWN "docker containers" line on screen, never SAFE', () => {
-  // bin/wardlatch.mjs:309, the second UNKNOWN on the line (the screen line; the first is the --json row)
+  // bin/wardlatch.mjs:313, the second UNKNOWN on the line (the screen line; the first is the --json row)
   const failing = fresh('c17-fail');
   exe(join(failing, 'docker'), 'echo \'error during connect: Get "http://%2F%2F.%2Fpipe%2Fdocker_engine/v1.47/containers/json": EOF\' >&2\nexit 1');
   const args = ['--incident', 'emudhra-2026-10', '--paths', fresh('c17-root')];
@@ -193,7 +193,7 @@ test('#17 a container engine that cannot list its containers: an UNKNOWN "docker
 });
 
 test('#22 #23 a LiteLLM marker in the temp folder: the EXPOSED row carries the fix in --json, and its screen line has a fix line', () => {
-  // bin/wardlatch.mjs:365 (an EXPOSED install row gets the fix) and :368 (an EXPOSED install line gets its fix line)
+  // bin/wardlatch.mjs:369 (an EXPOSED install row gets the fix) and :372 (an EXPOSED install line gets its fix line)
   const inc = incident('litellm-2026-10'), args = ['--incident', 'litellm-2026-10', '--no-containers', '--paths', fresh('l22-root')];
   const tmp = fresh('l22-tmp'), marker = put(join(tmp, 'remote_code_loader.lock'), '');
   const j = cli([...args, '--json'], { TMPDIR: tmp }, { name: 'l22' });
@@ -209,7 +209,7 @@ test('#22 #23 a LiteLLM marker in the temp folder: the EXPOSED row carries the f
 });
 
 test('#37 GitLab: a version file larger than expected is UNKNOWN; beside a file of the same install that gives a version, it is dropped', () => {
-  // lib/installs.mjs:66 (a version file found but not read is UNKNOWN, and so dropped when its install answered elsewhere)
+  // lib/installs.mjs:69 (a version file found but not read is UNKNOWN, and so dropped when its install answered elsewhere)
   const rule = incident('gitlab-2026-10').versionFiles, root = fresh('v37');
   const manifest = put(join(root, 'opt', 'gitlab', 'version-manifest.txt'), `gitlab-ee 19.5.1\n${'#'.repeat(4 * 1024 * 1024)}\n`);
   assert.deepEqual(checkVersionFiles(rule, { root }).map((r) => [r.status, r.path, r.reason]),

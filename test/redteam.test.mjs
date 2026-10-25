@@ -786,7 +786,7 @@ scenario('--json completeness: every row names its incident, kind and status; ev
   const h = fresh('x9-home'); gitconfigId(h); put(join(h, '.curlrc'), `-H "From: ${EMAIL}"\n`);
   const r = run(['--no-containers', '--paths', root], { PATH: gitbin, HOME: h, TMPDIR: fresh('x9-tmp') }, preload('x9', { online: false }));
   const ids = r.json.incidents.map((i) => i.id);
-  assert.equal(ids.length, 10);
+  assert.equal(ids.length, 11);
   const bad = r.rows.filter((x) => !ids.includes(x.incident) || typeof x.kind !== 'string' || !x.kind || !['SAFE', 'EXPOSED', 'UNKNOWN', 'REVIEW'].includes(x.status)
     || (x.status === 'SAFE' && !(Array.isArray(x.searched) && x.searched.length)) || (x.status === 'UNKNOWN' && !x.reason) || (x.status === 'EXPOSED' && !x.fix));
   assert.deepEqual(bad, []);

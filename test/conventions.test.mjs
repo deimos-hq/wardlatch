@@ -111,13 +111,13 @@ test('layout: UTF-8 text with LF line ends, no tabs, no trailing spaces, a final
 
 test('no test looks in the real home folder: every test file loads test/support/no-real-home.cjs before anything else', () => {
   const tests = FILES.filter((f) => /^test\/[^/]+\.test\.mjs$/.test(f));
-  assert.ok(tests.length >= 19);
+  assert.ok(tests.length >= 23);
   for (const f of tests) assert.match(read(f), /^(?:\/\/.*\n)*import '\.\/support\/no-real-home\.cjs';\n/, f);
 });
 
 test('no test asks where the real home folder is: no test file takes homedir or userInfo from node:os', () => {
   const tests = FILES.filter((f) => /^test\/[^/]+\.test\.mjs$/.test(f));
-  assert.ok(tests.length >= 19);
+  assert.ok(tests.length >= 23);
   for (const f of tests) {
     const src = read(f), code = src.replace(/(^|\s)\/\/.*$/gm, '$1');
     assert.deepEqual(named(src, 'node:os').filter((x) => ['homedir', 'userInfo'].includes(x)), [], f);
