@@ -421,16 +421,24 @@ test('no table and no link is UNKNOWN; a file that can\'t be read (a FIFO, a fol
   assert.equal(judge(join(d, 'not-there')).status, 'UNKNOWN');
 });
 
-test('the reading budget: once a run has read its share, every file left is UNKNOWN, never skipped', () => {
+test('the reading budget: a file is read only if it fits in what is left, so a run reads at most its budget; nothing is skipped', () => {
   const path = fresh('budget-path');
   const a = fixedLib(join(path, 'a', 'node')), b = fixedLib(join(path, 'b', 'node'));
+  const size = readFileSync(a).length;
   const nodeDirs = [join(path, '*', 'node')];
-  const tight = run({ nodeDirs }, { budgetBytes: 10 }).rows;
+  const tight = run({ nodeDirs }, { budgetBytes: Math.floor(size * 1.5) }).rows;
   assert.deepEqual(tight.map((r) => r.file).sort(), [a, b].sort());
-  assert.equal(tight.filter((r) => r.status === 'SAFE').length, 1, 'the first file is read');
+  assert.equal(tight.filter((r) => r.status === 'SAFE').length, 1, 'the first file fits and is read');
   const left = tight.find((r) => r.status !== 'SAFE');
   assert.equal(left.status, 'UNKNOWN'); assert.match(left.reason, /4 GB.*could not be tested/);
+  // a file larger than what is left is not read at all, even the first: the budget is never overshot
+  assert.deepEqual(run({ nodeDirs }, { budgetBytes: size - 1 }).rows.map((r) => r.status), ['UNKNOWN', 'UNKNOWN']);
   assert.deepEqual(run({ nodeDirs }).rows.map((r) => r.status), ['SAFE', 'SAFE'], 'with the budget, both are read');
+  // the small files are read first: a package's copy before a node of the same size, though the node's row prints first
+  const sp = fresh('budget-sp');
+  oldLib(join(sp, 'examplepkg.libs', 'libbrotlidec-1.so.1'));
+  const order = run({ nodeDirs: [a] }, { siteDirs: [sp], budgetBytes: Math.floor(size * 1.5) }).rows;
+  assert.deepEqual(order.map((r) => [r.what, r.status]), [['node', 'UNKNOWN'], ['python', 'EXPOSED']]);
 });
 
 test('RECORD: plain and quoted paths, a quote inside quotes, CRLF, and a line too long to be a path', () => {
@@ -849,6 +857,10 @@ test('a distribution\'s package version speaks only for a file that package inst
   assert.equal(distroVerdict(hand, INC.distro, places).status, 'UNKNOWN');
   // no md5sums to read: UNKNOWN
   assert.equal(distroVerdict(dist, INC.distro, { osRelease: osr, dpkgStatus: status }).status, 'UNKNOWN');
+  // hashing it reads it again, within the run's reading budget: past it, UNKNOWN
+  const over = distroVerdict(dist, INC.distro, places, { left: 10 });
+  assert.equal(over.status, 'UNKNOWN'); assert.match(over.reason, /4 GB/);
+  assert.equal(distroVerdict(dist, INC.distro, places, { left: 1e6 }).status, 'EXPOSED', 'the clean twin: within the budget');
   // two architectures installed (Multi-Arch: same): the one whose list names the file decides
   const i386 = oldLib(join(d, 'usr', 'lib', 'i386-linux-gnu', 'libbrotlidec.so.1.1.0'));
   dpkgStatus(status, stanza('1.1.0-2+deb13u1'), stanza('1.1.0-2+b7', '1.1.0-2', 'i386'));
