@@ -26,7 +26,9 @@ appears.** The workflow never publishes to npm.
 ```bash
 # 4. Publish to npm the exact package the workflow attested, so what is on npm can be verified.
 gh release download vX.Y.Z -p 'wardlatch-X.Y.Z.tgz' -R deimos-hq/wardlatch
-gh attestation verify wardlatch-X.Y.Z.tgz --repo deimos-hq/wardlatch
+gh attestation verify wardlatch-X.Y.Z.tgz --repo deimos-hq/wardlatch \
+  --signer-workflow deimos-hq/wardlatch/.github/workflows/release.yml --source-ref refs/tags/vX.Y.Z \
+  --deny-self-hosted-runners
 npm publish ./wardlatch-X.Y.Z.tgz
 ```
 
@@ -64,13 +66,17 @@ import.
 
 ```bash
 npm pack wardlatch@X.Y.Z                 # downloads wardlatch-X.Y.Z.tgz from npm without installing it
-gh attestation verify wardlatch-X.Y.Z.tgz --repo deimos-hq/wardlatch
+gh attestation verify wardlatch-X.Y.Z.tgz --repo deimos-hq/wardlatch \
+  --signer-workflow deimos-hq/wardlatch/.github/workflows/release.yml --source-ref refs/tags/vX.Y.Z \
+  --deny-self-hosted-runners
 ```
 
 Without GitHub's attestation store, use the bundle attached to the release:
 
 ```bash
-gh attestation verify wardlatch-X.Y.Z.tgz --bundle wardlatch-X.Y.Z.tgz.sigstore.json --repo deimos-hq/wardlatch
+gh attestation verify wardlatch-X.Y.Z.tgz --bundle wardlatch-X.Y.Z.tgz.sigstore.json --repo deimos-hq/wardlatch \
+  --signer-workflow deimos-hq/wardlatch/.github/workflows/release.yml --source-ref refs/tags/vX.Y.Z \
+  --deny-self-hosted-runners
 sha256sum -c SHA256SUMS                  # the files are byte for byte what was published
 ```
 
