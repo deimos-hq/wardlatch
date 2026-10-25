@@ -217,6 +217,29 @@ test('links: @loader_path beside the file, an absolute path; @rpath, @executable
   assert.equal(resolveLink('$ORIGIN/libbrotlidec.so.1', join(d, 'x')), null);
 });
 
+test('a link is followed only when its whole C string names the library: a non-ASCII folder is kept, a cut name is UNKNOWN', () => {
+  const d = fresh('cstr');
+  // a load path through a folder named José: the library there is unfixed; the ASCII tail after the é names a fixed one
+  const real = oldLib(join(d, `José${d}`, 'fixed', 'libbrotlidec.1.dylib'));
+  fixedLib(join(d, 'fixed', 'libbrotlidec.1.dylib'));
+  const prog = bin(join(d, 'prog'), [real]);
+  assert.deepEqual(evidence(prog, M).links, [real], 'the whole path, not its ASCII tail');
+  const r = judge(prog);
+  assert.equal(r.status, 'EXPOSED'); assert.equal(r.via, real);
+  // the clean twin: the library at that path fixed
+  fixedLib(real);
+  assert.equal(judge(prog).status, 'SAFE');
+  // a name that doesn't start right after a NUL, doesn't end at one, or isn't UTF-8: never followed, UNKNOWN
+  const lib = join(d, 'fixed', 'libbrotlidec.1.dylib');
+  for (const [name, raw] of [['after-a-byte', Buffer.from(`\0\x01${lib}\0`)], ['no-nul-after', Buffer.from(`\0${lib}\x01\0`)], ['bad-utf8', Buffer.concat([Buffer.from('\0'), Buffer.from([0xc3]), Buffer.from(`${lib}\0`)])]]) {
+    const c = judge(bin(join(d, name), [raw]));
+    assert.equal(c.status, 'UNKNOWN', name); assert.match(c.reason, /could not be read whole.*could not be tested/, name);
+  }
+  // beside a whole link to a fixed library, a cut name still makes it UNKNOWN: the cut one may be what loads
+  assert.equal(judge(bin(join(d, 'whole-and-cut'), [lib, Buffer.from(`\0\x01${join(d, 'other', 'libbrotlidec.1.dylib')}\0`)])).status, 'UNKNOWN');
+  assert.equal(judge(bin(join(d, 'whole-only'), [lib])).status, 'SAFE', 'the clean twin');
+});
+
 test('ELF sonames: found in the library folders only when the program sets no search path of its own; every candidate must be SAFE', () => {
   const d = fresh('elf'), libs = fresh('elf-lib'), libs2 = fresh('elf-lib2');
   fixedLib(join(libs, 'libbrotlidec.so.1'));
