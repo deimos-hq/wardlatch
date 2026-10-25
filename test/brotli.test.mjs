@@ -1167,6 +1167,50 @@ test('libnode is Node.js\'s own library: a node it decides is told the Node.js f
   assert.deepEqual(rows().map((r) => r.status), ['SAFE', 'SAFE']);
 });
 
+test('a whole link to libnode is followed and judged beside a fixed table or a Brotli library too: an unfixed libnode is EXPOSED, one it can\'t follow UNKNOWN', () => {
+  const d = fresh('ln-beside'), lib = fresh('ln-beside-lib');   // no folder named libnode here: its path would name it
+  const decFixed = fixedLib(join(d, 'brew', 'libbrotlidec.1.dylib')), decOld = oldLib(join(d, 'old', 'libbrotlidec.1.dylib'));
+  const libnode = join(lib, 'libnode.147.dylib'), soname = join(lib, 'libnode.so.108');
+  const besides = [['a fixed 1.1 table', [CONTROL, MARKER]], ['a fixed 1.0 table', [packed(V1010)]], ['a whole link to a fixed Brotli library', [decFixed]]];
+  for (const [what, parts] of besides) {
+    const tag = what.replace(/[^a-z0-9]/gi, '_');
+    const macho = bin(join(d, `macho-${tag}`), [...parts, libnode]), linux = elf(join(d, `elf-${tag}`), [...parts, 'libnode.so.108']);
+    // the real attack: the libnode it links lacks the fix, by its own table or by the Brotli library it links (at
+    // 9242a4f each read SAFE: libnode was looked at only when the file had no table and no Brotli library)
+    for (const [how, make] of [['its own table', (f) => bin(f, [CONTROL, NODE_CONTROL])], ['the Brotli library it links', (f) => bin(f, [NODE_CONTROL, decOld])]]) {
+      make(libnode); make(soname);
+      for (const [form, f] of [['Mach-O, an absolute path', macho], ['ELF, a soname', linux]]) {
+        const r = judge(f, [lib]);
+        assert.equal(r.status, 'EXPOSED', `${what}, ${form}, unfixed by ${how}: ${r.reason}`);
+        assert.match(r.reason, /libnode\.(147\.dylib|so\.108), the library that holds Node\.js's code: (its Brotli decoder lacks the fix|it uses .*old\/libbrotlidec)/, `${what}, ${form}`);
+      }
+    }
+    // the clean twin: libnode fixed, SAFE, its receipt naming libnode
+    bin(libnode, [CONTROL, MARKER, NODE_CONTROL, NODE_MARKER]); bin(soname, [CONTROL, MARKER, NODE_CONTROL, NODE_MARKER]);
+    for (const [f, l] of [[macho, libnode], [linux, soname]]) {
+      const r = judge(f, [lib]);
+      assert.equal(r.status, 'SAFE', `${what}: the clean twin`); assert.ok(r.searched.includes(f) && r.searched.includes(l), r.searched.join(', '));
+    }
+    // a libnode link it can't follow (@rpath, as Homebrew's node links its libnode beside Homebrew's Brotli library) or
+    // can't find: UNKNOWN, never SAFE on the table or the Brotli library beside it
+    for (const ref of ['@rpath/libnode.147.dylib', join(d, 'nowhere', 'libnode.147.dylib')]) {
+      const r = judge(bin(join(d, `ref-${tag}-${ref.length}`), [...parts, ref]));
+      assert.equal(r.status, 'UNKNOWN', `${what}: ${ref}`); assert.match(r.reason, /libnode\.147\.dylib, the library that holds Node\.js's code, which (Wardlatch can't follow|was not found).*could not be tested/, `${what}: ${ref}`);
+    }
+  }
+  // through the command: a node on PATH with a fixed table, linking a libnode whose own decoder lacks the fix, is EXPOSED
+  // and told the Node.js fix for libnode's line (libnode is Node.js's own library)
+  const path = fresh('ln-beside-path');
+  bin(libnode, [CONTROL, NODE_CONTROL, 'nodejs.org/download/release/v24.11.0']);
+  bin(join(path, 'node'), [CONTROL, MARKER, libnode]);
+  const row = () => run({}, { pathEnv: path }).rows.find((r) => r.file === join(path, 'node'));
+  const bad = row();
+  assert.equal(bad.status, 'EXPOSED'); assert.equal(bad.via, libnode); assert.match(bad.reason, /^its own Brotli decoder has the fix, but it uses .*libnode\.147\.dylib/);
+  assert.match(bad.fix, /^Install Node\.js 24\.22\.1 or later, the fixed release for the 24 line/);
+  bin(libnode, [CONTROL, MARKER, NODE_CONTROL, NODE_MARKER, 'nodejs.org/download/release/v24.22.1']);
+  assert.equal(row().status, 'SAFE', 'the clean twin');
+});
+
 test('a distribution\'s node whose libnode is found but can\'t be shown SAFE, or whose loader configuration could not all be read, is UNKNOWN, never SAFE', { skip: process.getuid?.() === 0 && 'root reads everything' }, () => {
   const lib = fresh('libnode-unk-lib'), path = fresh('libnode-unk-path'), conf = fresh('libnode-unk-conf');
   elf(join(path, 'node'), ['libnode.so.108', 'libc.so.6']);

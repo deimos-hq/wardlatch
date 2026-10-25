@@ -69,7 +69,11 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     Brotli package; a distribution library without the marker whose package version isn't in the table or can't be read,
     or that no package installed as it is now. Node's `zlib.constants` names, which contain the marker as a substring,
     never decide.
-  - A distribution's node (a launcher for `libnode`) is judged by its libnode, by the same rules. A compiled `node` on
+  - A whole link to `libnode`, the library that holds Node.js's code (a distribution's node is a launcher for it, and
+    so is Homebrew's), is followed and judged by the same rules, one level, beside a table or a Brotli library too, and
+    must be SAFE as well: a libnode without the fix makes the file EXPOSED, and one it can't follow, find or read makes
+    it "could not be tested". Homebrew's node links `@rpath/libnode.147.dylib`, which Wardlatch doesn't follow, so it
+    reads "could not be tested" though the Brotli library it links has the fix. A compiled `node` on
     `PATH` that shows no sign of Node.js is a REVIEW line only for a version manager's known shim (a link to volta-shim,
     mise, rtx or proto-shim; or a copy of proto-shim, which is how proto writes its shims today, in proto's shims
     folder or carrying proto-shim's own `PROTO_SHIM_NAME`) whose nodes were read, and a script named `node` on `PATH`
