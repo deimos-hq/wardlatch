@@ -26,14 +26,16 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   (`_ERROR_FORMAT_BLOCK_LENGTH_1`), reading bytes only. Trail of Bits' brotli-checker is another tool that finds bundled
   copies; it checks source trees and ELF builds, and Wardlatch points to it.
   - What proves SAFE: the marker exactly as often as the control, in the file or in the Brotli library it links (every
-    candidate, by its real path, named in the receipt), or a Debian package version its table lists as fixed.
+    candidate, by its real path, named in the receipt), or a Debian package version its table lists as fixed, for the very
+    file that package installed (dpkg's md5sums list names it with the same MD5).
   - What is EXPOSED: the control without the marker (or fewer markers than controls), in the file or its library; a
-    Debian package version its table lists as without the fix. A bundled copy with no fixed release yet (Pillow,
+    Debian package built from a source version its table lists as without the fix (every rebuild, such as 1.1.0-2+b7,
+    keeps its source's version), again for the file that package installed. A bundled copy with no fixed release yet (Pillow,
     opencv-python) is EXPOSED, and its fix line says what to do until one ships.
   - What is "could not be tested": the marker without the control; no table and no library it can follow (a stripped
     static copy, `@rpath`, `@executable_path`, `$ORIGIN`, a program with its own `RUNPATH`); a file it can't read, over
     512 MB or past the run's 4 GB reading budget; a distribution library without the marker whose package version isn't
-    in the table or can't be read. Node's `zlib.constants` names, which contain the marker as a substring, never decide.
+    in the table or can't be read, or that no package installed as it is now. Node's `zlib.constants` names, which contain the marker as a substring, never decide.
   - Fix lines follow the by-hand guide (https://www.deimoscore.com/wardlatch/brotli/): the fixed release for each Node.js
     line, "move to 22, 24 or 26" for the end-of-life ones, the library's own update for a node that links one, Bun 1.4.4,
     `Brotli>=1.2.1` and `brotlicffi>=1.2.1.0`, `brew upgrade brotli`, the conda and MacPorts updates, Debian's fixed

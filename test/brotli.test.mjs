@@ -8,6 +8,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, openSync, ftruncateSync, closeSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -504,23 +505,25 @@ test('conda: the Brotli library of every conda home whose Python packages are re
  *  1.1.0-2+b7) names its source version on the Source line; a security build (1.1.0-2+deb13u1) doesn't. */
 const stanza = (version, source = '', arch = 'amd64') => `Package: libbrotli1\nStatus: install ok installed\nPriority: optional\nSection: libs\nInstalled-Size: 785\nMaintainer: Debian Brotli Maintainers <brotli@example.org>\nArchitecture: ${arch}\nMulti-Arch: same\nSource: brotli${source ? ` (${source})` : ''}\nVersion: ${version}\nDepends: libc6 (>= 2.29)\nDescription: library implementing brotli encoder and decoder (shared libraries)\n Brotli is a generic-purpose lossless compression algorithm.\n`;
 const dpkgStatus = (file, ...stanzas) => writeFileSync(file, `Package: zlib1g\nStatus: install ok installed\nArchitecture: amd64\nVersion: 1:1.3.dfsg+really1.3.1-1+b1\n\n${stanzas.join('\n')}\n`);
+/** dpkg's md5sums list for libbrotli1 in `info`, naming each file (by its real path) with its MD5, as dpkg writes it. */
+const md5sums = (info, files, arch = 'amd64') => { mkdirSync(info, { recursive: true }); writeFileSync(join(info, `libbrotli1:${arch}.md5sums`), files.map((f) => `${createHash('md5').update(readFileSync(f)).digest('hex')}  ${realpathSync(f).slice(1)}\n`).join('')); };
 
 test('a distribution\'s library without the marker: its own package version decides, by exact string; anything else is UNKNOWN', () => {
   const d = fresh('distro'), path = fresh('distro-path');
   const sys = oldLib(join(d, 'sys', 'libbrotlidec.so.1'));
-  const status = join(d, 'status'), osr = join(d, 'os-release'), apk = join(d, 'installed');
+  const status = join(d, 'status'), osr = join(d, 'os-release'), apk = join(d, 'installed'), info = join(d, 'info');
   writeFileSync(osr, 'ID=debian\nVERSION_ID="13"\nVERSION_CODENAME=trixie\n');
-  const dpkg = (...st) => dpkgStatus(status, ...st);
+  const dpkg = (...st) => { dpkgStatus(status, ...st); md5sums(info, [sys]); };
   const libPlaces = [{ pattern: sys, label: 'the system\'s libbrotlidec', system: true }];
   // a node that links the system library (Debian's own nodejs does), by its path
   bin(join(path, 'node'), [NODE_CONTROL, NODE_MARKER, 'nodejs.org/download/release/v18.19.0', sys]);
   const realSys = realpathSync(sys);
-  const go = (places = { osRelease: osr, dpkgStatus: status }) => { const { rows } = run({ libPlaces }, { pathEnv: path, places }); return { lib: rows.find((r) => r.file === realSys), node: rows.find((r) => r.file === join(path, 'node')) }; };
+  const go = (places = { osRelease: osr, dpkgStatus: status, dpkgInfo: info }) => { const { rows } = run({ libPlaces }, { pathEnv: path, places }); return { lib: rows.find((r) => r.file === realSys), node: rows.find((r) => r.file === join(path, 'node')) }; };
   // Debian 13's security build
   dpkg(stanza('1.1.0-2+deb13u1'));
   let { lib, node } = go();
   assert.equal(lib.status, 'SAFE'); assert.match(lib.reason, /Debian's fixed package libbrotli1 1\.1\.0-2\+deb13u1 \(DSA-6582-1/); assert.equal(lib.label, 'libbrotli1 1.1.0-2+deb13u1');
-  assert.deepEqual(lib.searched, [realSys, `${status}: libbrotli1 1.1.0-2+deb13u1`]);
+  assert.deepEqual(lib.searched, [realSys, `${status}: libbrotli1 1.1.0-2+deb13u1`, `${join(info, 'libbrotli1:amd64.md5sums')}: ${realSys}, with the same MD5`]);
   assert.equal(node.status, 'SAFE', 'a program linking it is judged the same way'); assert.ok(node.searched.includes(`${status}: libbrotli1 1.1.0-2+deb13u1`));
   // stock trixie, as dpkg records it: the binNMU 1.1.0-2+b7, built from the unfixed source 1.1.0-2
   dpkg(stanza('1.1.0-2+b7', '1.1.0-2'));
@@ -558,15 +561,50 @@ test('a distribution\'s library without the marker: its own package version deci
   writeFileSync(osr, 'ID=debian\nVERSION_ID="13"\n');
   for (const st of [stanza('1.1.0-2+deb13u2'), stanza('1.1.0-2+deb13u1+b1', '1.1.0-2+deb13u1'), stanza('1.1.0-2+b7', '1.1.0-2.1')]) {
     dpkg(st);
-    assert.equal(distroVerdict(sys, INC.distro, { osRelease: osr, dpkgStatus: status }).status, 'UNKNOWN', st.split('\n').filter((l) => /^(Source|Version)/.test(l)).join(' '));
+    assert.equal(distroVerdict(sys, INC.distro, { osRelease: osr, dpkgStatus: status, dpkgInfo: info }).status, 'UNKNOWN', st.split('\n').filter((l) => /^(Source|Version)/.test(l)).join(' '));
   }
   // Debian 12 as it really is: Brotli 1.0's error texts have no _ERROR_FORMAT_ prefix (BrotliDecoderErrorString returns
   // the bare name before 1.1.0), so no table is seen and the package record is not reached: UNKNOWN, never SAFE
   const old10 = bin(join(d, 'sys12', 'libbrotlidec.so.1'), ['SUCCESS', 'BLOCK_LENGTH_1', 'UNREACHABLE']);
   writeFileSync(osr, 'ID=debian\nVERSION_ID="12"\nVERSION_CODENAME=bookworm\n');
   dpkg(stanza('1.0.9-2+deb12u1'));
-  const r12 = run({ libPlaces: [{ pattern: old10, label: 'the system\'s libbrotlidec', system: true }] }, { places: { osRelease: osr, dpkgStatus: status } }).rows[0];
+  md5sums(info, [old10]);
+  const r12 = run({ libPlaces: [{ pattern: old10, label: 'the system\'s libbrotlidec', system: true }] }, { places: { osRelease: osr, dpkgStatus: status, dpkgInfo: info } }).rows[0];
   assert.equal(r12.status, 'UNKNOWN'); assert.match(r12.reason, /could not be tested/);
+});
+
+test('a distribution\'s package version speaks only for a file that package installed, as dpkg installed it', () => {
+  const d = fresh('owned'), info = join(d, 'info'), status = join(d, 'status'), osr = join(d, 'os-release');
+  writeFileSync(osr, 'ID=debian\nVERSION_ID="13"\n');
+  const places = { osRelease: osr, dpkgStatus: status, dpkgInfo: info };
+  const dist = oldLib(join(d, 'usr', 'lib', 'x86_64-linux-gnu', 'libbrotlidec.so.1.1.0'));
+  // a hand-built 1.2.0 (`make install` with prefix /usr) beside it, at a system place: dpkg says the fixed package is
+  // installed, but it never installed this file, so its version says nothing about it
+  const hand = oldLib(join(d, 'usr', 'lib', 'x86_64-linux-gnu', 'libbrotlidec.so.1.2.0'));
+  dpkgStatus(status, stanza('1.1.0-2+deb13u1')); md5sums(info, [dist]);
+  assert.equal(distroVerdict(dist, INC.distro, places).status, 'SAFE', 'the file dpkg installed, unchanged');
+  const h = distroVerdict(hand, INC.distro, places);
+  assert.equal(h.status, 'UNKNOWN'); assert.match(h.reason, /dpkg's records don't list it as a file of libbrotli1.*could not be tested/);
+  // through a program that links it by soname, and as the system library row: never "Debian's fixed package"
+  const libPlaces = [{ pattern: hand, label: 'the system\'s libbrotlidec', system: true }];
+  assert.equal(run({ libPlaces }, { places }).rows[0].status, 'UNKNOWN');
+  // the file dpkg installed, changed since (its MD5 differs): UNKNOWN
+  oldLib(dist); writeFileSync(dist, Buffer.concat([readFileSync(dist), Buffer.from('changed')]));
+  const c = distroVerdict(dist, INC.distro, places);
+  assert.equal(c.status, 'UNKNOWN'); assert.match(c.reason, /not the file libbrotli1 installed/);
+  // the same for an unfixed package: only the file it installed is EXPOSED by its version
+  oldLib(dist); dpkgStatus(status, stanza('1.1.0-2+b7', '1.1.0-2')); md5sums(info, [dist]);
+  assert.equal(distroVerdict(dist, INC.distro, places).status, 'EXPOSED');
+  assert.equal(distroVerdict(hand, INC.distro, places).status, 'UNKNOWN');
+  // no md5sums to read: UNKNOWN
+  assert.equal(distroVerdict(dist, INC.distro, { osRelease: osr, dpkgStatus: status }).status, 'UNKNOWN');
+  // two architectures installed (Multi-Arch: same): the one whose list names the file decides
+  const i386 = oldLib(join(d, 'usr', 'lib', 'i386-linux-gnu', 'libbrotlidec.so.1.1.0'));
+  dpkgStatus(status, stanza('1.1.0-2+deb13u1'), stanza('1.1.0-2+b7', '1.1.0-2', 'i386'));
+  md5sums(info, [dist]); md5sums(info, [i386], 'i386');
+  assert.equal(distroVerdict(dist, INC.distro, places).status, 'SAFE');
+  const r = distroVerdict(i386, INC.distro, places);
+  assert.equal(r.status, 'EXPOSED'); assert.equal(r.label, 'libbrotli1 1.1.0-2+b7');
 });
 
 test('words: every UNKNOWN says "could not be tested", every EXPOSED has a fix, every SAFE names what it read', () => {
