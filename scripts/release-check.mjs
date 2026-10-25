@@ -4,7 +4,7 @@
 // The release gate (docs/RELEASING.md, "Before you cut a release"). Run it on the release commit before tagging:
 //
 //   npm run release-check                 # on the maintainer's machine: everything below
-//   node scripts/release-check.mjs --ci   # in .github/workflows/release.yml: everything but 4
+//   node scripts/release-check.mjs --ci   # in .github/workflows/release.yml: 4 is only "on main"
 //
 // It refuses (exit 1) unless:
 //   1. package.json's version has a dated section at the top of CHANGELOG.md, right under an empty "Unreleased";
@@ -17,7 +17,8 @@
 //      (bin/, lib/, fix/, test/, scripts/, .github/, and package.json apart from its version) changed after that
 //      commit, counting a rename as a deletion and an addition: the reviews are of the code being released;
 //   3. the class audit names every advisory in CHANGELOG.md, so each past advisory's kind of mistake was looked for again;
-//   4. (not with --ci) the working tree is clean, on main, at origin/main;
+//   4. the working tree is clean, on main, at origin/main; with --ci (a tag's checkout), the tagged commit is on
+//      origin/main;
 //   5. every check GitHub ran on this commit passed, every page of them, including the critical-mutant gate and the
 //      corpus report (gh reads them: signed in, or GH_TOKEN). With --ci the commit is GITHUB_SHA, which must be HEAD,
 //      and the jobs of this workflow run itself (GITHUB_RUN_ID), still running, are left out.
@@ -125,8 +126,18 @@ if (!ghsas.length) fail('CHANGELOG.md names no advisory: the pattern no longer m
 else if (missing.length) fail(`the class audit doesn't name ${missing.length} of the ${ghsas.length} advisories: ${missing.join(', ')}`);
 else ok(`the class audit names all ${ghsas.length} advisories in CHANGELOG.md`);
 
-// 4. the machine this is released from
-if (!CI) {
+// 4. the machine this is released from; in the release workflow, that the tagged commit is on main (check runs from a
+// pull request are attached to its head commit though they tested a merge commit: a commit never merged was never
+// tested as itself)
+if (CI) {
+  let main = '';
+  try { main = git('rev-parse', '--verify', '--quiet', 'refs/remotes/origin/main'); } catch { /* no origin/main */ }
+  let onMain = false;
+  if (main) try { git('merge-base', '--is-ancestor', head, main); onMain = true; } catch { /* not an ancestor */ }
+  if (!main) fail('no origin/main here to tell whether the tagged commit is on main (the checkout needs fetch-depth: 0)');
+  else if (!onMain) fail(`${head.slice(0, 12)} is not on main (origin/main): tag only a commit that is on main`);
+  else ok(`${head.slice(0, 7)} is on main`);
+} else {
   if (git('status', '--porcelain')) fail('the working tree has changes: release from a clean checkout');
   else ok('the working tree is clean');
   const branch = git('rev-parse', '--abbrev-ref', 'HEAD');

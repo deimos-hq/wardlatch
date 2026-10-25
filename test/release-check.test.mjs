@@ -8,7 +8,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, realpathSync, renameSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, realpathSync, renameSync, chmodSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -60,7 +60,14 @@ if [ -n "$p" ] && [ -n "$s" ]; then cat '${join(bin, 'all.json')}'; else cat '${
   chmodSync(join(bin, 'gh'), 0o755);
   return { PATH: `${bin}:${process.env.PATH}` };
 };
-const gate = (dir, { ci = true, env = {} } = {}) => {
+// the release workflow's checkout: HEAD is on main at the origin (a bare repository beside it)
+const pushMain = (dir) => {
+  const origin = `${dir}-origin.git`;
+  if (!existsSync(origin)) { git(base, 'init', '-q', '--bare', origin); git(dir, 'remote', 'add', 'origin', origin); }
+  git(dir, 'push', '-q', '-f', 'origin', 'HEAD:refs/heads/main'); git(dir, 'fetch', '-q', 'origin');
+};
+const gate = (dir, { ci = true, env = {}, onMain = true } = {}) => {
+  if (ci && onMain) pushMain(dir);
   const e = { ...ENV, ...(env.PATH ? {} : ghStub(dir)), ...env };
   for (const k of ['GITHUB_SHA', 'GITHUB_RUN_ID', 'GITHUB_REPOSITORY', 'GH_TOKEN', 'GITHUB_TOKEN']) if (!(k in env)) delete e[k];
   const r = spawnSync(process.execPath, ['scripts/release-check.mjs', ...(ci ? ['--ci'] : [])], { cwd: dir, env: e, encoding: 'utf8' });
@@ -348,6 +355,21 @@ test('GitHub\'s checks are read page by page: a required check, or a failed one,
   dir = repo();
   r = gate(dir, { ci: false, env: full(dir, { pages: [PASSING, [{ name: 'analyze', status: 'completed', conclusion: 'failure' }]] }) });
   assert.equal(r.code, 1, r.out); assert.match(r.out, /checks not passed[^\n]*analyze \(failure\)/);
+});
+
+test('--ci: the tagged commit must be on main: one on a branch never merged, or with no origin/main to tell, is refused; one behind main passes', () => {
+  let dir = repo();
+  pushMain(dir);
+  git(dir, 'checkout', '-q', '-b', 'pr-head'); put(dir, 'NOTES.md', 'docs only\n'); commit(dir, 'not merged');
+  let r = gate(dir, { onMain: false });
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /[0-9a-f]{12} is not on main \(origin\/main\)/); assert.doesNotMatch(r.out, /READY to tag/);
+  git(dir, 'checkout', '-q', 'main'); put(dir, 'NOTES.md', 'later\n'); commit(dir, 'later docs'); pushMain(dir);
+  git(dir, 'checkout', '-q', '--detach', 'HEAD~1');
+  r = gate(dir, { onMain: false });
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /is on main/);
+  dir = repo();
+  r = gate(dir, { onMain: false });
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /no origin\/main here/);
 });
 
 test('--ci (the release workflow) reads GitHub\'s checks too, for GITHUB_SHA, leaving out only this workflow run\'s own jobs', () => {
