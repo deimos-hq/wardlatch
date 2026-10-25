@@ -338,12 +338,16 @@ test('ELF sonames: found in the library folders only when the program sets no se
 test('ld.so.conf: the folders it names are searched too, so a library only the loader\'s configuration points at still decides', () => {
   const d = fresh('ldso'), extra = fresh('ldso-extra'), extra2 = fresh('ldso-extra2'), std = fresh('ldso-std');
   mkdirSync(join(d, 'ld.so.conf.d'));
-  writeFileSync(join(d, 'ld.so.conf'), 'include /etc/ld.so.conf.d/*.conf\n# a comment\n');
+  // the include line as Fedora writes it (relative to the file); Debian's names /etc/ld.so.conf.d/*.conf, the same folder
+  writeFileSync(join(d, 'ld.so.conf'), 'include ld.so.conf.d/*.conf\n# a comment\n');
   writeFileSync(join(d, 'ld.so.conf.d', 'a.conf'), `# extra\n${extra} # trailing comment\n\n`);
   writeFileSync(join(d, 'ld.so.conf.d', 'b.conf'), `${extra2}:/also/this\n`);
   writeFileSync(join(d, 'ld.so.conf.d', 'notes.txt'), '/not/this\n');
   const places = { ldSoConf: join(d, 'ld.so.conf'), ldSoConfDir: join(d, 'ld.so.conf.d') };
-  assert.deepEqual(ldSoConfDirs(places).sort(), [extra, extra2, '/also/this'].sort());
+  assert.deepEqual(ldSoConfDirs(places).dirs.sort(), [extra, extra2, '/also/this'].sort());
+  assert.deepEqual(ldSoConfDirs(places).gaps, []);
+  writeFileSync(join(d, 'ld.so.conf'), `include ${join(d, 'ld.so.conf.d')}/*.conf\n`);
+  assert.deepEqual(ldSoConfDirs(places).gaps, [], 'the same folder by its absolute path');
   // a program linking the soname: the standard folder's copy is fixed, the one the configuration adds is not
   fixedLib(join(std, 'libbrotlidec.so.1')); oldLib(join(extra, 'libbrotlidec.so.1'));
   const path = fresh('ldso-path');
@@ -352,6 +356,53 @@ test('ld.so.conf: the folders it names are searched too, so a library only the l
   assert.equal(at().status, 'EXPOSED');
   fixedLib(join(extra, 'libbrotlidec.so.1'));
   assert.equal(at().status, 'SAFE', 'the clean twin');
+});
+
+test('the loader\'s configuration: anything not read (an include elsewhere, a file or folder it can\'t read, too many files) makes a soname UNKNOWN', { skip: process.getuid?.() === 0 && 'root reads everything' }, () => {
+  const d = fresh('ldgap'), std = fresh('ldgap-std'), path = fresh('ldgap-path');
+  mkdirSync(join(d, 'ld.so.conf.d'));
+  const places = { ldSoConf: join(d, 'ld.so.conf'), ldSoConfDir: join(d, 'ld.so.conf.d') };
+  fixedLib(join(std, 'libbrotlidec.so.1'));
+  elf(join(path, 'node'), [NODE_CONTROL, 'libbrotlidec.so.1']);
+  const at = (p = places, sonameDirs = [std]) => run({}, { pathEnv: path, sonameDirs, places: p }).rows.find((r) => r.file === join(path, 'node'));
+  writeFileSync(join(d, 'ld.so.conf'), 'include ld.so.conf.d/*.conf\n');
+  assert.equal(at().status, 'SAFE', 'the clean twin: everything read');
+  // an include naming another folder is not followed: the loader may take its copy from there
+  writeFileSync(join(d, 'ld.so.conf'), 'include ld.so.conf.d/*.conf\ninclude /opt/vendor/ld.conf.d/*.conf\n');
+  const inc = at();
+  assert.equal(inc.status, 'UNKNOWN'); assert.match(inc.reason, /what the dynamic loader is told to search could not all be read \(.*include \/opt\/vendor.*could not be tested/);
+  writeFileSync(join(d, 'ld.so.conf'), 'include ld.so.conf.d/*.conf\n');
+  // a configuration file, or the conf.d folder, that can't be read
+  writeFileSync(join(d, 'ld.so.conf.d', 'vendor.conf'), '/opt/vendor/lib\n');
+  for (const f of [join(d, 'ld.so.conf.d', 'vendor.conf'), join(d, 'ld.so.conf'), join(d, 'ld.so.conf.d')]) {
+    execFileSync('chmod', ['000', f]);
+    try { assert.equal(at().status, 'UNKNOWN', f); } finally { execFileSync('chmod', [f.endsWith('.d') ? '755' : '644', f]); }
+  }
+  // more .conf files than are read
+  for (let i = 0; i < 257; i++) writeFileSync(join(d, 'ld.so.conf.d', `x${String(i).padStart(3, '0')}.conf`), '\n');
+  assert.equal(at().status, 'UNKNOWN');
+  // a library folder that can't be reached (its parent is closed): its copy could be the one that loads
+  const locked = fresh('ldgap-locked'), lockedLib = join(locked, 'lib');
+  oldLib(join(lockedLib, 'libbrotlidec.so.1'));
+  execFileSync('chmod', ['000', locked]);
+  try { assert.equal(at({}, [std, lockedLib]).status, 'UNKNOWN'); } finally { execFileSync('chmod', ['755', locked]); }
+  assert.equal(at({}, [std, lockedLib]).status, 'EXPOSED', 'once it can be read, its unfixed copy decides');
+  assert.equal(at({}, [std]).status, 'SAFE');
+  // and a pattern's folder that can't be listed (/usr/lib/*-linux-gnu under a closed /usr/lib)
+  execFileSync('chmod', ['000', locked]);
+  try { assert.equal(at({}, [std, join(locked, '*')]).status, 'UNKNOWN'); } finally { execFileSync('chmod', ['755', locked]); }
+});
+
+test('musl\'s loader path file: its folders are searched too', () => {
+  const d = fresh('musl'), std = fresh('musl-std'), extra = fresh('musl-extra'), path = fresh('musl-path');
+  fixedLib(join(std, 'libbrotlidec.so.1')); oldLib(join(extra, 'libbrotlidec.so.1'));
+  writeFileSync(join(d, 'ld-musl-x86_64.path'), `/lib:/usr/local/lib\n${extra}\n`);
+  elf(join(path, 'node'), [NODE_CONTROL, 'libbrotlidec.so.1']);
+  const at = (places) => run({}, { pathEnv: path, sonameDirs: [std], places }).rows.find((r) => r.file === join(path, 'node'));
+  assert.equal(at({ ldMuslPath: join(d, 'ld-musl-*.path') }).status, 'EXPOSED');
+  assert.equal(at({}).status, 'SAFE', 'without it, only the standard folder');
+  fixedLib(join(extra, 'libbrotlidec.so.1'));
+  assert.equal(at({ ldMuslPath: join(d, 'ld-musl-*.path') }).status, 'SAFE', 'the clean twin');
 });
 
 test('no table and no link is UNKNOWN; a file that can\'t be read (a FIFO, a folder, too large) is UNKNOWN, never SAFE', () => {
@@ -835,6 +886,8 @@ test('bounded: a file full of "libbrotlidec" and printable bytes is read in time
   const conf = join(fresh('bounded-conf'), 'x.conf');
   writeFileSync(conf, `/${' '.repeat(60000)}/x\n`);
   const t2 = Date.now(); ldSoConfDirs({ ldSoConf: conf }); assert.ok(Date.now() - t2 < 500);
+  writeFileSync(conf, `include${' '.repeat(60000)}x\n`);
+  const t3 = Date.now(); ldSoConfDirs({ ldSoConf: conf }); assert.ok(Date.now() - t3 < 500);
 });
 
 // ---- the command, end to end ----------------------------------------------------------------------------------------

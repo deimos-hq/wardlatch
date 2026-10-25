@@ -33,7 +33,8 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     keeps its source's version), again for the file that package installed. A bundled copy with no fixed release yet (Pillow,
     opencv-python) is EXPOSED, and its fix line says what to do until one ships.
   - What is "could not be tested": the marker without the control; no table and no library it can follow (a stripped
-    static copy, `@rpath`, `@executable_path`, `$ORIGIN`, a program with its own `RUNPATH`); a file it can't read, over
+    static copy, `@rpath`, `@executable_path`, `$ORIGIN`, a program with its own `RUNPATH`, a soname when the loader's
+    configuration or a library folder couldn't all be read); a file it can't read, over
     512 MB or past the run's 4 GB reading budget; a distribution library without the marker whose package version isn't
     in the table or can't be read, or that no package installed as it is now. Node's `zlib.constants` names, which contain the marker as a substring, never decide.
   - A distribution's node (a launcher for `libnode`) is judged by its libnode, by the same rules. A compiled `node` on

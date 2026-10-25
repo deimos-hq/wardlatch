@@ -429,7 +429,7 @@ for (const inc of chosen) {
       results.push({ incident: inc.id, kind: 'bundled', status: 'UNKNOWN', reason }); print('UNKNOWN', 'folders given with --paths'); note('33', reason);
     }
     const siteDirs = sitePackagesDirs({ roots: searchable, denied, found: foundUnread });
-    const places = { osRelease: '/etc/os-release', dpkgStatus: '/var/lib/dpkg/status', dpkgInfo: '/var/lib/dpkg/info', apkInstalled: '/lib/apk/db/installed', ldSoConf: '/etc/ld.so.conf', ldSoConfDir: '/etc/ld.so.conf.d' };
+    const places = { osRelease: '/etc/os-release', dpkgStatus: '/var/lib/dpkg/status', dpkgInfo: '/var/lib/dpkg/info', apkInstalled: '/lib/apk/db/installed', ldSoConf: '/etc/ld.so.conf', ldSoConfDir: '/etc/ld.so.conf.d', ldMuslPath: '/etc/ld-musl-*.path' };
     const { rows, looked } = checkBundled(inc, { execPath: process.execPath, siteDirs, denied, places });
     for (const r of rows) {
       results.push({ incident: inc.id, kind: 'bundled', ...r });
