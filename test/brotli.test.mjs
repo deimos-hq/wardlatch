@@ -304,6 +304,27 @@ test('a link is followed only when its whole C string names the library: a non-A
   assert.equal(judge(bin(join(d, 'whole-only'), [lib])).status, 'SAFE', 'the clean twin');
 });
 
+test('a load path longer than the bytes kept before the library\'s name is incomplete: UNKNOWN beside a fixed table too, never dropped', () => {
+  const d = fresh('long-path'), libDir = fresh('long-path-lib');
+  // more than the 1024 bytes kept before "libbrotlidec": its start was never seen, so where it leads is not known
+  const long = (name) => `/${Array.from({ length: 5 }, (_, i) => String.fromCharCode(97 + i).repeat(250)).join('/')}/${name}`;
+  for (const [what, f] of [['Mach-O, with a table', bin(join(d, 'macho'), [CONTROL, MARKER, long('libbrotlidec.1.dylib')])],
+    ['ELF DT_NEEDED, with a table', elf(join(d, 'elf'), [CONTROL, MARKER, long('libbrotlidec.so.1')])],
+    ['no table', bin(join(d, 'bare'), [long('libbrotlidec.1.dylib')])]]) {
+    const r = judge(f);
+    assert.equal(r.status, 'UNKNOWN', what); assert.match(r.reason, /could not be read whole.*could not be tested/, what);
+  }
+  // a distribution's node: a libnode path past the bytes kept, beside a libnode name that is whole
+  elf(join(libDir, 'libnode.so.108'), [CONTROL, MARKER]);
+  const node = judge(elf(join(d, 'node'), ['libnode.so.108', long('libnode.so.109')]), [libDir]);
+  assert.equal(node.status, 'UNKNOWN'); assert.match(node.reason, /libnode.*could not be read whole/);
+  // clean twins: a long path that fits in the bytes kept is whole and followed; long text that isn't a path is nothing
+  const near = fixedLib(join(d, 'x'.repeat(200), 'y'.repeat(200), 'z'.repeat(200), 'libbrotlidec.1.dylib'));
+  assert.equal(judge(bin(join(d, 'macho-near'), [CONTROL, MARKER, near])).status, 'SAFE');
+  assert.equal(judge(bin(join(d, 'macho-text'), [CONTROL, MARKER, `${'w'.repeat(1300)} uses libbrotlidec to decode`])).status, 'SAFE');
+  assert.equal(judge(elf(join(d, 'node-twin'), ['libnode.so.108']), [libDir]).status, 'SAFE');
+});
+
 test('ELF sonames: found in the library folders only when the program sets no search path of its own; every candidate must be SAFE', () => {
   const d = fresh('elf'), libs = fresh('elf-lib'), libs2 = fresh('elf-lib2');
   fixedLib(join(libs, 'libbrotlidec.so.1'));
