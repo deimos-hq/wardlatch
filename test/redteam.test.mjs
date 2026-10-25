@@ -731,9 +731,11 @@ scenario('sudo: the person\'s own home is searched, not root\'s (SUDO_USER\'s ~/
   assert.ok(r.rows.some((x) => x.status === 'EXPOSED'), show(r)); assert.equal(r.code, 1);
 });
 
-scenario('owners: a locked folder of another person (uid 502) is UNKNOWN; one root owns is a review line and the run passes', { skip: AS_ROOT && 'root' }, () => {
+// a person's uid on this system: macOS counts people from 501, Linux from 1000 (lib/owners.mjs isPersonUid)
+const PERSON_UID = DARWIN ? 502 : 1502;
+scenario(`owners: a locked folder of another person (uid ${PERSON_UID}) is UNKNOWN; one root owns is a review line and the run passes`, { skip: AS_ROOT && 'root' }, () => {
   const a = fresh('x4a'), theirs = join(a, 'projects'); mkdirSync(theirs); lock(theirs);
-  const r1 = run(['--incident', 'github-actions-2026-10', '--paths', a], { PATH: '/usr/bin:/bin' }, preload('x4a', { uids: { [theirs]: 502 } }));
+  const r1 = run(['--incident', 'github-actions-2026-10', '--paths', a], { PATH: '/usr/bin:/bin' }, preload('x4a', { uids: { [theirs]: PERSON_UID } }));
   assert.ok(unknowns(r1).some((x) => x.path === theirs), show(r1)); assert.equal(r1.code, 2);
   const b = fresh('x4b'), svc = join(b, 'pgdata'); mkdirSync(svc); lock(svc);
   const r2 = run(['--incident', 'github-actions-2026-10', '--paths', b], { PATH: '/usr/bin:/bin' }, preload('x4b', { uids: { [svc]: 0 } }));
