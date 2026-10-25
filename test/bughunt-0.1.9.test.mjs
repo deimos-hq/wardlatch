@@ -12,6 +12,7 @@ import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSy
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checked } from './support/output-checks.mjs';
 
 const WL = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(WL, 'bin', 'wardlatch.mjs');
@@ -85,13 +86,15 @@ require('node:module').syncBuiltinESMExports();
   return ['--require', p];
 };
 
-const spawnCli = (args, env = {}, nodeArgs = [], { cwd = dir, json = true } = {}) => spawnSync(process.execPath, [...nodeArgs, BIN, ...args, ...(json ? ['--json'] : [])],
-  { encoding: 'utf8', env: { HOME: home, PATH: fresh('empty-path'), LANG: 'C', ...env }, cwd, timeout: 180000, killSignal: 'SIGKILL', maxBuffer: 64 * 1024 * 1024 });
+const spawnCli = (args, env = {}, nodeArgs = [], { cwd = dir, json = true } = {}) => checked([...args, ...(json ? ['--json'] : [])], spawnSync(process.execPath, [...nodeArgs, BIN, ...args, ...(json ? ['--json'] : [])],
+  { encoding: 'utf8', env: { HOME: home, PATH: fresh('empty-path'), LANG: 'C', ...env }, cwd, timeout: 180000, killSignal: 'SIGKILL', maxBuffer: 64 * 1024 * 1024 }));
 const run = (args, env = {}, nodeArgs = [], opts = {}) => {
   const r = spawnCli(args, env, nodeArgs, opts);
   let j; try { j = JSON.parse(r.stdout); } catch { assert.fail(`not JSON (exit ${r.status}, signal ${r.signal}): ${String(r.stderr).slice(0, 600)}`); }
   return { code: r.status, rows: j.results, json: j };
 };
+// what the command prints on screen (no --json); spawnCli checks T0 and T1 on it
+const text = (args, env = {}, nodeArgs = [], opts = {}) => spawnCli(args, env, nodeArgs, { ...opts, json: false }).stdout;
 // real git, no preload (only git runs in these incidents)
 const sys = (args, env = {}) => run(args, { PATH: '/usr/bin:/bin', ...env });
 const unknowns = (r) => r.rows.filter((x) => x.status === 'UNKNOWN');
@@ -452,6 +455,9 @@ test('wordpress: core found with no content folder anywhere it is looked for is 
   put(join(root, 'custom', 'core', 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";');
   const r = wp(root);
   assert.ok(unknowns(r).some((x) => /plugins/.test(x.reason)), show(r)); assert.equal(r.code, 2);
+  // and on screen: the line for it is UNKNOWN too (bin/wardlatch.mjs:460, a separate line from the row)
+  const t = text(['--incident', 'wordpress-plugins-2026-10', '--paths', root]);
+  assert.ok(t.split('\n').some((l) => /^UNKNOWN {2}\S.* · plugins folder$/.test(l)), t);
 });
 
 test('wordpress: a site that is found and has none of the listed plugins says so, not "no WordPress installs found"', () => {
@@ -545,6 +551,9 @@ test('keys: a deleted tracked file whose copy git no longer has is UNKNOWN, neve
   rmSync(join(app, 'gone.txt')); rmSync(join(app, '.git', 'objects', blob.slice(0, 2), blob.slice(2)));
   const r = keys(root);
   assert.ok(unknowns(r).some((x) => x.file === 'gone.txt'), show(r)); assert.equal(r.code, 2);
+  // and on screen: the line for it is UNKNOWN too (bin/wardlatch.mjs:444, a separate line from the row)
+  const t = text(['--incident', 'committed-keys-2026-10', '--paths', root], { PATH: '/usr/bin:/bin', HOME: fresh('k-home') });
+  assert.ok(t.split('\n').includes(`UNKNOWN  ${join(app, 'gone.txt')}`), t);
 });
 
 test('keys: 3,000 deleted tracked files are read in one batch, in seconds', () => {
@@ -811,6 +820,9 @@ test('trust (Linux): the distribution\'s CA bundle with neither curl nor python3
   const d = fresh('o2'); nodeRt(d);
   const r = trust({ PATH: d }, linux('o2'));
   assert.ok(unknowns(r).some((x) => x.system && /neither curl nor python3/.test(x.reason)), show(r)); assert.equal(r.code, 2);
+  // and on screen: the line for it is UNKNOWN too (bin/wardlatch.mjs:297, a separate line from the row)
+  const t = text(['--incident', 'emudhra-2026-10', '--no-containers', '--paths', fresh('trust-root')], { PATH: d }, linux('o2'));
+  assert.ok(t.split('\n').includes('UNKNOWN  Linux system trust store (/etc/ssl/certs/ca-certificates.crt)'), t);
   const d2 = fresh('o2b'); nodeRt(d2); pythonRt(d2);
   const r2 = trust({ PATH: d2 }, linux('o2b'));
   assert.ok(!r2.rows.some((x) => x.system && x.status === 'UNKNOWN'), show(r2));

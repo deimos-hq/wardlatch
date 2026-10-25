@@ -18,6 +18,7 @@ import { scanText } from '../lib/secrets.mjs';
 import { execFileSync } from 'node:child_process';
 import { discover } from '../lib/discover.mjs';
 import { fakeHome } from './support/fake-home.cjs';
+import { checked } from './support/output-checks.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
@@ -55,7 +56,7 @@ require('node:module').syncBuiltinESMExports();
 `);
   return p;
 };
-const spawnCli = (args, env = {}, nodeArgs = []) => spawnSync(process.execPath, [...nodeArgs, BIN, ...args, '--json'], { encoding: 'utf8', env: { HOME: home, PATH: fresh('empty-path'), LANG: 'C', ...env }, cwd: dir, timeout: 120000, killSignal: 'SIGKILL' });
+const spawnCli = (args, env = {}, nodeArgs = []) => checked([...args, '--json'], spawnSync(process.execPath, [...nodeArgs, BIN, ...args, '--json'], { encoding: 'utf8', env: { HOME: home, PATH: fresh('empty-path'), LANG: 'C', ...env }, cwd: dir, timeout: 120000, killSignal: 'SIGKILL' }));
 const run = (args, env = {}, nodeArgs = []) => {
   const r = spawnCli(args, env, nodeArgs);
   let rows; try { rows = JSON.parse(r.stdout).results; } catch { assert.fail(`not JSON (exit ${r.status}): ${r.stderr.slice(0, 500)}`); }

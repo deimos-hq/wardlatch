@@ -13,68 +13,6 @@
  },
  {
   "file": "bin/wardlatch.mjs",
-  "op": "unknown->safe",
-  "before": "results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason });",
-  "why": "test gap: no test reaches this result, or checks its status, on this path"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "unknown->safe",
-  "before": "const unknown = (d, reason) => { results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason }); print('UNKNOWN', short(d)); note('33', reason); };",
-  "why": "test gap: no test reaches this result, or checks its status, on this path"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "unknown->safe",
-  "before": "results.push({ incident: inc.id, kind: 'containers', engine: hostVars.join(','), status: 'UNKNOWN', reason });",
-  "why": "test gap: no test reaches this result, or checks its status, on this path"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "unknown->safe",
-  "before": "print('UNKNOWN', `${what} named by the environment`); note('33', reason);",
-  "why": "test gap: no test checks the status word on this text line (the --json row is a separate line)"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "unknown->safe",
-  "before": "if (sudoHomeMissing && readsHome) { results.push({ incident: inc.id, kind: 'home', status: 'UNKNOWN', reason: sudoHomeMissing }); print('UNKNOWN', 'home folder'); note('33', sudoHomeMissing); }",
-  "nth": 2,
-  "why": "test gap: no test reaches this result, or checks its status, on this path"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "exposed->safe",
-  "before": "print('EXPOSED', `${rule.binary}  ${short(t[0])}`); note('31', `the malware ran on this machine: it left ${t.join(', ')}`); note('2', `fix: ${rule.fix}`);",
-  "why": "test gap: no test checks the status word on this text line (the --json row is a separate line)"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "unknown->safe",
-  "before": "print('UNKNOWN', 'not checked on Windows yet'); note('33', 'this check looks only in macOS and Linux locations; Windows is not supported yet');",
-  "why": "test gap: no test checks the status word on this text line (the --json row is a separate line)"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "unknown->safe",
-  "before": "print('UNKNOWN', 'not checked on Windows yet'); note('33', 'this check looks only in macOS and Linux locations; Windows is not supported yet');",
-  "nth": 2,
-  "why": "test gap: no test checks the status word on this text line (the --json row is a separate line)"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "unknown->safe",
-  "before": "results.push({ incident: inc.id, kind: 'environment', status: 'UNKNOWN', reason });",
-  "why": "test gap: no test reaches this result, or checks its status, on this path"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "unknown->safe",
-  "before": "print('UNKNOWN', 'settings not given to the probes'); note('33', reason);",
-  "why": "test gap: no test checks the status word on this text line (the --json row is a separate line)"
- },
- {
-  "file": "bin/wardlatch.mjs",
   "op": "exposed->safe",
   "before": "print(r.status, what, r.status === 'EXPOSED' ? c('31', `  trusts ${r.trusted.length}/${r.tested}`) : '');",
   "why": "test gap: no test checks what this comparison controls (a note, a fix line, a colour or the summary)"
@@ -83,37 +21,6 @@
   "file": "bin/wardlatch.mjs",
   "op": "unknown->safe",
   "before": "if (r.status === 'UNKNOWN') note('33', r.reason);",
-  "why": "test gap: no test checks what this comparison controls (a note, a fix line, a colour or the summary)"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "unknown->safe",
-  "before": "results.push({ incident: inc.id, kind: 'curl', status: 'UNKNOWN', ...u.fields, reason: u.reason });",
-  "why": "test gap: no test reaches this result, or checks its status, on this path"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "unknown->safe",
-  "before": "print('UNKNOWN', u.label); note('33', u.reason);",
-  "why": "test gap: no test checks the status word on this text line (the --json row is a separate line)"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "unknown->safe",
-  "before": "if (list.error) { results.push({ incident: inc.id, kind: 'containers', engine, status: 'UNKNOWN', reason: list.error }); print('UNKNOWN', `${engine} containers`); note('33', list.error); continue; }",
-  "nth": 2,
-  "why": "test gap: no test reaches this result, or checks its status, on this path"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "unknown->safe",
-  "before": "const r = expired ? { status: 'UNKNOWN', trusted: [], tested: 0, reason: `the test hosts' certificates expired on ${inc.canaryNotAfter}, so a refusal here would prove nothing` } : await checkContainer(engine, ct, canaries, { controlUrl: inc.advisory });",
-  "why": "test gap: no test reaches this result, or checks its status, on this path"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "exposed->safe",
-  "before": "const row = { incident: inc.id, kind: 'container', engine, container: ct.name, image: ct.image, ...r, fix: r.status === 'EXPOSED' ? inc.fixes.container : undefined };",
   "why": "test gap: no test checks what this comparison controls (a note, a fix line, a colour or the summary)"
  },
  {
@@ -131,30 +38,6 @@
  },
  {
   "file": "bin/wardlatch.mjs",
-  "op": "exposed->safe",
-  "before": "results.push({ incident: inc.id, kind: 'install', ...r, fix: r.status === 'EXPOSED' ? fix : r.status === 'REVIEW' ? inc.reviewFix : undefined });",
-  "why": "test gap: no test checks what this comparison controls (a note, a fix line, a colour or the summary)"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "exposed->safe",
-  "before": "if (r.status === 'EXPOSED') note('2', `fix: ${fix}`);",
-  "why": "test gap: no test checks what this comparison controls (a note, a fix line, a colour or the summary)"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "unknown->safe",
-  "before": "if (explicitPaths && !searchable.length) show({ status: 'UNKNOWN', reason: `none of the folders given with --paths exist (${roots.map(short).join(', ')}), so no virtual environment there was searched` }, 'folders given with --paths');",
-  "why": "test gap: no test reaches this result, or checks its status, on this path"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "unknown->safe",
-  "before": "if (list.error) { show({ status: 'UNKNOWN', engine: e, reason: `${list.error}, so its local images were not checked` }, `${e} images`); continue; }",
-  "why": "test gap: no test reaches this result, or checks its status, on this path"
- },
- {
-  "file": "bin/wardlatch.mjs",
   "op": "unknown->safe",
   "before": "const onlyEngineGaps = counted(results).every((r) => r.engine && (r.status === 'UNKNOWN' || r.notRunning));",
   "why": "test gap: no test checks what this comparison controls (a note, a fix line, a colour or the summary)"
@@ -162,99 +45,7 @@
  {
   "file": "bin/wardlatch.mjs",
   "op": "unknown->safe",
-  "before": "if (h.unread) { results.push({ incident: inc.id, kind: 'secret', status: 'UNKNOWN', repo, file: h.file, reason: h.unread }); print('UNKNOWN', `${short(repo)}/${h.file}`); note('33', h.unread); continue; }",
-  "why": "test gap: no test reaches this result, or checks its status, on this path"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "unknown->safe",
-  "before": "if (h.unread) { results.push({ incident: inc.id, kind: 'secret', status: 'UNKNOWN', repo, file: h.file, reason: h.unread }); print('UNKNOWN', `${short(repo)}/${h.file}`); note('33', h.unread); continue; }",
-  "nth": 2,
-  "why": "test gap: no test reaches this result, or checks its status, on this path"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "unknown->safe",
-  "before": "results.push({ incident: inc.id, kind: 'wordpress', site: core, status: 'UNKNOWN', what: 'plugins folder', reason });",
-  "why": "test gap: no test reaches this result, or checks its status, on this path"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "unknown->safe",
-  "before": "print('UNKNOWN', `${short(core)} · plugins folder`); note('33', reason);",
-  "why": "test gap: no test checks the status word on this text line (the --json row is a separate line)"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "unknown->safe",
-  "before": "results.push({ incident: inc.id, kind: 'header', status: 'UNKNOWN', file: u.file, reason: u.reason });",
-  "why": "test gap: no test reaches this result, or checks its status, on this path"
- },
- {
-  "file": "bin/wardlatch.mjs",
-  "op": "unknown->safe",
   "before": "for (const r of withdrawUnreceipted(all)) { print('UNKNOWN', `the SAFE line for ${r.kind} above is withdrawn`); note('33', r.reason); }",
   "why": "test gap: no test checks the status word on this text line (the --json row is a separate line)"
- },
- {
-  "file": "lib/binaries.mjs",
-  "op": "unknown->safe",
-  "before": "for (const d of denied) out.push({ status: 'UNKNOWN', bin: d, version: '', reason: 'this temp folder could not be listed, so the malware\\'s trace was not looked for there' });",
-  "why": "test gap: no test checks this binaries result's status on this path"
- },
- {
-  "file": "lib/binaries.mjs",
-  "op": "unknown->safe",
-  "before": "for (const p of odd) out.push({ status: 'UNKNOWN', bin: p, version: '', reason: 'something of this name is there, but it is not a regular file (or could not be looked at), so it was not checked and not run' });",
-  "why": "test gap: no test checks this binaries result's status on this path"
- },
- {
-  "file": "lib/binaries.mjs",
-  "op": "unknown->safe",
-  "before": "if (!p || p.status === 'UNKNOWN') return { status: 'UNKNOWN', bin, version: v, reason: `${why}; that toolchain was not checked` };",
-  "nth": 2,
-  "why": "test gap: no test checks this binaries result's status on this path"
- },
- {
-  "file": "lib/headers.mjs",
-  "op": "exposed->safe",
-  "before": "if (p.kind === 'wget') return as(headersInRc(text, p.kind), 'EXPOSED', p.to);",
-  "why": "test gap: no test checks this headers result's status on this path"
- },
- {
-  "file": "lib/installs.mjs",
-  "op": "unknown->safe",
-  "before": "if (!buf) { out.push({ group: f.group, status: 'UNKNOWN', path, version: '', label: f.label, reason: 'found, but the file could not be read (or is larger than expected)' }); continue; }",
-  "why": "test gap: no test checks this installs result's status on this path"
- },
- {
-  "file": "lib/probe.mjs",
-  "op": "unknown->safe",
-  "before": "if (!hits.length && uncovered.length) return { status: 'UNKNOWN', trusted: [], tested: 0, reason: `no test host chained to ${uncovered.join(' or ')} answered, so this runtime's trust in that root could not be tested` };",
-  "why": "test gap: no test checks this probe result's status on this path"
- },
- {
-  "file": "lib/wordpress.mjs",
-  "op": "unknown->safe",
-  "before": "if (st === 'denied') { out.push({ site, status: 'UNKNOWN', what: r.plugin, reason: 'the plugins folder could not be opened, so this plugin was not checked: run Wardlatch with sudo' }); continue; }",
-  "why": "test gap: no test checks this wordpress result's status on this path"
- },
- {
-  "file": "lib/wordpress.mjs",
-  "op": "unknown->safe",
-  "before": "if (skipped.length) out.push({ site, status: 'UNKNOWN', what: `${r.plugin}: indicator search`, reason: `not searched for \"${r.indicator}\": ${skipped.join('; ')}` });",
-  "why": "test gap: no test checks this wordpress result's status on this path"
- },
- {
-  "file": "lib/wordpress.mjs",
-  "op": "unknown->safe",
-  "before": "for (const d of denied) out.push({ site, status: 'UNKNOWN', what: `${r.plugin}: ${d.slice(dir.length + 1) || '.'}`, reason: 'this folder could not be opened, so the indicator was not searched for in it: run Wardlatch with sudo' });",
-  "why": "test gap: no test checks this wordpress result's status on this path"
- },
- {
-  "file": "lib/wordpress.mjs",
-  "op": "unknown->safe",
-  "before": "if (l.denied) out.push({ site, status: 'UNKNOWN', what: 'plugins folder', reason: 'could not be opened, so new plugin folders were not looked for: run Wardlatch with sudo' });",
-  "why": "test gap: no test checks this wordpress result's status on this path"
  }
 ]

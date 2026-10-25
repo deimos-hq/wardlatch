@@ -25,6 +25,7 @@ import { reposUnder } from '../lib/workflows.mjs';
 import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
 import { accounts, subuidRanges } from '../lib/owners.mjs';
 import { STAND_IN_MS } from './support/timeouts.mjs';
+import { checked } from './support/output-checks.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
@@ -87,6 +88,7 @@ const childEnv = (env) => ({ HOME: home, PATH: fresh('empty-path'), LANG: 'C', T
 const run = (args, env = {}, pre) => {
   const nodeArgs = pre ? ['--require', preload(pre.name, pre)] : [];
   const r = spawnSync(process.execPath, [...nodeArgs, BIN, ...args, '--json'], { encoding: 'utf8', env: childEnv(env), cwd: dir, timeout: 120000, killSignal: 'SIGKILL' });
+  checked([...args, '--json'], r);   // T0 (test/support/output-checks.mjs)
   let rows; try { rows = JSON.parse(r.stdout).results; } catch { assert.fail(`not JSON (exit ${r.status}): ${r.stderr.slice(0, 500)}`); }
   return { code: r.status, rows };
 };

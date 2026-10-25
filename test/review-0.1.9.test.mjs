@@ -13,6 +13,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { envFor } from '../lib/run.mjs';
 import { safe } from '../lib/report.mjs';
+import { checked } from './support/output-checks.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
@@ -56,6 +57,7 @@ require('node:module').syncBuiltinESMExports();
 };
 const run = (args, env = {}, nodeArgs = []) => {
   const r = spawnSync(process.execPath, [...nodeArgs, BIN, ...args, '--json'], { encoding: 'utf8', env: { HOME: home, PATH: fresh('empty-path'), LANG: 'C', ...env }, cwd: dir, timeout: 120000, killSignal: 'SIGKILL' });
+  checked([...args, '--json'], r);   // T0 (test/support/output-checks.mjs)
   let rows; try { rows = JSON.parse(r.stdout).results; } catch { assert.fail(`not JSON (exit ${r.status}): ${r.stderr.slice(0, 500)}`); }
   return { code: r.status, rows };
 };
