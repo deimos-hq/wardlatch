@@ -36,16 +36,18 @@ const { lstatSync, readlinkSync, statSync, accessSync, openSync, readSync, close
 
 // what a test passes to the processes it starts, as JSON { homes, marks, nodeOptions? }: the folders, where a note
 // goes, and the NODE_OPTIONS the process was given before this file was added to it. Every process deletes it from its
-// own environment first, so the code under test never sees it. An empty value starts a process as a test file starts
-// (a test of this file needs that).
+// own environment first, so the code under test never sees it; but a node --test runner a test started keeps it, and
+// its NODE_OPTIONS, as Node starts each test file without the wrappers below, and a test file it runs is still below
+// the test. An empty value starts a process as a test file starts (a test of this file needs that).
 const KEY = 'WARDLATCH_TEST_NO_HOME';
 const MAC = process.platform === 'darwin';
 let given = null;
 try { given = process.env[KEY] ? JSON.parse(process.env[KEY]) : null; } catch { /* not from this file: started as a test file */ }
-delete process.env[KEY];
 const child = !!given && Array.isArray(given.homes) && typeof given.marks === 'string';
+const runner = child && process.execArgv.includes('--test');
+if (!runner) delete process.env[KEY];
 // NODE_OPTIONS carried this file here: put back what the process was given, so the code under test reads its own
-if (child && 'nodeOptions' in given) { if (given.nodeOptions == null) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = given.nodeOptions; }
+if (child && !runner && 'nodeOptions' in given) { if (given.nodeOptions == null) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = given.nodeOptions; }
 
 // a path's spelling for comparing: on macOS, without the start-up disk's other spellings, in lower case (one pass from
 // the start, however many there are)
@@ -111,12 +113,15 @@ const where = (p) => {
 };
 const offLimits = (abs) => shut(key(physical(abs, stop)));
 
-// where a process a test started leaves its note (a test file: a folder of its own, removed when it exits)
+// where a process a test started leaves its note: the test file's own folder, made when it first starts a process (a
+// test file that is killed can't remove it) and removed when it exits; never one in a home
 let MARKS = child ? given.marks : '';
-if (!child) {
+const marks = () => {
+  if (child || MARKS) return MARKS;
   const t = os.tmpdir();
   try { MARKS = mkdtempSync(path.join(offLimits(where(t)) ? '/tmp' : t, 'wardlatch-no-home-')); } catch { MARKS = ''; }
-}
+  return MARKS;
+};
 let looked = false, notes = 0;
 const refuse = (s) => {
   const msg = `test/support/no-real-home.cjs: a test looked in the real home folder (${s}); give it a home of its own`;
@@ -261,7 +266,7 @@ const nodeKind = (p) => {
   const binary = /^(?:\x7fELF|\xcf\xfa\xed\xfe|\xce\xfa\xed\xfe|\xfe\xed\xfa\xcf|\xfe\xed\xfa\xce|\xca\xfe\xba\xbe)/.test(text);
   return binary && /^node/.test(path.basename(real)) ? 'node' : null;
 };
-const payload = (extra) => JSON.stringify({ homes: HOMES, marks: MARKS, ...extra });
+const payload = (extra) => JSON.stringify({ homes: HOMES, marks: marks(), ...extra });
 // (quoted only when it must be: a path with a space, a quote or a backslash)
 const REQUIRE = `--require ${/[\s"'\\]/.test(__filename) ? JSON.stringify(__filename) : __filename}`;
 const withOptions = (env) => ({ ...env, NODE_OPTIONS: `${REQUIRE}${env.NODE_OPTIONS ? ` ${env.NODE_OPTIONS}` : ''}`, [KEY]: payload({ nodeOptions: env.NODE_OPTIONS ?? null }) });
