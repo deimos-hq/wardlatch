@@ -49,9 +49,12 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     static copy, `@rpath`, `@executable_path`, `$ORIGIN`, a relative path such as `lib/libbrotlidec.1.dylib` or
     `../lib/libbrotlidec.so.1`, which dyld and ld.so look for from the folder the program is started in and which the
     reason names, a program with its own `RUNPATH`, a soname when the loader's configuration or a library folder
-    couldn't all be read, a library name in a string that isn't whole, whatever cut it (a tab, a newline, DEL or another
-    control byte in its path, bytes that aren't UTF-8), or at the end of a path that starts more than 1024 bytes before
-    it; each of these beside a table too); Brotli 1.0's unprefixed error texts that are not whole tables (scattered, out
+    couldn't all be read, a library name in a string that isn't whole, whatever bytes it holds (a tab, a newline, DEL or
+    another control byte anywhere in its path, the library's own file name included, as in `libbrotlidec\x01.so.1`, or
+    bytes that aren't UTF-8), or at the end of a path that starts more than 1024 bytes before it; each of these beside a
+    table too; a line of a program's messages that names the library, such as `cannot open libbrotlidec.so.1\n`, the
+    name after a space and followed only by newlines or printf formats, is text, and so is a part of a path longer than
+    any file's name can be, 255 characters); Brotli 1.0's unprefixed error texts that are not whole tables (scattered, out
     of order, only some of them, a table followed by neither form, which is how 1.0.0 to 1.0.3 read, more copies than
     the 64 kept, or `BLOCK_SWITCH` anywhere but in its place), alone or beside a fixed table; a file it can't read (a
     node or bun at mode 0111 included), over 512 MB or bigger than what is left of the run's 4 GB reading budget; a

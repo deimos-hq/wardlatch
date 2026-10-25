@@ -481,9 +481,67 @@ test('a library\'s name in a load path with a byte the walk back stops at (a tab
   assert.equal(judge(elf(join(d, 'elf-twin'), [CONTROL, MARKER, fixed])).status, 'SAFE');
   assert.equal(judge(bin(join(d, 'form10-twin'), [packed(V1010), fixed])).status, 'SAFE');
   assert.equal(judge(elf(join(d, 'node-twin'), ['libnode.so.108']), [libDir]).status, 'SAFE');
-  // and text that mentions the library is nothing: no file of it named after a stop byte, or a whole string that is a
-  // sentence, not a path (a file named "cannot load libbrotlidec.so.1" is not a Brotli library): SAFE by the table
-  assert.equal(judge(bin(join(d, 'text-twin'), [CONTROL, MARKER, Buffer.from('\0\x01libbrotlidec mention\0'), 'uses\tlibbrotlidec to decode', 'cannot load libbrotlidec.so.1'])).status, 'SAFE');
+  // and text that mentions the library is nothing: a whole string that is a sentence, not a path (a file named "cannot
+  // load libbrotlidec.so.1" is not a Brotli library), or a line of a program's messages (below): SAFE by the table
+  assert.equal(judge(bin(join(d, 'text-twin'), [CONTROL, MARKER, 'cannot load libbrotlidec.so.1', 'cannot open libbrotlidec.so.1\n'])).status, 'SAFE');
+});
+
+test('a control byte inside the library\'s own file name, before its suffix, is UNKNOWN beside a fixed table too: the name in a string that isn\'t whole, whatever follows it', () => {
+  const d = fresh('in-name'), libDir = fresh('in-name-lib');
+  const fixed = fixedLib(join(d, 'fixed', 'libbrotlidec.1.dylib'));
+  elf(join(libDir, 'libnode.so.108'), [CONTROL, MARKER]);
+  for (const [name, file] of [['ctl-before-so', 'libbrotlidec\x01.so.1'], ['ctl-in-suffix', 'libbrotlidec.\x01so.1'], ['tab-before-dylib', 'libbrotlidec\t.1.dylib'],
+    ['del', 'libbrotlidec\x7f.so.1'], ['escape-then-text', 'libbrotlidec\x1bx'], ['newline-after', 'libbrotlidec.so.1\n']]) {
+    // the real attack: the library at that path lacks the fix; the walk forward from "libbrotlidec" stopped at the byte,
+    // and what it saw ("libbrotlidec", "libbrotlidec.") is no library's file name
+    const old = oldLib(join(d, name, file));
+    for (const [what, f] of [['Mach-O, with a table', bin(join(d, `macho-${name}`), [CONTROL, MARKER, old])],
+      ['ELF DT_NEEDED, with a table', elf(join(d, `elf-${name}`), [CONTROL, MARKER, old])],
+      ['a 1.0 table', bin(join(d, `form10-${name}`), [packed(V1010), old])],
+      ['beside a whole link to a fixed library', bin(join(d, `both-${name}`), [fixed, old])],
+      ['no table', bin(join(d, `bare-${name}`), [old])]]) {
+      const r = judge(f);
+      assert.equal(r.status, 'UNKNOWN', `${name}: ${what}`); assert.match(r.reason, /could not be read whole.*could not be tested/, `${name}: ${what}`);
+    }
+    // a distribution's node: a libnode path with the byte in the file's name, beside a libnode name that is whole
+    const node = judge(elf(join(d, `node-${name}`), ['libnode.so.108', `/opt/x/${file.replace('libbrotlidec', 'libnode')}`]), [libDir]);
+    assert.equal(node.status, 'UNKNOWN', `${name}: libnode`); assert.match(node.reason, /libnode.*could not be read whole/, name);
+  }
+  // round 3 read these as text; they are strings that aren't whole, and the loader reads the whole string: UNKNOWN
+  for (const s of [Buffer.from('\0\x01libbrotlidec mention\0'), 'uses\tlibbrotlidec to decode']) assert.equal(judge(bin(join(d, `was-text-${s.length}`), [CONTROL, MARKER, s])).status, 'UNKNOWN');
+  // the clean twins: a whole path to a fixed library, a whole libnode name, and a long text that mentions the library (a
+  // part of a path over 255 characters is no file's name, so it is no load path, however much of it the bytes kept show)
+  assert.equal(judge(bin(join(d, 'macho-twin'), [CONTROL, MARKER, fixed])).status, 'SAFE');
+  assert.equal(judge(elf(join(d, 'elf-twin'), [CONTROL, MARKER, fixed])).status, 'SAFE');
+  assert.equal(judge(bin(join(d, 'form10-twin'), [packed(V1010), fixed])).status, 'SAFE');
+  assert.equal(judge(elf(join(d, 'node-twin'), ['libnode.so.108']), [libDir]).status, 'SAFE');
+  assert.equal(judge(bin(join(d, 'long-text'), [CONTROL, MARKER, `\t${'w'.repeat(300)} uses libbrotlidec\x01 to decode`])).status, 'SAFE');
+  // and a part of 255 characters or fewer is a name: UNKNOWN
+  assert.equal(judge(bin(join(d, 'long-name'), [CONTROL, MARKER, `\t${'w'.repeat(200)}libbrotlidec\x01.so.1`])).status, 'UNKNOWN');
+});
+
+test('a line of a program\'s messages naming the library ("cannot open libbrotlidec.so.1\\n") is text, not a path: a fixed table stays SAFE', () => {
+  const d = fresh('text-line'), libDir = fresh('text-line-lib');
+  elf(join(libDir, 'libnode.so.108'), [CONTROL, MARKER]);
+  // whole strings with spaces, the name after a space, and only newlines or printf formats after the name
+  const lines = ['cannot open libbrotlidec.so.1\n', 'error: libbrotlidec.so.1\n', 'could not load libbrotlidec.1.dylib\n\n', 'cannot open libbrotlidec.so.1%s\n', 'error: libbrotlidec\n'];
+  for (const [i, s] of lines.entries()) {
+    for (const [what, f] of [['Mach-O', bin(join(d, `macho-${i}`), [CONTROL, MARKER, s])], ['ELF', elf(join(d, `elf-${i}`), [CONTROL, MARKER, s])], ['a 1.0 table', bin(join(d, `form10-${i}`), [packed(V1010), s])]]) {
+      assert.equal(judge(f).status, 'SAFE', `${JSON.stringify(s)}: ${what}`);
+    }
+  }
+  // a distribution's node whose messages name libnode, beside the whole soname of a fixed libnode
+  assert.equal(judge(elf(join(d, 'node'), ['libnode.so.108', 'cannot open libnode.so.108\n', 'error: libnode.so.108%s\n']), [libDir]).status, 'SAFE');
+  // the near misses, UNKNOWN: no space before the name, a path before it (a folder with a space and a file named with a
+  // newline), a control byte before the newlines or inside the name, a newline before the name, a format with more
+  // letters than printf's, bytes that aren't UTF-8, a line cut by the bytes kept
+  for (const s of ['libbrotlidec.so.1\n', '/opt/my dir/libbrotlidec.so.1\n', 'cannot\topen libbrotlidec.so.1\n', 'cannot open libbrotlidec\x01.so.1\n', 'first\ncannot open libbrotlidec.so.1\n',
+    'cannot open libbrotlidec.so.1%sabcd\n', Buffer.from('\0cannot \xc3open libbrotlidec.so.1\n\0', 'latin1'), Buffer.from(`${'x/'.repeat(600)} libbrotlidec.so.1\n\0`)]) {
+    const r = judge(bin(join(d, `near-${Math.random()}`), [CONTROL, MARKER, s]));
+    assert.equal(r.status, 'UNKNOWN', JSON.stringify(String(s).slice(-40))); assert.match(r.reason, /could not be read whole.*could not be tested/);
+  }
+  const near = judge(elf(join(d, 'node-near'), ['libnode.so.108', 'libnode.so.109\n']), [libDir]);
+  assert.equal(near.status, 'UNKNOWN'); assert.match(near.reason, /libnode.*could not be read whole/);
 });
 
 test('a whole relative load path (lib/..., ../lib/...) is UNKNOWN naming it: the loader looks for it from the folder the program starts in', () => {
