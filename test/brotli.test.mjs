@@ -789,6 +789,31 @@ test('conda: the Brotli library of every conda home whose Python packages are re
   }
 });
 
+test('conda installed as a Python version by pyenv, asdf or mise: its Brotli library is read, base and environments', () => {
+  // the incident's own places in the home folder, moved into this test's home
+  const home = fresh('conda-vm-home');
+  const libPlaces = INC.libPlaces.filter((p) => p.pattern.startsWith('~/')).map((p) => ({ ...p, pattern: join(home, p.pattern.slice(2)) }));
+  // the version names pyenv's python-build gives conda (anaconda3-*, miniconda3-*, miniforge3-*, mambaforge-*), which asdf
+  // and mise install with it too, each in its manager's folder of Python versions
+  const libs = [
+    ['.pyenv/versions/miniforge3-24.3.0-0', 'base'], ['.pyenv/versions/miniforge3-24.3.0-0/envs/ml', 'ml'],
+    ['.pyenv/versions/anaconda3-2024.06-1', 'base'], ['.pyenv/versions/mambaforge-22.9.0-3/envs/web', 'web'],
+    ['.pyenv/versions/miniconda3-latest', 'base'], ['.asdf/installs/python/miniforge3-24.3.0-0', 'base'],
+    ['.asdf/installs/python/anaconda3-2024.06-1/envs/ml', 'ml'], ['.local/share/mise/installs/python/mambaforge-22.9.0-3', 'base'],
+    ['.local/share/mise/installs/python/miniconda3-3.12-24.1.2-0/envs/ml', 'ml'],
+  ].map(([at, env]) => [oldLib(join(home, at, 'lib', 'libbrotlidec.1.1.0.dylib')), env]);
+  const by = (rows, f) => rows.find((x) => x.file === realpathSync(f));
+  const bad = run({ libPlaces }).rows;
+  for (const [f, env] of libs) {
+    assert.equal(by(bad, f)?.status, 'EXPOSED', f); assert.equal(by(bad, f).label, 'conda\'s libbrotlidec', f);
+    assert.match(by(bad, f).fix, new RegExp(`^conda install -n ${env} 'libbrotlidec>=1\\.2\\.1'`), f);
+  }
+  // the clean twin: the same libraries fixed
+  for (const [f] of libs) fixedLib(f);
+  const good = run({ libPlaces }).rows;
+  for (const [f] of libs) assert.equal(by(good, f)?.status, 'SAFE', f);
+});
+
 /** dpkg's status file as dpkg writes it: zlib1g first, then the given libbrotli1 stanzas. A rebuild (binNMU, such as
  *  1.1.0-2+b7) names its source version on the Source line; a security build (1.1.0-2+deb13u1) doesn't. */
 const stanza = (version, source = '', arch = 'amd64') => `Package: libbrotli1\nStatus: install ok installed\nPriority: optional\nSection: libs\nInstalled-Size: 785\nMaintainer: Debian Brotli Maintainers <brotli@example.org>\nArchitecture: ${arch}\nMulti-Arch: same\nSource: brotli${source ? ` (${source})` : ''}\nVersion: ${version}\nDepends: libc6 (>= 2.29)\nDescription: library implementing brotli encoder and decoder (shared libraries)\n Brotli is a generic-purpose lossless compression algorithm.\n`;
