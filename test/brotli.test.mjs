@@ -737,6 +737,26 @@ test('the reading budget: a file is read only if it fits in what is left, so a r
   assert.deepEqual(order.map((r) => [r.what, r.status]), [['node', 'UNKNOWN'], ['python', 'EXPOSED']]);
 });
 
+test('the reading budget holds for the look for proto-shim\'s marker: a node on PATH read for it is charged, so the run reads at most its budget', () => {
+  const path = fresh('budget-marker-path'), sp = fresh('budget-marker-sp');
+  const node = fixedLib(join(path, 'node')), lib = fixedLib(join(sp, 'examplepkg.libs', 'libbrotlidec-1.so.1'));
+  const n0 = readFileSync(node).length, size = n0 + readFileSync(lib).length;
+  // the library is read, then the node for the marker (it is no shim by name or place), then the node itself: the
+  // budget fits two of those reads, so the node's own read is past it
+  const rows = run({}, { pathEnv: path, siteDirs: [sp], budgetBytes: size }).rows;
+  assert.equal(rows.find((r) => r.file === lib).status, 'SAFE');
+  const n = rows.find((r) => r.file === node);
+  assert.equal(n.status, 'UNKNOWN'); assert.match(n.reason, /4 GB.*could not be tested/);
+  // the clean twin: room for all three reads
+  assert.deepEqual(run({}, { pathEnv: path, siteDirs: [sp], budgetBytes: size + n0 }).rows.map((r) => r.status), ['SAFE', 'SAFE']);
+  // a node on PATH larger than what is left is not read for the marker at all (no overshoot), so a version manager's
+  // node read after it still fits
+  const big = bin(join(path, 'node'), [CONTROL, MARKER, 'x'.repeat(5000)]), managed = fixedLib(join(sp, 'nvm', 'node')), m0 = readFileSync(managed).length;
+  assert.ok(readFileSync(big).length > m0 + 10);
+  const rest = run({ nodeDirs: [managed] }, { pathEnv: path, budgetBytes: m0 + 10 }).rows;
+  assert.equal(rest.find((r) => r.file === managed).status, 'SAFE'); assert.equal(rest.find((r) => r.file === big).status, 'UNKNOWN');
+});
+
 test('the reading budget holds for a universal file: builds that overlap are UNKNOWN and not read, so no byte is read twice', () => {
   const d = fresh('budget-fat');
   // a universal header whose builds name the same bytes: read build by build, a 256 KB file was read once per build
@@ -924,8 +944,9 @@ test('node: PATH copies, version managers and the running node are read, never r
   assert.match(by('v27.0.0').fix, /^Install the fixed release for its line/, 'a line newer than the table: the general words');
   assert.match(by('custom').fix, /^Install the fixed release for its line/);
   assert.equal(rows.find((r) => r.file === self).status, 'SAFE');
-  const shim = rows.find((r) => r.file === join(path, 'node'));
-  assert.equal(shim.status, 'REVIEW'); assert.match(shim.reason, /shim/);
+  // a script that is no version manager's shim Wardlatch knows: the runtime it starts was not read (the script shims test below)
+  const script = rows.find((r) => r.file === join(path, 'node'));
+  assert.equal(script.status, 'UNKNOWN'); assert.match(script.reason, /^a script named node on PATH, not a program.*could not be tested/);
   assert.ok(looked.some((l) => l.includes(join(d, 'nvm'))), 'the receipt names the version managers\' folders');
   assert.ok(!existsSync(ran), 'nothing found was run');
   // a compiled program named node on PATH with no sign of Node.js that is a version manager's shim (volta's node links
@@ -1362,7 +1383,7 @@ const PRELOAD = ['--require', join(ROOT, 'test', 'support', 'hide-machine-places
 // the preload never hides this test's own folder (and hides the rest of the temporary folder like any other place)
 // the variables that move a version manager's folders are cleared, so a test sees only the places it makes (one the
 // person running the tests has set could name a folder in their real home)
-const VM_VARS = ['VOLTA_HOME', 'MISE_DATA_DIR', 'MISE_INSTALLS_DIR', 'MISE_SYSTEM_DATA_DIR', 'MISE_SYSTEM_INSTALLS_DIR', 'MISE_SHARED_INSTALL_DIRS', 'XDG_DATA_HOME', 'RTX_DATA_DIR', 'PROTO_HOME'];
+const VM_VARS = ['VOLTA_HOME', 'MISE_DATA_DIR', 'MISE_INSTALLS_DIR', 'MISE_SYSTEM_DATA_DIR', 'MISE_SYSTEM_INSTALLS_DIR', 'MISE_SHARED_INSTALL_DIRS', 'XDG_DATA_HOME', 'RTX_DATA_DIR', 'PROTO_HOME', 'ASDF_DATA_DIR', 'NODENV_ROOT'];
 const cli = (args, env) => {
   const r = spawnSync(process.execPath, [...PRELOAD, BIN, ...args], { encoding: 'utf8', env: { ...process.env, ...Object.fromEntries(VM_VARS.map((k) => [k, ''])), WARDLATCH_TEST_OWN_DIR: dir, ...env }, maxBuffer: 64 * 1024 * 1024 });
   return { code: r.status, out: r.stdout, err: r.stderr };
@@ -1633,3 +1654,95 @@ test('a version manager\'s shim: a folder of runtimes that can\'t be read beside
   }
 });
 
+
+/** What the command says, by file, and its exit code. */
+const cliRows = (env) => {
+  const r = cli(['--incident', 'brotli-2026-10', '--json', '--paths', fresh(`cli-rows-empty-${Math.random()}`)], env);
+  const rows = JSON.parse(r.out).results;
+  return { code: r.code, out: r.out, at: (f) => rows.find((x) => x.file === f) };
+};
+/** proto-shim as proto writes it into its shims folder (crates/shim/src/unix.rs: its bytes, renamed node): a compiled
+ *  program with Rust's strings packed together, no NUL between them; `marker`: with PROTO_SHIM_NAME, which it sets. */
+const protoShim = (f, marker = true) => bin(f, [Buffer.from(`\0proto-shim: Invalid shim name detected. Unable to execute the appropriate proto tool.${marker ? 'PROTO_SHIM_NAMEPROTO_SHIM_PATH' : ''}registry.json\0`)]);
+
+test('proto\'s shims are copies of proto-shim named node: one in proto\'s shims folder, or one carrying proto-shim\'s marker, is a REVIEW line only when proto\'s nodes are read', () => {
+  // by its place: proto's home's shims folder, under ~/.proto, $PROTO_HOME or $XDG_DATA_HOME/proto (no marker needed)
+  for (const [what, vars, shims, nodes] of [['~/.proto', {}, '.proto/shims', '.proto/tools/node'], ['PROTO_HOME', { PROTO_HOME: 'ph' }, 'ph/shims', 'ph/tools/node'],
+    ['XDG_DATA_HOME', { XDG_DATA_HOME: 'xdg' }, 'xdg/proto/shims', 'xdg/proto/tools/node']]) {
+    const home = fresh(`proto-copy-${what.replace(/[^a-z]/gi, '')}`), path = join(home, shims), shim = protoShim(join(path, 'node'), false);
+    const env = { HOME: home, PATH: path, ...Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, join(home, v)])) };
+    // its folder of runtimes not there: UNKNOWN, exit 2
+    const none = cliRows(env);
+    assert.equal(none.code, 2, `${what}: ${none.out}`);
+    assert.equal(none.at(shim)?.status, 'UNKNOWN', what); assert.match(none.at(shim).reason, /^proto-shim, a version manager's shim.*not found.*could not be tested/, what);
+    // its nodes read: an unfixed one EXPOSED (exit 1) and the shim a REVIEW line; the clean twin, exit 0
+    const node = node20(join(home, nodes, '20.11.0', 'bin', 'node'));
+    const bad = cliRows(env);
+    assert.equal(bad.code, 1, `${what}: ${bad.out}`); assert.equal(bad.at(node)?.status, 'EXPOSED', what); assert.equal(bad.at(shim)?.status, 'REVIEW', what);
+    node26(node);
+    const good = cliRows(env);
+    assert.equal(good.code, 0, `${what}: ${good.out}`); assert.equal(good.at(shim)?.status, 'REVIEW', what);
+  }
+  // by its bytes: a copy in a folder of its own on PATH that carries proto-shim's marker; its nodes are read in proto's home
+  const home = fresh('proto-marker'), path = join(home, 'bin'), shim = protoShim(join(path, 'node'));
+  const node = node20(join(home, '.proto', 'tools', 'node', '20.11.0', 'bin', 'node'));
+  const bad = cliRows({ HOME: home, PATH: path });
+  assert.equal(bad.code, 1, bad.out); assert.equal(bad.at(shim)?.status, 'REVIEW'); assert.equal(bad.at(node)?.status, 'EXPOSED');
+  node26(node);
+  assert.equal(cliRows({ HOME: home, PATH: path }).code, 0);
+  // the near misses, UNKNOWN (exit 2) though proto's fixed nodes are read: the same copy without the marker outside
+  // proto's shims folder, and in a folder named shims that isn't proto's
+  for (const at of ['bin', 'other/shims']) {
+    const h = fresh(`proto-near-${at.replace('/', '-')}`), p = join(h, at), s = protoShim(join(p, 'node'), false);
+    node26(join(h, '.proto', 'tools', 'node', '26.12.1', 'bin', 'node'));
+    const r = cliRows({ HOME: h, PATH: p });
+    assert.equal(r.code, 2, `${at}: ${r.out}`); assert.equal(r.at(s)?.status, 'UNKNOWN', at); assert.match(r.at(s).reason, /could not be tested.*Check this one by hand/, at);
+  }
+});
+
+test('a script named node on PATH: asdf\'s or nodenv\'s shim is a REVIEW line only when its nodes are read (ASDF_DATA_DIR and NODENV_ROOT too); any other script is UNKNOWN', () => {
+  // the shims as asdf (internal/shims/shims.go) and nodenv (libexec/nodenv-rehash) write them, in their shims folders
+  const script = (f, text) => { mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, text, { mode: 0o755 }); return f; };
+  const asdf = (f) => script(f, '#!/usr/bin/env bash\n# asdf-plugin: nodejs 20.11.0\nexec asdf exec "node" "$@"');
+  const nodenv = (f) => script(f, '#!/usr/bin/env bash\nset -e\n[ -n "$NODENV_DEBUG" ] && set -x\n\nprogram="${0##*/}"\n\nexport NODENV_ROOT="/x"\nexec "/x/libexec/nodenv" exec "$program" "$@"\n');
+  for (const [what, make, vars, shims, nodes] of [['asdf, ~/.asdf', asdf, {}, '.asdf/shims', '.asdf/installs/nodejs'], ['asdf, ASDF_DATA_DIR', asdf, { ASDF_DATA_DIR: 'ad' }, 'ad/shims', 'ad/installs/nodejs'],
+    ['nodenv, ~/.nodenv', nodenv, {}, '.nodenv/shims', '.nodenv/versions'], ['nodenv, NODENV_ROOT', nodenv, { NODENV_ROOT: 'nr' }, 'nr/shims', 'nr/versions']]) {
+    const home = fresh(`script-${what.replace(/[^a-z]/gi, '')}`), path = join(home, shims), shim = make(join(path, 'node'));
+    const env = { HOME: home, PATH: path, ...Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, join(home, v)])) };
+    // its folder of runtimes not there: UNKNOWN, exit 2 (it was a REVIEW line, exit 0, wherever its nodes were)
+    const none = cliRows(env);
+    assert.equal(none.code, 2, `${what}: ${none.out}`);
+    assert.equal(none.at(shim)?.status, 'UNKNOWN', what); assert.match(none.at(shim).reason, /a version manager's shim.*not found.*could not be tested/, what);
+    // its nodes read: an unfixed one EXPOSED, the shim REVIEW, exit 1; the clean twin, exit 0
+    const node = node20(join(home, nodes, '20.11.0', 'bin', 'node'));
+    const bad = cliRows(env);
+    assert.equal(bad.code, 1, `${what}: ${bad.out}`); assert.equal(bad.at(node)?.status, 'EXPOSED', what); assert.equal(bad.at(shim)?.status, 'REVIEW', what);
+    assert.match(bad.at(shim).reason, new RegExp(`^${what.split(',')[0]}, a version manager's shim`));
+    node26(node);
+    assert.equal(cliRows(env).code, 0, what);
+  }
+  // ASDF_DATA_DIR's and NODENV_ROOT's nodes are read with no shim on PATH too
+  for (const [k, nodes] of [['ASDF_DATA_DIR', 'installs/nodejs'], ['NODENV_ROOT', 'versions']]) {
+    const home = fresh(`script-var-${k}`), node = node20(join(home, 'moved', nodes, '20.11.0', 'bin', 'node'));
+    const env = { HOME: home, PATH: fresh(`script-var-path-${k}`), [k]: join(home, 'moved') };
+    const bad = cliRows(env);
+    assert.equal(bad.code, 1, `${k}: ${bad.out}`); assert.equal(bad.at(node)?.status, 'EXPOSED', k);
+    node26(node);
+    assert.equal(cliRows(env).code, 0, k);
+  }
+  // any other script named node or bun (npm's node wrapper, one's own), and asdf's shim text outside asdf's shims folder:
+  // UNKNOWN, exit 2, even with asdf's fixed nodes read
+  const home = fresh('script-other'), path = join(home, '.npm-global', 'bin');
+  node26(join(home, '.asdf', 'installs', 'nodejs', '26.12.1', 'bin', 'node'));
+  const wrapper = script(join(path, 'node'), '#!/bin/sh\nexec "$(dirname "$0")/../lib/node_modules/node/bin/node" "$@"\n'), bun = script(join(path, 'bun'), '#!/bin/sh\nexec bun-real "$@"\n');
+  const elsewhere = fresh('script-elsewhere'), copied = asdf(join(elsewhere, 'shims', 'node'));
+  for (const [f, p] of [[wrapper, path], [bun, path], [copied, dirname(copied)]]) {
+    const r = cliRows({ HOME: home, PATH: p });
+    assert.equal(r.code, 2, `${f}: ${r.out}`);
+    assert.equal(r.at(f)?.status, 'UNKNOWN', f); assert.match(r.at(f).reason, /^a script named (node|bun) on PATH, not a program, and not a version manager's shim Wardlatch knows.*could not be tested/, f);
+  }
+  // a compiled node in asdf's shims folder is no asdf shim (asdf's are scripts): judged as any node, UNKNOWN
+  const compiled = bin(join(home, '.asdf', 'shims', 'node'), ['nothing']);
+  const c = cliRows({ HOME: home, PATH: dirname(compiled) });
+  assert.equal(c.code, 2, c.out); assert.equal(c.at(compiled)?.status, 'UNKNOWN'); assert.match(c.at(compiled).reason, /Check this one by hand/);
+});

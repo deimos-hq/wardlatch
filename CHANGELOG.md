@@ -67,9 +67,13 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     never decide.
   - A distribution's node (a launcher for `libnode`) is judged by its libnode, by the same rules. A compiled `node` on
     `PATH` that shows no sign of Node.js is a REVIEW line only for a version manager's known shim (a link to volta-shim,
-    mise, rtx or proto-shim) whose nodes were read: at least one of its folders of runtimes is there and was listed,
-    every one that is there could be listed, and no variable names one by a path that doesn't start at `/`; otherwise it
-    is "could not be tested" (exit 2), so a node it starts that Wardlatch didn't read never ends the run in exit 0.
+    mise, rtx or proto-shim; or a copy of proto-shim, which is how proto writes its shims today, in proto's shims
+    folder or carrying proto-shim's own `PROTO_SHIM_NAME`) whose nodes were read, and a script named `node` on `PATH`
+    is one only for asdf's or nodenv's shim, in its shims folder: at least one of its folders of runtimes is there and
+    was listed, every one that is there could be listed, and no variable names one by a path that doesn't start at
+    `/`; otherwise it is "could not be tested" (exit 2), so a node it starts that Wardlatch didn't read never ends the
+    run in exit 0. Any other script named `node` or `bun` on `PATH` (npm's node wrapper, one of your own) is "could not
+    be tested" too.
     Those folders are each manager's layouts as its own source has them: volta's `$VOLTA_HOME` or `~/.volta`,
     `tools/image/node/<version>/bin/node` and its older layouts' `tools/image/node/<node>/<npm>/bin/node`; mise's
     `$MISE_DATA_DIR`, `$XDG_DATA_HOME/mise` or `~/.local/share/mise`, and its system installs (`$MISE_SYSTEM_DATA_DIR`
@@ -78,7 +82,8 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     `$MISE_SHARED_INSTALL_DIRS` (the only variable split on `:`, as mise splits it; every other one is one path, a `:`
     in it included, as each manager reads it); rtx's `$RTX_DATA_DIR`, `$XDG_DATA_HOME/rtx` or `~/.local/share/rtx`, with
     `installs/node` and `installs/nodejs` (before rtx renamed it); proto's `$PROTO_HOME`, `$XDG_DATA_HOME/proto` or
-    `~/.proto`, with `tools/node`; and for each, the folder above the one its shim is in when that is its shims folder
+    `~/.proto`, with `tools/node`; asdf's `$ASDF_DATA_DIR` or `~/.asdf`, with `installs/nodejs`; nodenv's `$NODENV_ROOT`
+    or `~/.nodenv`, with `versions`; and for each, the folder above the one its shim is in when that is its shims folder
     (volta's `bin`, the others' `shims`). The nodes in all of these are read whether or not a shim is on `PATH` (the
     folder above a shim's, when there is one). Any other compiled `node` with no sign of Node.js (a packed node, a shim
     Wardlatch doesn't know) is "could not be tested".
@@ -91,21 +96,19 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     `sizeOf`, and `programKind` (which tells a file that can't be read from one that isn't a program).
     `lib/installs.mjs` exports `SITE_PATTERNS` for the tests.
   - Known limits: not yet run on a Linux nodejs.org build, whose linker may have merged the decoder's strings into
-    Node's constant names; such a node would read "could not be tested" until that is checked on CI. nvm, fnm, asdf,
-    nodenv and n kept outside their usual folders (`NVM_DIR`, `ASDF_DATA_DIR` and the like) are not read, and a script
-    named `node` on `PATH` (asdf's and nodenv's shims are scripts) is still a REVIEW line whose runtimes are read only
-    in those usual folders. mise's settings in its configuration files (`shims_dir`, `system_installs_dir`,
-    `shared_install_dirs`) are not read, only its variables. proto's shims today are copies of proto-shim named `node`,
-    not links to it, so they read "could not be tested" (its nodes are still read). What the dynamic loader is told when a
-    program starts (`LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`) is not known. A partial backport that adds the new error
-    code without the decoder's fix would read SAFE, and so would an unfixed table beside one stray NUL-delimited copy of
-    the marker (in the 1.1 form; in the 1.0 form a stray copy makes it UNKNOWN). Brotli 1.0's table layout was checked
-    against clang's (1.0.9's and 1.0.10's lists compiled at -O0, -O2 and -Os) and against Debian 12's own GCC builds
-    (libbrotli1 1.0.9-2+b6 and 1.0.9-2+deb12u1, amd64 and arm64, from deb.debian.org, each checked against the
-    archive's signed index): GCC lays the names out in `decode.h`'s order, one NUL apart on amd64 and each padded to 8
-    bytes on arm64, which the reader takes as it is. Another compiler's layout it doesn't match reads "could not be
-    tested", never SAFE. A linker that merges a 1.0 name into a longer string ending in it (`BLOCK_LENGTH_1` into
-    `_ERROR_FORMAT_BLOCK_LENGTH_1`) hides that table, as with two decoders in one image.
+    Node's constant names; such a node would read "could not be tested" until that is checked on CI. nvm, fnm and n
+    kept outside their usual folders (`NVM_DIR` and the like) are not read. asdf's `nodejs` plugin under another name
+    (`installs/node`) is not read, so its shim reads "could not be tested". mise's settings in its configuration files
+    (`shims_dir`, `system_installs_dir`, `shared_install_dirs`) are not read, only its variables. What the dynamic
+    loader is told when a program starts (`LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`) is not known. A partial backport that
+    adds the new error code without the decoder's fix would read SAFE, and so would an unfixed table beside one stray
+    NUL-delimited copy of the marker (in the 1.1 form; in the 1.0 form a stray copy makes it UNKNOWN). Brotli 1.0's
+    table layout was checked against clang's (1.0.9's and 1.0.10's lists compiled at -O0, -O2 and -Os) and against
+    Debian 12's own GCC builds (libbrotli1 1.0.9-2+b6 and 1.0.9-2+deb12u1, amd64 and arm64, from deb.debian.org, each
+    checked against the archive's signed index): GCC lays the names out in `decode.h`'s order, one NUL apart on amd64
+    and each padded to 8 bytes on arm64, which the reader takes as it is. Another compiler's layout it doesn't match
+    reads "could not be tested", never SAFE. A linker that merges a 1.0 name into a longer string ending in it
+    (`BLOCK_LENGTH_1` into `_ERROR_FORMAT_BLOCK_LENGTH_1`) hides that table, as with two decoders in one image.
 - The tests never look in the home folder of the person running them (where macOS keeps Desktop, Documents, Downloads,
   Library, Photos and Mail): every test file loads `test/support/no-real-home.cjs` first, which refuses any look there,
   in the test and in every Node process it starts, and drops the home's folders from the `PATH` the tests start with.

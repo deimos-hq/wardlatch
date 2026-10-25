@@ -39,7 +39,9 @@
     "volta-shim": { "folder": "bin", "homes": ["$VOLTA_HOME", "~/.volta"], "nodes": ["tools/image/node/*/bin/node", "tools/image/node/*/*/bin/node"] },
     "mise": { "folder": "shims", "homes": ["$MISE_DATA_DIR", "$XDG_DATA_HOME/mise", "~/.local/share/mise", "$MISE_SYSTEM_DATA_DIR", "/usr/local/share/mise"], "nodes": ["installs/node/*/bin/node", "installs/nodejs/*/bin/node"], "installs": ["$MISE_INSTALLS_DIR", "$MISE_SYSTEM_INSTALLS_DIR", "$MISE_SHARED_INSTALL_DIRS"], "installsNodes": ["node/*/bin/node", "nodejs/*/bin/node"], "lists": ["MISE_SHARED_INSTALL_DIRS"] },
     "rtx": { "folder": "shims", "homes": ["$RTX_DATA_DIR", "$XDG_DATA_HOME/rtx", "~/.local/share/rtx"], "nodes": ["installs/node/*/bin/node", "installs/nodejs/*/bin/node"] },
-    "proto-shim": { "folder": "shims", "homes": ["$PROTO_HOME", "$XDG_DATA_HOME/proto", "~/.proto"], "nodes": ["tools/node/*/bin/node"] }
+    "proto-shim": { "folder": "shims", "homes": ["$PROTO_HOME", "$XDG_DATA_HOME/proto", "~/.proto"], "nodes": ["tools/node/*/bin/node"], "copies": true, "marker": "PROTO_SHIM_NAME" },
+    "asdf": { "script": true, "folder": "shims", "homes": ["$ASDF_DATA_DIR", "~/.asdf"], "nodes": ["installs/nodejs/*/bin/node"] },
+    "nodenv": { "script": true, "folder": "shims", "homes": ["$NODENV_ROOT", "~/.nodenv"], "nodes": ["versions/*/bin/node"] }
   },
   "bunDirs": ["~/.bun/bin/bun"],
   "sonameDirs": ["/lib", "/lib64", "/usr/lib", "/usr/lib64", "/usr/local/lib", "/lib/*-linux-gnu", "/usr/lib/*-linux-gnu"],
@@ -138,5 +140,5 @@
     }
   },
   "safeText": "no copy of the Brotli decoder found",
-  "notCovered": "Electron apps and browsers (they update themselves), programs built with bun build --compile and other single-file programs, Envoy and Istio, container images, re-implementations of Brotli in other languages (such as the Go port, github.com/andybalholm/brotli, fixed in v1.2.7), Python packages that build Brotli into their own files (apart from the Brotli and brotlicffi packages), nvm, fnm, asdf, nodenv and n kept outside their usual folders (NVM_DIR, ASDF_DATA_DIR and the like), and Windows. The guide covers more, by hand: https://www.deimoscore.com/wardlatch/brotli/"
+  "notCovered": "Electron apps and browsers (they update themselves), programs built with bun build --compile and other single-file programs, Envoy and Istio, container images, re-implementations of Brotli in other languages (such as the Go port, github.com/andybalholm/brotli, fixed in v1.2.7), Python packages that build Brotli into their own files (apart from the Brotli and brotlicffi packages), nvm, fnm and n kept outside their usual folders (NVM_DIR and the like), and Windows. The guide covers more, by hand: https://www.deimoscore.com/wardlatch/brotli/"
 }
