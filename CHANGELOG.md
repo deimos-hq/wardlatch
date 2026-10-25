@@ -54,11 +54,22 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     `LC_ID_DYLIB` and `LC_DYLD_ENVIRONMENT`; 32- and 64-bit, either byte order, each build of a universal file on its
     own) and an ELF file's dynamic table (`DT_NEEDED`, `DT_SONAME`, `DT_RPATH`, `DT_RUNPATH`, through `DT_STRTAB`),
     every read bounded and checked against the file. Its Brotli libraries and libnode are exactly the entries named
-    `libbrotlidec*`, or `libnode` and `libnode.*`, `libnode-*`, `libnode_*` (any case), found where the loader looks: an
-    absolute path as it is, `@loader_path` and `$ORIGIN` beside the file, `@executable_path` beside it in a main
-    program, `@rpath` and a bare ELF soname through the file's own `LC_RPATH` or `DT_RUNPATH` (`DT_RPATH` only without
-    one) in order, the first folder that holds it deciding, then for a soname the system's library folders (every copy
-    there must be SAFE). Each is judged, one level, and an EXPOSED one decides. The rest of the file is read only for a
+    `libbrotlidec*`, or `libnode` and `libnode.*`, `libnode-*`, `libnode_*` (any case). Which copy of each the loader
+    takes is not emulated: where dyld or ld.so could take a different copy, every candidate must be SAFE, or the file
+    is "could not be tested" (EXPOSED if any candidate is EXPOSED). That covers each `LC_RPATH`, `DT_RUNPATH` or
+    `DT_RPATH` folder that holds a file of that name, not just the first (dyld and ld.so pass over a copy they can't
+    load and look on); a candidate that isn't a loadable Mach-O or ELF library for the file's CPU type (another
+    `cputype` or `cpusubtype`, ELF class, byte order or machine, or not a dylib or shared object), which is "could not
+    be tested"; the `glibc-hwcaps/*` subfolders of every folder searched for a soname; and, on ELF, a library's
+    program's folders too (its `DT_RPATH`, as glibc reads it for a library with no `DT_RUNPATH`, and its `DT_RUNPATH`,
+    as musl does), so a library read without its program is "could not be tested" when its own folders don't hold the
+    copy (an ELF file is a program when it is `ET_EXEC` or flagged `DF_1_PIE`). An absolute path is taken as it is,
+    `@loader_path` as the file's real folder, `$ORIGIN` as both its real folder and the folder it was reached by,
+    `@executable_path` only in a main program, then for a soname the system's library folders (every copy there a
+    candidate). Each path is handed to the operating system as written (`realpath(3)`), so `..` after a link goes where
+    the kernel goes (Node's own `realpathSync` cleans it up as text first), and an ELF file whose dynamic table at
+    `PT_DYNAMIC`'s `p_offset` isn't the one the loader reads at its `p_vaddr` contradicts itself and is "could not be
+    tested". Each is judged, one level, and an EXPOSED one decides. The rest of the file is read only for a
     library it may load while it runs (`dlopen`): a Brotli library's or libnode's file name the loader can load
     (`libbrotlidec.so.1`, `libnode.147.dylib`, `libbrotlidec-ba690955.so.1.1.0`, in a message or a path too) that is not
     one of the file's own (in its link table, a whole copy of one of its links or of its own install name or soname, its
@@ -122,13 +133,17 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     and a universal file's header), `sizeOf`, and `programKind` (which tells a file that can't be read from one that
     isn't a program). `lib/installs.mjs` exports `SITE_PATTERNS` for the tests.
   - Known limits: not yet run on a Linux nodejs.org build, whose linker may have merged the decoder's strings into
-    Node's constant names; such a node would read "could not be tested" until that is checked on CI. A Brotli
-    library loaded under another name (a link called `libfoo.dylib`, a name a program puts together while it runs,
-    or a name with other bytes in it, such as `libbrotlidec\x01.so.1`) can't be seen. A library a program's
-    `@rpath` finds only through the `LC_RPATH` of the program that loads it, or only through `DYLD_` or `LD_` variables,
-    reads "not found". Which copy of an ELF soname the loader takes among the system's folders is decided by its cache,
-    which isn't read, so every copy there must be SAFE. nvm, fnm and n kept outside their usual folders (`NVM_DIR` and
-    the like) are not read. An asdf plugin for Node.js named other than `nodejs` or `node` is not read, so its shim
+    Node's constant names; such a node would read "could not be tested" until that is checked on CI. A Brotli library
+    loaded under another name (a link called `libfoo.dylib`, a name a program puts together while it runs, or a name
+    with other bytes in it, such as `libbrotlidec\x01.so.1`) can't be seen. A library a program's `@rpath` finds only
+    through the `LC_RPATH` of the program that loads it, or only through `DYLD_` or `LD_` variables, reads "not found".
+    Which copy of an ELF soname the loader takes among the system's folders is decided by its cache, which isn't read,
+    so every copy there must be SAFE. A loader's other reasons to pass over a copy of the right format and CPU (its
+    platform, its code signature, its version) are not read, so such a copy is judged as the one it takes; dyld's
+    fallback folders after an absolute path it can't load are not read either, nor glibc's legacy hwcaps subfolders
+    (`tls`, `haswell`, `x86_64` and the like, searched before glibc 2.37); and a position-independent program without
+    `DF_1_PIE` (an older toolchain's) is read as a library. nvm, fnm and n kept outside their usual folders (`NVM_DIR`
+    and the like) are not read. An asdf plugin for Node.js named other than `nodejs` or `node` is not read, so its shim
     reads "could not be tested". mise's settings in its configuration files (`shims_dir`, `system_installs_dir`,
     `shared_install_dirs`) are not read, only its variables. What the dynamic loader is told when a program starts
     (`LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`, `DYLD_FALLBACK_LIBRARY_PATH`) is not known. A partial backport that adds
