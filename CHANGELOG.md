@@ -32,7 +32,9 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     whole table (maintainer, 2026-10-25): the names from `HUFFMAN_SPACE` to `DISTANCE` in Brotli's order
     around `BLOCK_LENGTH_1`, each NUL-delimited (up to 16 NULs between two, as a compiler pads strings it aligns),
     either way round (the order `decode.h` lists them, as clang lays them out, or by code), then `BLOCK_SWITCH` and
-    `DICTIONARY_NOT_SET` (1.0.10) or `DICTIONARY_NOT_SET` at once (1.0.4 to 1.0.9).
+    `DICTIONARY_NOT_SET` (1.0.10), `DICTIONARY_NOT_SET` at once (1.0.4 to 1.0.9), or `COMPOUND_DICTIONARY` and
+    `DICTIONARY_NOT_SET` (1.0.3, the first affected release, whose `decode.h` lists `DISTANCE` then
+    `COMPOUND_DICTIONARY`).
   - What proves SAFE: the marker exactly as often as the control, in the file (in each build of a universal Mach-O file,
     with every Brotli library a file with a table also links SAFE too) or in the Brotli library it links (every
     candidate, by its real path, named in the receipt), or a Debian package version its table lists as fixed, for the
@@ -55,7 +57,7 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     table too; a line of a program's messages that names the library, such as `cannot open libbrotlidec.so.1\n`, the
     name after a space and followed only by newlines or printf formats, is text, and so is a part of a path longer than
     any file's name can be, 255 characters); Brotli 1.0's unprefixed error texts that are not whole tables (scattered, out
-    of order, only some of them, a table followed by neither form, which is how 1.0.0 to 1.0.3 read, more copies than
+    of order, only some of them, a table followed by none of these, which is how 1.0.0 to 1.0.2 read, more copies than
     the 64 kept, or `BLOCK_SWITCH` anywhere but in its place), alone or beside a fixed table; a file it can't read (a
     node or bun at mode 0111 included), over 512 MB or bigger than what is left of the run's 4 GB reading budget; a
     universal file whose builds overlap (read build by build, they would read the same bytes again); a zipped egg of a

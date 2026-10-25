@@ -11,7 +11,8 @@
     "fixed": "_ERROR_FORMAT_BLOCK_SWITCH",
     "nodeConstant": "BROTLI_DECODER",
     "table10": ["HUFFMAN_SPACE", "CONTEXT_MAP_REPEAT", "BLOCK_LENGTH_1", "BLOCK_LENGTH_2", "TRANSFORM", "DICTIONARY", "WINDOW_BITS", "PADDING_1", "PADDING_2", "DISTANCE"],
-    "after10": "DICTIONARY_NOT_SET"
+    "after10": "DICTIONARY_NOT_SET",
+    "unfixed10": [[], ["COMPOUND_DICTIONARY"]]
   },
   "nodeFixed": ["22.23.4", "24.22.1", "26.12.1"],
   "nodeDirs": [

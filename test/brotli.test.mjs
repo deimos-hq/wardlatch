@@ -189,9 +189,9 @@ test('one file, every decoder it uses: each build of a universal file, and the l
 
 // Brotli 1.0's error table as a library holds it: BrotliDecoderErrorString's strings with no prefix (1.0.x has
 // `return #NAME;`, 1.1.0 on `return #PREFIX #NAME;`), one NUL after each, in decode.h's order (as clang lays them out:
-// checked by compiling 1.0.9's and 1.0.10's lists). 1.0.10, the fix on the 1.0 line, added BLOCK_SWITCH (code -17) right
-// after DISTANCE (-16), before DICTIONARY_NOT_SET (-19). 1.0.0 to 1.0.2 had COMPOUND_DICTIONARY where DISTANCE is, and
-// 1.0.3 both
+// checked by compiling 1.0.9's and 1.0.10's lists; and as GCC does in Debian 12's libbrotli1, below). 1.0.10, the fix on
+// the 1.0 line, added BLOCK_SWITCH (code -17) right after DISTANCE (-16), before DICTIONARY_NOT_SET (-19). 1.0.0 to 1.0.2
+// had COMPOUND_DICTIONARY (-18) where DISTANCE is, and 1.0.3 both, DISTANCE then COMPOUND_DICTIONARY (decode.h at v1.0.3)
 const T10_HEAD = ['NO_ERROR', 'SUCCESS', 'NEEDS_MORE_INPUT', 'NEEDS_MORE_OUTPUT', 'EXUBERANT_NIBBLE', 'RESERVED', 'EXUBERANT_META_NIBBLE', 'SIMPLE_HUFFMAN_ALPHABET', 'SIMPLE_HUFFMAN_SAME', 'CL_SPACE', 'HUFFMAN_SPACE', 'CONTEXT_MAP_REPEAT', 'BLOCK_LENGTH_1', 'BLOCK_LENGTH_2', 'TRANSFORM', 'DICTIONARY', 'WINDOW_BITS', 'PADDING_1', 'PADDING_2'];
 const T10_TAIL = ['DICTIONARY_NOT_SET', 'INVALID_ARGUMENTS', 'CONTEXT_MODES', 'TREE_GROUPS', 'CONTEXT_MAP', 'RING_BUFFER_1', 'RING_BUFFER_2', 'BLOCK_TYPE_TREES', 'UNREACHABLE', 'INVALID'];
 const V109 = [...T10_HEAD, 'DISTANCE', ...T10_TAIL], V1010 = [...T10_HEAD, 'DISTANCE', 'BLOCK_SWITCH', ...T10_TAIL];
@@ -210,6 +210,9 @@ test('Brotli 1.0\'s form: a whole table in Brotli\'s order decides; 1.0.9 is EXP
         const at = `${kind}-${order}-${align}`;
         const bad = judge(make(join(d, `libbrotlidec-109-${at}.so.1`), [packed(way(V109), align)]));
         assert.equal(bad.status, 'EXPOSED', `1.0.9 ${at}`); assert.match(bad.reason, /lacks the fix.*form Brotli 1\.0 writes them/, at);
+        // 1.0.3, the first affected release: DISTANCE, then COMPOUND_DICTIONARY, then DICTIONARY_NOT_SET
+        const first = judge(make(join(d, `libbrotlidec-103-${at}.so.1`), [packed(way(V103), align)]));
+        assert.equal(first.status, 'EXPOSED', `1.0.3 ${at}`); assert.match(first.reason, /lacks the fix.*form Brotli 1\.0 writes them/, at);
         // the clean twin: 1.0.10
         const good = judge(make(join(d, `libbrotlidec-1010-${at}.so.1`), [packed(way(V1010), align)]));
         assert.equal(good.status, 'SAFE', `1.0.10 ${at}`); assert.match(good.reason, /has the fix.*form Brotli 1\.0 writes them/, at);
@@ -227,6 +230,7 @@ test('Brotli 1.0\'s form: a whole table in Brotli\'s order decides; 1.0.9 is EXP
   // fixed one SAFE; an unfixed 1.1 table is EXPOSED whatever the 1.0 one says
   const both = judge(bin(join(d, 'both-old'), [CONTROL, MARKER, packed(V109)]));
   assert.equal(both.status, 'EXPOSED'); assert.match(both.reason, /more than one Brotli decoder/);
+  assert.equal(judge(bin(join(d, 'both-103'), [CONTROL, MARKER, packed(V103)])).status, 'EXPOSED');
   assert.equal(judge(bin(join(d, 'both-new'), [CONTROL, MARKER, packed(V1010)])).status, 'SAFE');
   assert.equal(judge(bin(join(d, 'new-old'), [CONTROL, packed(V1010)])).status, 'EXPOSED');
   // a fixed 1.0 table in a file that also links an unfixed library: that library is used too, EXPOSED; a link it can't
@@ -262,8 +266,16 @@ test('Brotli 1.0\'s form, near misses: names scattered, out of order, alone, or 
     ['new-and-stray-anchor', [packed(V1010), packed(['some other text', 'BLOCK_LENGTH_1'])]],
     // more NULs between two names than a compiler's alignment pads with
     ['wide-gap', [Buffer.concat([packed(V1010.slice(0, 13)), Buffer.alloc(40), packed(V1010.slice(13))])]],
-    // 1.0.0 to 1.0.2 (no DISTANCE yet: not affected) and 1.0.3 (DISTANCE, then COMPOUND_DICTIONARY): neither form
-    ['1.0.2', [packed(V102)]], ['1.0.3', [packed(V103)]],
+    // 1.0.0 to 1.0.2 (no DISTANCE yet: not affected, and not judged)
+    ['1.0.2', [packed(V102)]],
+    // 1.0.3's run, near misses: COMPOUND_DICTIONARY not followed by DICTIONARY_NOT_SET, twice, before DISTANCE, with the
+    // fix's name beside it (either side), or DISTANCE alone after it
+    ['1.0.3-not-followed', [packed([...T10_HEAD, 'DISTANCE', 'COMPOUND_DICTIONARY', 'some other text'])]],
+    ['1.0.3-twice', [packed([...T10_HEAD, 'DISTANCE', 'COMPOUND_DICTIONARY', 'COMPOUND_DICTIONARY', ...T10_TAIL])]],
+    ['1.0.3-before-distance', [packed([...T10_HEAD, 'COMPOUND_DICTIONARY', 'DISTANCE', ...T10_TAIL])]],
+    ['1.0.3-and-marker', [packed([...T10_HEAD, 'DISTANCE', 'COMPOUND_DICTIONARY', 'BLOCK_SWITCH', ...T10_TAIL])]],
+    ['marker-and-1.0.3', [packed([...T10_HEAD, 'DISTANCE', 'BLOCK_SWITCH', 'COMPOUND_DICTIONARY', ...T10_TAIL])]],
+    ['1.0.3-run-cut', [packed([...T10_HEAD, 'DISTANCE', 'COMPOUND_DICTIONARY'])]],
     // more copies of the table than are kept (64): the ones past them are not read, and an unfixed one could be there
     ['crowded', [...Array.from({ length: 64 }, () => packed(V1010)), packed(V109)]],
   ]) {
@@ -310,6 +322,15 @@ test('the incident\'s 1.0 form: plain names, the anchor and the marker among the
   // the run is decode.h's order, right before the place of the fix's name
   const at = V1010.indexOf(t[0]);
   assert.deepEqual(V1010.slice(at, at + t.length + 2), [...t, strip(MARKER), INC.markers.after10]);
+  // what sits between the run and after10 in a table without the fix: nothing (1.0.4 to 1.0.9) and 1.0.3's
+  // COMPOUND_DICTIONARY, plain names, never the fix's name, the control's or after10
+  const u = INC.markers.unfixed10;
+  assert.ok(Array.isArray(u) && u.every((x) => Array.isArray(x) && x.every((n) => /^[A-Z0-9_]+$/.test(n) && ![strip(MARKER), strip(CONTROL), INC.markers.after10].includes(n))));
+  for (const v of [V109, V103]) { const i = v.indexOf(t[0]); assert.ok(u.some((x) => JSON.stringify(v.slice(i, i + t.length + x.length + 1)) === JSON.stringify([...t, ...x, INC.markers.after10]))); }
+  // without unfixed10 (an incident written before it), only 1.0.4 to 1.0.9's table is read as one without the fix
+  const f103 = bin(join(fresh('form10-no-unfixed10'), 'x'), [packed(V103)]);
+  assert.deepEqual(evidence(f103, { ...M, unfixed10: undefined }).t10, { fixed: 0, unfixed: 0, other: 1 });
+  assert.deepEqual(evidence(f103, M).t10, { fixed: 0, unfixed: 1, other: 0 });
 });
 
 test('names lie: a file named 1.2.1 without the marker is EXPOSED, one named 1.2.0 with it is SAFE', () => {
