@@ -128,7 +128,7 @@ test('a container whose normal-site control is refused is UNKNOWN, even when eve
 
 test('a python3-only or wget-only container reads its tool\'s answers: control ok, certificates refused, SAFE', async () => {
   // lib/containers.mjs:35 and :36 (python3's and wget's "ok" lines in the in-container probe)
-  const py = await inContainer(containerEngine('ct35', 'python3', 'case "$5" in *self-signed*) exit 10;; *advisory*) exit 0;; *) exit 10;; esac'));
+  const py = await inContainer(containerEngine('ct35', 'python3', 'for a in "$@"; do case "$a" in https://*) u="$a";; esac; done\ncase "$u" in *self-signed*) exit 10;; *advisory*) exit 0;; *) exit 10;; esac'));
   assert.equal(py.status, 'SAFE', JSON.stringify(py)); assert.equal(py.tool, 'python3');
   const wg = await inContainer(containerEngine('ct36', 'wget', 'case "$6" in *self-signed*) exit 5;; *advisory*) exit 0;; *) exit 5;; esac'));
   assert.equal(wg.status, 'SAFE', JSON.stringify(wg)); assert.equal(wg.tool, 'wget');
@@ -162,14 +162,14 @@ const probeCanaries = () => {
 };
 
 test('the forced-roots control must pass for every root: root A connecting and root B refused is UNKNOWN', async () => {
-  // lib/probe.mjs:127 (any forced result that is neither ok nor blocked fails the control)
+  // lib/probe.mjs:135 (any forced result that is neither ok nor blocked fails the control)
   const curl = exe(join(fresh('pr127'), 'curl'), 'case "$*" in *B.pem*) exit 60;; *A.pem*) exit 0;; *) exit 60;; esac');
   const r = await check({ kind: 'curl', bin: curl }, probeCanaries(), { controlUrl: 'https://advisory.test/', timeoutMs: 2000 });
   assert.equal(r.status, 'UNKNOWN', JSON.stringify(r)); assert.match(r.reason, /positive control failed/);
 });
 
 test('Node blocking the compromised keys (CERT_REVOKED) but unable to open a normal site is UNKNOWN, not SAFE', async () => {
-  // lib/probe.mjs:132 (a blocked control still needs the normal site to open)
+  // lib/probe.mjs:140 (a blocked control still needs the normal site to open)
   const node = exe(join(fresh('pr132'), 'node'), 'case "$3" in *canary*) exit 4;; *) exit 3;; esac');
   const r = await check({ kind: 'node', bin: node }, probeCanaries(), { controlUrl: 'https://advisory.test/', timeoutMs: 2000 });
   assert.equal(r.status, 'UNKNOWN', JSON.stringify(r)); assert.match(r.reason, /could not open a normal site either/);

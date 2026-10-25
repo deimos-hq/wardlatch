@@ -116,9 +116,11 @@ const nodeRt = (d, normal = 'exit 1', forced = 'exit 0') => exe(join(d, 'node'),
 u="$3"
 if [ -n "$WARDLATCH_CA" ]; then ${forced}; fi
 ${normal}`);
+// the URL and the forced CA file follow the script, wherever the options before -c put it (0.1.9 had -I -S, now -I -S -B)
 const pythonRt = (d, normal = 'exit 1', forced = 'exit 0') => exe(join(d, 'python3'), `[ "$1" = -V ] && { echo "Python 3.12.1"; exit 0; }
-u="$5"
-if [ -n "$6" ]; then ${forced}; fi
+while [ $# -gt 0 ] && [ "$1" != -c ]; do shift; done; shift 2
+u="$1"
+if [ -n "$2" ]; then ${forced}; fi
 ${normal}`);
 const curlRt = (d, normal = 'exit 60', forced = 'exit 0') => exe(join(d, 'curl'), `[ "$1" = --version ] && { echo "curl 8.7.1 (x86_64-apple-darwin) libcurl/8.7.1"; exit 0; }
 ca=""; prev=""; u=""
