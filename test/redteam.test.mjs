@@ -5,6 +5,7 @@
 // faked in a --require preload, net.connect throws, and every program a check runs is a stand-in in the test folder,
 // except real git in the git-based scenarios, which never fetches). Nothing is written inside the repository.
 // Part of `npm test`; point it at another checkout with WARDLATCH_DIR=/path/to/wardlatch.
+import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';

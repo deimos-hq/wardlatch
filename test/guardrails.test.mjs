@@ -3,6 +3,7 @@
 // The guardrails' own wiring, read as text: the workflows give each job only the token it needs and the concurrency the
 // release gate relies on, and the documents say what the gates do, no more. Nothing here touches bin/ or lib/, so the
 // mutation copies don't run this test.
+import './support/no-real-home.cjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';

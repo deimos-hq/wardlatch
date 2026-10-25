@@ -5,6 +5,7 @@
 // (gh is always a stand-in on PATH, which answers only for HEAD, and gives every page only to --paginate --slurp, as gh
 // does); without --ci, also a clean main at origin/main (a local bare repository). Offline; git runs with no user config,
 // and no GITHUB_* variable of a CI runner reaches the gate.
+import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';

@@ -2,6 +2,7 @@
 // Copyright 2026 Deimos AI LLC
 // The incident files are data the checks trust, so they are checked like code: the shape each check reads, https
 // sources only, the bundled roots are exactly the advisory's roots, and the fix commands people copy are safe to run.
+import './support/no-real-home.cjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';

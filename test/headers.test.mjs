@@ -2,6 +2,7 @@
 // Copyright 2026 Deimos AI LLC
 // Agents that tell websites who you are: header settings that carry your name or email are found, by file and header
 // name, and the value is never printed. Everything runs against a made-up home folder; nothing is sent.
+import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';

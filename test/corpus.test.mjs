@@ -4,6 +4,7 @@
 // as each layout's FAKE variable says): --gate passes only when the candidate meets every layout's expectations, with
 // the exit code each finding should give, and it never passes having checked nothing (an --only name that isn't in the
 // corpus, no layouts, no clean or no bad layout, or a bad layout no incident run here checks). Offline: nothing real runs.
+import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';

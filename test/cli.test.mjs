@@ -4,6 +4,7 @@
 // folder (fake programs on a private PATH, throwaway git repositories, a fake WordPress site). The eMudhra trust
 // check runs here only with an offline stand-in (no test host answers), for what it says when it can't test; its
 // probes need the advisory's public test hosts, so they are covered in wardlatch.test.mjs against a local one.
+import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
@@ -17,11 +18,12 @@ const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
 // the PHP check also searches folders off PATH: these tests hide them, so PHP installed on the machine can't change them
 const HIDE_PHP = ['--require', join(ROOT, 'test', 'support', 'hide-php-places.cjs')];
 const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
-let dir;
+let dir, home;
 
-/** Run the CLI → { code, out, err }. Output is piped, as in CI, so stdout is not a TTY and carries no colour. */
+/** Run the CLI → { code, out, err }. Output is piped, as in CI, so stdout is not a TTY and carries no colour. HOME is
+ *  an empty folder of the tests' own, never the one they run with. */
 const run = (args, env = {}, nodeArgs = [], cwd = undefined) => {
-  const r = spawnSync(process.execPath, [...nodeArgs, BIN, ...args], { encoding: 'utf8', env: { ...process.env, ...env }, maxBuffer: 64 * 1024 * 1024, cwd });
+  const r = spawnSync(process.execPath, [...nodeArgs, BIN, ...args], { encoding: 'utf8', env: { ...process.env, HOME: home, ...env }, maxBuffer: 64 * 1024 * 1024, cwd });
   return { code: r.status, out: r.stdout, err: r.stderr };
 };
 const gitRepo = (path) => {
@@ -31,8 +33,8 @@ const gitRepo = (path) => {
   return { commit: () => { g('add', '-A'); g('-c', 'commit.gpgsign=false', 'commit', '-qm', 'add'); } };
 };
 
-before(() => { dir = mkdtempSync(join(tmpdir(), 'wardlatch-cli-')); });
-after(() => rmSync(dir, { recursive: true, force: true }));
+before(() => { dir = mkdtempSync(join(tmpdir(), 'wardlatch-cli-')); home = mkdtempSync(join(tmpdir(), 'wardlatch-cli-home-')); });
+after(() => { rmSync(dir, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); });
 
 test('--help and --list answer without checking anything', () => {
   const help = run(['--help']);
@@ -532,7 +534,7 @@ test('a planted FIFO as a venv\'s certifi METADATA can\'t hang the run', () => {
   mkdirSync(join(v, 'bin'), { recursive: true }); mkdirSync(join(sp, 'certifi'), { recursive: true }); mkdirSync(join(sp, 'certifi-9.9.9.dist-info'), { recursive: true });
   writeFileSync(join(v, 'pyvenv.cfg'), 'home = /x\n'); writeFileSync(join(sp, 'certifi', 'cacert.pem'), '-----BEGIN CERTIFICATE-----\n'); writeFileSync(join(v, 'bin', 'python'), '');
   execFileSync('mkfifo', [join(sp, 'certifi-9.9.9.dist-info', 'METADATA')]);
-  const r = spawnSync(process.execPath, ['--require', offline, BIN, '--incident', 'emudhra-2026-10', '--json', '--no-containers', '--paths', proj], { encoding: 'utf8', timeout: 60000, env: { ...process.env, PATH: join(dir, 'empty-path') } });
+  const r = spawnSync(process.execPath, ['--require', offline, BIN, '--incident', 'emudhra-2026-10', '--json', '--no-containers', '--paths', proj], { encoding: 'utf8', timeout: 60000, env: { ...process.env, HOME: home, PATH: join(dir, 'empty-path') } });
   assert.notEqual(r.signal, 'SIGTERM', 'the run hung on the FIFO');
   assert.ok(JSON.parse(r.stdout).results.length >= 0);
 });

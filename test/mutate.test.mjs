@@ -14,6 +14,7 @@
 // Stopping the script kills every suite it started, with everything those started. Also scripts/gaps-only-shrink.mjs,
 // the check that the two lists of survivors (known gaps, equivalent) only shrink. Offline; the gate needs rsync and
 // Node 22.1 or later, as the script does.
+import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';

@@ -64,6 +64,7 @@
 // ... no site found is SAFE" (SAFE for a --paths that doesn't exist: R5); wardlatch.test.mjs "a runtime that refuses
 // the compromised keys even with their roots forced in ... is SAFE" uses a curl stand-in, which R1 rules out for curl.
 // ======================================================================================================================
+import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
