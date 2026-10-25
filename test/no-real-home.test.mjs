@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
 import * as nodeFs from 'node:fs';
 import * as nodeModule from 'node:module';
-import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync, symlinkSync, linkSync, readFileSync, rmSync, constants } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync, symlinkSync, linkSync, readFileSync, readdirSync, rmSync, constants } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -88,11 +88,35 @@ test('a refusal in a process a test started fails the test file, at any depth, t
   const copyOk = run(twiceOk);
   assert.deepEqual(copyOk.out, { status: 0, out: 'READ' }, copyOk.err);
   assert.equal(copyOk.code, 0, copyOk.err);
+  // a test file run by a node --test the test started (as the mutation gate's tests do): Node starts it, not the net,
+  // and its refusal still reaches the test
+  const inner = put(m, 'inner/home.test.cjs', `const { test } = require('node:test');
+test('swallows a look at the home', () => { try { require('fs').readFileSync(${J(join(m.home, 'secret'))}); } catch { /* swallowed */ } });\n`);
+  const innerOk = put(m, 'inner/ok.test.cjs', `const { test } = require('node:test');\ntest('reads its own', () => require('fs').readFileSync(${J(join(m.tmp, 'ok'))}));\n`);
+  const nested = (file) => probe(m, `const r = cp.spawnSync(process.execPath, ['--test', ${J(file)}], { encoding: 'utf8' }); report({ status: r.status });`);
+  const viaRunner = nested(inner);
+  assert.deepEqual(viaRunner.out, { status: 1 }, viaRunner.err);
+  assert.equal(viaRunner.code, 1, 'a refusal in a test file a nested node --test ran did not fail the test');
+  const viaRunnerOk = nested(innerOk);
+  assert.deepEqual(viaRunnerOk.out, { status: 0 }, viaRunnerOk.err);
+  assert.equal(viaRunnerOk.code, 0, viaRunnerOk.err);
+  // ...and when a shell starts that node --test (the net comes by NODE_OPTIONS, which the runner passes on)
+  const viaShell = probe(m, `let status = 0; try { cp.execSync('node --test ' + ${J(J(inner))}, { stdio: 'pipe' }); } catch (e) { status = e.status; } report({ status });`);
+  assert.deepEqual(viaShell.out, { status: 1 }, viaShell.err);
+  assert.equal(viaShell.code, 1, 'a refusal in a test file a nested node --test ran (started by a shell) did not fail the test');
   // a test file whose temporary folder is in the home keeps its notes elsewhere: the net writes nothing there
   mkdirSync(join(m.home, 't'));
   const inHome = probe(m, `cp.spawnSync(process.execPath, [${J(home)}]); report({ left: cp.execFileSync('/bin/ls', ['-A', path.join(m.home, 't')], { encoding: 'utf8' }) });`, { TMPDIR: join(m.home, 't') });
   assert.deepEqual(inHome.out, { left: '' }, inHome.err);
   assert.equal(inHome.code, 1, inHome.err);
+  // the folder for notes is made only when a test file first starts a process (one that is killed can't remove it),
+  // and removed when it exits
+  const quiet = join(m.tmp, 'quiet'); mkdirSync(quiet);
+  const q = probe(m, `const before = fs.readdirSync(process.env.TMPDIR); cp.spawnSync(process.execPath, ['-e', '0']);
+report({ before, after: fs.readdirSync(process.env.TMPDIR).map((f) => f.replace(/-[^-]*$/, '-*')) });`, { TMPDIR: quiet });
+  assert.deepEqual(q.out, { before: [], after: ['wardlatch-no-home-*'] }, q.err);
+  assert.equal(q.code, 0, q.err);
+  assert.deepEqual(readdirSync(quiet), [], 'the folder for notes was left behind');
   // the clean twin: a child that reads only its own folders leaves no note, and the test file passes
   const clean = run(ok);
   assert.deepEqual(clean.out, { status: 0, out: 'READ' }, clean.err);
