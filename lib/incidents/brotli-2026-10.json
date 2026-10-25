@@ -22,6 +22,7 @@
     "~/.volta/tools/image/node/*/bin/node",
     "~/.volta/tools/image/node/*/*/bin/node",
     "~/.asdf/installs/nodejs/*/bin/node",
+    "~/.asdf/installs/node/*/bin/node",
     "~/.local/share/mise/installs/node/*/bin/node",
     "~/.local/share/mise/installs/nodejs/*/bin/node",
     "/usr/local/share/mise/installs/node/*/bin/node",
@@ -40,7 +41,7 @@
     "mise": { "folder": "shims", "homes": ["$MISE_DATA_DIR", "$XDG_DATA_HOME/mise", "~/.local/share/mise", "$MISE_SYSTEM_DATA_DIR", "/usr/local/share/mise"], "nodes": ["installs/node/*/bin/node", "installs/nodejs/*/bin/node"], "installs": ["$MISE_INSTALLS_DIR", "$MISE_SYSTEM_INSTALLS_DIR", "$MISE_SHARED_INSTALL_DIRS"], "installsNodes": ["node/*/bin/node", "nodejs/*/bin/node"], "lists": ["MISE_SHARED_INSTALL_DIRS"] },
     "rtx": { "folder": "shims", "homes": ["$RTX_DATA_DIR", "$XDG_DATA_HOME/rtx", "~/.local/share/rtx"], "nodes": ["installs/node/*/bin/node", "installs/nodejs/*/bin/node"] },
     "proto-shim": { "folder": "shims", "homes": ["$PROTO_HOME", "$XDG_DATA_HOME/proto", "~/.proto"], "nodes": ["tools/node/*/bin/node"], "copies": true, "marker": "PROTO_SHIM_NAME" },
-    "asdf": { "script": true, "folder": "shims", "homes": ["$ASDF_DATA_DIR", "~/.asdf"], "nodes": ["installs/nodejs/*/bin/node"] },
+    "asdf": { "script": true, "folder": "shims", "homes": ["$ASDF_DATA_DIR", "~/.asdf"], "nodes": ["installs/nodejs/*/bin/node", "installs/node/*/bin/node"], "pluginLine": "# asdf-plugin:" },
     "nodenv": { "script": true, "folder": "shims", "homes": ["$NODENV_ROOT", "~/.nodenv"], "nodes": ["versions/*/bin/node"] }
   },
   "bunDirs": ["~/.bun/bin/bun"],

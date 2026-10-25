@@ -1939,3 +1939,40 @@ test('a script named node in proto\'s shims folder is no proto shim (proto\'s ar
   const good = cliRows({ HOME: home, PATH: path });
   assert.equal(good.code, 0, good.out); assert.equal(good.at(shim)?.status, 'REVIEW');
 });
+
+test('asdf: a plugin named node (installs/node) is read like nodejs, and a shim counts only the folder of the plugins it names', () => {
+  // asdf's shim names its plugins, one "# asdf-plugin: <plugin> <version>" line each (internal/shims/shims.go, encode)
+  const asdfShim = (f, ...plugins) => { mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, `#!/usr/bin/env bash\n${plugins.map((p) => `# asdf-plugin: ${p} 20.11.0\n`).join('')}exec asdf exec "node" "$@"`, { mode: 0o755 }); return f; };
+  // a plugin named node: its nodes in ~/.asdf/installs/node are read (they were not, and its shim was UNKNOWN, exit 2)
+  const home = fresh('asdf-node'), path = join(home, '.asdf', 'shims'), shim = asdfShim(join(path, 'node'), 'node');
+  const node = node20(join(home, '.asdf', 'installs', 'node', '20.11.0', 'bin', 'node'));
+  const bad = cliRows({ HOME: home, PATH: path });
+  assert.equal(bad.code, 1, bad.out); assert.equal(bad.at(node)?.status, 'EXPOSED'); assert.equal(bad.at(shim)?.status, 'REVIEW');
+  assert.match(bad.at(shim).reason, /read in .*\.asdf\/installs\/node$/);
+  node26(node);
+  const good = cliRows({ HOME: home, PATH: path });
+  assert.equal(good.code, 0, good.out); assert.equal(good.at(node)?.status, 'SAFE');
+  // with no shim on PATH too, and under ASDF_DATA_DIR
+  const moved = fresh('asdf-node-moved'), other = node20(join(moved, 'ad', 'installs', 'node', '20.11.0', 'bin', 'node'));
+  const r = cliRows({ HOME: moved, PATH: fresh('asdf-node-moved-path'), ASDF_DATA_DIR: join(moved, 'ad') });
+  assert.equal(r.code, 1, r.out); assert.equal(r.at(other)?.status, 'EXPOSED');
+  // the shim of the nodejs plugin, with only the node plugin's folder there (its nodes fixed): the nodes it starts are
+  // in installs/nodejs, which is not there, so UNKNOWN, exit 2, never a REVIEW over another plugin's folder
+  asdfShim(shim, 'nodejs');
+  const wrong = cliRows({ HOME: home, PATH: path });
+  assert.equal(wrong.code, 2, wrong.out); assert.equal(wrong.at(shim)?.status, 'UNKNOWN'); assert.match(wrong.at(shim).reason, /installs\/nodejs\).*could not be tested/);
+  // a plugin Wardlatch reads no folder for, and a shim that names none: UNKNOWN, with both folders there and fixed
+  node26(join(home, '.asdf', 'installs', 'nodejs', '26.12.1', 'bin', 'node'));
+  for (const plugins of [['nodejs-lts'], []]) {
+    asdfShim(shim, ...plugins);
+    const u = cliRows({ HOME: home, PATH: path });
+    assert.equal(u.code, 2, u.out); assert.equal(u.at(shim)?.status, 'UNKNOWN', plugins.join());
+    assert.match(u.at(shim).reason, plugins.length ? /belongs to the plugin nodejs-lts, and Wardlatch reads no folder of runtimes for that/ : /belongs to no plugin it names/);
+  }
+  // the clean twins: the nodejs plugin's shim with its folder there, and a shim of both plugins, REVIEW, exit 0
+  for (const plugins of [['nodejs'], ['node', 'nodejs']]) {
+    asdfShim(shim, ...plugins);
+    const t = cliRows({ HOME: home, PATH: path });
+    assert.equal(t.code, 0, t.out); assert.equal(t.at(shim)?.status, 'REVIEW', plugins.join());
+  }
+});
