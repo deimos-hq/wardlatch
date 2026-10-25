@@ -104,7 +104,7 @@ for (const name of ['CLASS-AUDIT.md', 'INDEPENDENT-REVIEW.md']) {
   const labels = lines.filter((l) => COMMIT_LABEL.some((re) => re.test(l)));
   if (labels.length !== 1) { fail(`${p} must have exactly one "Commit:" line, and no other line labelling a commit (found ${labels.length})`); continue; }
   const cline = bare(labels[0]);
-  const sha = /^commit\s*:\s*([0-9a-f]{7,40})$/i.exec(cline)?.[1] ?? '';
+  const sha = /^[0-9a-f]{7,40}$/.exec(/^commit\s*:\s*(\S+)$/i.exec(cline)?.[1] ?? '')?.[0] ?? '';
   if (!sha) { fail(`${p}: the line labelling a commit must read "Commit: <sha>" (it reads "${cline.slice(0, 80)}")`); continue; }
   let full;
   try { full = git('rev-parse', '--verify', `${sha}^{commit}`); } catch { fail(`${p}: commit ${sha} is not in this repository`); continue; }

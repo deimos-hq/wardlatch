@@ -331,6 +331,15 @@ test('a commit hidden in a comment behind another in a table, a heading or a rou
   assert.equal(r.code, 1, r.out); assert.match(r.out, /exactly one "Commit:" line[^\n]*\(found 2\)/);
 });
 
+test('a commit id must be written as git prints it, lower-case hex: "Commit: <SHA in capitals>" or a name is refused', () => {
+  for (const id of ['UPPER', 'HEAD', 'main']) {
+    const dir = repo(), sha = git(dir, 'rev-parse', 'HEAD~1');
+    put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', review(id === 'UPPER' ? sha.toUpperCase() : id));
+    const r = gate(dir);
+    assert.equal(r.code, 1, `${id}\n${r.out}`); assert.match(r.out, /the line labelling a commit must read "Commit: <sha>"/, id);
+  }
+});
+
 test('the plain forms still pass: a verdict and a commit in a quote, a list or bold, with "commit" and "ready" in prose', () => {
   for (const text of ['> **Commit:** SHA\n> **Verdict:** READY', '- Commit: SHA\n- Verdict: READY',
     'Each fix\ncommit was checked again; the branch is ready to tag.\n\nCommit: SHA\nVerdict: READY']) {
