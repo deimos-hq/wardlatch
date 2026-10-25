@@ -36,6 +36,9 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     static copy, `@rpath`, `@executable_path`, `$ORIGIN`, a program with its own `RUNPATH`); a file it can't read, over
     512 MB or past the run's 4 GB reading budget; a distribution library without the marker whose package version isn't
     in the table or can't be read, or that no package installed as it is now. Node's `zlib.constants` names, which contain the marker as a substring, never decide.
+  - A distribution's node (a launcher for `libnode`) is judged by its libnode, by the same rules. A compiled `node` on
+    `PATH` that shows no sign of Node.js is a REVIEW line only for a version manager's known shim (volta-shim, mise);
+    any other (a packed node, a shim Wardlatch doesn't know) is "could not be tested".
   - Fix lines follow the by-hand guide (https://www.deimoscore.com/wardlatch/brotli/): the fixed release for each Node.js
     line, "move to 22, 24 or 26" for the end-of-life ones, the library's own update for a node that links one, Bun 1.4.4,
     `Brotli>=1.2.1` and `brotlicffi>=1.2.1.0`, `brew upgrade brotli`, the conda and MacPorts updates, Debian's fixed

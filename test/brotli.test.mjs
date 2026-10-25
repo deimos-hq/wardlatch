@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scanBytes, readAt } from '../lib/files.mjs';
-import { judgeFile, evidence, resolveLink, isDecoderLibName, recordPaths, sitePackagesCandidates, distroVerdict, checkBundled, elfSearchPath, ldSoConfDirs } from '../lib/brotli.mjs';
+import { judgeFile, evidence, resolveLink, isDecoderLibName, isNodeLibName, recordPaths, sitePackagesCandidates, distroVerdict, checkBundled, elfSearchPath, ldSoConfDirs } from '../lib/brotli.mjs';
 import { SITE_PATTERNS } from '../lib/installs.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -545,11 +545,20 @@ test('node: PATH copies, version managers and the running node are read, never r
   assert.equal(shim.status, 'REVIEW'); assert.match(shim.reason, /shim/);
   assert.ok(looked.some((l) => l.includes(join(d, 'nvm'))), 'the receipt names the version managers\' folders');
   assert.ok(!existsSync(ran), 'nothing found was run');
-  // a compiled program named node on PATH with no sign of Node.js (volta's shim): REVIEW, never judged
-  const path2 = fresh('rt-path2');
-  bin(join(path2, 'node'), ['shim']);
-  const r2 = run({}, { pathEnv: path2 }).rows;
-  assert.equal(r2.length, 1); assert.equal(r2[0].status, 'REVIEW'); assert.match(r2[0].reason, /not a Node\.js runtime/);
+  // a compiled program named node on PATH with no sign of Node.js that is a version manager's shim (volta's node links
+  // to volta-shim, mise's to mise): REVIEW, never judged
+  for (const shimName of ['volta-shim', 'mise']) {
+    const path2 = fresh(`rt-path2-${shimName}`);
+    bin(join(d, `${shimName}-home`, shimName), ['shim']);
+    symlinkSync(join(d, `${shimName}-home`, shimName), join(path2, 'node'));
+    const r2 = run({}, { pathEnv: path2 }).rows;
+    assert.equal(r2.length, 1); assert.equal(r2[0].status, 'REVIEW', shimName); assert.match(r2[0].reason, new RegExp(`^${shimName}, a version manager's shim, not a Node\\.js runtime`));
+  }
+  // any other compiled node with no sign of Node.js (packed, or a shim Wardlatch doesn't know): could not be tested
+  const path4 = fresh('rt-path4');
+  bin(join(path4, 'node'), ['packed']);
+  const r4 = run({}, { pathEnv: path4 }).rows;
+  assert.equal(r4.length, 1); assert.equal(r4[0].status, 'UNKNOWN'); assert.match(r4[0].reason, /could not be tested.*Check this one by hand/);
   // something named node or bun on PATH that isn't a regular file (a FIFO): not read, and said so
   const path3 = fresh('rt-path3');
   execFileSync('mkfifo', [join(path3, 'node')]); execFileSync('mkfifo', [join(path3, 'bun')]);
@@ -589,6 +598,41 @@ test('a node or bun that can\'t be read is "could not be tested", on PATH, in a 
   } finally {
     for (const f of files) execFileSync('chmod', ['755', f]);
   }
+});
+
+test('a distribution\'s node, a launcher for libnode: libnode decides, by the same rules, through the Brotli library it links', () => {
+  const lib = fresh('libnode-lib'), path = fresh('libnode-path'), d = fresh('libnode');
+  // Debian's /usr/bin/node names libnode.so.108, libstdc++ and libc, and nothing of Brotli; libnode links the system's
+  elf(join(path, 'node'), ['libnode.so.108', 'libstdc++.so.6', 'libc.so.6']);
+  elf(join(lib, 'libnode.so.108'), [NODE_CONTROL, NODE_MARKER, 'libbrotlidec.so.1', 'libbrotlienc.so.1', 'nodejs.org/download/release/v18.20.4']);
+  oldLib(join(lib, 'libbrotlidec.so.1'));
+  const row = () => run({}, { pathEnv: path, sonameDirs: [lib] }).rows.find((r) => r.file === join(path, 'node'));
+  const bad = row();
+  assert.equal(bad.status, 'EXPOSED'); assert.match(bad.reason, /the library that holds Node\.js's code: it uses .*libbrotlidec\.so\.1, whose Brotli decoder lacks the fix/);
+  assert.equal(bad.via, join(lib, 'libbrotlidec.so.1')); assert.match(bad.fix, /not Node\.js/);
+  assert.equal(bad.version, '18.20.4', 'the release libnode holds, for the words');
+  fixedLib(join(lib, 'libbrotlidec.so.1'));
+  const good = row();
+  assert.equal(good.status, 'SAFE'); assert.deepEqual(good.searched, [join(path, 'node'), join(lib, 'libnode.so.108'), join(lib, 'libbrotlidec.so.1')]);
+  // beside it, a libnode name in a string that isn't whole could be the one that loads: UNKNOWN
+  const unsure = judge(elf(join(d, 'node-unsure'), ['libnode.so.108', Buffer.from(`\0\x01${join(d, 'other', 'libnode.so.108')}\0`)]), [lib]);
+  assert.equal(unsure.status, 'UNKNOWN'); assert.match(unsure.reason, /libnode.*could not be read whole/);
+  // libnode with its own fixed table decides by it; with an unfixed one, EXPOSED
+  elf(join(lib, 'libnode.so.108'), [CONTROL, MARKER]);
+  assert.equal(row().status, 'SAFE');
+  elf(join(lib, 'libnode.so.108'), [CONTROL]);
+  assert.equal(row().status, 'EXPOSED');
+  // a libnode that can't be followed (@rpath, a program with its own RUNPATH) or found: UNKNOWN, never REVIEW
+  bin(join(d, 'node-rpath'), ['@rpath/libnode.147.dylib']);
+  elf(join(d, 'node-runpath'), ['libnode.so.108'], { runpath: true });
+  elf(join(d, 'node-nowhere'), ['libnode.so.999']);
+  for (const f of ['node-rpath', 'node-runpath', 'node-nowhere']) {
+    const r = judge(join(d, f), [lib]);
+    assert.equal(r.status, 'UNKNOWN', f); assert.match(r.reason, /libnode.*could not be tested/, f);
+  }
+  // names that only look like it are not a link (libnode_base.a in a build path)
+  assert.ok(!['libnode_base.a', 'libnodejs.so.1', 'libnode.147', 'libnode.so.x'].some(isNodeLibName));
+  assert.ok(['libnode.so.108', '@rpath/libnode.147.dylib', '/usr/lib/x86_64-linux-gnu/libnode.so.115', 'libnode.dylib'].every(isNodeLibName));
 });
 
 test('bun: 1.4.3\'s table is EXPOSED with the 1.4.4 fix, 1.4.4\'s is SAFE; Node\'s rules never apply; a bare bun is UNKNOWN', () => {
