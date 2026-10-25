@@ -141,5 +141,5 @@
     }
   },
   "safeText": "no copy of the Brotli decoder found",
-  "notCovered": "Electron apps and browsers (they update themselves), programs built with bun build --compile and other single-file programs, Envoy and Istio, container images, re-implementations of Brotli in other languages (such as the Go port, github.com/andybalholm/brotli, fixed in v1.2.7), Python packages that build Brotli into their own files (apart from the Brotli and brotlicffi packages), nvm, fnm and n kept outside their usual folders (NVM_DIR and the like), and Windows. The guide covers more, by hand: https://www.deimoscore.com/wardlatch/brotli/"
+  "notCovered": "Electron apps and browsers (they update themselves), programs built with bun build --compile and other single-file programs, Envoy and Istio, container images, re-implementations of Brotli in other languages (such as the Go port, github.com/andybalholm/brotli, fixed in v1.2.7), Python packages that build Brotli into their own files (apart from the Brotli and brotlicffi packages), nvm, fnm and n kept outside their usual folders (NVM_DIR and the like), a Brotli library a program loads under another name (a link of another name, or a name it puts together while it runs), and Windows. The guide covers more, by hand: https://www.deimoscore.com/wardlatch/brotli/"
 }

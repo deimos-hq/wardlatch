@@ -48,32 +48,46 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     its source's version), again for the file that package installed. A bundled copy with no fixed release yet
     (Pillow, opencv-python) is EXPOSED, and its fix line says no release had a fixed Brotli on 24 October and to update
     when one ships.
+  - What a file links is read as the loader reads it (maintainer's decision #24, 2026-10-25), from the binary format,
+    never from strings that look like paths: a Mach-O build's header and load commands (`LC_LOAD_DYLIB`,
+    `LC_LOAD_WEAK_DYLIB`, `LC_REEXPORT_DYLIB`, `LC_LAZY_LOAD_DYLIB`, `LC_LOAD_UPWARD_DYLIB`, with `LC_RPATH`,
+    `LC_ID_DYLIB` and `LC_DYLD_ENVIRONMENT`; 32- and 64-bit, either byte order, each build of a universal file on its
+    own) and an ELF file's dynamic table (`DT_NEEDED`, `DT_SONAME`, `DT_RPATH`, `DT_RUNPATH`, through `DT_STRTAB`),
+    every read bounded and checked against the file. Its Brotli libraries and libnode are exactly the entries named
+    `libbrotlidec*`, or `libnode` and `libnode.*`, `libnode-*`, `libnode_*` (any case), found where the loader looks: an
+    absolute path as it is, `@loader_path` and `$ORIGIN` beside the file, `@executable_path` beside it in a main
+    program, `@rpath` and a bare ELF soname through the file's own `LC_RPATH` or `DT_RUNPATH` (`DT_RPATH` only without
+    one) in order, the first folder that holds it deciding, then for a soname the system's library folders (every copy
+    there must be SAFE). Each is judged, one level, and an EXPOSED one decides. The rest of the file is read only for a
+    library it may load while it runs (`dlopen`): a Brotli library's or libnode's file name the loader can load
+    (`libbrotlidec.so.1`, `libnode.147.dylib`, `libbrotlidec-ba690955.so.1.1.0`, in a message or a path too) that is not
+    one of the file's own (in its link table, a whole copy of one of its links or of its own install name or soname, its
+    code-signing identifier when that is its own file name, and nothing else) makes it "could not be tested"; a static
+    archive's or object file's name (`libnode_base.a(callback.o)`), a debugging-information file's name
+    (`libbrotlidec.so.1.0.9.debug`, as a stripped library's `.gnu_debuglink` gives it) or a word does not. So
+    nodejs.org's Node.js 26.12.1 for macOS, whose debug map names about 400 static archive members, reads SAFE by its
+    own table, and Homebrew's node, which links `@rpath/libnode.147.dylib`, is followed to its libnode and judged (an
+    earlier draft of this check read both as "could not be tested").
   - What is "could not be tested": the marker without the control; no table and no library it can follow (a stripped
-    static copy, `@rpath`, `@executable_path`, `$ORIGIN`, a relative path such as `lib/libbrotlidec.1.dylib` or
-    `../lib/libbrotlidec.so.1`, which dyld and ld.so look for from the folder the program is started in and which the
-    reason names, a program with its own `RUNPATH`, a soname when the loader's configuration or a library folder
-    couldn't all be read; each of these beside a table too); a file that names `libbrotlidec` or `libnode` anywhere
-    other than in a whole load path to that library, beside a table too. The rule is simple on purpose: each mention
-    must be a whole C string (NUL before and after) that is the library's path or soname, which is followed and judged
-    (or named as a relative or `$ORIGIN` path, "could not be tested"), and any other mention, whatever its shape, is
-    one Wardlatch can't follow: a line of messages such as `cannot open libbrotlidec.so.1\n`, a sentence, a build path
-    such as `libnode_base.a(callback.o)`, a name with any other byte next to it or in it (`libbrotlidec.so.1~`,
-    `élibbrotlidec.so.1`, `libbrotlidec\x01.so.1`), bytes that aren't UTF-8, or a path that starts more than 1024
-    bytes before the name. No string is read as "just text" by its shape: four rounds of rules that tried to tell a
-    message from a path were each beaten by review. The known cost: a program that only mentions the library in a
-    message reads "could not be tested"; Brotli 1.0's unprefixed error texts that are not whole tables (scattered, out
-    of order, only some of them, a table followed by none of these, which is how 1.0.0 to 1.0.2 read, more copies than
-    the 64 kept, or `BLOCK_SWITCH` anywhere but in its place), alone or beside a fixed table; a file it can't read (a
-    node or bun at mode 0111 included), over 512 MB or bigger than what is left of the run's 4 GB reading budget; a
-    universal file whose builds overlap (read build by build, they would read the same bytes again); a zipped egg of a
-    Brotli package; a distribution library without the marker whose package version isn't in the table or can't be read,
-    or that no package installed as it is now. Node's `zlib.constants` names, which contain the marker as a substring,
-    never decide.
-  - A whole link to `libnode`, the library that holds Node.js's code (a distribution's node is a launcher for it, and so
+    static copy, a link not found or behind a folder it can't look into, `@executable_path` in a library, `$LIB` or
+    `$PLATFORM`, a relative path such as `lib/libbrotlidec.1.dylib` or `../lib/libbrotlidec.so.1`, or a relative search
+    folder, which dyld and ld.so look for from the folder the program is started in and which the reason names, a soname
+    when the loader's configuration or a library folder couldn't all be read; each of these beside a table too); headers
+    that don't fit their format, a file that is neither Mach-O nor ELF, `LC_DYLD_ENVIRONMENT`, a library a program links
+    that links a Brotli library or libnode of its own, and a name it may load while it runs (above), or more mentions of
+    the names than the 65,536 a build is looked at for, beside a table too; Brotli 1.0's unprefixed error texts that are
+    not whole tables (scattered, out of order, only some of them, a table followed by none of these, which is how 1.0.0
+    to 1.0.2 read, more copies than the 64 kept, or `BLOCK_SWITCH` anywhere but in its place), alone or beside a fixed
+    table; a file it can't read (a node or bun at mode 0111 included), over 512 MB or bigger than what is left of the
+    run's 4 GB reading budget; a universal file whose builds overlap (read build by build, they would read the same
+    bytes again); a zipped egg of a Brotli package; a distribution library without the marker whose package version
+    isn't in the table or can't be read, or that no package installed as it is now. Node's `zlib.constants` names, which
+    contain the marker as a substring, never decide.
+  - A link to `libnode`, the library that holds Node.js's code (a distribution's node is a launcher for it, and so
     is Homebrew's), is followed and judged by the same rules, one level, beside a table or a Brotli library too, and
     must be SAFE as well: a libnode without the fix makes the file EXPOSED, and one it can't follow, find or read makes
-    it "could not be tested". Homebrew's node links `@rpath/libnode.147.dylib`, which Wardlatch doesn't follow, so it
-    reads "could not be tested" though the Brotli library it links has the fix. A compiled `node` on `PATH` that shows
+    it "could not be tested". Homebrew's node links `@rpath/libnode.147.dylib`, found through its own `LC_RPATH`
+    (`@loader_path/../lib`), and its libnode links Homebrew's Brotli library. A compiled `node` on `PATH` that shows
     no sign of Node.js is a REVIEW line only for a version manager's known shim (a link to volta-shim, mise, rtx or
     proto-shim; or a copy of proto-shim, which is how proto writes its shims today, in proto's shims folder or carrying
     the message only proto-shim holds, `Invalid shim name detected. Unable to execute the appropriate proto tool.`, from
@@ -103,26 +117,29 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     (but Node.js's fix when libnode's own decoder decides: libnode is Node.js's own library), Bun 1.4.4, `Brotli>=1.2.1`
     and `brotlicffi>=1.2.1.0`, `brew upgrade brotli`, the conda and MacPorts updates, Debian's fixed packages.
   - `lib/files.mjs` gains `scanBytes` (fixed byte strings counted in a large file, or one range of it, read in 4 MB
-    pieces), `readAt` (up to 64 KB from an offset, for an ELF file's dynamic segment and a universal file's header),
-    `sizeOf`, and `programKind` (which tells a file that can't be read from one that isn't a program).
-    `lib/installs.mjs` exports `SITE_PATTERNS` for the tests.
+    pieces, with each hit's place in the file, and needles found ignoring ASCII case and kept only when the caller's
+    test takes them, up to a number of looks), `readAt` (up to 64 KB from an offset, for an ELF file's dynamic segment
+    and a universal file's header), `sizeOf`, and `programKind` (which tells a file that can't be read from one that
+    isn't a program). `lib/installs.mjs` exports `SITE_PATTERNS` for the tests.
   - Known limits: not yet run on a Linux nodejs.org build, whose linker may have merged the decoder's strings into
-    Node's constant names; such a node would read "could not be tested" until that is checked on CI. nodejs.org's
-    Node.js 26.12.1 for macOS, though its own table has the fix, names `libnode` in its debug map's build paths
-    (`/Users/admin/build/ws/out/Release/libnode_base.a(async_resource.o)` and about 400 more), so by the rule above it
-    reads "could not be tested". nvm, fnm and n kept outside their usual folders (`NVM_DIR` and the like) are not read.
-    An asdf plugin for Node.js named other than `nodejs` or `node` is not read, so its shim reads "could not be tested".
-    mise's settings in its configuration files (`shims_dir`, `system_installs_dir`, `shared_install_dirs`) are not read,
-    only its variables. What the dynamic loader is told when a program starts (`LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`)
-    is not known. A partial backport that adds the new error code without the decoder's fix would read SAFE, and so
-    would an unfixed table beside one stray NUL-delimited copy of the marker (in the 1.1 form; in the 1.0 form a stray
-    copy makes it UNKNOWN). Brotli 1.0's table layout was checked against clang's (1.0.9's and 1.0.10's lists compiled
-    at -O0, -O2 and -Os) and against Debian 12's own GCC builds (libbrotli1 1.0.9-2+b6 and 1.0.9-2+deb12u1, amd64 and
-    arm64, from deb.debian.org, each checked against the archive's signed index): GCC lays the names out in `decode.h`'s
-    order, one NUL apart on amd64 and each padded to 8 bytes on arm64, which the reader takes as it is. Another
-    compiler's layout it doesn't match reads "could not be tested", never SAFE. A linker that merges a 1.0 name into a
-    longer string ending in it (`BLOCK_LENGTH_1` into `_ERROR_FORMAT_BLOCK_LENGTH_1`) hides that table, as with two
-    decoders in one image.
+    Node's constant names; such a node would read "could not be tested" until that is checked on CI. A Brotli
+    library loaded under another name (a link called `libfoo.dylib`, a name a program puts together while it runs,
+    or a name with other bytes in it, such as `libbrotlidec\x01.so.1`) can't be seen. A library a program's
+    `@rpath` finds only through the `LC_RPATH` of the program that loads it, or only through `DYLD_` or `LD_` variables,
+    reads "not found". Which copy of an ELF soname the loader takes among the system's folders is decided by its cache,
+    which isn't read, so every copy there must be SAFE. nvm, fnm and n kept outside their usual folders (`NVM_DIR` and
+    the like) are not read. An asdf plugin for Node.js named other than `nodejs` or `node` is not read, so its shim
+    reads "could not be tested". mise's settings in its configuration files (`shims_dir`, `system_installs_dir`,
+    `shared_install_dirs`) are not read, only its variables. What the dynamic loader is told when a program starts
+    (`LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`, `DYLD_FALLBACK_LIBRARY_PATH`) is not known. A partial backport that adds
+    the new error code without the decoder's fix would read SAFE, and so would an unfixed table beside one stray
+    NUL-delimited copy of the marker (in the 1.1 form; in the 1.0 form a stray copy makes it UNKNOWN). Brotli 1.0's
+    table layout was checked against clang's (1.0.9's and 1.0.10's lists compiled at -O0, -O2 and -Os) and against
+    Debian 12's own GCC builds (libbrotli1 1.0.9-2+b6 and 1.0.9-2+deb12u1, amd64 and arm64, from deb.debian.org, each
+    checked against the archive's signed index): GCC lays the names out in `decode.h`'s order, one NUL apart on amd64
+    and each padded to 8 bytes on arm64, which the reader takes as it is. Another compiler's layout it doesn't match
+    reads "could not be tested", never SAFE. A linker that merges a 1.0 name into a longer string ending in it
+    (`BLOCK_LENGTH_1` into `_ERROR_FORMAT_BLOCK_LENGTH_1`) hides that table, as with two decoders in one image.
 - The tests never look in the home folder of the person running them (where macOS keeps Desktop, Documents, Downloads,
   Library, Photos and Mail): every test file loads `test/support/no-real-home.cjs` first, which refuses any look there,
   in the test and in every Node process it starts, and drops the home's folders from the `PATH` the tests start with.
