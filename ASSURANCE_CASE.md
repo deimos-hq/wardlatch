@@ -91,14 +91,22 @@ success or failure is read. The reachability handshake sends no request at all. 
 fails if any other shipped module imports a network module or calls `fetch`.
 
 **R3, changes nothing.** The shipped code imports no file-writing function, opens files only read-only, and the
-container probe only runs a request. The runtimes it starts write nothing either: Python runs with `-B`, on the host
-and in containers, so it leaves no `.pyc` cache. Up to 0.1.9 it had `-I -S` alone, under which python.org, Homebrew,
-pyenv and uv Pythons may write `__pycache__` beside a standard-library module whose cache is missing or stale (Apple's
-`/usr/bin/python3` writes none under `-I`). *Evidence:* `test/conventions.test.mjs` fails on any import of a write,
-delete, rename, copy or chmod function in `bin/` or `lib/`, on any `open` without `O_RDONLY` or with a flag that
-writes, and on a Python probe without `-B`; `test/wardlatch.test.mjs` fails if a probe starts Python without
-`-I -S -B`, if a real `python3` given the probe's options would write a cache, or if a probe leaves a file in the HOME
-it was given.
+container probe only runs a request. Of the programs it starts, only Python is tested for what it writes: every
+`python3` Wardlatch starts gets `-B`, which stops it writing a `.pyc` cache (the version check runs `python3 -B -V`,
+the probe `python3 -I -S -B`, and the container probe the same inside a container), and a probe with a real Python
+leaves the HOME it was given empty. Up to 0.1.9 the probes had `-I -S` alone, under which python.org, Homebrew, pyenv
+and uv Pythons may write `__pycache__` beside a standard-library module whose cache is missing or stale (Apple's
+`/usr/bin/python3` writes none under `-I`), and the version check had `-V` alone. No test checks what the other
+programs it starts write: `node`, `curl`, `nscurl`, `git`, `docker` or `podman`, the programs whose version it reads,
+and a container's `curl` or `wget`. *Evidence:* `test/conventions.test.mjs` fails on any import of a write, delete,
+rename, copy or chmod function in `bin/` or `lib/`, on any `open` without `O_RDONLY` or with a flag that writes, and
+if the source of `lib/probe.mjs` or `lib/containers.mjs` starts Python without `-B`; `test/bughunt-0.1.9.test.mjs`
+runs the command with a `python3` that records the options of each run, first on `PATH`, in place of
+`/usr/bin/python3` and inside a container, and fails if a run has no `-B`, if the version check, the probe or the
+container probe made no run, or if the command started a Python that is not one of them; `test/wardlatch.test.mjs`
+fails if a probe starts Python without `-I -S -B`, if a real `python3` (the one on `PATH`, and Apple's on a Mac with
+the developer tools) given the probe's options reports `sys.flags.dont_write_bytecode` other than 1, or if a probe
+with it leaves a file in the HOME it was given.
 
 **R4, no secret printed.** `scanText` keeps the first four characters and the length, or a fixed marker for private
 keys and service-account files. *Evidence:* `test/wardlatch.test.mjs` and `test/cli.test.mjs` assert the key never
@@ -199,7 +207,7 @@ and `python3` on `PATH`, and later copies that are compiled programs (a later sc
 place it was found, the one your shell would pick; the PHP check also runs the first `php`, `php-fpm` or `php-cgi` of
 each versioned name in its known install folders off `PATH` (the `sbin` folders, macOS Homebrew's `php@*` kegs, Remi, cPanel,
 Plesk), where a second PHP serving the sites lives. Each is run once for its version (`node -v`, `curl --version`,
-`python3 -V`, or the rule's arguments), and each runtime once more per test connection, with the arguments in
+`python3 -B -V`, or the rule's arguments), and each runtime once more per test connection, with the arguments in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#the-trust-check-step-by-step). Python is not started the way your shell
 would start it: see the next paragraph. Since 0.1.7 every `node_modules/.bin` folder and every relative entry is
 dropped from `PATH` before anything runs (npx puts the current project's `node_modules/.bin` first, so a project could
@@ -223,9 +231,9 @@ interpreter's site-packages, and a malicious package can put code there that run
 1.107.0's `cook.pth`, 21 October 2026). `-I` does not stop this: it leaves out only the user's own site-packages, the
 `PYTHON*` environment variables and the current folder. So since 0.1.7 the trust probe runs `python3 -I -S -c
 <script>` (`-I -S -B` since the release after 0.1.9: see R3): `-S` skips `site`, and with it every `.pth` file and
-`sitecustomize.py`. The probe needs only the standard
-library. The version is read with `python3 -V`, which exits before any start-up code. Inside a container `python3` runs
-with `-I -S` (and `-B`) too; one older than 3.4 has no `-I`, fails the normal-site control and is UNKNOWN. The cost: a `.pth` file
+`sitecustomize.py`. The probe needs only the standard library. The version is read with `python3 -B -V`, which
+exits before any start-up code. Inside a container `python3` runs with `-I -S` (and `-B`) too; one older than 3.4
+has no `-I`, fails the normal-site control and is UNKNOWN. The cost: a `.pth` file
 or `sitecustomize.py` that changes how that Python trusts certificates (pip-system-certs, which makes it use the
 system's store, for example) no longer applies to the probe, so the result can differ from what your code sees. In
 particular, as before, the `certifi` in the own site-packages of a Python on `PATH` is not tested yet (a virtual environment's

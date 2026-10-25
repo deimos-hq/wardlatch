@@ -46,8 +46,9 @@ whose certificates are signed with the compromised keys, the way your own code w
 the run says so in an UNKNOWN line).
 If a runtime connects, it still trusts them. Two exceptions keep it from running what it checks: Python is started
 with `-I -S -B`, so a `.pth` file or `sitecustomize.py` that changes its trust (pip-system-certs, for example) is not
-applied (and Python writes no `.pyc` cache), and, as before, the `certifi` in the own site-packages of a Python on your `PATH` is not tested yet (a
-virtual environment's is); and every program runs from `/`, so a version manager picks your default, not the current project's.
+applied (and Python writes no `.pyc` cache), and, as before, the `certifi` in the own site-packages of a Python on
+your `PATH` is not tested yet (a virtual environment's is); and every program runs from `/`, so a version manager
+picks your default, not the current project's.
 
 Two checks keep the answer honest:
 
