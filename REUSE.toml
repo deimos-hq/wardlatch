@@ -23,6 +23,16 @@ path = ["**.json", "**.yml", "**.yaml", "**.toml"]
 SPDX-FileCopyrightText = "2026 Deimos AI LLC"
 SPDX-License-Identifier = "Apache-2.0"
 
+# The README banner (dark and light plates): Deimos AI LLC's own drawing. The
+# WARDLATCH letters are drawn, not typed; the small lines are DM Mono (SIL Open
+# Font License, which leaves images made with the font free of it). Apache-2.0
+# grants no rights to the Wardlatch or Deimos names (its section 6). Not in the
+# npm package.
+[[annotations]]
+path = ".github/assets/**"
+SPDX-FileCopyrightText = "2026 Deimos AI LLC"
+SPDX-License-Identifier = "Apache-2.0"
+
 # The Mac fix is the one source file without an in-file header, on purpose.
 # www.deimoscore.com serves this exact file as a download and publishes its
 # SHA-256 (22153b4a...6a86) on the page and in its changelog, so a header
