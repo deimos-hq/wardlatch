@@ -23,16 +23,17 @@
 //      bin/ and lib/ it ran, which must be this commit's (and no GATE FAILED);
 //   4. the working tree is clean, on main, at origin/main; with --ci (a tag's checkout), the tagged commit is on
 //      origin/main;
-//   5. every check GitHub ran on this commit passed, every page of them, including the critical-mutant gate and the
-//      corpus report (gh reads them: signed in, or GH_TOKEN). With --ci the commit is GITHUB_SHA, which must be HEAD,
-//      and the jobs of this workflow run itself (GITHUB_RUN_ID), still running, are left out.
+//   5. every check GitHub ran on this commit, every page of them, ended in success, neutral or skipped, and the
+//      critical-mutant gate and the corpus report (REQUIRED_CHECKS) are among them and ended in success (gh reads them:
+//      signed in, or GH_TOKEN). With --ci the commit is GITHUB_SHA, which must be HEAD, and the jobs of this workflow
+//      run itself (GITHUB_RUN_ID), still running, are left out.
 //   6. the lists of planted bugs no test catches (scripts/mutants-gaps.json, scripts/mutants-allowed.json) only shrank
 //      since the last release: the newest older vX.Y.Z tag in this history with a GitHub release (gh reads them) that
 //      the gate trusts as the release workflow's (RELEASED, below), so a tag pushed by hand, one this gate refused, a
-//      prerelease or a release edited after it was published is never the baseline. Each entry added since carries
-//      "approved": "maintainer, YYYY-MM-DD", and each is named in the output for the maintainer to read. That is
-//      deliberately stricter than CLAUDE.md, which lets an entry onto the allow list with a reason a reviewer agreed
-//      to: for a release, only the maintainer adds to either list.
+//      prerelease or a release edited after it was published is never the baseline (with no such tag, it refuses). Each
+//      entry added since carries "approved": "maintainer, YYYY-MM-DD", and each is named in the output for the
+//      maintainer to read. That is deliberately stricter than CLAUDE.md, which lets an entry onto the allow list with a
+//      reason a reviewer agreed to: for a release, only the maintainer adds to either list.
 // Releases 0.1.0 to 0.1.9 predate this gate: on the maintainer's machine it has nothing to check for them; with --ci (a
 // tag pushed for one now) it refuses, as it does any other version older than 0.1.10, none of which was released.
 import { readFileSync, existsSync } from 'node:fs';
@@ -108,8 +109,9 @@ const blockWord = (l) => {
   }
   return undefined;
 };
-// an advisory id, as a whole word: its four words aren't read for a commit id (the class audit must name each one, and
-// its groups can be hex). Nothing is taken out of the line: every other word, and the words around it, are read.
+// an advisory id with no letter, digit or _ just before or after it (\b): its four words aren't read for a commit id
+// (the class audit must name each one, and its groups can be hex). Nothing is taken out of the line: every other word,
+// and the words around it, are read.
 const ADVISORY = /\bGHSA-[0-9A-Za-z]{4}-[0-9A-Za-z]{4}-[0-9A-Za-z]{4}\b/g;
 const HEX = '0123456789abcdefABCDEF';
 const isHex = (s) => { for (const c of s) if (!HEX.includes(c)) return false; return true; };
@@ -142,7 +144,7 @@ const afterTheBlock = (lines, from, full) => {
     if (!t.trim()) columns = 0;
     else if (columns) {
       const n = cells(t);
-      if (n > columns) return { why: `${at} has a table row with ${n} cells, more than the ${columns} of its header (GitHub doesn't show the cells after the header's; a line of only |, :, - and spaces starts a table, and a blank line, or one of only quote marks, ends one) (docs/reviews/README.md)` };
+      if (n > columns) return { why: `${at} has a table row with ${n} cells, more than the ${columns} of its header (GitHub doesn't show the cells after the header's; a line of only |, :, -, spaces and tabs, with at least one - (after any quote marks, spaces and tabs), starts a table, and the next line that is blank once its quote marks, spaces and tabs are taken off ends it) (docs/reviews/README.md)` };
     } else if (delimiterRow(t)) columns = cells(t);
     const word = blockWord(l);
     if (word) {

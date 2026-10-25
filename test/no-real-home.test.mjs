@@ -67,6 +67,26 @@ const allRefused = (r, tried) => {
   assert.deepEqual(Object.entries(r.out).filter(([, v]) => v !== 'refused'), [], 'these ways in were not refused');
   assert.deepEqual(Object.keys(r.out).sort(), [...tried].sort());
 };
+/** Another Node binary, one the net knows by its first bytes and name, not by its path: a hard link, or a copy, of this
+ *  one (a link to it would be this one) in a bin folder of its own in the machine's tmp, with the other folders of this
+ *  one's install linked beside that folder, as a Node may load its own library from there (Homebrew's loads
+ *  @loader_path/../lib/libnode.<n>.dylib: a copy of it alone stops before it starts, SIGABRT). The links are made by a
+ *  Node that loads the net as a test file does, in this test file's environment: an install in a home is refused
+ *  there, which fails that Node, not this test file, and the copy is tried without them. → { node } if it starts, else
+ *  { node, skipped: why it doesn't }. */
+const anotherNode = (m) => {
+  const install = dirname(dirname(process.execPath)), root = join(m.tmp, 'other'), node = join(root, 'bin', 'node');
+  mkdirSync(dirname(node), { recursive: true });
+  try { linkSync(process.execPath, node); } catch { copyFileSync(process.execPath, node, constants.COPYFILE_FICLONE); }
+  const laid = spawnSync(process.execPath, ['--require', NET, '-e', `const fs = require('fs'), path = require('path');
+for (const e of fs.readdirSync(${J(install)})) if (e !== 'bin') fs.symlinkSync(path.join(${J(install)}, e), path.join(${J(root)}, e));`],
+  { encoding: 'utf8', timeout: 20000, killSignal: 'SIGKILL', env: { ...process.env, WARDLATCH_TEST_NO_HOME: '' } });
+  const r = spawnSync(node, ['--version'], { encoding: 'utf8', timeout: 20000, killSignal: 'SIGKILL' });
+  if (r.status === 0 && r.stdout.trim() === process.version) return { node };
+  const how = r.signal ?? r.error?.code ?? `exit ${r.status}`;
+  return { node, skipped: `a hard link, or a copy, of this Node (${process.execPath}) doesn't start here (${how}), ${laid.status === 0
+    ? `with the other folders of ${install} linked beside its bin folder` : `and the other folders of ${install} couldn't be linked beside it (${laid.signal ?? `exit ${laid.status}`})`}` };
+};
 
 test('a refusal in a process a test started fails the test file, at any depth, though nothing reads that process\'s exit code', () => {
   const m = machine('marks');
@@ -724,7 +744,7 @@ test('a package in the checkout\'s own node_modules loads by name, by require() 
   assert.deepEqual(b.out, hooks ? { checkout: 'refused', outside: 'not refused: ERR_PACKAGE_IMPORT_NOT_DEFINED' } : {}, b.err);
 });
 
-test('the net goes with every Node a test starts: fork, exec, execSync, node by name, a #! script, a shell, another Node, and below the command; the child\'s own NODE_OPTIONS stay its own', () => {
+test('the net goes with every Node a test starts: fork, exec, execSync, node by name, a #! script, a shell, another Node, and below the command; the child\'s own NODE_OPTIONS stay its own', (t) => {
   // a space in every path: NODE_OPTIONS must quote the net's (Node reads it as words)
   const m = machine('carry with space');
   const s = join(m.home, 'secret');
@@ -732,9 +752,10 @@ test('the net goes with every Node a test starts: fork, exec, execSync, node by 
   const byEnv = reader(m, 'by-env', s, '#!/usr/bin/env node\n');
   const byEnvS = reader(m, 'by-env-s', s, '#!/usr/bin/env -S node --no-warnings\n');
   const byPath = reader(m, 'by-path', s, `#!${process.execPath}\n`);
-  // another Node binary (a hard link, or a copy, of this one): a found Node the command runs is one
-  const other = join(m.tmp, 'other', 'node'); mkdirSync(dirname(other));
-  try { linkSync(process.execPath, other); } catch { copyFileSync(process.execPath, other, constants.COPYFILE_FICLONE); }
+  // another Node binary (anotherNode, above): a found Node the command runs is one. Where even its copy can't start,
+  // that one case is skipped, and the test's output says why
+  const other = anotherNode(m);
+  if (other.skipped) t.diagnostic(`skipped one case, another Node binary: ${other.skipped}`);
   // not a program: a FIFO the net must not hang on, reading its first bytes
   const fifo = join(m.tmp, 'fifo'); execFileSync('mkfifo', [fifo]);
   // below a process the test started (as the command is), where only a Node gets the net
@@ -743,8 +764,7 @@ r.shebangEnv = cp.spawnSync(${J(byEnv)}, o).status;
 r.shebangEnvS = cp.spawnSync(${J(byEnvS)}, o).status;
 r.shebangPath = cp.spawnSync(${J(byPath)}, o).status;
 r.byName = cp.spawnSync('node', [${J(g)}], o).status;
-r.otherNode = cp.spawnSync(${J(other)}, [${J(g)}], o).status;
-r.shellOption = cp.spawnSync('node ' + ${J(J(g))}, { ...o, shell: true }).status;
+${other.skipped ? '' : `r.otherNode = cp.spawnSync(${J(other.node)}, [${J(g)}], o).status;\n`}r.shellOption = cp.spawnSync('node ' + ${J(J(g))}, { ...o, shell: true }).status;
 try { cp.execSync('node ' + ${J(J(g))}, o); r.execSync = 0; } catch (e) { r.execSync = e.status; }
 r.fifo = cp.spawnSync(${J(fifo)}, o).error?.code ?? 'ran';
 cp.exec('node ' + ${J(J(g))}, o, (e) => { r.exec = e?.code ?? 0; cp.fork(${J(g)}, o).on('exit', (d) => { r.fork = d; console.log(JSON.stringify(r)); }); });
@@ -766,7 +786,7 @@ cp.exec('node ' + JSON.stringify(g), o, (e) => {
 });`);
   assert.deepEqual(r.out, {
     execSync: 70, byName: 70, shebangEnv: 70, shebangPath: 70, shell: 70, shellOption: 70, exec: 70, fork: 70,
-    below: { shebangEnv: 70, shebangEnvS: 70, shebangPath: 70, byName: 70, otherNode: 70, shellOption: 70, execSync: 70, fifo: 'EACCES', exec: 70, fork: 70 },
+    below: { shebangEnv: 70, shebangEnvS: 70, shebangPath: 70, byName: 70, ...(other.skipped ? {} : { otherNode: 70 }), shellOption: 70, execSync: 70, fifo: 'EACCES', exec: 70, fork: 70 },
   }, r.err);
   assert.equal(r.code, 1, 'the processes it started were stopped: the test file fails');
 

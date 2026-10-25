@@ -94,3 +94,26 @@ test('no document says the release workflow repeats the release gate\'s checks w
   }
   assert.ok(seen >= 3, `the claim is made in CHANGELOG.md, GOVERNANCE.md and docs/RELEASING.md (seen ${seen})`);
 });
+
+test('no document says the ruleset for main requires no approving review: its count of required approvals is 0, and what its require_extra_approval_for_unattributed_changes asks is not established', () => {
+  let seen = 0;
+  for (const f of [...DOCS, 'docs/reviews/README.md']) {
+    for (const s of sentences(f)) {
+      assert.doesNotMatch(s, /no approving review/i, `${f}: ${s.slice(0, 300)}`);
+      if (/count of required approvals is 0/.test(s)) seen++;
+    }
+  }
+  assert.ok(seen >= 3, `GOVERNANCE.md, docs/RELEASING.md and docs/reviews/README.md say what was read of the ruleset (seen ${seen})`);
+  assert.match(text('GOVERNANCE.md').replace(/\s*\n\s*/g, ' '), /`require_extra_approval_for_unattributed_changes` on: [^.]*; what it asks of other pull requests is not established/);
+});
+
+test('the changelog\'s summary of the release gate names, by name, each check the gate requires to have run and succeeded', () => {
+  const required = /^const REQUIRED_CHECKS = \[([^\]\n]*)\];/m.exec(read('scripts/release-check.mjs'));
+  assert.ok(required, 'scripts/release-check.mjs has its REQUIRED_CHECKS');
+  const names = [...required[1].matchAll(/'([^'\n]+)'/g)].map((m) => m[1]);
+  assert.ok(names.length >= 2, names.join(', '));
+  const item = text('CHANGELOG.md').split(/\n- /).find((p) => p.startsWith('The release gate: '))?.replace(/\s*\n\s*/g, ' ');
+  assert.ok(item, 'the changelog\'s release gate item');
+  for (const n of names) assert.ok(item.includes(`\`${n}\``), `the item names \`${n}\``);
+  assert.match(item, /\(skipped is not enough for these two\)/);
+});

@@ -316,6 +316,14 @@ test('full gate: a failed check, a required check missing, or gh unable to answe
   dir = repo();
   r = gate(dir, { ci: false, env: full(dir, { ghFails: true }) });
   assert.equal(r.code, 1, r.out); assert.match(r.out, /couldn't read GitHub's checks/);
+  // a required check skipped is not run: refused; the twin, another check skipped, passes
+  const skipped = (k) => CHECKS.map((name, i) => ({ name, status: 'completed', conclusion: i === k ? 'skipped' : 'success' }));
+  dir = repo();
+  r = gate(dir, { ci: false, env: full(dir, { runs: skipped(0) }) });
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /required checks didn't run or pass on [0-9a-f]{7}: critical mutants\n/);
+  dir = repo();
+  r = gate(dir, { ci: false, env: full(dir, { runs: skipped(2) }) });
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /all 3 GitHub checks passed/);
 });
 
 test('a second verdict after the block counts however it is dressed: in bold, a quote, a list, code or a sentence it is refused', () => {
@@ -564,12 +572,14 @@ test('round 4: an advisory id is skipped only as a whole word: one glued to a co
   // the probes' advisory groups name nothing here (the dates are fixed, so this holds on every run): what is refused
   // is the commit id after them
   assert.equal(execFileSync('git', ['cat-file', '--batch-check'], { cwd: dir0, env: ENV, input: 'abcd\n', encoding: 'utf8' }), 'abcd missing\n');
+  // (a whole word as \b reads one, which counts _ as part of a word: an id in underscore italics is read)
   for (const [text, word] of [[`GHSA-abcd-abcd-${other}`, other], [`See GHSA-abcd-abcd-${other.slice(0, 10)}.`, other.slice(0, 10)],
-    [`xGHSA-${other.slice(0, 4)}-abcd-abcd`, other.slice(0, 4)]]) {
+    [`xGHSA-${other.slice(0, 4)}-abcd-abcd`, other.slice(0, 4)], [`See _GHSA-${other.slice(0, 4)}-abcd-abcd_ again.`, other.slice(0, 4)]]) {
     REFUSED(PROBE(repo(), text), text, new RegExp(`line 8 has "${word}", which git resolves as a commit here, or finds ambiguous`));
   }
   // the twins: whole advisory ids, every group of one a commit id's first hex digits, are still skipped
-  for (const twin of [`GHSA-${other.slice(0, 4)}-${other.slice(4, 8)}-${other.slice(8, 12)}: looked again.`, `(GHSA-${other.slice(0, 4)}-xxxx-xxxx) and GHSA-766p-78h4-77gr.`]) {
+  for (const twin of [`GHSA-${other.slice(0, 4)}-${other.slice(4, 8)}-${other.slice(8, 12)}: looked again.`, `(GHSA-${other.slice(0, 4)}-xxxx-xxxx) and GHSA-766p-78h4-77gr.`,
+    `See *GHSA-${other.slice(0, 4)}-abcd-abcd* again.`]) {
     PASSES(PROBE(repo(), twin), twin);
   }
 });
@@ -619,12 +629,17 @@ test('round 4: a word git resolves to a commit as written, between spaces (a bra
 test('round 4: a table row with more cells than its header (GitHub doesn\'t show the cells after the header\'s) is refused; its twins pass', () => {
   for (const [text, line] of [['| a | b |\n|---|---|\n| x | y | hidden |', 10], ['a | b\n--- | ---\nx | y | z', 10], ['> | a |\n> |---|\n> | x | y |', 10],
     ['| a | b |\n|---|---|\n|---|---|---|', 10], ['a\n:---\nx | y', 10], ['| a | b |\n| - | - |\nplain\n| x | y | z |', 11]]) {
-    REFUSED(PROBE(repo(), text), text, /has a table row with \d+ cells, more than the \d+ of its header/, line);
+    // the reason states the rule as the gate applies it (docs/reviews/README.md, item 12)
+    REFUSED(PROBE(repo(), text), text, new RegExp(`has a table row with \\d+ cells, more than the \\d+ of its header \\(GitHub doesn't show the cells after the header's; ${
+      'a line of only |, :, -, spaces and tabs, with at least one - (after any quote marks, spaces and tabs), starts a table, and the next line that is blank once its quote marks, spaces and tabs are taken off ends it)'
+        .replace(/[|()]/g, '\\$&')} \\(docs/reviews/README\\.md\\)`), line);
   }
   for (const twin of ['| a | b |\n|---|---|\n| x | y |\n| x |', '| a | b |\n|---|---|\n| x | y |\n\nx | y | z, after a blank line', 'a | b | c, and no table',
     // a line of only quote marks, spaces and tabs ends a table too: it is blank once they are taken off
     '| a | b |\n|---|---|\n> \t>\nx | y | z, after a line of quote marks',
     '- | a | b |\n  |---|---|\n  | x | y |',
+    // a line of only |, : and spaces, with no -, starts none
+    '| : |\nx | y | z, after a line with no dash', '| a |\n|:|:|\nw | x | y | z',
     // a "|" at a row's start or end is no cell, whether its header has one or not
     'a | b\n--- | ---\n| x | y |\nx | y |\n| x | y', '| a | b |\n|---|---|\nx | y']) {
     PASSES(PROBE(repo(), twin), twin);

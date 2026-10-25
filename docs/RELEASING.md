@@ -60,8 +60,8 @@ being reviewed ([CLAUDE.md](../CLAUDE.md), rule 3).
    review begins with, and after it refuses a listed set of known ways to hide or add a verdict or a commit id
    ([docs/reviews/README.md](reviews/README.md) lists them, and what they don't catch); it can't prove that the page
    GitHub shows says what the text says. What stands behind that is the pull request into `main` (the ruleset lets
-   changes reach `main` only that way, with no approving review required), the maintainer's approval in the `release`
-   environment, and the reviewers' own reading.
+   changes reach `main` only that way; its count of required approvals is 0), the maintainer's approval in the
+   `release` environment, and the reviewers' own reading.
 
 Fewer, reviewed releases beat many fast ones. After a security release, releases pause for the freeze the maintainer
 sets (after 0.1.9: at least a week); whether anything breaks it is the maintainer's call.

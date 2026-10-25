@@ -13,38 +13,43 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ### Development (no code in the package changes; package.json gains three npm scripts)
 
-- The release gate: `npm run release-check` refuses a release unless CHANGELOG.md has a dated section for the version
-  right under an empty Unreleased, both reviews are on file for the code being released (`docs/reviews/<version>/`,
-  each beginning with the block the gate reads, four lines exactly: a fence, `Commit: <sha>`, `Verdict: READY`, a
-  fence), nothing that runs (package.json apart from its version included) changed after them, the class audit names
-  every advisory and quotes the corpus gate's GATE PASSED for this code (the line names the SHA-256 of the `bin/` and
-  `lib/` the corpus gate ran), the release commit is a clean checkout of `main` at `origin/main`, every GitHub check
-  passed on it, and neither list of planted bugs no test catches (`scripts/mutants-gaps.json`,
-  `scripts/mutants-allowed.json`) gained an entry since the last release without the maintainer's approval written on
-  it. The last release is the newest tag in this history, older than the version released, with a GitHub release that
-  github-actions[bot] published for a tag vX.Y.Z, neither a draft nor a prerelease, and either immutable (`immutable`
-  is `true`) or never edited after it was published (its `updated_at` no later than its `published_at`); for one that
-  isn't immutable (0.1.3 to 0.1.9) the gate takes the tag in the clone as the one released, which the repository's tag
-  ruleset (only admins create, move or delete `v*` tags) protects. The gate reads the verdict and the commit only from
-  the block. It doesn't read the rest of a review for what it means, or render it: after the block it refuses a listed
-  set of known ways to hide or add a verdict or a commit id: characters outside printable ASCII but the tab, HTML,
-  character references, backslashes, marks inside a word, links, emoji codes, `$`, fences with an info string,
-  ordered-list markers of 2 or more digits, a table row with more cells than its header, the block's words or "ship"
-  again (in any case, after a fixed fold in which `l`, `I`, `1` and `|` read as `i`, and `0` as `o`: "verdict" or
-  "ready" anywhere, even inside another word, as in "already", and "commit", "commits", "ship" or "ships" as a word),
-  a search of the commit messages, a commit as `git describe` writes one (`-`, a number, `-g` and 4 or more hex
-  digits), and a word git, asked in this clone, resolves to a commit or a tag or finds ambiguous. git is asked about
-  two kinds of word, never the block's own commit in full: hex digits, a whole word of 4 or more (a word here is
+- The release gate: `npm run release-check` refuses a release unless its version is X.Y.Z, 0.1.10 or later (for 0.1.0
+  to 0.1.9, which predate the gate, it checks nothing on the maintainer's machine and exits 0), CHANGELOG.md has a
+  dated section for the version right under an empty Unreleased, both reviews are on file for the code being released
+  (`docs/reviews/<version>/`, each beginning with the block the gate reads, four lines exactly: a fence,
+  `Commit: <sha>`, `Verdict: READY`, a fence, the sha in lower-case hex, of a commit the release commit descends
+  from), nothing that runs (package.json apart from its version included) changed after them, the class audit names
+  every advisory CHANGELOG.md names (at least one) and quotes the corpus gate's GATE PASSED for this code (the line
+  names the SHA-256 of the `bin/` and `lib/` the corpus gate ran) and no GATE FAILED, the release commit is a clean
+  checkout of `main` at `origin/main`, every GitHub check on it ended in success, neutral or skipped, and
+  `critical mutants` and `corpus (report against last release)` are among them and ended in success (skipped is not
+  enough for these two), the gate finds the last release, and neither list of planted bugs no test catches
+  (`scripts/mutants-gaps.json`, `scripts/mutants-allowed.json`) gained an entry since that release without the
+  maintainer's approval written on it. The last release is the newest tag in this history, older than the version
+  released, with a GitHub release that github-actions[bot] published for a tag vX.Y.Z, neither a draft nor a
+  prerelease, and either immutable (`immutable` is `true`) or never edited after it was published (its `updated_at` no
+  later than its `published_at`); for one that isn't immutable (0.1.3 to 0.1.9) the gate takes the tag in the clone as
+  the one released, which the repository's tag ruleset (only admins create, move or delete `v*` tags) protects. The
+  gate reads the verdict and the commit only from the block. It doesn't read the rest of a review for what it means,
+  or render it: after the block it refuses a listed set of known ways to hide or add a verdict or a commit id:
+  characters outside printable ASCII but the tab, HTML, character references, backslashes, marks inside a word, links,
+  emoji codes, `$`, fences with an info string, ordered-list markers of 2 or more digits, a table row with more cells
+  than its header, the block's words or "ship" again (in any case, after a fixed fold in which `l`, `I`, `1` and `|`
+  read as `i`, and `0` as `o`: "verdict" or "ready" anywhere, even inside another word, as in "already", and "commit",
+  "commits", "ship" or "ships" as a word), a search of the commit messages, a commit as `git describe` writes one
+  (`-`, a number, `-g` and 4 or more hex digits), and a word git, asked in this clone, resolves to a commit or a tag
+  or finds ambiguous. git is asked about two kinds of word, never the block's own commit written in full in lower
+  case, as `git rev-parse` prints it (in capitals it is asked): hex digits, a whole word of 4 or more (a word here is
   letters and digits between any other characters, so `(cafe)` is asked as `cafe`) or a run of 7 or more inside a
   word, asked as written and in lower case, but not the four words of an advisory id `GHSA-xxxx-xxxx-xxxx` (`GHSA` in
-  capitals) that stands as a whole word; and every word between spaces and tabs, asked as written. When git stops on
-  a word (`@{u}` with no upstream), the review is refused ([docs/reviews/README.md](docs/reviews/README.md) lists
-  them, and what they don't catch). It can't prove that the page GitHub shows says what the text says, and a review
-  that contradicts its block in other words is not refused: the pull request into `main`, the maintainer's approval in
-  the `release` environment and the reviewers' own reading stand behind that. The release workflow repeats the gate in
-  a job whose token only reads, checking that the tagged commit is on `main` instead of the clean checkout of `main`,
-  reads GitHub's checks and releases with its own token, refuses a tag for a version older than 0.1.10, and publishes
-  nothing without it.
+  capitals) with no letter, digit or `_` just before or after it (one in underscore italics, `_GHSA-..._`, is read);
+  and every word between spaces and tabs, asked as written. When git stops on a word (`@{u}` with no upstream), the
+  review is refused ([docs/reviews/README.md](docs/reviews/README.md) lists them, and what they don't catch). It can't
+  prove that the page GitHub shows says what the text says, and a review that contradicts its block in other words is
+  not refused: the pull request into `main`, the maintainer's approval in the `release` environment and the reviewers'
+  own reading stand behind that. The release workflow repeats the gate in a job whose token only reads, checking that
+  the tagged commit is on `main` instead of the clean checkout of `main`, reads GitHub's checks and releases with its
+  own token, refuses a tag for a version older than 0.1.10, and publishes nothing without it.
 - Releases: the job that publishes one runs in the `release` environment, which only `v*` tags may use and which waits
   for the maintainer's approval (an admin can bypass it). The commands to verify a release, in its notes and in
   [docs/RELEASING.md](docs/RELEASING.md), add `--signer-workflow` (the release workflow), `--source-ref` (the release's
@@ -73,26 +78,28 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   streams, `require()` and, from Node 22.15, `import` (of a file, a package name or a `#` name of package.json's
   `imports`), a change of folder, a working folder there, a program there or found through a `PATH` folder there (not
   one a shell command runs), a `.env` file `process.loadEnvFile` reads, a `node:sqlite` database there, a Node started
-  with `--env-file` or a config-file flag naming a file there, and a walk that can reach it (a recursive listing, copy,
-  watch or `rm` of a folder that holds it, or a recursive listing, copy, watch or glob below which a link leads into
-  it). It goes with every Node process a test starts through `child_process`, and those they start in turn, and with
-  each Worker thread they start with `worker_threads.Worker`; a refusal in a process the test started fails the test
-  file even when nothing reads that process's exit code. A package in the checkout's own `node_modules` loads by name.
-  Paths are compared as the system reads them (links and `..` followed, and on macOS in any case and under the start-up
-  disk's other names, by their text too), and under sudo SUDO_USER's home is off limits too. It drops the home's folders
-  from the `PATH` the tests start with. The sudo test and the two tests of macOS's own Library build a `/Users/<name>`
-  home of their own (`test/support/fake-home.cjs`); `test/cli.test.mjs` gives the command an empty HOME of its own, and
-  the version test gives the go check one. `test/no-real-home.test.mjs` tries each route the net watches on a made-up
-  home. Routes it is known not to watch include a program that isn't Node (a shell, and the programs a shell command
-  runs; a Node one starts below the command), what Node itself reads or writes as a process starts or ends (other
-  flags that name a file, the flags above in the words of a program that isn't Node, as in
-  `/usr/bin/env node --env-file=...`, a variable such as `NODE_EXTRA_CA_CERTS`, and macOS's own read of
-  `~/.CFUserTextEncoding`), Node functions that open a file, folder or socket without `fs` (a unix socket from `net`,
-  a heap snapshot, a diagnostic report, `module.enableCompileCache`'s cache folder, and in some of its forms
-  `module.findPackageJSON`'s read of a package.json), `import` on a Node older than 22.15, `module.register`'s hooks
-  thread, a Worker made from `Worker.prototype.constructor`, and code written to get past it, such as an option whose
-  getter changes when Node reads it (CONTRIBUTING.md, Testing policy, lists the routes known not to be watched; the
-  list is not complete).
+  with `--env-file` or a config-file flag naming a file there, and a walk that can reach it (a recursive listing,
+  copy, watch or `rm` of a folder that holds it, or a recursive listing, copy, watch or glob below which a link leads
+  into it). It goes with every Node process a test starts through `child_process`, and those they start in turn, and
+  with each Worker thread they start with `worker_threads.Worker`; a refusal in a process the test started fails the
+  test file even when nothing reads that process's exit code. A package in the checkout's own `node_modules` loads by
+  name. Paths are compared as the system reads them (links and `..` followed, and on macOS in any case and under the
+  start-up disk's other names, by their text too), and under sudo SUDO_USER's home is off limits too. It drops the
+  home's folders from the `PATH` the tests start with. The sudo test and the two tests of macOS's own Library build a
+  `/Users/<name>` home of their own (`test/support/fake-home.cjs`); `test/cli.test.mjs` gives the command an empty
+  HOME of its own, and the version test gives the go check one. `test/no-real-home.test.mjs` tries each route the net
+  watches on a made-up home; as another Node binary it runs a hard link, or a copy, of the one running the tests, with
+  the other folders of that one's install linked beside it unless they are in a home (Homebrew's Node loads its
+  library from there), and where even that can't start, it skips that one case, and its output says why. Routes it is
+  known not to watch include a program that isn't Node (a shell, and the programs a shell command runs; a Node one
+  starts below the command), what Node itself reads or writes as a process starts or ends (other flags that name a
+  file, the flags above in the words of a program that isn't Node, as in `/usr/bin/env node --env-file=...`, a
+  variable such as `NODE_EXTRA_CA_CERTS`, and macOS's own read of `~/.CFUserTextEncoding`), Node functions that open a
+  file, folder or socket without `fs` (a unix socket from `net`, a heap snapshot, a diagnostic report,
+  `module.enableCompileCache`'s cache folder, and in some of its forms `module.findPackageJSON`'s read of a
+  package.json), `import` on a Node older than 22.15, `module.register`'s hooks thread, a Worker made from
+  `Worker.prototype.constructor`, and code written to get past it, such as an option whose getter changes when Node
+  reads it (CONTRIBUTING.md, Testing policy, lists the routes known not to be watched; the list is not complete).
 - Rules for AI coding agents: [CLAUDE.md](CLAUDE.md).
 
 ## [0.1.9] - 2026-10-23

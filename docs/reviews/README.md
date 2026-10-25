@@ -27,9 +27,11 @@ other words is not refused.
 
 What stands behind that is people, not the gate:
 
-- **The pull request into `main`.** Since 25 October 2026 (UTC) the repository's ruleset lets changes reach `main` only
-  through a pull request that passes the required checks, so a review is on a page GitHub shows before it reaches
-  `main`. The ruleset requires no approving review: today the maintainer is the only reviewer.
+- **The pull request into `main`.** Since 25 October 2026 (UTC) the repository's ruleset lets changes reach `main`
+  only through a pull request that passes the required checks, so a review is on a page GitHub shows before it reaches
+  `main`. The ruleset's count of required approvals is 0; what its `require_extra_approval_for_unattributed_changes`
+  asks of pull requests other than the two merged under it so far is not established
+  ([GOVERNANCE.md](../../GOVERNANCE.md), Review). Today the maintainer is the only reviewer.
 - **The maintainer's approval in the `release` environment.** On `main` since 25 October 2026 (UTC), the job of the
   release workflow that publishes runs in the `release` environment, which waits for the maintainer's approval (an
   admin can bypass it).
@@ -86,13 +88,14 @@ git asked about item 15, for every line at once; the gate then names the first l
     - **hex digits**, in either case: a word of 4 or more (a word: letters and digits between any other characters),
       or 7 or more in a row inside another word, asked as written and in lower case. Not read for one: the block's own
       commit written in full, as `git rev-parse` prints it (in lower case), and the four words of an advisory id
-      written `GHSA-xxxx-xxxx-xxxx`, `GHSA` in capitals, that stands as a whole word. Every word is read in an advisory
-      id glued to other letters or digits (`GHSA-abcd-abcd-0657ddb...`), and in one written `ghsa-...` (though the
-      gate's check that the class audit names every advisory matches one in any case). A number or word that happens
-      to begin a commit id here (2026, face, added) is refused too: write it another way.
-    - **every word between spaces and tabs, exactly as written** (but the block's own commit written in full), as
-      `git rev-parse --verify` would read it: a branch or tag name (`main`, `v0.1.9`; `origin` in a clone with
-      `origin/HEAD`; on a Mac, `head` as well as `HEAD`), `HEAD^^`, `@`, `<id>^`. Write a release as `0.1.9`, and
+      written `GHSA-xxxx-xxxx-xxxx`, `GHSA` in capitals, with no letter, digit or `_` just before or after it. Every
+      word is read in an advisory id with one of those beside it (`GHSA-abcd-abcd-0657ddb...`, and `_GHSA-..._` in
+      underscore italics: write `*GHSA-...*`), and in one written `ghsa-...` (though the gate's check that the class
+      audit names every advisory matches one in any case). A number or word that happens to begin a commit id here
+      (2026, face, added) is refused too: write it another way.
+    - **every word between spaces and tabs, exactly as written** (but the block's own commit written in full, in lower
+      case), as `git rev-parse --verify` would read it: a branch or tag name (`main`, `v0.1.9`; `origin` in a clone
+      with `origin/HEAD`; on a Mac, `head` as well as `HEAD`), `HEAD^^`, `@`, `<id>^`. Write a release as `0.1.9`, and
       name a fix by what it changed. When git stops on a word (`@{u}` with no upstream), the review is refused, as git
       couldn't say what it names.
 
