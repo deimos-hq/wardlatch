@@ -5,7 +5,7 @@
 'use strict';
 const { resolve, sep } = require('node:path');
 
-const HIDDEN = /^\/(?:usr|opt|lib|lib64|Library|System|Applications|srv|app|var\/www|home\/linuxbrew|var\/lib\/dpkg|etc\/os-release|etc\/ld\.so\.conf|etc\/ld\.so\.conf\.d|etc\/ld-musl-[^/]*\.path)(?:\/|$)/;
+const HIDDEN = /^\/(?:usr|opt|lib|lib64|Library|System|Applications|srv|app|var\/www|home\/linuxbrew|var\/lib\/dpkg|etc\/os-release|etc\/ld\.so\.conf|etc\/ld\.so\.conf\.d|etc\/ld\.so\.preload|etc\/ld-musl-[^/]*\.path)(?:\/|$)/;
 
 /**
  * → (path) => whether the preload hides it. root: the checkout; own: the test's own temporary folder (or none); self:

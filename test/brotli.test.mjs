@@ -17,6 +17,8 @@ import { fileURLToPath } from 'node:url';
 import { scanBytes, readAt } from '../lib/files.mjs';
 import { judgeFile, evidence, isDecoderLibName, isNodeLibName, recordPaths, sitePackagesCandidates, distroVerdict, checkBundled, linkTable, loadableAt, ldSoConfDirs, shimPlaces } from '../lib/brotli.mjs';
 import { SITE_PATTERNS } from '../lib/installs.mjs';
+// round 10's new exports, by name, so this file still loads (and their tests fail) at a tree without them
+import * as brotli from '../lib/brotli.mjs';
 import { hiddenPlaces } from './support/machine-places.cjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -108,15 +110,17 @@ const isSoName = (p) => /^lib[\s\S]*\.so(\.[0-9.]+)?$/.test(basename(p));
  * DT_NULL; then the strings, as bin() writes them. `type`: a shared object (ET_DYN, 3) for a file named like a soname, a
  * program (ET_EXEC, 2) otherwise. `machine`: e_machine (62 x86-64, 183 aarch64, 21 ppc64, 8 MIPS); `eflags`: e_flags (the
  * ABI flags: ppc64's EF_PPC64_ABI, MIPS's EF_MIPS_ABI2 and EF_MIPS_NAN2008). `split`: two PT_LOAD segments, the headers
- * at 0x10000 and the rest (the string table first) at 0x400000.
+ * at 0x10000 and the rest (the string table first) at 0x400000. `interp`: a PT_INTERP segment naming that loader (its
+ * bytes in the string table's place, with its NUL; `cut`: without it, as no kernel takes one).
  */
-function elf(path, parts = [], { needed = [], soname, rpath, runpath, flags1, bits = 64, be = false, type = isSoName(path) ? 3 : 2, machine = 0x3e, eflags = 0, split = false } = {}) {
+function elf(path, parts = [], { needed = [], soname, rpath, runpath, flags1, bits = 64, be = false, type = isSoName(path) ? 3 : 2, machine = 0x3e, eflags = 0, split = false, interp, cut = false } = {}) {
   const BASE = 0x10000, ent = bits === 64 ? 16 : 8, ehsize = bits === 64 ? 64 : 52, phsize = bits === 64 ? 56 : 32;
   let strtab = Buffer.alloc(1);
   const str = (s, prefix = '') => { const at = strtab.length + Buffer.from(prefix).length; strtab = Buffer.concat([strtab, Buffer.from(prefix), Buffer.isBuffer(s) ? s : Buffer.from(s), Buffer.alloc(1)]); return at; };
   const tags = [...needed.map((n) => (typeof n === 'string' || Buffer.isBuffer(n) ? [1, str(n)] : [1, str(n.name, n.prefix)])),
     ...[[14, soname], [15, rpath], [29, runpath]].filter(([, v]) => v !== undefined).map(([t, v]) => [t, str(v)]), ...(flags1 === undefined ? [] : [[0x6ffffffb, flags1]])];
-  const phnum = split ? 3 : 2, SEG2 = 0x400000;
+  const interpAt = interp === undefined ? -1 : str(interp), interpLen = interp === undefined ? 0 : Buffer.from(interp).length + (cut ? 0 : 1);
+  const phnum = (split ? 3 : 2) + (interp === undefined ? 0 : 1), SEG2 = 0x400000;
   const strOff = ehsize + phnum * phsize, dynOff = Math.ceil((strOff + strtab.length) / 8) * 8;
   tags.push([5, split ? SEG2 : BASE + strOff], [10, strtab.length], [0, 0]);
   const tail = Buffer.concat([Buffer.alloc(16), ...cstrings(parts), Buffer.alloc(16)]);
@@ -129,7 +133,8 @@ function elf(path, parts = [], { needed = [], soname, rpath, runpath, flags1, bi
   w16(type, 16); w16(machine, 18); w32(1, 20); w32(eflags, bits === 64 ? 48 : 36);
   if (bits === 64) { w64(ehsize, 32); w16(ehsize, 52); w16(phsize, 54); w16(phnum, 56); } else { w32(ehsize, 28); w16(ehsize, 40); w16(phsize, 42); w16(phnum, 44); }
   // PT_LOAD (the whole file, or the headers and then the rest), then PT_DYNAMIC
-  const segs = split ? [[1, 0, strOff, BASE], [1, strOff, total - strOff, SEG2], [2, dynOff, dynLen, SEG2 + dynOff - strOff]] : [[1, 0, total, BASE], [2, dynOff, dynLen, BASE + dynOff]];
+  const segs = [...(interp === undefined ? [] : [[3, strOff + interpAt, interpLen, BASE + strOff + interpAt]]),
+    ...(split ? [[1, 0, strOff, BASE], [1, strOff, total - strOff, SEG2], [2, dynOff, dynLen, SEG2 + dynOff - strOff]] : [[1, 0, total, BASE], [2, dynOff, dynLen, BASE + dynOff]])];
   segs.forEach(([type2, off, len, vaddr], i) => {
     const o = ehsize + i * phsize;
     w32(type2, o);
@@ -278,10 +283,14 @@ test('one file, every decoder it uses: each build of a universal file, and the l
   assert.equal(both.status, 'EXPOSED'); assert.match(both.reason, /its own Brotli decoder has the fix, but it uses .*old\/libbrotlidec\.1\.dylib/);
   const bothGood = judge(bin(join(d, 'table-and-new'), [CONTROL, MARKER], { links: [good] }));
   assert.equal(bothGood.status, 'SAFE'); assert.deepEqual(bothGood.searched, [join(d, 'table-and-new'), good]);
-  // every library it links is followed, however many: 70 links to the fixed one, then the unfixed one, EXPOSED; and
-  // copies of a name it links, in its strings, are that link (round 5 read past 64 mentions as UNKNOWN)
-  const copies = (n) => Array.from({ length: n }, () => good);
-  assert.equal(judge(bin(join(d, 'table-many'), [CONTROL, MARKER], { links: [...copies(70), old] })).status, 'EXPOSED');
+  // every library it links is followed, however many: 70 links to the fixed one, then the unfixed one, which is followed
+  // too. Since round 10 (rule 2) every Brotli library a link in the closure reaches is a candidate for every Brotli link
+  // (a loader may hand a link a copy already loaded), so the two disagree: UNKNOWN (rounds 5 to 9: EXPOSED); 70 links to
+  // the unfixed one EXPOSED; and copies of a name it links, in its strings, are that link (round 5 read past 64 mentions
+  // as UNKNOWN)
+  const copies = (n, f = good) => Array.from({ length: n }, () => f);
+  assert.equal(judge(bin(join(d, 'table-many'), [CONTROL, MARKER], { links: [...copies(70), old] })).status, 'UNKNOWN');
+  assert.equal(judge(bin(join(d, 'table-many-old'), [CONTROL, MARKER], { links: copies(70, old) })).status, 'EXPOSED');
   assert.equal(judge(bin(join(d, 'table-many-new'), [CONTROL, MARKER], { links: copies(70) })).status, 'SAFE', 'the clean twin');
   assert.equal(judge(bin(join(d, 'table-copies'), [CONTROL, MARKER, ...copies(70)], { links: [good] })).status, 'SAFE');
   // a name in its strings that is not a link: "libbrotlidec mention 0" names no file the loader loads, SAFE (round 5
@@ -642,8 +651,14 @@ test('a universal node with LC_RPATH and @rpath/libnode, laid out as Homebrew\'s
     assert.equal(good.status, 'SAFE', good.reason); assert.deepEqual(good.searched, [node, dec, realpathSync(libnode)]);
     assert.match(good.reason, /it uses .*Cellar\/node\/26\.12\.1\/lib\/libnode\.147\.dylib, the library that holds Node\.js's code: it uses .*opt\/brotli\/lib\/libbrotlidec\.1\.dylib, whose Brotli decoder has the fix/);
   }
-  // libnode using an unfixed Brotli library: EXPOSED, through libnode
+  // libnode using an unfixed Brotli library, beside the node's own link to the fixed one: since round 10 (rule 2) each
+  // is a candidate for the other's link (dyld may hand a link an image already loaded under that install name), a mix,
+  // UNKNOWN (round 9: EXPOSED); a node that links no Brotli library itself: EXPOSED, through libnode
   makeLibnode(old);
+  const mixed = judge(node);
+  assert.equal(mixed.status, 'UNKNOWN', mixed.reason); assert.match(mixed.reason, /are not all fixed or all unfixed/);
+  const own = (o = {}) => build({ links: ['@rpath/libnode.147.dylib', '/usr/lib/libz.1.dylib'], ...o });
+  fat(node, [own(), own()]);
   const bad = judge(node);
   assert.equal(bad.status, 'EXPOSED'); assert.match(bad.reason, /libnode\.147\.dylib, the library that holds Node\.js's code: it uses .*old\/libbrotlidec\.1\.dylib, whose Brotli decoder lacks the fix/);
   // one build without its LC_RPATH: the folders a file's builds name are one set (decision #25: every folder the file's
@@ -658,7 +673,7 @@ test('a universal node with LC_RPATH and @rpath/libnode, laid out as Homebrew\'s
   const half = judge(node);
   assert.equal(half.status, 'UNKNOWN'); assert.match(half.reason, /it links @rpath\/libnode\.147\.dylib, the library that holds Node\.js's code, which was not found/);
   // through the check, as Homebrew puts it on PATH (bin/node, a link to the Cellar's): @loader_path is its real folder
-  fat(node, [build(), build()]);
+  fat(node, [own(), own()]);
   const path = join(brew, 'bin');
   mkdirSync(path, { recursive: true }); symlinkSync(node, join(path, 'node'));
   const row = () => run({}, { pathEnv: path }).rows.find((r) => r.file === join(path, 'node'));
@@ -970,7 +985,7 @@ test('ELF: a library\'s sonames are looked for in its program\'s folders too, an
   }
 });
 
-test('ELF: every subfolder of every folder searched is searched too, down to 3 levels (glibc-hwcaps/<level>), each copy there a candidate', { skip: process.getuid?.() === 0 && 'root reads everything' }, () => {
+test('ELF: every subfolder of every folder searched is searched too, down to 4 levels (glibc-hwcaps/<level>), each copy there a candidate', { skip: process.getuid?.() === 0 && 'root reads everything' }, () => {
   const d = fresh('hwcaps'), sys = fresh('hwcaps-sys');
   // glibc 2.33 and later look in <folder>/glibc-hwcaps/<level>/ before <folder>: an unfixed copy in lib/glibc-hwcaps/
   // x86-64-v3/ beside a fixed one in lib/ (c2f3a13 read SAFE, by lib/'s; rounds 7 and 8 EXPOSED, the hwcaps copy
@@ -1003,13 +1018,15 @@ test('ELF: every subfolder of every folder searched is searched too, down to 3 l
   oldLib(join(many, 'glibc-hwcaps', 'level-64', 'libbrotlidec.so.1'));
   const deep = judge(prog({}), [many]);
   assert.equal(deep.status, 'UNKNOWN', deep.reason); assert.equal(deep.via, join(many, 'glibc-hwcaps', 'level-64', 'libbrotlidec.so.1'));
-  // down to 3 levels below a folder (glibc 2.36's old tls/haswell/x86_64 is 3), and no further: a 4th level is not looked
-  // in (a documented limit)
+  // down to 4 levels below a folder (glibc 2.36's old tls/haswell/avx512_1/x86_64 is 4, on an Intel CPU with AVX-512:
+  // probe G3; round 9 stopped at 3, mutant A3b), and no further: a 5th level is not looked in (a documented limit)
   rmSync(join(many, 'glibc-hwcaps'), { recursive: true });
   oldLib(join(many, 'a', 'b', 'c', 'libbrotlidec.so.1'));
   assert.equal(judge(prog({}), [many]).status, 'UNKNOWN', 'the 3rd level');
   rmSync(join(many, 'a'), { recursive: true }); oldLib(join(many, 'a', 'b', 'c', 'd', 'libbrotlidec.so.1'));
-  assert.equal(judge(prog({}), [many]).status, 'SAFE', 'a 4th level is past what is looked in');
+  assert.equal(judge(prog({}), [many]).status, 'UNKNOWN', 'the 4th level');
+  rmSync(join(many, 'a'), { recursive: true }); oldLib(join(many, 'a', 'b', 'c', 'd', 'e', 'libbrotlidec.so.1'));
+  assert.equal(judge(prog({}), [many]).status, 'SAFE', 'a 5th level is past what is looked in');
   // a subfolder that can't be listed may hold a copy: UNKNOWN, naming it (one this account owns and has shut: a program
   // run by another account, root included, may still load from it)
   const locked = join(d, 'lib', 'glibc-hwcaps');
@@ -1333,6 +1350,8 @@ test('ELF: the page is the one the machine\'s kernel may map with, never p_align
   // P1x, the clean twin: the same layout on x86-64, whose pages are 4 KB only: the decoy is the table the loader reads,
   // SAFE by its own fixed table (no Brotli library)
   assert.equal(judge(p1(join(d, 'P1x', 'prog'), 62, 0x1000), [sys]).status, 'SAFE');
+  // and on 32-bit x86 (EM_386), whose kernels use 4 KB pages only too (mutant D4: checked with 16 and 64 KB, UNKNOWN)
+  assert.equal(judge(p1(join(d, 'P1x386', 'prog'), 3, 0x1000), [sys]).status, 'SAFE', 'EM_386');
   // M2g: a second PT_LOAD whose bytes end before the table but whose last page holds it (the table at 0x401800, mid-page):
   // the loader maps that whole page from the second segment (the real table at 0x11800). UNKNOWN; the twin, the second
   // segment on a page of its own, SAFE by the decoy
@@ -1483,9 +1502,15 @@ test('rule 2: the libraries a file loads are followed, and the folders they name
   assert.equal(judge(mprog).status, 'SAFE', 'the clean twin: libfoo names no folder');
   // a library it loads that can't be read as Mach-O or ELF: the folders it would name aren't known, UNKNOWN, naming it;
   // and one whose search path is relative (the folder the program starts in) or another $ word
-  writeFileSync(join(d, 'lib', 'libfoo.so.1'), 'not a library');
+  writeFileSync(join(d, 'lib', 'libfoo.so.1'), Buffer.from('not a library\0\x01\x02'));
   const bad = judge(prog);
   assert.equal(bad.status, 'UNKNOWN'); assert.ok(bad.reason.includes(`and ${join(d, 'lib', 'libfoo.so.1')}, a library found for it or for another library it loads, could not be read as a Mach-O or ELF library`), bad.reason);
+  // plain text of that name (a linker script) or a static archive is no library a loader can load: no candidate, so
+  // nothing is left unknown (round 10, rule 3; round 9 read a text file UNKNOWN as above)
+  for (const [what, bytes] of [['a linker script', '/* GNU ld script */\nGROUP ( libfoo.so.1.2 )\n'], ['a static archive', '!<arch>\n/               0           0     0     0       4         `\n\0\0\0\0']]) {
+    writeFileSync(join(d, 'lib', 'libfoo.so.1'), bytes);
+    assert.equal(judge(prog).status, 'SAFE', what);
+  }
   for (const [runpath, says] of [['rel', /looks for it in 'rel', a folder named by a relative path/], ['$PLATFORM/x', /can't follow or open \(through '\$PLATFORM\/x'\)/]]) {
     foo({ runpath });
     const u = judge(prog);
@@ -1499,12 +1524,17 @@ test('a candidate is a file of exactly the library\'s name, compared ignoring ca
   const d = fresh('case-cands'), A = join(d, 'A'), B = join(d, 'B');
   // DT_RUNPATH A then B: A's libbrotlidec.so.1 fixed, B's LIBBROTLIDEC.SO.1 unfixed. A loader on a disk that ignores
   // case opens B's for the name too, so it is a candidate: UNKNOWN. Compared by case (Linux's disks), B's is another
-  // name: SAFE by A's
+  // name, unless B's own file system ignores case: the name is opened in every folder as the loader opens it (round 10,
+  // rule 5), so on such a disk (this test's folder on macOS) UNKNOWN, and on one that keeps case SAFE by A's
   fixedLib(join(A, 'libbrotlidec.so.1')); elf(join(B, 'LIBBROTLIDEC.SO.1'), ['_SUCCESS', CONTROL, '_ERROR_UNREACHABLE'], { type: 3 });
   const prog = elf(join(d, 'bin', 'prog'), [CONTROL, MARKER], { needed: ['libbrotlidec.so.1'], runpath: `${A}:${B}` });
   const r = judge(prog, [], { caseless: true });
   assert.equal(r.status, 'UNKNOWN', r.reason); assert.equal(r.via, join(B, 'LIBBROTLIDEC.SO.1'));
-  assert.equal(judge(prog, [], { caseless: false }).status, 'SAFE', 'the clean twin: compared by case');
+  const ignores = existsSync(join(B, 'libbrotlidec.so.1'));
+  assert.equal(judge(prog, [], { caseless: false }).status, ignores ? 'UNKNOWN' : 'SAFE', 'compared by case');
+  // the clean twin: B's copy fixed too, SAFE either way
+  elf(join(B, 'LIBBROTLIDEC.SO.1'), ['_SUCCESS', CONTROL, MARKER, '_ERROR_UNREACHABLE'], { type: 3 });
+  for (const caseless of [true, false]) assert.equal(judge(prog, [], { caseless }).status, 'SAFE', `the clean twin, caseless ${caseless}`);
   // a library that isn't a Brotli library, linked by a bare name: dyld looks for it from the folder the program is
   // started in, so the folders it names aren't known, and every link is UNKNOWN; the clean twin links it by its path
   fixedLib(join(A, 'libbrotlidec.1.dylib'));
@@ -1536,6 +1566,285 @@ test('a subfolder another account owns that this account can\'t open is passed o
     const r = judge(prog);
     assert.equal(r.status, 'UNKNOWN', r.reason); assert.ok(r.reason.includes(`can't follow or open (through '${shut}')`), r.reason);
   } finally { execFileSync('chmod', ['755', shut]); }
+  assert.equal(judge(prog).status, 'SAFE');
+});
+
+// Round 10 (decision #25 stands: no loader's search order is predicted, and never which copy wins). The round-9 verifier
+// found copies a loader takes that no rule made a candidate; each is closed by a rule that only widens the candidates or
+// the closure (rules 1 to 6 in linkPlaces). Each test reads at b7ba7c5 as the finding says, and has its clean twin:
+// every candidate fixed, SAFE.
+test('rule 1 (O1): a library reached by several paths gives the $ORIGIN of every one, so a link to it in another folder names that folder\'s $ORIGIN too', () => {
+  const d = fresh('r10-o1'), sys = fresh('r10-o1-sys');
+  // node's DT_RUNPATH is $ORIGIN/../top:$ORIGIN/../B/lib. libnode is in top/A/lib (a subfolder of top, met first), and
+  // B/lib/libnode.so.115 is a link to it; libnode's DT_RUNPATH is $ORIGIN/../dec. glibc and musl open
+  // B/lib/libnode.so.115 (glibc looks in no subfolder of top but glibc-hwcaps) and take $ORIGIN from the path they
+  // opened (glibc elf/dl-object.c, musl fixup_rpath): B/dec, whose copy is unfixed. Round 9 kept the first path only,
+  // top/A/lib, never looked in B/dec, and read SAFE
+  const bDec = join(d, 'B', 'dec', 'libbrotlidec.so.1'), aDec = join(d, 'top', 'A', 'dec', 'libbrotlidec.so.1'), sysDec = join(sys, 'libbrotlidec.so.1');
+  fixedLib(aDec); oldLib(bDec); fixedLib(sysDec);
+  elf(join(d, 'top', 'A', 'lib', 'libnode.so.115'), [NODE_CONTROL, NODE_MARKER], { soname: 'libnode.so.115', needed: ['libbrotlidec.so.1', 'libc.so.6'], runpath: '$ORIGIN/../dec' });
+  mkdirSync(join(d, 'B', 'lib'), { recursive: true }); symlinkSync('../../top/A/lib/libnode.so.115', join(d, 'B', 'lib', 'libnode.so.115'));
+  const node = elf(join(d, 'bin', 'node'), [], { needed: ['libnode.so.115', 'libc.so.6'], runpath: '$ORIGIN/../top:$ORIGIN/../B/lib' });
+  const r = judge(node, [sys]);
+  assert.equal(r.status, 'UNKNOWN', r.reason); assert.equal(r.via, bDec);
+  // every copy unfixed: EXPOSED; the clean twin, every copy fixed: SAFE, naming B/dec's
+  oldLib(aDec); oldLib(sysDec);
+  assert.equal(judge(node, [sys]).status, 'EXPOSED');
+  for (const f of [aDec, bDec, sysDec]) fixedLib(f);
+  const good = judge(node, [sys]);
+  assert.equal(good.status, 'SAFE', good.reason); assert.ok(good.searched.includes(bDec), good.searched.join());
+});
+
+test('rule 2 (N1, N10, N11, N13, G1, G1o, G1c, G1n): every Brotli library (or libnode) a link in the closure reaches, by any name, is a candidate for every Brotli (or libnode) link: a copy another library loads first, or one a loader hands out for its install name or soname', () => {
+  const d = fresh('r10-rule2');
+  const evilOf = (root, name = 'libbrotlidec.1.dylib') => join(d, root, 'evil', name);
+  const mach = (bad, f, o) => (bad ? oldLib : fixedLib)(f, { type: 6, ...o });
+  const cases = [
+    // N1 (real dyld, no loader variable set): node links @rpath/libfoo.dylib, then @rpath/libnode.147.dylib (LC_RPATH
+    // @loader_path/../lib). libfoo links an unfixed copy by its absolute path, whose install name is
+    // @rpath/libbrotlidec.1.dylib; libnode links @rpath/libbrotlidec.1.dylib, and its own folder holds a fixed one. dyld
+    // hands libnode the image it loaded for libfoo, by its install name: libnode's decoder is the unfixed one.
+    // N10: the same, the unfixed copy's file named libz.1.dylib. N11: libnode links the fixed copy by its absolute path,
+    // and libfoo links (by @loader_path) an unfixed copy whose install name is that same path. Round 9: SAFE, each
+    ...['N1', 'N10', 'N11'].map((id) => [id, (bad) => {
+      const lib = join(d, id, 'lib'), evil = evilOf(id, id === 'N10' ? 'libz.1.dylib' : undefined), fixed = join(lib, 'libbrotlidec.1.dylib');
+      mach(bad, evil, { id: id === 'N11' ? fixed : '@rpath/libbrotlidec.1.dylib' }); fixedLib(fixed, { type: 6, id: id === 'N11' ? fixed : '@rpath/libbrotlidec.1.dylib' });
+      bin(join(lib, 'libfoo.dylib'), [], { type: 6, id: '@rpath/libfoo.dylib', links: [id === 'N11' ? '@loader_path/../evil/libbrotlidec.1.dylib' : evil] });
+      bin(join(lib, 'libnode.147.dylib'), [NODE_CONTROL, NODE_MARKER], { type: 6, id: '@rpath/libnode.147.dylib', links: [id === 'N11' ? fixed : '@rpath/libbrotlidec.1.dylib'], rpaths: ['@loader_path'] });
+      return [bin(join(d, id, 'bin', 'node'), [], { links: ['@rpath/libfoo.dylib', '@rpath/libnode.147.dylib'], rpaths: ['@loader_path/../lib'] }), evil];
+    }]),
+    // N13: the program links evil/libz.1.dylib (unfixed; install name @rpath/libbrotlidec.1.dylib) by its path, then
+    // @rpath/libbrotlidec.1.dylib (lib/ fixed): dyld hands it the libz image already loaded. Round 9: SAFE
+    ['N13', (bad) => {
+      const evil = evilOf('N13', 'libz.1.dylib');
+      mach(bad, evil, { id: '@rpath/libbrotlidec.1.dylib' }); fixedLib(join(d, 'N13', 'lib', 'libbrotlidec.1.dylib'), { type: 6, id: '@rpath/libbrotlidec.1.dylib' });
+      return [bin(join(d, 'N13', 'bin', 'prog'), [], { links: [evil, '@rpath/libbrotlidec.1.dylib'], rpaths: ['@loader_path/../lib'] }), evil];
+    }],
+    // G1 and G1o (glibc's source: elf/dl-load.c _dl_map_object reuses a loaded object of that DT_SONAME before any
+    // search): node (DT_RUNPATH lib) needs libfoo.so.1, then libnode.so.115; libfoo needs an unfixed copy by its
+    // absolute path (G1) or by $ORIGIN/../evil (G1o), whose soname is libbrotlidec.so.1; libnode (DT_RUNPATH $ORIGIN)
+    // needs libbrotlidec.so.1, and lib/ holds a fixed one. Round 9: SAFE, both
+    ...[['G1', 'absolute'], ['G1o', '$ORIGIN']].map(([id, how]) => [id, (bad) => {
+      const lib = join(d, id, 'lib'), evil = join(d, id, 'evil', 'libbrotlidec.so.1');
+      (bad ? oldLib : fixedLib)(evil, { soname: 'libbrotlidec.so.1' }); fixedLib(join(lib, 'libbrotlidec.so.1'), { soname: 'libbrotlidec.so.1' });
+      elf(join(lib, 'libfoo.so.1'), [], { soname: 'libfoo.so.1', needed: [how === 'absolute' ? evil : '$ORIGIN/../evil/libbrotlidec.so.1', 'libc.so.6'] });
+      elf(join(lib, 'libnode.so.115'), [NODE_CONTROL, NODE_MARKER], { soname: 'libnode.so.115', needed: ['libbrotlidec.so.1', 'libc.so.6'], runpath: '$ORIGIN' });
+      return [elf(join(d, id, 'bin', 'node'), [], { needed: ['libfoo.so.1', 'libnode.so.115', 'libc.so.6'], runpath: '$ORIGIN/../lib' }), evil];
+    }]),
+    // G1c: the program needs libz.so.1, then libbrotlidec.so.1 (DT_RUNPATH lib); lib/libz.so.1 is an unfixed Brotli
+    // decoder whose soname is libbrotlidec.so.1, which glibc reuses for the second. Round 9: SAFE
+    ['G1c', (bad) => {
+      const evil = join(d, 'G1c', 'lib', 'libz.so.1');
+      (bad ? oldLib : fixedLib)(evil, { soname: 'libbrotlidec.so.1' }); fixedLib(join(d, 'G1c', 'lib', 'libbrotlidec.so.1'));
+      return [elf(join(d, 'G1c', 'bin', 'prog'), [], { needed: ['libz.so.1', 'libbrotlidec.so.1', 'libc.so.6'], runpath: '$ORIGIN/../lib' }), evil];
+    }],
+    // G1n, the same for libnode: node needs libfoo.so.1, then libnode.so.115 (lib/'s, fixed); libfoo needs an unfixed
+    // libnode by its absolute path, soname libnode.so.115, which glibc reuses for node's. Round 9: SAFE
+    ['G1n', (bad) => {
+      const lib = join(d, 'G1n', 'lib'), evil = join(d, 'G1n', 'evil', 'libnode.so.115');
+      elf(evil, bad ? [CONTROL, NODE_CONTROL] : [CONTROL, MARKER, NODE_CONTROL, NODE_MARKER], { soname: 'libnode.so.115' });
+      elf(join(lib, 'libnode.so.115'), [CONTROL, MARKER, NODE_CONTROL, NODE_MARKER], { soname: 'libnode.so.115' });
+      elf(join(lib, 'libfoo.so.1'), [], { soname: 'libfoo.so.1', needed: [evil, 'libc.so.6'] });
+      return [elf(join(d, 'G1n', 'bin', 'node'), [], { needed: ['libfoo.so.1', 'libnode.so.115', 'libc.so.6'], runpath: '$ORIGIN/../lib' }), evil];
+    }],
+  ];
+  for (const [id, make] of cases) {
+    const [prog, evil] = make(true);
+    const r = judge(prog);
+    assert.equal(r.status, 'UNKNOWN', `${id}: ${r.reason}`); assert.equal(r.via, evil, id); assert.match(r.reason, /are not all fixed or all unfixed/, id);
+    // the clean twin: the copy the other library reaches fixed too, SAFE, naming it
+    make(false);
+    const t = judge(prog);
+    assert.equal(t.status, 'SAFE', `${id}, the clean twin: ${t.reason}`); assert.ok(t.searched.includes(evil), `${id}: ${t.searched.join()}`);
+  }
+  // every copy unfixed: EXPOSED
+  const [n1] = cases[0][1](true);
+  oldLib(join(d, 'N1', 'lib', 'libbrotlidec.1.dylib'), { type: 6, id: '@rpath/libbrotlidec.1.dylib' });
+  assert.equal(judge(n1).status, 'EXPOSED');
+  // a library of another name with an install name of its own, which no link hands out for a Brotli library (N13t,
+  // real dyld: the program's decoder is the fixed one): no candidate, SAFE by lib/'s
+  const z = evilOf('N13t', 'libz.1.dylib');
+  oldLib(z, { type: 6, id: z }); fixedLib(join(d, 'N13t', 'lib', 'libbrotlidec.1.dylib'), { type: 6, id: '@rpath/libbrotlidec.1.dylib' });
+  assert.equal(judge(bin(join(d, 'N13t', 'bin', 'prog'), [], { links: [z, '@rpath/libbrotlidec.1.dylib'], rpaths: ['@loader_path/../lib'] })).status, 'SAFE');
+});
+
+test('rule 3 (G2, G2b): every file of a Brotli library\'s name, and every one whose soname is the link\'s, in the folders looked in is a candidate; a static archive or plain text is none, and Debian\'s and Homebrew\'s layouts read as the one file they install', () => {
+  const d = fresh('r10-rule3');
+  const prog = (root) => elf(join(root, 'bin', 'prog'), [], { needed: ['libbrotlidec.so.1', 'libc.so.6'] });
+  // G2: the system folder's copy fixed; its glibc-hwcaps/x86-64-v3 holds libbrotlidec.so.1 (fixed) and
+  // libbrotlidec.so.1.0.9 (unfixed, soname libbrotlidec.so.1): ldconfig (glibc 2.33 and later, elf/ldconfig.c
+  // search_dir) caches a glibc-hwcaps subfolder's library by its own file and, of two with one soname, the higher name,
+  // which ld.so loads on a CPU of that level. G2b: the subfolder holds only libbrotlidec.so.1.2.0 (unfixed; ldconfig
+  // makes no soname link there). G2s: its unfixed copy is a file of another name, libz.so.1.2.0, with that soname. Round 9
+  // read all three SAFE
+  for (const [id, files] of [['G2', [['libbrotlidec.so.1', true], ['libbrotlidec.so.1.0.9', false]]], ['G2b', [['libbrotlidec.so.1.2.0', false]]], ['G2s', [['libz.so.1.2.0', false]]]]) {
+    const sys = join(d, id, 'sys'), hw = join(sys, 'glibc-hwcaps', 'x86-64-v3'), bad = join(hw, files.find(([, good]) => !good)[0]);
+    fixedLib(join(sys, 'libbrotlidec.so.1'), { soname: 'libbrotlidec.so.1' });
+    for (const [name, good] of files) (good ? fixedLib : oldLib)(join(hw, name), { soname: 'libbrotlidec.so.1' });
+    const r = judge(prog(join(d, id)), [sys]);
+    assert.equal(r.status, 'UNKNOWN', `${id}: ${r.reason}`); assert.equal(r.via, bad, id);
+    fixedLib(bad, { soname: 'libbrotlidec.so.1' });
+    const t = judge(prog(join(d, id)), [sys]);
+    assert.equal(t.status, 'SAFE', `${id}, the clean twin: ${t.reason}`); assert.ok(t.searched.includes(bad), id);
+  }
+  // Debian's libbrotli1 and libbrotli-dev: libbrotlidec.so.1.0.9 (the file), libbrotlidec.so.1 and libbrotlidec.so
+  // (links to it), libbrotlidec.a (a static archive, here holding an unfixed table's text) and pkgconfig/libbrotlidec.pc
+  // (text): one candidate, by its real path, SAFE or EXPOSED by it alone
+  const deb = join(d, 'debian', 'usr', 'lib', 'x86_64-linux-gnu'), debLib = join(deb, 'libbrotlidec.so.1.0.9');
+  fixedLib(debLib, { soname: 'libbrotlidec.so.1' });
+  symlinkSync('libbrotlidec.so.1.0.9', join(deb, 'libbrotlidec.so.1')); symlinkSync('libbrotlidec.so.1', join(deb, 'libbrotlidec.so'));
+  writeFileSync(join(deb, 'libbrotlidec.a'), Buffer.concat([Buffer.from('!<arch>\n'), Buffer.alloc(60, 0x20), Buffer.from(`\0_SUCCESS\0${CONTROL}\0`)]));
+  mkdirSync(join(deb, 'pkgconfig')); writeFileSync(join(deb, 'pkgconfig', 'libbrotlidec.pc'), 'prefix=/usr\nlibdir=${prefix}/lib/x86_64-linux-gnu\n\nName: libbrotlidec\nVersion: 1.0.9\nLibs: -L${libdir} -lbrotlidec\n');
+  const debProg = prog(join(d, 'debian'));
+  const dg = judge(debProg, [deb]);
+  assert.equal(dg.status, 'SAFE', dg.reason); assert.deepEqual(dg.searched, [debProg, debLib]);
+  oldLib(debLib, { soname: 'libbrotlidec.so.1' });
+  const db = judge(debProg, [deb]);
+  assert.equal(db.status, 'EXPOSED', db.reason); assert.equal(db.via, debLib);
+  // Homebrew's brotli 1.2.1: lib/libbrotlidec.1.2.1.dylib (the file), libbrotlidec.1.dylib and libbrotlidec.dylib (links
+  // to it) and lib/pkgconfig/libbrotlidec.pc: one candidate
+  const brew = join(d, 'brew', 'lib'), brewLib = join(brew, 'libbrotlidec.1.2.1.dylib');
+  fixedLib(brewLib, { type: 6, id: join(brew, 'libbrotlidec.1.dylib') });
+  symlinkSync('libbrotlidec.1.2.1.dylib', join(brew, 'libbrotlidec.1.dylib')); symlinkSync('libbrotlidec.1.2.1.dylib', join(brew, 'libbrotlidec.dylib'));
+  mkdirSync(join(brew, 'pkgconfig')); writeFileSync(join(brew, 'pkgconfig', 'libbrotlidec.pc'), 'prefix=/opt/homebrew/Cellar/brotli/1.2.1\nName: libbrotlidec\nVersion: 1.2.1\n');
+  const brewProg = bin(join(d, 'brew', 'bin', 'prog'), [], { links: ['@rpath/libbrotlidec.1.dylib'], rpaths: ['@loader_path/../lib'] });
+  const bg = judge(brewProg);
+  assert.equal(bg.status, 'SAFE', bg.reason); assert.deepEqual(bg.searched, [brewProg, brewLib]);
+  // a file of that name that is neither an archive nor text, and not Mach-O or ELF (a compressed copy): it can't be read
+  // as a library, UNKNOWN, naming it (round 9: not a candidate, SAFE); the clean twin without it, SAFE
+  fixedLib(debLib, { soname: 'libbrotlidec.so.1' });
+  writeFileSync(join(deb, 'libbrotlidec.so.1.0.9.gz'), Buffer.from([0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3, 0x4b, 0x04, 0]));
+  const gz = judge(debProg, [deb]);
+  assert.equal(gz.status, 'UNKNOWN', gz.reason); assert.ok(gz.reason.includes(`and ${join(deb, 'libbrotlidec.so.1.0.9.gz')}, a library found for it or for another library it loads, could not be read as a Mach-O or ELF library`), gz.reason);
+  rmSync(join(deb, 'libbrotlidec.so.1.0.9.gz'));
+  assert.equal(judge(debProg, [deb]).status, 'SAFE', 'the clean twin');
+  // a wider name never stands in for the link: a file only of a Brotli library's name (another soname), with no file of
+  // the link's own name or soname, leaves it not found, UNKNOWN; with the link's own, every one decides
+  const only = join(d, 'only', 'sys');
+  fixedLib(join(only, 'libbrotlidec.so.0.9.0'), { soname: 'libbrotlidec.so.0' });
+  const nf = judge(prog(join(d, 'only')), [only]);
+  assert.equal(nf.status, 'UNKNOWN', nf.reason); assert.match(nf.reason, /it links libbrotlidec\.so\.1, which was not found/);
+  fixedLib(join(only, 'libbrotlidec.so.1'));
+  const both = judge(prog(join(d, 'only')), [only]);
+  assert.equal(both.status, 'SAFE', both.reason); assert.ok(both.searched.includes(join(only, 'libbrotlidec.so.0.9.0')), both.searched.join());
+});
+
+test('rule 4 (G3): subfolders are looked in down to 4 levels, glibc 2.36\'s tls/haswell/avx512_1/x86_64 on an Intel CPU with AVX-512 among them', () => {
+  const d = fresh('r10-g3'), deep = join(d, 'lib', 'tls', 'haswell', 'avx512_1', 'x86_64', 'libbrotlidec.so.1');
+  // glibc 2.36's sysdeps/x86/cpu-features.c gives such a CPU the hwcaps x86_64 and avx512_1 and the platform haswell,
+  // and elf/dl-hwcaps.c adds tls: ld.so searches lib/tls/haswell/avx512_1/x86_64 first (Debian 12, Ubuntu 22.04, RHEL 8
+  // and 9). Round 9 looked 3 levels down and read SAFE
+  fixedLib(join(d, 'lib', 'libbrotlidec.so.1')); oldLib(deep);
+  const prog = elf(join(d, 'bin', 'prog'), [CONTROL, MARKER], { needed: ['libbrotlidec.so.1', 'libc.so.6'], runpath: '$ORIGIN/../lib' });
+  const r = judge(prog);
+  assert.equal(r.status, 'UNKNOWN', r.reason); assert.equal(r.via, deep);
+  fixedLib(deep);
+  const t = judge(prog);
+  assert.equal(t.status, 'SAFE', t.reason); assert.ok(t.searched.includes(deep));
+});
+
+test('rule 5 (G6): the link\'s file name is opened in every folder looked in, as the loader opens it, so a folder whose file system ignores case gives its copy under another case, even where names are compared by case', () => {
+  const d = fresh('r10-g6'), sys = fresh('r10-g6-sys'), upper = join(d, 'lib', 'LIBBROTLIDEC.SO.1');
+  fixedLib(join(sys, 'libbrotlidec.so.1')); elf(upper, ['_SUCCESS', CONTROL, '_ERROR_UNREACHABLE'], { type: 3 });
+  const prog = elf(join(d, 'bin', 'prog'), [CONTROL, MARKER], { needed: ['libbrotlidec.so.1'], runpath: '$ORIGIN/../lib' });
+  // whether this test's folder ignores case: open() finds the file by the link's name there (macOS's APFS; on Linux an
+  // ext4 folder with casefold, vfat, exFAT, WSL's /mnt/c), and the loader takes it; on a disk that keeps case it can't.
+  // Round 9 compared names by case off macOS and read SAFE on either
+  const ignores = existsSync(join(d, 'lib', 'libbrotlidec.so.1'));
+  const r = judge(prog, [sys], { caseless: false });
+  if (ignores) { assert.equal(r.status, 'UNKNOWN', r.reason); assert.equal(r.via, upper); } else assert.equal(r.status, 'SAFE', r.reason);
+  // the clean twin: that copy fixed, SAFE, named where the folder ignores case
+  elf(upper, ['_SUCCESS', CONTROL, MARKER, '_ERROR_UNREACHABLE'], { type: 3 });
+  const t = judge(prog, [sys], { caseless: false });
+  assert.equal(t.status, 'SAFE', t.reason); assert.equal(t.searched.includes(upper), ignores, t.searched.join());
+});
+
+test('rule 6: every library /etc/ld.so.preload names joins the closure, looked for as the program\'s own links (glibc loads them into every program first); a preload file that can\'t be read, or a name in it that can\'t be followed, is UNKNOWN', () => {
+  const d = fresh('r10-preload'), pf = join(d, 'ld.so.preload');
+  const pre = () => brotli.ldSoPreload?.(pf) ?? { names: [], gap: null };
+  // read as glibc's elf/rtld.c reads it: '#' to the end of a line, names split on spaces, tabs, line feeds and ':'
+  writeFileSync(pf, '# preloaded\n/opt/a/libx.so:/opt/b/liby.so libz.so\t# a comment: not a name\n\n');
+  assert.deepEqual(brotli.ldSoPreload?.(pf), { names: ['/opt/a/libx.so', '/opt/b/liby.so', 'libz.so'], gap: null });
+  assert.deepEqual(brotli.ldSoPreload(join(d, 'none')), { names: [], gap: null }, 'no file names nothing');
+  assert.deepEqual(brotli.ldSoPreload(d), { names: [], gap: d }, 'a folder can\'t be read as one');
+  // the program's own copy fixed; /etc/ld.so.preload names an unfixed one by its path (a candidate: rule 2), or a
+  // library of another name, found in the system's folders, that links it. Round 9 never read the file: SAFE
+  fixedLib(join(d, 'lib', 'libbrotlidec.so.1'));
+  const evil = oldLib(join(d, 'evil', 'libbrotlidec.so.1')), sys = join(d, 'sys');
+  elf(join(sys, 'libshim.so'), [], { soname: 'libshim.so', needed: [evil, 'libc.so.6'] });
+  const prog = elf(join(d, 'bin', 'prog'), [CONTROL, MARKER], { needed: ['libbrotlidec.so.1', 'libc.so.6'], runpath: '$ORIGIN/../lib' });
+  for (const [what, text] of [['by its path', `${evil}\n`], ['a library that links it', 'libshim.so\n']]) {
+    writeFileSync(pf, text);
+    const r = judge(prog, [sys], { preload: pre() });
+    assert.equal(r.status, 'UNKNOWN', `${what}: ${r.reason}`); assert.equal(r.via, evil, what);
+  }
+  // one that can't be read, or a name in it that can't be followed (a relative path): UNKNOWN, saying so
+  const gap = judge(prog, [sys], { preload: { names: [], gap: pf } });
+  assert.equal(gap.status, 'UNKNOWN'); assert.match(gap.reason, /ld\.so\.preload, which names libraries the dynamic loader loads into every program first, could not be read/);
+  writeFileSync(pf, 'rel/libfoo.so\n');
+  const rel = judge(prog, [sys], { preload: pre() });
+  assert.equal(rel.status, 'UNKNOWN'); assert.match(rel.reason, /rel\/libfoo\.so, a library \/etc\/ld\.so\.preload names .*could not be followed or opened/);
+  // through the command: a node on PATH, the preload file at its place (places.ldSoPreload)
+  const path = fresh('r10-preload-path');
+  elf(join(path, 'node'), [CONTROL, MARKER, NODE_CONTROL, NODE_MARKER], { needed: ['libbrotlidec.so.1'], runpath: join(d, 'lib') });
+  writeFileSync(pf, `${evil}\n`);
+  const row = () => run({}, { pathEnv: path, places: { ldSoPreload: pf } }).rows.find((x) => x.file === join(path, 'node'));
+  assert.equal(row().status, 'UNKNOWN');
+  // the clean twins: the preloaded copy fixed, or nothing named, SAFE
+  fixedLib(evil);
+  for (const [what, text] of [['by its path', `${evil}\n`], ['a library that links it', 'libshim.so\n'], ['only comments', '# nothing\n']]) {
+    writeFileSync(pf, text);
+    assert.equal(judge(prog, [sys], { preload: pre() }).status, 'SAFE', what);
+  }
+  writeFileSync(pf, `${evil}\n`);
+  assert.equal(row().status, 'SAFE', 'through the command');
+});
+
+test('rule 6: a program whose PT_INTERP names a loader that is not the system\'s (Homebrew\'s on Linux, Nix\'s, a vendored glibc) is UNKNOWN: that loader searches its own folders', () => {
+  const d = fresh('r10-interp');
+  fixedLib(join(d, 'lib', 'libbrotlidec.so.1'));
+  const prog = (interp, o = {}) => elf(join(d, 'bin', 'prog'), [CONTROL, MARKER], { needed: ['libbrotlidec.so.1', 'libc.so.6'], runpath: '$ORIGIN/../lib', interp, ...o });
+  // round 9 read no PT_INTERP: SAFE, each
+  for (const interp of ['/nix/store/q4mn8f2vzh7l6bry2w0a7c0d1d8b8yg8-glibc-2.40-66/lib/ld-linux-x86-64.so.2', '/home/linuxbrew/.linuxbrew/lib/ld.so', '/lib64/ld-linux-x86-64.so.2.old', 'ld-linux-x86-64.so.2']) {
+    const r = judge(prog(interp));
+    assert.equal(r.status, 'UNKNOWN', `${interp}: ${r.reason}`); assert.ok(r.reason.includes(`it names its own dynamic loader, ${interp} (PT_INTERP), not one of the system's`), r.reason);
+  }
+  // one that can't be read (its bytes don't end in a NUL, which no kernel runs): UNKNOWN too
+  const cut = judge(prog('/lib64/ld-linux-x86-64.so.2', { cut: true }));
+  assert.equal(cut.status, 'UNKNOWN', cut.reason); assert.match(cut.reason, /the dynamic loader it names \(PT_INTERP\) could not be read/);
+  // the clean twins: the system's own loaders, glibc's and musl's, and none (a library), SAFE
+  for (const interp of ['/lib64/ld-linux-x86-64.so.2', '/lib/ld-linux-aarch64.so.1', '/lib/ld-linux-armhf.so.3', '/lib/ld-musl-x86_64.so.1', '/lib/ld-musl-aarch64.so.1', '/usr/lib/ld-linux-x86-64.so.2', '/lib64/ld64.so.2', undefined]) {
+    assert.equal(judge(prog(interp)).status, 'SAFE', String(interp));
+  }
+  // the list, exactly: glibc's and musl's per-architecture names, under /lib, /lib64 and /usr/lib
+  assert.ok(brotli.SYSTEM_LOADERS?.includes('/lib64/ld-linux-x86-64.so.2'));
+  assert.ok(brotli.SYSTEM_LOADERS.every((p) => /^\/(?:lib|lib64|usr\/lib)\/(?:ld-linux[a-z0-9_-]*\.so\.[123]|ld64\.so\.[12]|ld\.so\.1|ld-musl-[a-z0-9_]+\.so\.1)$/.test(p)), 'nothing else');
+});
+
+test('a folder reached again nearer a named one is gone into deeper: a search folder first met deep inside another (mutant A18)', () => {
+  const d = fresh('r10-a18'), P = join(d, 'P'), deep = join(P, 'a', 'b', 'c', 'd', 'e', 'libbrotlidec.so.1');
+  fixedLib(join(P, 'libbrotlidec.so.1')); oldLib(deep);
+  // DT_RUNPATH P, then P/a/b/c: P's walk meets c 3 levels down and lists d, the 4th, without going into it; c, named
+  // itself, is gone into again from its own level 0, so e (2 below c, 5 below P) is listed and its copy is a candidate
+  const prog = (runpath) => elf(join(d, 'bin', 'prog'), [CONTROL, MARKER], { needed: ['libbrotlidec.so.1'], runpath });
+  const r = judge(prog(`${P}:${join(P, 'a', 'b', 'c')}`));
+  assert.equal(r.status, 'UNKNOWN', r.reason); assert.equal(r.via, deep);
+  assert.equal(judge(prog(P)).status, 'SAFE', 'P alone: e is 5 levels below it');
+  fixedLib(deep);
+  assert.equal(judge(prog(`${P}:${join(P, 'a', 'b', 'c')}`)).status, 'SAFE', 'the clean twin');
+});
+
+test('a closure of more than 4,096 libraries is UNKNOWN, saying so; one of fewer is followed to its end (mutant C8)', () => {
+  const d = fresh('r10-many'), lib = join(d, 'lib');
+  fixedLib(join(lib, 'libbrotlidec.so.1'));
+  // the program needs 64 libraries, each of which needs 64 more: 1 + 64 + 4,096 objects and the Brotli library
+  const top = (i, n) => elf(join(lib, `liba${i}.so.1`), [], { soname: `liba${i}.so.1`, needed: Array.from({ length: n }, (_, j) => `libb${i}x${j}.so.1`) });
+  for (let i = 0; i < 64; i++) { top(i, 64); for (let j = 0; j < 64; j++) elf(join(lib, `libb${i}x${j}.so.1`), [], { soname: `libb${i}x${j}.so.1` }); }
+  const prog = elf(join(d, 'bin', 'prog'), [CONTROL, MARKER], { needed: [...Array.from({ length: 64 }, (_, i) => `liba${i}.so.1`), 'libbrotlidec.so.1'], runpath: '$ORIGIN/../lib' });
+  const r = judge(prog);
+  assert.equal(r.status, 'UNKNOWN', r.reason); assert.match(r.reason, /more than Wardlatch looks at \(65536 folders, 4096 libraries\)/);
+  // the clean twin: two of the 64 need nothing, 4,034 objects, SAFE
+  top(0, 0); top(1, 0);
   assert.equal(judge(prog).status, 'SAFE');
 });
 
@@ -2023,25 +2332,27 @@ test('the reading budget holds for a universal file: builds that overlap are UNK
   assert.ok(budget.left > 0 && budget.left < size, `${size - budget.left} bytes read of a ${size}-byte file`);
 });
 
-test('the reading budget holds for the candidate search: each folder listed (4 KB, then 256 bytes an entry) and each library followed (its first 8 bytes, a universal file\'s list of builds, its headers) is charged; past it, UNKNOWN', () => {
+test('the reading budget holds for the candidate search: each folder listed (4 KB, then 256 bytes an entry) and each file in it (its first 8 bytes; a library\'s list of builds and headers) is charged, once a run; past it, UNKNOWN', () => {
   const d = fresh('budget-places');
   // a program with LC_RPATH lib/, linking @rpath/libbrotlidec.1.dylib: lib/ is listed (it holds the library and two
-  // other files), the library is followed (its first 8 bytes, its 32-byte header, no load commands) and then judged
+  // other files), each file in it looked at (its first 8 bytes; the library's 32-byte header, no load commands, which
+  // is what following it reads) and the library then judged
   const lib = fresh('budget-places/lib');
   fixedLib(join(lib, 'libbrotlidec.1.dylib')); writeFileSync(join(lib, 'a.txt'), 'a'); writeFileSync(join(lib, 'b.txt'), 'b');
   const prog = bin(join(d, 'bin', 'prog'), [], { links: ['@rpath/libbrotlidec.1.dylib'], rpaths: [lib] });
   const ev = (f) => { const b = readFileSync(f); return 8 + b.length + 32 + b.readUInt32LE(20); };   // evidence(): first 8 bytes, the file, header, load commands
-  const listing = 4096 + 3 * 256, follow = 8 + 32, cost = ev(prog) + listing + follow + ev(join(lib, 'libbrotlidec.1.dylib'));
+  const listing = 4096 + 3 * 256, scan = 3 * 8 + 32, cost = ev(prog) + listing + scan + ev(join(lib, 'libbrotlidec.1.dylib'));
   const exact = { left: cost };
   assert.equal(judgeFile(prog, { markers: M, budget: exact }).status, 'SAFE');
   assert.equal(exact.left, 0, `${cost - exact.left} of ${cost}`);
-  // the same run (the same budget) reads a folder once: a second program's look at lib/ is not charged again
-  const again = { left: 2 * cost - listing };
+  // the same run (the same budget) reads a folder, and each file in it, once: a second program's look at lib/ is not
+  // charged again
+  const again = { left: 2 * cost - listing - scan };
   assert.equal(judgeFile(prog, { markers: M, budget: again }).status, 'SAFE');
   assert.equal(judgeFile(prog, { markers: M, budget: again }).status, 'SAFE');
-  assert.equal(again.left, 0, 'the second look at lib/ comes from the run\'s own listing');
-  // too little left to list lib/, or to follow the library: UNKNOWN, saying so, never SAFE; nothing read past the budget
-  for (const left of [ev(prog) + listing - 1, ev(prog) + listing + follow - 1]) {
+  assert.equal(again.left, 0, 'the second look at lib/ comes from the run\'s own listing and looks');
+  // too little left to list lib/, or to look at its files: UNKNOWN, saying so, never SAFE; nothing read past the budget
+  for (const left of [ev(prog) + listing - 1, ev(prog) + listing + 8 - 1, ev(prog) + listing + scan - 1]) {
     const b = { left };
     const r = judgeFile(prog, { markers: M, budget: b });
     assert.equal(r.status, 'UNKNOWN', String(left)); assert.match(r.reason, /it links @rpath\/libbrotlidec\.1\.dylib, and the folders and libraries where a loader may look for it were not all read, because this run had already read 4 GB of files for this check, so whether it has the fix could not be tested/);
@@ -2297,8 +2608,13 @@ test('a distribution\'s node, a launcher for libnode: libnode decides, by the sa
   elf(join(lib, 'libnode.so.108'), [CONTROL, MARKER], { needed: ['libnode.so.109'] });
   const nested = row();
   assert.equal(nested.status, 'UNKNOWN'); assert.match(nested.reason, /libnode\.so\.108, the library that holds Node\.js's code: its own Brotli decoder has the fix, but it links libnode\.so\.109, a Brotli library or libnode of its own/);
-  // libnode with its own fixed table decides by it; with an unfixed one, EXPOSED
+  // libnode with its own fixed table decides by it; with an unfixed one, EXPOSED. Every file of a libnode name in the
+  // folders looked in is a candidate (round 10, rule 3), so the unfixed libnode.so.109 still there beside a fixed
+  // libnode.so.108 makes the link a mix, UNKNOWN (round 9: SAFE, by libnode.so.108 alone)
   elf(join(lib, 'libnode.so.108'), [CONTROL, MARKER]);
+  const beside = row();
+  assert.equal(beside.status, 'UNKNOWN', beside.reason); assert.match(beside.reason, /it links libnode\.so\.108, the library that holds Node\.js's code, and the 2 files of that name .* are not all fixed or all unfixed .*libnode\.so\.109 lacks it/);
+  rmSync(join(lib, 'libnode.so.109'));
   assert.equal(row().status, 'SAFE');
   elf(join(lib, 'libnode.so.108'), [CONTROL]);
   assert.equal(row().status, 'EXPOSED');
@@ -2366,6 +2682,13 @@ test('a whole link to libnode is followed and judged beside a fixed table or a B
       make(libnode); make(soname);
       for (const [form, f] of [['Mach-O, an absolute path', macho], ['ELF, a soname', linux]]) {
         const r = judge(f, [lib]);
+        // beside its own link to a fixed Brotli library, libnode's unfixed one is a candidate for that link and the
+        // fixed one for libnode's (round 10, rule 2: a loader may hand a link a copy already loaded): a mix, UNKNOWN
+        // (round 9: EXPOSED)
+        if (links.length && how !== 'its own table') {
+          assert.equal(r.status, 'UNKNOWN', `${what}, ${form}, unfixed by ${how}: ${r.reason}`); assert.match(r.reason, /are not all fixed or all unfixed/);
+          continue;
+        }
         assert.equal(r.status, 'EXPOSED', `${what}, ${form}, unfixed by ${how}: ${r.reason}`);
         assert.match(r.reason, /libnode\.(147\.dylib|so\.108), the library that holds Node\.js's code: (its Brotli decoder lacks the fix|it uses .*old\/libbrotlidec)/, `${what}, ${form}`);
       }
