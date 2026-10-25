@@ -295,6 +295,21 @@ not searched, and running with sudo includes them; a person's locked folder is U
 that person's projects. The committed-key scan looks for high-confidence shapes only; a key in an unusual format
 is missed.
 
+**The workflow review reads commits by the date they claim.** It reads commits whose committer date is on or after the
+incident's start, an explicit UTC instant (for `github-actions-2026-10`, 30 Aug 2026 00:00 UTC), and the SAFE line
+names that instant. A commit can claim any date: one dated before the start is not read, and git stops reading a branch
+at a commit dated before it, so a correctly dated workflow behind a later commit made on a machine with a wrong clock
+can be missed too. A start that isn't an explicit UTC instant is UNKNOWN, and so is each repository when
+`git rev-parse --since` shows that this git reads the start as another instant. **Found 25 October 2026:** 0.1.0 to
+0.1.9 gave git the bare date `2026-09-01`, which git reads as 1 Sep at the current time of day in the machine's zone,
+so a workflow committed on 31 Aug, or on 1 Sep before the hour the check ran, was not read, and the review could read
+SAFE with exit code 0; the sources say to check from 31 Aug. *Evidence:* `test/workflows.test.mjs` plants workflows a
+second inside the window, at 05:00 on 31 Aug at UTC+8, at 09:00 UTC on 1 Sep, and under the advisory's own file names
+on 31 Aug, and expects each listed, with the command run in two time zones; a workflow a second before the window must
+read SAFE; a bare-date start and a git that reads the start as another instant must read UNKNOWN.
+`test/incidents.test.mjs` holds the start of every incident's window (`since`, `addedSince`) to an explicit UTC
+instant.
+
 **The Mac fix finds the two roots by the header lines macOS writes above each certificate** (`=== …/CN=…`). If Apple
 changed that format, the script would find no root to remove; it then re-tests online, and reports EXPOSED if the file
 still trusts the test host. If the test host were also down at that moment, it would report the file as clean without

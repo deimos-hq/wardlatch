@@ -14,6 +14,8 @@ const DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'incident
 const incidents = readdirSync(DIR).filter((f) => f.endsWith('.json')).map((f) => ({ file: f, ...JSON.parse(readFileSync(join(DIR, f), 'utf8')) }));
 const TYPES = ['trust', 'binaries', 'workflows', 'secrets', 'wordpress', 'installs', 'headers'];
 const https = (u) => typeof u === 'string' && new URL(u).protocol === 'https:';
+// the start of a date window: an explicit instant in UTC, to the second (lib/workflows.mjs windowStart reads only this)
+const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 
 test('every incident has the fields its check reads, named after its file', () => {
   assert.ok(incidents.length >= 6);
@@ -23,7 +25,7 @@ test('every incident has the fields its check reads, named after its file', () =
     assert.match(i.date, /^\d{4}-\d{2}-\d{2}$/); assert.ok(i.title && i.summary, i.id);
     assert.ok(https(i.advisory), `${i.id}: the source is an https URL`);
     for (const b of i.binaries ?? []) assert.ok(b.binary && b.fix && (b.bad || b.fixedIn || b.pendingUntil || (b.noExec && b.md5Bad?.length)), `${i.id}: ${b.binary}`);
-    if (i.type === 'workflows') assert.ok(!Number.isNaN(Date.parse(i.since)) && i.fix);
+    if (i.type === 'workflows') assert.ok(INSTANT.test(i.since) && i.fix, `${i.id}: since`);
     if (i.type === 'secrets') assert.ok(i.fix);
     if (i.type === 'installs') {
       assert.ok(i.versionFiles || i.sitePackages || i.dockerDigests, `${i.id}: something to check`);
@@ -49,9 +51,24 @@ test('every incident has the fields its check reads, named after its file', () =
       if (i.dockerDigestPrefixes || i.dockerTags) assert.ok(i.dockerFix);
     }
     if (i.type === 'headers') assert.ok(i.fix && i.notCovered);
-    if (i.type === 'wordpress') { assert.ok(!Number.isNaN(Date.parse(i.addedSince)) && i.reviewFix); for (const r of i.rules) assert.ok(r.plugin && r.mainFile && r.fix); }
+    if (i.type === 'wordpress') { assert.ok(INSTANT.test(i.addedSince) && i.reviewFix, `${i.id}: addedSince`); for (const r of i.rules) assert.ok(r.plugin && r.mainFile && r.fix); }
   }
   assert.equal(new Set(incidents.map((i) => i.id)).size, incidents.length, 'ids are unique');
+});
+
+test('every date window starts at an explicit UTC instant that exists, never a bare date', () => {
+  // 0.1.0 to 0.1.9 gave the workflow review "2026-09-01", which git read as 1 Sep at the run's time of day in the
+  // machine's zone, and a workflow committed on 31 Aug read SAFE. Any field naming a window's start (since, addedSince,
+  // at any depth) is a full instant in UTC.
+  const starts = (o, at) => (o && typeof o === 'object' ? Object.entries(o).flatMap(([k, v]) => (/since$/i.test(k) ? [[`${at}.${k}`, v]] : starts(v, `${at}.${k}`))) : []);
+  const found = incidents.flatMap((i) => starts(i, i.id));
+  assert.ok(found.some(([k]) => k === 'github-actions-2026-10.since') && found.some(([k]) => k === 'wordpress-plugins-2026-10.addedSince'), JSON.stringify(found));
+  for (const [k, v] of found) {
+    assert.match(String(v), INSTANT, k);
+    assert.equal(new Date(Date.parse(v)).toISOString(), v.replace('Z', '.000Z'), `${k}: a day and time that exist`);
+  }
+  // the pattern itself refuses what git or Date.parse would read in a zone, or at the time of day
+  for (const bad of ['2026-09-01', '2026-08-30 00:00:00', '2026-08-30T00:00:00', '2026-08-30T00:00:00+00:00', '2026-08-30T00:00Z', '2026-08-30T00:00:00.000Z']) assert.doesNotMatch(bad, INSTANT, bad);
 });
 
 test('the trust incident: unique test hosts, and the bundled roots are exactly the advisory\'s roots', () => {

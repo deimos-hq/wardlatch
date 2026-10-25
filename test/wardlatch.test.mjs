@@ -328,11 +328,11 @@ test('LiteLLM (real incident data): the exact dropped files, a variant by name, 
   assert.deepEqual(hits, ['litellm/litellm:latest', 'ghcr.io/berriai/litellm-database:main-stable', 'ghcr.io/berriai/litellm:v1.107.0']);
 });
 
-test('workflow review lists each workflow file added since the date, once', () => {
+test('workflow review lists each workflow file added since the instant, once', () => {
   const repo = join(dir, 'repo'); mkdirSync(join(repo, '.github', 'workflows'), { recursive: true });
   const g = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x' } });
   g('init', '-q'); writeFileSync(join(repo, '.github', 'workflows', 'audit.yml'), 'on: push\n'); g('add', '.'); g('commit', '-qm', 'add');
-  const found = workflowsAddedSince(repo, '2000-01-01');
+  const found = workflowsAddedSince(repo, '2000-01-01T00:00:00Z');
   assert.equal(found.length, 1); assert.equal(found[0].file, '.github/workflows/audit.yml');
 });
 
