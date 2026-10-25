@@ -171,10 +171,13 @@ test('one file, every decoder it uses: each build of a universal file, and the l
   const bothGood = judge(bin(join(d, 'table-and-new'), [CONTROL, MARKER, good]));
   assert.equal(bothGood.status, 'SAFE'); assert.deepEqual(bothGood.searched, [join(d, 'table-and-new'), good]);
   // and links it names past the mentions kept, or in a string that isn't whole: UNKNOWN beside a table too
-  const decoys = (n) => Array.from({ length: n }, (_, i) => `libbrotlidec mention ${i}`);
-  assert.equal(judge(bin(join(d, 'table-crowded'), [CONTROL, MARKER, good, ...decoys(70), old])).status, 'UNKNOWN');
+  const copies = (n) => Array.from({ length: n }, () => good);
+  assert.equal(judge(bin(join(d, 'table-crowded'), [CONTROL, MARKER, good, ...copies(70), old])).status, 'UNKNOWN');
   assert.equal(judge(bin(join(d, 'table-cut'), [CONTROL, MARKER, Buffer.from(`\0\x01${old}\0`)])).status, 'UNKNOWN');
-  assert.equal(judge(bin(join(d, 'table-few'), [CONTROL, MARKER, good, ...decoys(10)])).status, 'SAFE', 'the clean twin');
+  assert.equal(judge(bin(join(d, 'table-few'), [CONTROL, MARKER, good, ...copies(10)])).status, 'SAFE', 'the clean twin');
+  // a mention that is no load path ("libbrotlidec mention 0"; until round 5, these ten were the clean twin's) is one
+  // Wardlatch can't follow: UNKNOWN by design
+  assert.equal(judge(bin(join(d, 'table-text'), [CONTROL, MARKER, good, ...Array.from({ length: 10 }, (_, i) => `libbrotlidec mention ${i}`)])).status, 'UNKNOWN');
   // a decoder library's own name (its install name or soname) is not a link: still SAFE by its table
   assert.equal(judge(bin(join(d, 'self', 'libbrotlidec.1.2.1.dylib'), [CONTROL, MARKER, '/DLC/PIL/.dylibs/libbrotlidec.1.2.1.dylib'])).status, 'SAFE');
   // a fixed 1.1-form table beside a 1.0-form name that is no whole table (Brotli 1.0's error texts have no prefix):
@@ -437,11 +440,14 @@ test('links: @loader_path beside the file, an absolute path; @rpath, @executable
   // a file that names libbrotlidec more often than the mentions kept: a link past them could be an old library, so the
   // fixed one it shows first is not enough
   oldLib(join(d, 'crowd', 'old', 'libbrotlidec.1.dylib'));
-  const decoys = (n) => Array.from({ length: n }, (_, i) => `libbrotlidec mention ${i}`);
-  const crowded = judge(bin(join(d, 'crowd', 'prog'), [join(d, 'pkg', 'libbrotlidec.1.2.1.dylib'), ...decoys(70), join(d, 'crowd', 'old', 'libbrotlidec.1.dylib')]));
+  const copies = (n) => Array.from({ length: n }, () => join(d, 'pkg', 'libbrotlidec.1.2.1.dylib'));
+  const crowded = judge(bin(join(d, 'crowd', 'prog'), [join(d, 'pkg', 'libbrotlidec.1.2.1.dylib'), ...copies(70), join(d, 'crowd', 'old', 'libbrotlidec.1.dylib')]));
   assert.equal(crowded.status, 'UNKNOWN'); assert.match(crowded.reason, /more often than Wardlatch keeps track of.*could not be tested/);
-  assert.equal(judge(bin(join(d, 'crowd', 'prog-few'), [join(d, 'pkg', 'libbrotlidec.1.2.1.dylib'), ...decoys(10)])).status, 'SAFE', 'the clean twin');
-  assert.equal(judge(bin(join(d, 'crowd', 'prog-few-old'), [join(d, 'pkg', 'libbrotlidec.1.2.1.dylib'), ...decoys(10), join(d, 'crowd', 'old', 'libbrotlidec.1.dylib')])).status, 'EXPOSED');
+  assert.equal(judge(bin(join(d, 'crowd', 'prog-few'), [join(d, 'pkg', 'libbrotlidec.1.2.1.dylib'), ...copies(10)])).status, 'SAFE', 'the clean twin');
+  assert.equal(judge(bin(join(d, 'crowd', 'prog-few-old'), [join(d, 'pkg', 'libbrotlidec.1.2.1.dylib'), ...copies(10), join(d, 'crowd', 'old', 'libbrotlidec.1.dylib')])).status, 'EXPOSED');
+  // ten mentions that are no load path ("libbrotlidec mention 0"; until round 5, the clean twin's): UNKNOWN by design
+  const text = judge(bin(join(d, 'crowd', 'prog-text'), [join(d, 'pkg', 'libbrotlidec.1.2.1.dylib'), ...Array.from({ length: 10 }, (_, i) => `libbrotlidec mention ${i}`)]));
+  assert.equal(text.status, 'UNKNOWN'); assert.match(text.reason, /in a way Wardlatch can't follow.*could not be tested/);
   // what counts as a decoder library's name
   for (const s of ['/opt/homebrew/opt/brotli/lib/libbrotlidec.1.dylib', '@loader_path/libbrotlidec.1.2.0.dylib', 'libbrotlidec.so.1', 'libbrotlidec-ba690955.so.1.0.9', 'libbrotlidec.so']) assert.ok(isDecoderLibName(s), s);
   for (const s of ['libbrotlidec is used here', 'libbrotlidec.so.1x', 'libbrotlidec.a', 'libbrotlienc.1.dylib', 'token=AKIAEXAMPLE/libbrotlidec.so.1']) assert.ok(!isDecoderLibName(s), s);
@@ -464,7 +470,7 @@ test('a link is followed only when its whole C string names the library: a non-A
   const lib = join(d, 'fixed', 'libbrotlidec.1.dylib');
   for (const [name, raw] of [['after-a-byte', Buffer.from(`\0\x01${lib}\0`)], ['no-nul-after', Buffer.from(`\0${lib}\x01\0`)], ['bad-utf8', Buffer.concat([Buffer.from('\0'), Buffer.from([0xc3]), Buffer.from(`${lib}\0`)])]]) {
     const c = judge(bin(join(d, name), [raw]));
-    assert.equal(c.status, 'UNKNOWN', name); assert.match(c.reason, /could not be read whole.*could not be tested/, name);
+    assert.equal(c.status, 'UNKNOWN', name); assert.match(c.reason, /in a way Wardlatch can't follow.*could not be tested/, name);
   }
   // beside a whole link to a fixed library, a cut name still makes it UNKNOWN: the cut one may be what loads
   assert.equal(judge(bin(join(d, 'whole-and-cut'), [lib, Buffer.from(`\0\x01${join(d, 'other', 'libbrotlidec.1.dylib')}\0`)])).status, 'UNKNOWN');
@@ -479,17 +485,20 @@ test('a load path longer than the bytes kept before the library\'s name is incom
     ['ELF DT_NEEDED, with a table', elf(join(d, 'elf'), [CONTROL, MARKER, long('libbrotlidec.so.1')])],
     ['no table', bin(join(d, 'bare'), [long('libbrotlidec.1.dylib')])]]) {
     const r = judge(f);
-    assert.equal(r.status, 'UNKNOWN', what); assert.match(r.reason, /could not be read whole.*could not be tested/, what);
+    assert.equal(r.status, 'UNKNOWN', what); assert.match(r.reason, /in a way Wardlatch can't follow.*could not be tested/, what);
   }
   // a distribution's node: a libnode path past the bytes kept, beside a libnode name that is whole
   elf(join(libDir, 'libnode.so.108'), [CONTROL, MARKER]);
   const node = judge(elf(join(d, 'node'), ['libnode.so.108', long('libnode.so.109')]), [libDir]);
-  assert.equal(node.status, 'UNKNOWN'); assert.match(node.reason, /libnode.*could not be read whole/);
-  // clean twins: a long path that fits in the bytes kept is whole and followed; long text that isn't a path is nothing
+  assert.equal(node.status, 'UNKNOWN'); assert.match(node.reason, /libnode.*in a way Wardlatch can't follow/);
+  // clean twins: a long path that fits in the bytes kept is whole and followed
   const near = fixedLib(join(d, 'x'.repeat(200), 'y'.repeat(200), 'z'.repeat(200), 'libbrotlidec.1.dylib'));
   assert.equal(judge(bin(join(d, 'macho-near'), [CONTROL, MARKER, near])).status, 'SAFE');
-  assert.equal(judge(bin(join(d, 'macho-text'), [CONTROL, MARKER, `${'w'.repeat(1300)} uses libbrotlidec to decode`])).status, 'SAFE');
   assert.equal(judge(elf(join(d, 'node-twin'), ['libnode.so.108']), [libDir]).status, 'SAFE');
+  // round 2's text twin, a long text that mentions the library, was SAFE: since round 5 a mention that is no load path
+  // is one Wardlatch can't follow, so it is UNKNOWN by design
+  const text = judge(bin(join(d, 'macho-text'), [CONTROL, MARKER, `${'w'.repeat(1300)} uses libbrotlidec to decode`]));
+  assert.equal(text.status, 'UNKNOWN'); assert.match(text.reason, /in a way Wardlatch can't follow.*could not be tested/);
 });
 
 test('a library\'s name in a load path with a byte the walk back stops at (a tab, a newline, DEL, a control byte) is UNKNOWN, never dropped', () => {
@@ -505,11 +514,11 @@ test('a library\'s name in a load path with a byte the walk back stops at (a tab
       ['beside a whole link to a fixed library', bin(join(d, `both-${name}`), [fixed, old])],
       ['a 1.0 table', bin(join(d, `form10-${name}`), [packed(V1010), old])]]) {
       const r = judge(f);
-      assert.equal(r.status, 'UNKNOWN', `${name}: ${what}`); assert.match(r.reason, /could not be read whole.*could not be tested/, `${name}: ${what}`);
+      assert.equal(r.status, 'UNKNOWN', `${name}: ${what}`); assert.match(r.reason, /in a way Wardlatch can't follow.*could not be tested/, `${name}: ${what}`);
     }
     // a distribution's node: a libnode path with the byte, beside a libnode name that is whole
     const node = judge(elf(join(d, `node-${name}`), ['libnode.so.108', `/opt/x${b}y/libnode.so.109`]), [libDir]);
-    assert.equal(node.status, 'UNKNOWN', `${name}: libnode`); assert.match(node.reason, /libnode.*could not be read whole/);
+    assert.equal(node.status, 'UNKNOWN', `${name}: libnode`); assert.match(node.reason, /libnode.*in a way Wardlatch can't follow/);
   }
   // a relative path after a control byte: not whole either
   assert.equal(judge(bin(join(d, 'after-a-byte-relative'), [CONTROL, MARKER, Buffer.from('\0\x01lib/libbrotlidec.1.dylib\0')])).status, 'UNKNOWN');
@@ -518,9 +527,12 @@ test('a library\'s name in a load path with a byte the walk back stops at (a tab
   assert.equal(judge(elf(join(d, 'elf-twin'), [CONTROL, MARKER, fixed])).status, 'SAFE');
   assert.equal(judge(bin(join(d, 'form10-twin'), [packed(V1010), fixed])).status, 'SAFE');
   assert.equal(judge(elf(join(d, 'node-twin'), ['libnode.so.108']), [libDir]).status, 'SAFE');
-  // and text that mentions the library is nothing: a whole string that is a sentence, not a path (a file named "cannot
-  // load libbrotlidec.so.1" is not a Brotli library), or a line of a program's messages (below): SAFE by the table
-  assert.equal(judge(bin(join(d, 'text-twin'), [CONTROL, MARKER, 'cannot load libbrotlidec.so.1', 'cannot open libbrotlidec.so.1\n'])).status, 'SAFE');
+  // round 4's text twins, a sentence and a line of messages that mention the library, were SAFE by the table: since
+  // round 5 a mention that is no load path is one Wardlatch can't follow, so each is UNKNOWN by design
+  for (const s of ['cannot load libbrotlidec.so.1', 'cannot open libbrotlidec.so.1\n']) {
+    const r = judge(bin(join(d, `text-twin-${s.length}`), [CONTROL, MARKER, s]));
+    assert.equal(r.status, 'UNKNOWN', JSON.stringify(s)); assert.match(r.reason, /in a way Wardlatch can't follow.*could not be tested/);
+  }
 });
 
 test('a control byte inside the library\'s own file name, before its suffix, is UNKNOWN beside a fixed table too: the name in a string that isn\'t whole, whatever follows it', () => {
@@ -538,47 +550,110 @@ test('a control byte inside the library\'s own file name, before its suffix, is 
       ['beside a whole link to a fixed library', bin(join(d, `both-${name}`), [fixed, old])],
       ['no table', bin(join(d, `bare-${name}`), [old])]]) {
       const r = judge(f);
-      assert.equal(r.status, 'UNKNOWN', `${name}: ${what}`); assert.match(r.reason, /could not be read whole.*could not be tested/, `${name}: ${what}`);
+      assert.equal(r.status, 'UNKNOWN', `${name}: ${what}`); assert.match(r.reason, /in a way Wardlatch can't follow.*could not be tested/, `${name}: ${what}`);
     }
     // a distribution's node: a libnode path with the byte in the file's name, beside a libnode name that is whole
     const node = judge(elf(join(d, `node-${name}`), ['libnode.so.108', `/opt/x/${file.replace('libbrotlidec', 'libnode')}`]), [libDir]);
-    assert.equal(node.status, 'UNKNOWN', `${name}: libnode`); assert.match(node.reason, /libnode.*could not be read whole/, name);
+    assert.equal(node.status, 'UNKNOWN', `${name}: libnode`); assert.match(node.reason, /libnode.*in a way Wardlatch can't follow/, name);
   }
   // round 3 read these as text; they are strings that aren't whole, and the loader reads the whole string: UNKNOWN
   for (const s of [Buffer.from('\0\x01libbrotlidec mention\0'), 'uses\tlibbrotlidec to decode']) assert.equal(judge(bin(join(d, `was-text-${s.length}`), [CONTROL, MARKER, s])).status, 'UNKNOWN');
-  // the clean twins: a whole path to a fixed library, a whole libnode name, and a long text that mentions the library (a
-  // part of a path over 255 characters is no file's name, so it is no load path, however much of it the bytes kept show)
+  // the clean twins: a whole path to a fixed library, a whole libnode name
   assert.equal(judge(bin(join(d, 'macho-twin'), [CONTROL, MARKER, fixed])).status, 'SAFE');
   assert.equal(judge(elf(join(d, 'elf-twin'), [CONTROL, MARKER, fixed])).status, 'SAFE');
   assert.equal(judge(bin(join(d, 'form10-twin'), [packed(V1010), fixed])).status, 'SAFE');
   assert.equal(judge(elf(join(d, 'node-twin'), ['libnode.so.108']), [libDir]).status, 'SAFE');
-  assert.equal(judge(bin(join(d, 'long-text'), [CONTROL, MARKER, `\t${'w'.repeat(300)} uses libbrotlidec\x01 to decode`])).status, 'SAFE');
-  // and a part of 255 characters or fewer is a name: UNKNOWN
-  assert.equal(judge(bin(join(d, 'long-name'), [CONTROL, MARKER, `\t${'w'.repeat(200)}libbrotlidec\x01.so.1`])).status, 'UNKNOWN');
+  // round 4's text twin, a part of a path over 255 characters (no file's name), was SAFE: since round 5 no shape makes a
+  // mention text, so it is UNKNOWN by design, as is a part of 255 characters or fewer
+  for (const [name, s] of [['long-text', `\t${'w'.repeat(300)} uses libbrotlidec\x01 to decode`], ['long-name', `\t${'w'.repeat(200)}libbrotlidec\x01.so.1`]]) {
+    const r = judge(bin(join(d, name), [CONTROL, MARKER, s]));
+    assert.equal(r.status, 'UNKNOWN', name); assert.match(r.reason, /in a way Wardlatch can't follow.*could not be tested/, name);
+  }
 });
 
-test('a line of a program\'s messages naming the library ("cannot open libbrotlidec.so.1\\n") is text, not a path: a fixed table stays SAFE', () => {
+// Round 4 read a line of a program's messages naming the library as text, and kept a fixed table SAFE beside it. Since
+// round 5 no shape of a string is text: these lines are UNKNOWN by design (the known cost: a program that only mentions
+// the library in a message reads "could not be tested").
+test('a line of a program\'s messages naming the library ("cannot open libbrotlidec.so.1\\n") is a mention Wardlatch can\'t follow: UNKNOWN beside a fixed table too', () => {
   const d = fresh('text-line'), libDir = fresh('text-line-lib');
   elf(join(libDir, 'libnode.so.108'), [CONTROL, MARKER]);
-  // whole strings with spaces, the name after a space, and only newlines or printf formats after the name
-  const lines = ['cannot open libbrotlidec.so.1\n', 'error: libbrotlidec.so.1\n', 'could not load libbrotlidec.1.dylib\n\n', 'cannot open libbrotlidec.so.1%s\n', 'error: libbrotlidec\n'];
+  // round 4's text twins (the name after a space, only newlines or printf formats after it), and its near misses (no
+  // space before the name, a path before it, a control byte before the newlines or inside the name, a newline before
+  // the name, a format with more letters than printf's, bytes that aren't UTF-8, a line cut by the bytes kept): all one
+  const lines = ['cannot open libbrotlidec.so.1\n', 'error: libbrotlidec.so.1\n', 'could not load libbrotlidec.1.dylib\n\n', 'cannot open libbrotlidec.so.1%s\n', 'error: libbrotlidec\n',
+    'libbrotlidec.so.1\n', '/opt/my dir/libbrotlidec.so.1\n', 'cannot\topen libbrotlidec.so.1\n', 'cannot open libbrotlidec\x01.so.1\n', 'first\ncannot open libbrotlidec.so.1\n',
+    'cannot open libbrotlidec.so.1%sabcd\n', Buffer.from('\0cannot \xc3open libbrotlidec.so.1\n\0', 'latin1'), Buffer.from(`${'x/'.repeat(600)} libbrotlidec.so.1\n\0`)];
   for (const [i, s] of lines.entries()) {
     for (const [what, f] of [['Mach-O', bin(join(d, `macho-${i}`), [CONTROL, MARKER, s])], ['ELF', elf(join(d, `elf-${i}`), [CONTROL, MARKER, s])], ['a 1.0 table', bin(join(d, `form10-${i}`), [packed(V1010), s])]]) {
-      assert.equal(judge(f).status, 'SAFE', `${JSON.stringify(s)}: ${what}`);
+      const r = judge(f);
+      assert.equal(r.status, 'UNKNOWN', `${JSON.stringify(String(s).slice(-40))}: ${what}`); assert.match(r.reason, /in a way Wardlatch can't follow.*could not be tested/);
     }
   }
-  // a distribution's node whose messages name libnode, beside the whole soname of a fixed libnode
-  assert.equal(judge(elf(join(d, 'node'), ['libnode.so.108', 'cannot open libnode.so.108\n', 'error: libnode.so.108%s\n']), [libDir]).status, 'SAFE');
-  // the near misses, UNKNOWN: no space before the name, a path before it (a folder with a space and a file named with a
-  // newline), a control byte before the newlines or inside the name, a newline before the name, a format with more
-  // letters than printf's, bytes that aren't UTF-8, a line cut by the bytes kept
-  for (const s of ['libbrotlidec.so.1\n', '/opt/my dir/libbrotlidec.so.1\n', 'cannot\topen libbrotlidec.so.1\n', 'cannot open libbrotlidec\x01.so.1\n', 'first\ncannot open libbrotlidec.so.1\n',
-    'cannot open libbrotlidec.so.1%sabcd\n', Buffer.from('\0cannot \xc3open libbrotlidec.so.1\n\0', 'latin1'), Buffer.from(`${'x/'.repeat(600)} libbrotlidec.so.1\n\0`)]) {
-    const r = judge(bin(join(d, `near-${Math.random()}`), [CONTROL, MARKER, s]));
-    assert.equal(r.status, 'UNKNOWN', JSON.stringify(String(s).slice(-40))); assert.match(r.reason, /could not be read whole.*could not be tested/);
+  // a distribution's node whose messages name libnode, beside the whole soname of a fixed libnode (round 4's twin)
+  for (const s of ['cannot open libnode.so.108\n', 'error: libnode.so.108%s\n', 'libnode.so.109\n']) {
+    const r = judge(elf(join(d, `node-${s.length}`), ['libnode.so.108', s]), [libDir]);
+    assert.equal(r.status, 'UNKNOWN', JSON.stringify(s)); assert.match(r.reason, /libnode.*in a way Wardlatch can't follow/);
   }
-  const near = judge(elf(join(d, 'node-near'), ['libnode.so.108', 'libnode.so.109\n']), [libDir]);
-  assert.equal(near.status, 'UNKNOWN'); assert.match(near.reason, /libnode.*could not be read whole/);
+  // the clean twins: the same files without the line
+  assert.equal(judge(bin(join(d, 'macho-twin'), [CONTROL, MARKER])).status, 'SAFE');
+  assert.equal(judge(bin(join(d, 'form10-twin'), [packed(V1010)])).status, 'SAFE');
+  assert.equal(judge(elf(join(d, 'node-twin'), ['libnode.so.108']), [libDir]).status, 'SAFE');
+});
+
+// Round 4's verifier beat the path-or-text rules with these: each read SAFE beside a fixed table at 9242a4f.
+test('round 4\'s probes: a byte next to or inside the library\'s name, a message, a long or cut path, a cut libnode, beside a fixed table: all UNKNOWN', () => {
+  const d = fresh('probes4'), libDir = fresh('probes4-lib');
+  const raw = (s) => Buffer.concat([Buffer.alloc(1), Buffer.isBuffer(s) ? s : Buffer.from(s, 'utf8'), Buffer.alloc(1)]);
+  const unknown = (what, f, dirs = []) => {
+    const r = judge(f, dirs);
+    assert.equal(r.status, 'UNKNOWN', what); assert.match(r.reason, /in a way Wardlatch can't follow.*could not be tested/, what);
+  };
+  // a whole path to a library without the fix whose file name has a byte no library's name has, next to "libbrotlidec"
+  // or inside its suffix: '~', a space, a UTF-8 letter or space (é, NBSP, ZWSP), a control byte, and textLine's shape
+  // (a space before the name, a newline or a format after it)
+  const names = ['libbrotlidec.so.1~', 'libbrotlidec.~so.1', 'libbrotlidec.so 1', 'libbrotlidec.so.1é', 'libbrotlidec.soé.1', 'libbrotlidec.éso.1', 'libbrotlidec.so.1 ',
+    '​libbrotlidec.so.1', 'élibbrotlidec.so.1', 'libbrotlidec.1.dylibé', 'libbrotlidec\x01.so.1', 'libbrotlidec.\x01so.1', ' libbrotlidec.so.1\n', ' libbrotlidec.so.1%s'];
+  for (const [i, name] of names.entries()) {
+    const old = oldLib(join(d, `c${i}`, name));
+    unknown(`1.1 table + ${JSON.stringify(old)}`, bin(join(d, `t11-${i}`), [CONTROL, MARKER, raw(old)]));
+    unknown(`1.0 table + ${JSON.stringify(old)}`, bin(join(d, `t10-${i}`), [packed(V1010), raw(old)]));
+  }
+  // an ELF soname of that shape, a library without the fix at that name in the library folder
+  for (const [i, s] of ['élibbrotlidec.so.1', 'libbrotlidec.so.1é', 'libbrotlidec.so.1~'].entries()) {
+    oldLib(join(libDir, s));
+    unknown(`soname ${JSON.stringify(s)}`, elf(join(d, `soname-${i}`), [CONTROL, MARKER, raw(s)]), [libDir]);
+  }
+  // messages naming it, a part of a path over 255 characters, and a path that starts before the bytes kept
+  const lib = oldLib(join(d, 'cut', 'libbrotlidec\x01.so.1'));
+  for (const [i, s] of ["cannot open 'libbrotlidec.so.1'\n", 'cannot open libbrotlidec.so.1\r\n', 'libbrotlidec.so.1: cannot open\n', 'Loading libbrotlidec.so.1 failed\n',
+    'cannot open libbrotlidec.so.1: %s\n', 'failed: %s libbrotlidec.so.1\n', 'cannot open libbrotlidec.so.1%08x\n', `${'w'.repeat(300)}/${lib.slice(1)}`,
+    `/opt/${'w'.repeat(250)}libbrotlidec\x01.so.1`, `/opt/${'é'.repeat(130)}libbrotlidec\x01.so.1`, `/opt/${'a/'.repeat(600)}libbrotlidec.so.1`].entries()) {
+    unknown(`1.1 table + ${JSON.stringify(s.slice(0, 60))}`, bin(join(d, `msg-${i}`), [CONTROL, MARKER, raw(s)]));
+  }
+  // a distribution's node that links a fixed libnode by its soname, and names libnode another way too (an unfixed one at
+  // that name in the library folder, where it is a soname)
+  elf(join(libDir, 'libnode.so.108'), [CONTROL, MARKER]);
+  for (const [i, s] of ['/opt/x/libnode\x01.so.108', '/opt/x/libnode.so.108é', '/opt/x/libnode.so.108~', 'libnode.so.108é', 'libnode.so.108~', 'élibnode.so.108',
+    'cannot open libnode.so.108\n', 'Loading libnode.so.108 failed\n', "cannot open 'libnode.so.108'\n", 'see libnode documentation\n'].entries()) {
+    if (!s.includes('/') && !s.includes(' ')) elf(join(libDir, s), [CONTROL]);
+    const r = judge(elf(join(d, `node-${i}`), ['libnode.so.108', raw(s)]), [libDir]);
+    assert.equal(r.status, 'UNKNOWN', JSON.stringify(s)); assert.match(r.reason, /libnode.*in a way Wardlatch can't follow.*could not be tested/, JSON.stringify(s));
+  }
+  // a cut libnode path beside a fixed 1.1 table, and beside a whole link to a fixed Brotli library
+  const fixedDec = fixedLib(join(d, 'opt', 'libbrotlidec.1.dylib'));
+  for (const [what, parts] of [['a fixed table', [CONTROL, MARKER]], ['a fixed Brotli library', [fixedDec]]]) {
+    const r = judge(bin(join(d, `cut-libnode-${what.length}`), [...parts, raw(`${join(d, 'opt')}/libnode\x01.147.dylib`)]));
+    assert.equal(r.status, 'UNKNOWN', what); assert.match(r.reason, /libnode.*in a way Wardlatch can't follow/, what);
+  }
+  // the clean twins: a whole path to a fixed library named as libraries are, as a path and as a soname, and the node
+  // with its whole libnode soname alone
+  const good = fixedLib(join(d, 'good', 'libbrotlidec.so.1'));
+  assert.equal(judge(bin(join(d, 'twin-path'), [CONTROL, MARKER, raw(good)])).status, 'SAFE');
+  assert.equal(judge(bin(join(d, 'twin-10'), [packed(V1010), raw(good)])).status, 'SAFE');
+  fixedLib(join(libDir, 'libbrotlidec.so.1'));
+  assert.equal(judge(elf(join(d, 'twin-soname'), [CONTROL, MARKER, raw('libbrotlidec.so.1')]), [libDir]).status, 'SAFE');
+  assert.equal(judge(elf(join(d, 'twin-node'), ['libnode.so.108']), [libDir]).status, 'SAFE');
+  assert.equal(judge(bin(join(d, 'twin-dec'), [fixedDec])).status, 'SAFE');
 });
 
 test('a whole relative load path (lib/..., ../lib/...) is UNKNOWN naming it: the loader looks for it from the folder the program starts in', () => {
@@ -609,10 +684,15 @@ test('a whole relative load path (lib/..., ../lib/...) is UNKNOWN naming it: the
   }
   const origin = judge(elf(join(d, 'node-origin'), ['libnode.so.108', '$ORIGIN/../lib/libnode.so.109']), [libDir]);
   assert.equal(origin.status, 'UNKNOWN'); assert.match(origin.reason, /libnode.*can't follow/);
-  // the clean twins: an absolute path to a fixed library, a soname, and text that names no file of it
+  // the clean twins: an absolute path to a fixed library, a soname
   assert.equal(judge(bin(join(d, 'macho-twin'), [CONTROL, MARKER, fixed])).status, 'SAFE');
   assert.equal(judge(elf(join(d, 'node-twin'), ['libnode.so.108']), [libDir]).status, 'SAFE');
-  assert.equal(judge(bin(join(d, 'text-twin'), [CONTROL, MARKER, 'built with libbrotlidec 1.2.1', 'lib/libbrotlidec.a', 'libbrotlidec.so.1/'])).status, 'SAFE');
+  // round 3's text twins, strings that name no file of the library, were SAFE by the table: since round 5 a mention that
+  // is no load path is one Wardlatch can't follow, so each is UNKNOWN by design
+  for (const s of ['built with libbrotlidec 1.2.1', 'lib/libbrotlidec.a', 'libbrotlidec.so.1/']) {
+    const r = judge(bin(join(d, `text-twin-${s.replace(/[^a-z0-9]/gi, '_')}`), [CONTROL, MARKER, s]));
+    assert.equal(r.status, 'UNKNOWN', s); assert.match(r.reason, /in a way Wardlatch can't follow.*could not be tested/, s);
+  }
 });
 
 test('ELF sonames: found in the library folders only when the program sets no search path of its own; every candidate must be SAFE', () => {
@@ -1040,7 +1120,7 @@ test('a distribution\'s node, a launcher for libnode: libnode decides, by the sa
   assert.equal(good.status, 'SAFE'); assert.deepEqual(good.searched, [join(path, 'node'), join(lib, 'libnode.so.108'), join(lib, 'libbrotlidec.so.1')]);
   // beside it, a libnode name in a string that isn't whole could be the one that loads: UNKNOWN
   const unsure = judge(elf(join(d, 'node-unsure'), ['libnode.so.108', Buffer.from(`\0\x01${join(d, 'other', 'libnode.so.108')}\0`)]), [lib]);
-  assert.equal(unsure.status, 'UNKNOWN'); assert.match(unsure.reason, /libnode.*could not be read whole/);
+  assert.equal(unsure.status, 'UNKNOWN'); assert.match(unsure.reason, /libnode.*in a way Wardlatch can't follow/);
   // libnode with its own fixed table decides by it; with an unfixed one, EXPOSED
   elf(join(lib, 'libnode.so.108'), [CONTROL, MARKER]);
   assert.equal(row().status, 'SAFE');
@@ -1057,6 +1137,11 @@ test('a distribution\'s node, a launcher for libnode: libnode decides, by the sa
   // names that only look like it are not a link (libnode_base.a in a build path)
   assert.ok(!['libnode_base.a', 'libnodejs.so.1', 'libnode.147', 'libnode.so.x'].some(isNodeLibName));
   assert.ok(['libnode.so.108', '@rpath/libnode.147.dylib', '/usr/lib/x86_64-linux-gnu/libnode.so.115', 'libnode.dylib'].every(isNodeLibName));
+  // so a node whose debug map names libnode_base.a (nodejs.org's macOS build does) is UNKNOWN beside its fixed table, by
+  // design since round 5; the clean twin, the table alone, SAFE
+  const debugMap = judge(bin(join(d, 'node-debug-map'), [CONTROL, MARKER, '/Users/admin/build/ws/out/Release/libnode_base.a(async_resource.o)']));
+  assert.equal(debugMap.status, 'UNKNOWN'); assert.match(debugMap.reason, /libnode.*in a way Wardlatch can't follow.*could not be tested/);
+  assert.equal(judge(bin(join(d, 'node-table'), [CONTROL, MARKER])).status, 'SAFE');
 });
 
 test('libnode is Node.js\'s own library: a node it decides is told the Node.js fix, never to update libnode as a Brotli library', () => {

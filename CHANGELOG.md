@@ -52,12 +52,16 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     static copy, `@rpath`, `@executable_path`, `$ORIGIN`, a relative path such as `lib/libbrotlidec.1.dylib` or
     `../lib/libbrotlidec.so.1`, which dyld and ld.so look for from the folder the program is started in and which the
     reason names, a program with its own `RUNPATH`, a soname when the loader's configuration or a library folder
-    couldn't all be read, a library name in a string that isn't whole, whatever bytes it holds (a tab, a newline, DEL or
-    another control byte anywhere in its path, the library's own file name included, as in `libbrotlidec\x01.so.1`, or
-    bytes that aren't UTF-8), or at the end of a path that starts more than 1024 bytes before it; each of these beside a
-    table too; a line of a program's messages that names the library, such as `cannot open libbrotlidec.so.1\n`, the
-    name after a space and followed only by newlines or printf formats, is text, and so is a part of a path longer than
-    any file's name can be, 255 characters); Brotli 1.0's unprefixed error texts that are not whole tables (scattered, out
+    couldn't all be read; each of these beside a table too); a file that names `libbrotlidec` or `libnode` anywhere
+    other than in a whole load path to that library, beside a table too. The rule is simple on purpose: each mention
+    must be a whole C string (NUL before and after) that is the library's path or soname, which is followed and judged
+    (or named as a relative or `$ORIGIN` path, "could not be tested"), and any other mention, whatever its shape, is
+    one Wardlatch can't follow: a line of messages such as `cannot open libbrotlidec.so.1\n`, a sentence, a build path
+    such as `libnode_base.a(callback.o)`, a name with any other byte next to it or in it (`libbrotlidec.so.1~`,
+    `élibbrotlidec.so.1`, `libbrotlidec\x01.so.1`), bytes that aren't UTF-8, or a path that starts more than 1024
+    bytes before the name. No string is read as "just text" by its shape: four rounds of rules that tried to tell a
+    message from a path were each beaten by review. The known cost: a program that only mentions the library in a
+    message reads "could not be tested"; Brotli 1.0's unprefixed error texts that are not whole tables (scattered, out
     of order, only some of them, a table followed by none of these, which is how 1.0.0 to 1.0.2 read, more copies than
     the 64 kept, or `BLOCK_SWITCH` anywhere but in its place), alone or beside a fixed table; a file it can't read (a
     node or bun at mode 0111 included), over 512 MB or bigger than what is left of the run's 4 GB reading budget; a
@@ -96,7 +100,10 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     `sizeOf`, and `programKind` (which tells a file that can't be read from one that isn't a program).
     `lib/installs.mjs` exports `SITE_PATTERNS` for the tests.
   - Known limits: not yet run on a Linux nodejs.org build, whose linker may have merged the decoder's strings into
-    Node's constant names; such a node would read "could not be tested" until that is checked on CI. nvm, fnm and n
+    Node's constant names; such a node would read "could not be tested" until that is checked on CI. nodejs.org's
+    Node.js 26.12.1 for macOS, though its own table has the fix, names `libnode` in its debug map's build paths
+    (`/Users/admin/build/ws/out/Release/libnode_base.a(async_resource.o)` and about 400 more), so by the rule above it
+    reads "could not be tested". nvm, fnm and n
     kept outside their usual folders (`NVM_DIR` and the like) are not read. asdf's `nodejs` plugin under another name
     (`installs/node`) is not read, so its shim reads "could not be tested". mise's settings in its configuration files
     (`shims_dir`, `system_installs_dir`, `shared_install_dirs`) are not read, only its variables. What the dynamic
