@@ -25,19 +25,23 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   the same idea, built into the check: an exact, NUL-delimited match plus a control string every decoder has
   (`_ERROR_FORMAT_BLOCK_LENGTH_1`), reading bytes only. Trail of Bits' brotli-checker is another tool that finds bundled
   copies; it checks source trees and ELF builds, and Wardlatch points to it.
-  - What proves SAFE: the marker exactly as often as the control, in the file or in the Brotli library it links (every
-    candidate, by its real path, named in the receipt), or a Debian package version its table lists as fixed, for the very
-    file that package installed (dpkg's md5sums list names it with the same MD5).
+  - What proves SAFE: the marker exactly as often as the control, in the file (in each build of a universal Mach-O file,
+    with every Brotli library a file with a table also links SAFE too) or in the Brotli library it links (every
+    candidate, by its real path, named in the receipt), or a Debian package version its table lists as fixed, for the
+    very file that package installed (dpkg's md5sums list names it with the same MD5).
   - What is EXPOSED: the control without the marker (or fewer markers than controls), in the file or its library; a
     Debian package built from a source version its table lists as without the fix (every rebuild, such as 1.1.0-2+b7,
-    keeps its source's version), again for the file that package installed. A bundled copy with no fixed release yet (Pillow,
-    opencv-python) is EXPOSED, and its fix line says no release had a fixed Brotli on 24 October and to update when one
-    ships.
+    keeps its source's version), again for the file that package installed. A bundled copy with no fixed release yet
+    (Pillow, opencv-python) is EXPOSED, and its fix line says no release had a fixed Brotli on 24 October and to update
+    when one ships.
   - What is "could not be tested": the marker without the control; no table and no library it can follow (a stripped
     static copy, `@rpath`, `@executable_path`, `$ORIGIN`, a program with its own `RUNPATH`, a soname when the loader's
-    configuration or a library folder couldn't all be read); a file it can't read, over
-    512 MB or past the run's 4 GB reading budget; a distribution library without the marker whose package version isn't
-    in the table or can't be read, or that no package installed as it is now. Node's `zlib.constants` names, which contain the marker as a substring, never decide.
+    configuration or a library folder couldn't all be read, a library name in a string that isn't whole); Brotli 1.0's
+    unprefixed error texts, alone or beside a fixed table; a file it can't read (a node or bun at mode 0111 included),
+    over 512 MB or bigger than what is left of the run's 4 GB reading budget; a zipped egg of a Brotli package; a
+    distribution library without the marker whose package version isn't in the table or can't be read, or that no
+    package installed as it is now. Node's `zlib.constants` names, which contain the marker as a substring, never
+    decide.
   - A distribution's node (a launcher for `libnode`) is judged by its libnode, by the same rules. A compiled `node` on
     `PATH` that shows no sign of Node.js is a REVIEW line only for a version manager's known shim (volta-shim, mise);
     any other (a packed node, a shim Wardlatch doesn't know) is "could not be tested".
@@ -45,8 +49,10 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     line, "move to 22, 24 or 26" for the end-of-life ones, the library's own update for a node that links one, Bun 1.4.4,
     `Brotli>=1.2.1` and `brotlicffi>=1.2.1.0`, `brew upgrade brotli`, the conda and MacPorts updates, Debian's fixed
     packages.
-  - `lib/files.mjs` gains `scanBytes` (fixed byte strings counted in a large file read in 4 MB pieces) and `readAt` (up
-    to 64 KB from an offset, for an ELF file's dynamic segment).
+  - `lib/files.mjs` gains `scanBytes` (fixed byte strings counted in a large file, or one range of it, read in 4 MB
+    pieces), `readAt` (up to 64 KB from an offset, for an ELF file's dynamic segment and a universal file's header),
+    `sizeOf`, and `programKind` (which tells a file that can't be read from one that isn't a program).
+    `lib/installs.mjs` exports `SITE_PATTERNS` for the tests.
   - Known limits: not yet run on a Linux nodejs.org build, whose linker may have merged the decoder's strings into
     Node's constant names; such a node would read "could not be tested" until that is checked on CI. Version managers
     kept outside their usual folders (`NVM_DIR` and the like) are not read. What the dynamic loader is told when a
