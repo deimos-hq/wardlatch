@@ -449,6 +449,37 @@ test('a load path longer than the bytes kept before the library\'s name is incom
   assert.equal(judge(elf(join(d, 'node-twin'), ['libnode.so.108']), [libDir]).status, 'SAFE');
 });
 
+test('a library\'s name in a load path with a byte the walk back stops at (a tab, a newline, DEL, a control byte) is UNKNOWN, never dropped', () => {
+  const d = fresh('stop-byte'), libDir = fresh('stop-byte-lib');
+  const fixed = fixedLib(join(d, 'fixed', 'libbrotlidec.1.dylib'));
+  elf(join(libDir, 'libnode.so.108'), [CONTROL, MARKER]);
+  for (const [name, b] of [['tab', '\t'], ['newline', '\n'], ['del', '\x7f'], ['control', '\x01'], ['escape', '\x1b']]) {
+    // the real attack: the folder's name holds the byte, and the library there lacks the fix; the walk back from
+    // "libbrotlidec" stops at the byte and sees "dir/libbrotlidec.1.dylib", which is neither a path nor a soname
+    const old = oldLib(join(d, `pre${b}dir`, 'libbrotlidec.1.dylib'));
+    for (const [what, f] of [['Mach-O, with a table', bin(join(d, `macho-${name}`), [CONTROL, MARKER, old])],
+      ['ELF DT_NEEDED, with a table', elf(join(d, `elf-${name}`), [CONTROL, MARKER, old])],
+      ['beside a whole link to a fixed library', bin(join(d, `both-${name}`), [fixed, old])],
+      ['a 1.0 table', bin(join(d, `form10-${name}`), [packed(V1010), old])]]) {
+      const r = judge(f);
+      assert.equal(r.status, 'UNKNOWN', `${name}: ${what}`); assert.match(r.reason, /could not be read whole.*could not be tested/, `${name}: ${what}`);
+    }
+    // a distribution's node: a libnode path with the byte, beside a libnode name that is whole
+    const node = judge(elf(join(d, `node-${name}`), ['libnode.so.108', `/opt/x${b}y/libnode.so.109`]), [libDir]);
+    assert.equal(node.status, 'UNKNOWN', `${name}: libnode`); assert.match(node.reason, /libnode.*could not be read whole/);
+  }
+  // a relative path after a control byte: not whole either
+  assert.equal(judge(bin(join(d, 'after-a-byte-relative'), [CONTROL, MARKER, Buffer.from('\0\x01lib/libbrotlidec.1.dylib\0')])).status, 'UNKNOWN');
+  // the clean twins: the same files with the library's path whole are followed
+  assert.equal(judge(bin(join(d, 'macho-twin'), [CONTROL, MARKER, fixed])).status, 'SAFE');
+  assert.equal(judge(elf(join(d, 'elf-twin'), [CONTROL, MARKER, fixed])).status, 'SAFE');
+  assert.equal(judge(bin(join(d, 'form10-twin'), [packed(V1010), fixed])).status, 'SAFE');
+  assert.equal(judge(elf(join(d, 'node-twin'), ['libnode.so.108']), [libDir]).status, 'SAFE');
+  // and text that mentions the library is nothing: no file of it named after a stop byte, or a whole string that is a
+  // sentence, not a path (a file named "cannot load libbrotlidec.so.1" is not a Brotli library): SAFE by the table
+  assert.equal(judge(bin(join(d, 'text-twin'), [CONTROL, MARKER, Buffer.from('\0\x01libbrotlidec mention\0'), 'uses\tlibbrotlidec to decode', 'cannot load libbrotlidec.so.1'])).status, 'SAFE');
+});
+
 test('ELF sonames: found in the library folders only when the program sets no search path of its own; every candidate must be SAFE', () => {
   const d = fresh('elf'), libs = fresh('elf-lib'), libs2 = fresh('elf-lib2');
   fixedLib(join(libs, 'libbrotlidec.so.1'));

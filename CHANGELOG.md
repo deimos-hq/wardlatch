@@ -47,8 +47,9 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     when one ships.
   - What is "could not be tested": the marker without the control; no table and no library it can follow (a stripped
     static copy, `@rpath`, `@executable_path`, `$ORIGIN`, a program with its own `RUNPATH`, a soname when the loader's
-    configuration or a library folder couldn't all be read, a library name in a string that isn't whole, or at the end
-    of a path that starts more than 1024 bytes before it); Brotli 1.0's unprefixed error texts that are not whole tables
+    configuration or a library folder couldn't all be read, a library name in a string that isn't whole, whatever cut
+    it (a tab, a newline, DEL or another control byte in its path, bytes that aren't UTF-8), or at the end of a path
+    that starts more than 1024 bytes before it, beside a table too); Brotli 1.0's unprefixed error texts that are not whole tables
     (scattered, out of order, only some of them, a table followed by neither form, which is how 1.0.0 to 1.0.3 read,
     more copies than the 64 kept, or `BLOCK_SWITCH` anywhere but in its place), alone or beside a fixed table; a file
     it can't read (a node or bun at mode 0111 included), over 512 MB or bigger than what is left of the run's 4 GB
