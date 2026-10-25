@@ -1218,7 +1218,8 @@ test('Debian 12\'s libbrotli1 1.0.9, in Brotli 1.0\'s form: its table without th
   // Debian's own node links it by soname
   elf(join(path, 'node'), [NODE_CONTROL, 'libbrotlidec.so.1', 'nodejs.org/download/release/v18.19.0']);
   const go = () => { const { rows } = run({ libPlaces }, { pathEnv: path, places, sonameDirs: [dirname(sys)] }); return { lib: rows.find((r) => r.what === 'library'), node: rows.find((r) => r.what === 'node') }; };
-  // the security build (DLA-4855-1), the file it installed: SAFE by the package's version, the program too
+  // a fixed package whose table lacks the fix's name (a backport without the new error code; Debian's own security
+  // build adds it, the test below), the file it installed: SAFE by the package's version, the program too
   dpkgStatus(status, stanza('1.0.9-2+deb12u1')); md5sums(info, [sys]);
   let { lib, node } = go();
   assert.equal(lib.status, 'SAFE'); assert.match(lib.reason, /Debian's fixed package libbrotli1 1\.0\.9-2\+deb12u1 \(DLA-4855-1/);
@@ -1235,6 +1236,40 @@ test('Debian 12\'s libbrotli1 1.0.9, in Brotli 1.0\'s form: its table without th
   // the clean twin: a 1.0.10 table needs no package record
   bin(sys, [packed(V1010)]);
   assert.equal(go().lib.status, 'SAFE'); assert.equal(go().node.status, 'SAFE');
+});
+
+/** Brotli 1.0's table as GCC lays it out in Debian 12's own libbrotli1 (1.0.9-2+b6 and 1.0.9-2+deb12u1, amd64 and arm64,
+ *  read from the packages on deb.debian.org): decode.h's order, the whole list from NO_ERROR on; on amd64 one NUL after
+ *  each name, on arm64 each name and its NUL padded to 8 bytes; and right before NO_ERROR the last bytes of the data
+ *  before it, with no NUL between. The security build has BLOCK_SWITCH between DISTANCE and DICTIONARY_NOT_SET. */
+const gccTable = (names, arch) => Buffer.concat([Buffer.from([0xff, 0x42, 0x58, 0x46]), packed(names, arch === 'arm64' ? 8 : 1).subarray(1)]);
+
+test('Debian 12\'s libbrotli1 as GCC built it: 1.0.9-2+b6 is EXPOSED by its table and its package record, the security build SAFE by its table alone', () => {
+  const d = fresh('deb12-gcc'), osr = join(d, 'os-release');
+  writeFileSync(osr, 'ID=debian\nVERSION_ID="12"\nVERSION_CODENAME=bookworm\n');
+  for (const [arch, triplet] of [['amd64', 'x86_64-linux-gnu'], ['arm64', 'aarch64-linux-gnu']]) {
+    const lib = (v, names) => elf(join(d, v, arch, 'usr', 'lib', triplet, 'libbrotlidec.so.1.0.9'), [gccTable(names, arch), 'libbrotlicommon.so.1', 'libc.so.6', 'libbrotlidec.so.1']);
+    const status = join(d, `status-${arch}`), info = join(d, `info-${arch}`);
+    const row = (file, places = {}) => run({ libPlaces: [{ pattern: file, label: 'the system\'s libbrotlidec', system: true }] }, { places }).rows[0];
+    // stock bookworm: the table without the fix's name, and the record of the binNMU built from the unfixed source
+    const b6 = lib('b6', V109);
+    assert.deepEqual(evidence(b6, M).t10, { fixed: 0, unfixed: 1, other: 0 }, arch);
+    dpkgStatus(status, stanza('1.0.9-2+b6', '1.0.9-2', arch)); md5sums(info, [b6], arch);
+    const bad = row(b6, { osRelease: osr, dpkgStatus: status, dpkgInfo: info });
+    assert.equal(bad.status, 'EXPOSED', arch); assert.equal(bad.label, 'libbrotli1 1.0.9-2+b6');
+    assert.match(bad.fix, /Debian 12's fixed package is 1\.0\.9-2\+deb12u1/);
+    // its table alone says EXPOSED; at a system place with no package record to read, the distribution may have fixed
+    // it another way, so UNKNOWN
+    const own = judgeFile(b6, { markers: M, follow: false });
+    assert.equal(own.status, 'EXPOSED', arch); assert.ok(own.noMarker);
+    assert.equal(row(b6).status, 'UNKNOWN', arch);
+    // the clean twin, the security build: SAFE by its table, with no package record at all
+    const u1 = lib('deb12u1', V1010);
+    assert.deepEqual(evidence(u1, M).t10, { fixed: 1, unfixed: 0, other: 0 }, arch);
+    const good = row(u1);
+    assert.equal(good.status, 'SAFE', arch); assert.match(good.reason, /has the fix: its error texts, in the form Brotli 1\.0 writes them/);
+    assert.deepEqual(good.searched, [realpathSync(u1)]);
+  }
 });
 
 test('a distribution\'s package version speaks only for a file that package installed, as dpkg installed it', () => {

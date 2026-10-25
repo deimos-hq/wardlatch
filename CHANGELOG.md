@@ -42,9 +42,10 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     of `BLOCK_LENGTH_1` in a whole table with `BLOCK_SWITCH` in its place, and `BLOCK_SWITCH` nowhere else.
   - What is EXPOSED: the control without the marker (or fewer markers than controls), in the file or its library; a
     whole Brotli 1.0 table without `BLOCK_SWITCH` (a fixed 1.1-form table beside it included), which for a Debian
-    library hands over to its package version as the 1.1 form does (Debian 12's fixed 1.0.9-2+deb12u1 keeps 1.0.9's
-    table); a Debian package built from a source version its table lists as without the fix (every rebuild, such as
-    1.1.0-2+b7, keeps its source's version), again for the file that package installed. A bundled copy with no fixed release yet
+    library hands over to its package version as the 1.1 form does (Debian 12's own 1.0.9-2+b6 reads EXPOSED by both;
+    its security build 1.0.9-2+deb12u1 adds `BLOCK_SWITCH` in its place and reads SAFE by its table alone); a Debian
+    package built from a source version its table lists as without the fix (every rebuild, such as 1.1.0-2+b7, keeps
+    its source's version), again for the file that package installed. A bundled copy with no fixed release yet
     (Pillow, opencv-python) is EXPOSED, and its fix line says no release had a fixed Brotli on 24 October and to update
     when one ships.
   - What is "could not be tested": the marker without the control; no table and no library it can follow (a stripped
@@ -98,9 +99,11 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     program starts (`LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`) is not known. A partial backport that adds the new error
     code without the decoder's fix would read SAFE, and so would an unfixed table beside one stray NUL-delimited copy of
     the marker (in the 1.1 form; in the 1.0 form a stray copy makes it UNKNOWN). Brotli 1.0's table layout was checked
-    against clang's (1.0.9's and 1.0.10's lists compiled at -O0, -O2 and -Os), not yet against a real Debian 12
-    library built by GCC: if GCC lays the names out in another order, that library reads "could not be tested", never
-    SAFE. A linker that merges a 1.0 name into a longer string ending in it (`BLOCK_LENGTH_1` into
+    against clang's (1.0.9's and 1.0.10's lists compiled at -O0, -O2 and -Os) and against Debian 12's own GCC builds
+    (libbrotli1 1.0.9-2+b6 and 1.0.9-2+deb12u1, amd64 and arm64, from deb.debian.org, each checked against the
+    archive's signed index): GCC lays the names out in `decode.h`'s order, one NUL apart on amd64 and each padded to 8
+    bytes on arm64, which the reader takes as it is. Another compiler's layout it doesn't match reads "could not be
+    tested", never SAFE. A linker that merges a 1.0 name into a longer string ending in it (`BLOCK_LENGTH_1` into
     `_ERROR_FORMAT_BLOCK_LENGTH_1`) hides that table, as with two decoders in one image.
 - The tests never look in the home folder of the person running them (where macOS keeps Desktop, Documents, Downloads,
   Library, Photos and Mail): every test file loads `test/support/no-real-home.cjs` first, which refuses any look there,
