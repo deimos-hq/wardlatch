@@ -35,18 +35,18 @@ being reviewed ([CLAUDE.md](../CLAUDE.md), rule 3).
    got worse still reads as the same todo; one that fails differently from its documented limit is a finding.
 6. **`npm run release-check` prints READY** on that commit, from a clean checkout of `main` (gh signed in). It checks
    1 to 5 where a machine can (the dated changelog section under an empty Unreleased, both reviews READY for this code
-   with nothing that runs changed since, package.json apart from its version included, every advisory named in the
-   class audit, the corpus gate's GATE PASSED for this code quoted there, every GitHub check passed), and that nothing
-   was added to `scripts/mutants-gaps.json` or `scripts/mutants-allowed.json` since the last release without the
-   maintainer's approval written on the entry (`"approved": "maintainer, YYYY-MM-DD"`). That is deliberately stricter
-   than [CLAUDE.md](../CLAUDE.md), which lets an equivalent survivor onto the allow list with a reason a reviewer agreed
-   to: for a release, only the maintainer adds to either list. The last release is the newest tag in this history with
-   a GitHub release the gate trusts as the release workflow's: published by github-actions[bot] for a tag `vX.Y.Z`,
-   neither a draft nor a prerelease, and either immutable or never edited after it was published (GitHub's
-   `updated_at` no later than its `published_at`). The release workflow repeats its checks in a job whose token only
-   reads, checking that the tagged commit is on `main` instead of the clean checkout of `main` (and reading GitHub's
-   checks and releases with its own token); it refuses a tag for a version older than 0.1.10, and publishes nothing
-   without them.
+   in the block each begins with, with nothing that runs changed since, package.json apart from its version included,
+   every advisory named in the class audit, the corpus gate's GATE PASSED for this code quoted there, every GitHub
+   check passed), and that nothing was added to `scripts/mutants-gaps.json` or `scripts/mutants-allowed.json` since
+   the last release without the maintainer's approval written on the entry (`"approved": "maintainer, YYYY-MM-DD"`).
+   That is deliberately stricter than [CLAUDE.md](../CLAUDE.md), which lets an equivalent survivor onto the allow list
+   with a reason a reviewer agreed to: for a release, only the maintainer adds to either list. The last release is the
+   newest tag in this history with a GitHub release the gate trusts as the release workflow's: published by
+   github-actions[bot] for a tag `vX.Y.Z`, neither a draft nor a prerelease, and either immutable (GitHub's `immutable`
+   is `true`) or never edited after it was published (GitHub's `updated_at` no later than its `published_at`). The
+   release workflow repeats its checks in a job whose token only reads, checking that the tagged commit is on `main`
+   instead of the clean checkout of `main` (and reading GitHub's checks and releases with its own token); it refuses a
+   tag for a version older than 0.1.10, and publishes nothing without them.
 
    Of the repository's protections, the gate relies on two. **Immutable releases**: GitHub keeps an immutable
    release's tag and files whatever is edited later, so the gate trusts one edited after it was published. **The tag
@@ -54,6 +54,13 @@ being reviewed ([CLAUDE.md](../CLAUDE.md), rule 3).
    before immutable releases were turned on), the gate takes the tag in the clone as the one released, and only the
    ruleset keeps anyone but an admin from moving it. It doesn't rely on **the `release` environment**: it reads
    nothing from it, and trusts no tag for having been allowed to run the release workflow.
+
+   What the gate can't check is the reviews' prose. It reads the verdict and the commit only from the block each
+   review begins with, and after it refuses a listed set of known ways to hide or add a verdict or a commit id
+   ([docs/reviews/README.md](reviews/README.md) lists them, and what they don't catch); it can't prove that the page
+   GitHub shows says what the text says. What stands behind that is the pull request into `main` (the ruleset lets
+   changes reach `main` only that way, with no approving review required), the maintainer's approval in the `release`
+   environment, and the reviewers' own reading.
 
 Fewer, reviewed releases beat many fast ones. After a security release, releases pause for the freeze the maintainer
 sets (after 0.1.9: at least a week); whether anything breaks it is the maintainer's call.

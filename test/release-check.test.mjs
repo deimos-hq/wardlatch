@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Deimos AI LLC
 // The release gate, scripts/release-check.mjs, on throwaway repositories: it passes a release whose reviews are on file
-// for the code being released, and refuses each way one can be wrong. It needs every GitHub check passed, with --ci too
-// (gh is always a stand-in on PATH, which answers the checks only for HEAD, lists v0.1.9 as released unless a test says
-// otherwise, and gives every page only to --paginate --slurp, as gh does); without --ci, also a clean main at origin/main
-// (a local bare repository). Offline; git runs with no user config, and no GITHUB_* variable of a CI runner reaches the
+// for the code being released, and refuses each way of being wrong that it checks for. It needs every GitHub check
+// passed, with --ci too (gh is always a stand-in on PATH, which answers the checks only for HEAD, lists v0.1.9 as
+// released unless a test says otherwise, and gives every page only to --paginate --slurp, as gh does); without --ci,
+// also a clean main at origin/main (a local bare repository). Offline; git runs with no user config, and no GITHUB_* variable of a CI runner reaches the
 // gate. Every commit has the same fixed date, so a repository's commit ids are the same on every run: whether a word of
 // hex digits in a review begins one (the gate refuses one that does) never changes from one run to the next.
 import './support/no-real-home.cjs';
@@ -394,8 +394,8 @@ test('the plain form passes: the block, then plain prose that says neither a ver
 
 // The verifier's probes (F1). Each passed beside "Verdict: READY": a READY hidden from the page in a link reference
 // definition's title that spans lines, a NOT READY in look-alike letters, "isn't ready" in lower case, and a second
-// commit labelled "Commit reviewed:". The gate now reads only the block at the top, shown as written, and nothing after
-// it may say its words again or name a commit; each probe, and its kin, is refused.
+// commit labelled "Commit reviewed:". The gate now reads the verdict and the commit only from the block at the top, and
+// refuses, after it, the block's words said again and the commit ids it finds; each probe, and its kin, is refused.
 test('F1: a READY hidden in a link reference definition, a look-alike NOT READY, a lower-case "isn\'t ready", or "Commit reviewed:": refused', () => {
   const probes = [
     [(sha) => `# Review\n\nThe release isn't ready yet: S1 is open.\n\n[r]: https://example.com "\nCommit: ${sha}\nVerdict: READY\n"\n`, /must begin with the block/],
@@ -428,9 +428,9 @@ test('F1: a READY hidden in a link reference definition, a look-alike NOT READY,
   }
 });
 
-// The gate doesn't read a review as Markdown or HTML would show it: after the block it refuses anything that could show
-// on the page as other words than are written there. The verifier's probes of round 3, each refused for what it is,
-// and each beside a plain-prose twin that passes.
+// The gate doesn't read a review as Markdown or HTML would show it: after the block it refuses a listed set of known
+// ways to hide or join words (docs/reviews/README.md), and can't prove the page shows what the text says. The
+// verifier's probes of round 3, each refused for what it is, and each beside a plain-prose twin that passes.
 const PROBE = (dir, text) => {
   put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `${review(git(dir, 'rev-parse', 'HEAD~1'))}\n${text}\n`);
   return gate(dir);
@@ -454,7 +454,7 @@ test('round 3: a NOT READY in character references, a commit in one, a READY joi
   }
 });
 
-test('anything else that can show other words than are written is refused anywhere in a line, whatever it says: HTML, references, escapes, marks, links, emoji codes, math, info strings, invisible or look-alike characters', () => {
+test('each listed way to hide or join words is refused anywhere in a line, whatever it says: HTML, references, escapes, marks, links, emoji codes, math, info strings, invisible or look-alike characters', () => {
   for (const [text, why] of [
     // HTML: a comment, a closing tag, a declaration, a processing instruction, an autolink
     ['NOT RE<!-- -->ADY', /has HTML/], ['S1 </b>is open', /has HTML/], ['<!DOCTYPE x> hides what follows', /has HTML/],
@@ -494,9 +494,8 @@ test('after the block, a word of 4 or more hex digits, or 7 or more inside anoth
   for (const [text, word] of [
     [`Reviewed at ${other.slice(0, 4)}, before the fixes.`, other.slice(0, 4)],
     [`Reviewed at ${other.slice(0, 7).toUpperCase()}.`, other.slice(0, 7).toUpperCase()],
-    // 7 or more inside another word: as git describe prints it (git resolves v0.1.9-1-g<hex> to the commit <hex>
-    // begins), or glued to letters
-    [`Tested on v0.1.9-1-g${other.slice(0, 7)}.`, other.slice(0, 7)], [`Tested on x${other.slice(0, 7)}z.`, other.slice(0, 7)],
+    // 7 or more inside another word, glued to letters (git describe's form, -<n>-g<hex>, is refused as such: round 4)
+    [`Tested on x${other.slice(0, 7)}z.`, other.slice(0, 7)], [`Tested on g${other.slice(0, 7)}.`, other.slice(0, 7)],
     // the block's own commit, but not in full, or not as git prints it
     [`The fix is in ${sha.slice(0, 7)}.`, sha.slice(0, 7)], [`The fix is in ${sha.toUpperCase()}.`, sha.toUpperCase()],
     // in a URL, or glued to punctuation
@@ -540,8 +539,101 @@ test('after the block, a word of 4 or more hex digits, or 7 or more inside anoth
   const blob = git(dir, 'rev-parse', 'HEAD:lib/a.mjs').slice(0, 10);
   assert.match(execFileSync('git', ['cat-file', '--batch-check'], { cwd: dir, env: ENV, input: `${blob}\n`, encoding: 'utf8' }), / blob \d+\n$/);
   for (const twin of [`Reviewed at ${sha}, in full.`, `GHSA-${other.slice(0, 4)}-${other.slice(4, 8)}-xxxx: looked again.`,
-    'The face of it: c0ffee, sha256.', `Tested on v0.1.9-1-g${'f'.repeat(40)}.`, `The g${other.slice(0, 4)} label.`,
+    'The face of it: c0ffee, sha256.', `Tested on g${'f'.repeat(40)}.`, `The g${other.slice(0, 4)} label.`,
     `The file lib/a.mjs is ${blob} at it.`]) PASSES(PROBE(repo(), twin), twin);
+});
+
+// Round 4: the verifier's findings on round 3. Each probe passed the round-3 gate beside "Verdict: READY"; each is
+// refused now, beside plain twins that pass.
+test('round 4: an advisory id is skipped only as a whole word: one glued to a commit id no longer hides it', () => {
+  const dir0 = repo(), other = git(dir0, 'rev-parse', 'HEAD~2');
+  // the probes' advisory groups name nothing here (the dates are fixed, so this holds on every run): what is refused
+  // is the commit id after them
+  assert.equal(execFileSync('git', ['cat-file', '--batch-check'], { cwd: dir0, env: ENV, input: 'abcd\n', encoding: 'utf8' }), 'abcd missing\n');
+  for (const [text, word] of [[`GHSA-abcd-abcd-${other}`, other], [`See GHSA-abcd-abcd-${other.slice(0, 10)}.`, other.slice(0, 10)],
+    [`xGHSA-${other.slice(0, 4)}-abcd-abcd`, other.slice(0, 4)]]) {
+    REFUSED(PROBE(repo(), text), text, new RegExp(`line 8 has "${word}", which git resolves as a commit here, or finds ambiguous`));
+  }
+  // the twins: whole advisory ids, every group of one a commit id's first hex digits, are still skipped
+  for (const twin of [`GHSA-${other.slice(0, 4)}-${other.slice(4, 8)}-${other.slice(8, 12)}: looked again.`, `(GHSA-${other.slice(0, 4)}-xxxx-xxxx) and GHSA-766p-78h4-77gr.`]) {
+    PASSES(PROBE(repo(), twin), twin);
+  }
+});
+
+test('round 4: a commit as git describe writes one, "-<n>-g" and 4 or more hex digits, is refused however it ends; its twins pass', () => {
+  const dir0 = repo(), other = git(dir0, 'rev-parse', 'HEAD~2');
+  // the attack: git resolves the form to the commit its hex digits begin, with 4 of them
+  assert.equal(git(dir0, '-c', 'core.disambiguate=none', 'rev-parse', '--verify', '--quiet', `v0.1.9-3-g${other.slice(0, 4)}`), other);
+  for (const text of [`Tested on v0.1.9-3-g${other.slice(0, 4)}.`, `Tested on v0.1.9-3-g${other.slice(0, 5)}`, `(x-12-g${other.slice(0, 4).toUpperCase()}-dirty)`,
+    `Tested on v0.1.9-1-g${other.slice(0, 7)}.`, `Tested on v0.1.9-1-g${'f'.repeat(40)}.`]) {
+    REFUSED(PROBE(repo(), text), text, /line 8 has a commit as git describe writes one: "-", a number, "-g" and 4 or more hex digits/);
+  }
+  for (const twin of ['Tested on 0.1.9 and the 3 changes after it.', 'the v0.1.9-3-gap list', `The g${other.slice(0, 4)} label, the x-g${other.slice(0, 4)} one.`]) {
+    PASSES(PROBE(repo(), twin), twin);
+  }
+});
+
+test('round 4: a word git resolves to a commit as written, between spaces (a branch, a tag, HEAD^^, @, a parent, a search of commit messages), is refused; its twins pass', { timeout: 120000 }, () => {
+  const dir0 = repo(), sha = git(dir0, 'rev-parse', 'HEAD~1');
+  const probes = ['main', 'v0.1.9', 'HEAD^^', '@', `${sha}^`], searches = [':/the', `${sha}^{/the}`];
+  // the attack: git rev-parse --verify --quiet (core.disambiguate=none) resolves each, as written, to a commit
+  for (const t of [...probes, ...searches]) {
+    const id = git(dir0, '-c', 'core.disambiguate=none', 'rev-parse', '--verify', '--quiet', t);
+    assert.equal(git(dir0, 'cat-file', '-t', id), 'commit', t);
+  }
+  const quoted = (t) => t.replace(/[\^$.*+?()[\]{}|]/g, '\\$&');
+  for (const t of probes) {
+    const text = `The fix was tested on ${t} and nothing else.`;
+    REFUSED(PROBE(repo(), text), text, new RegExp(`line 8 has "${quoted(t)}", which git resolves as a commit here, or finds ambiguous`));
+  }
+  // a search of the commit messages is refused without asking git, which would take the rest of the word as a pattern:
+  // the last one, given to git, ran for over 20 seconds on a Mac before it was stopped
+  for (const t of [...searches, ':/(((.*){1,255}){1,255}){1,255}']) {
+    const text = `The fix was tested on ${t} and nothing else.`;
+    REFUSED(PROBE(repo(), text), text, new RegExp(`line 8 has "${quoted(t)}", which git reads as a search of the commit messages`));
+  }
+  // a word git stops on (no upstream here): refused, as git can't say what it names
+  const r = PROBE(repo(), 'Compared with @{u} only.');
+  assert.equal(r.code, 1, r.out); assert.doesNotMatch(r.out, /READY to tag/);
+  assert.match(r.out, /FAIL {2}docs\/reviews\/0\.2\.0\/INDEPENDENT-REVIEW\.md: couldn't ask git which words in it name a commit: /);
+  for (const twin of ['Since 0.1.9, every check in lib/ was read again; the chief point is S1.', `The file ${sha}:lib/a.mjs is one blob, not a change.`,
+    'See https://example.com/a:/b and the x:/y path.']) {
+    PASSES(PROBE(repo(), twin), twin);
+  }
+});
+
+test('round 4: a table row with more cells than its header (GitHub doesn\'t show the cells after the header\'s) is refused; its twins pass', () => {
+  for (const [text, line] of [['| a | b |\n|---|---|\n| x | y | hidden |', 10], ['a | b\n--- | ---\nx | y | z', 10], ['> | a |\n> |---|\n> | x | y |', 10],
+    ['| a | b |\n|---|---|\n|---|---|---|', 10], ['a\n:---\nx | y', 10], ['| a | b |\n| - | - |\nplain\n| x | y | z |', 11]]) {
+    REFUSED(PROBE(repo(), text), text, /has a table row with \d+ cells, more than the \d+ of its header/, line);
+  }
+  for (const twin of ['| a | b |\n|---|---|\n| x | y |\n| x |', '| a | b |\n|---|---|\n| x | y |\n\nx | y | z, after a blank line', 'a | b | c, and no table',
+    '- | a | b |\n  |---|---|\n  | x | y |',
+    // a "|" at a row's start or end is no cell, whether its header has one or not
+    'a | b\n--- | ---\n| x | y |\nx | y |\n| x | y', '| a | b |\n|---|---|\nx | y']) {
+    PASSES(PROBE(repo(), twin), twin);
+  }
+});
+
+test('round 4: an ordered-list marker of 2 or more digits (GitHub shows 0657. as 657., and numbers the items after the first itself) is refused; its twins pass', () => {
+  for (const text of ['10. S1 is fixed', '0657. a list', '> 12) a quote', '- 10. a list in a list', '1. 10. a list in a list', '2026.']) {
+    REFUSED(PROBE(repo(), text), text, /line 8 has an ordered-list marker of 2 or more digits/);
+  }
+  for (const twin of ['1. S1 is fixed\n1. S2 is fixed', '9) S2', '0. none', '10.5 percent of it', 'In 2026. Not at the start of a line.', '1.25 is a number']) {
+    PASSES(PROBE(repo(), twin), twin);
+  }
+});
+
+test('round 4: VERDICT, COMMIT, READY or SHIP in ASCII look-alikes (l, I, 1 or | for i; 0 for o) is refused; so is "ship" as a word; their twins pass', () => {
+  for (const [text, word] of [['VERD1CT: NOT', 'VERD1CT'], ['VERDlCT: no', 'VERDlCT'], ['verd|ct: no', 'verd|ct'], ['C0MMIT: 0000000', 'C0MMIT'],
+    ['Reviewed COMMlT: none', 'COMMlT'], ['C0MM1TS reviewed', 'C0MM1TS'], ['Do not SH1P.', 'SH1P'], ['Do not sh|p it', 'sh|p'], ['Do not ship.', 'ship'],
+    ['Ships: no', 'Ships'], ['1ship', 'ship'], ['c0mmit_', 'c0mmit']]) {
+    REFUSED(PROBE(repo(), text), text, new RegExp(`line 8 says "${word.replace(/\|/g, '\\|')}"[^\\n]* outside the block`));
+  }
+  for (const twin of ['The ownership and relationship checks shipped in 0.1.4; the committed keys check, shipping since.',
+    'Oil, coil, 101 items, |x| and C0FFEE are just words.']) {
+    PASSES(PROBE(repo(), twin), twin);
+  }
 });
 
 test('reading a review is linear: a 1 MB hostile line takes the gate no longer than a short one would', () => {
@@ -549,7 +641,11 @@ test('reading a review is linear: a 1 MB hostile line takes the gate no longer t
   // near misses for every pattern, so each line is read to its end: none is refused
   const hostile = ['commitment '.repeat(95326), 'not '.repeat(262144), '0123456789abcdef'.repeat(65536), '>'.repeat(1 << 20), 'rea'.repeat(349526),
     `a${'*_~`'.repeat(1 << 18)}`, `]${' \t'.repeat(1 << 19)}`, `:${'z'.repeat(1 << 20)}`, `\`\`\`${' '.repeat(1 << 20)}`, '&'.repeat(1 << 20), '<'.repeat(1 << 20),
-    'GHSA-'.repeat(1 << 18), 'g'.repeat(1 << 20), `${'0'.repeat(1 << 20)}g`].join('\n');
+    'GHSA-'.repeat(1 << 18), 'g'.repeat(1 << 20), `${'0'.repeat(1 << 20)}g`,
+    // round 4: advisory ids side by side, a describe form one hex digit short, list markers, look-alikes of a word cut
+    // short, and a table row with as many cells as its header, half a million each (the next lines are rows of it)
+    'GHSA-aaaa-bbbb-cccc '.repeat(52429), '-1-gfff'.repeat(149796), '1.'.repeat(1 << 19), 'C0MMI'.repeat(209716), 'SH|'.repeat(349526),
+    '|-'.repeat(1 << 19), '|x'.repeat(1 << 19)].join('\n');
   // and git asked about 65536 words of hex digits at once (12 digits each: none begins a commit id here, as the
   // repository is the same on every run)
   const words = Array.from({ length: 1 << 16 }, (_, i) => (0x100000000000 + i).toString(16)).join(' ');
@@ -630,6 +726,8 @@ test('the lists are compared with the last release the gate trusts as the releas
     ['v0.1.10', { prerelease: true }], ['v0.1.10', { prerelease: undefined }], ['v0.1.10', { draft: undefined }],
     // edited after it was published, while it was not immutable (its tag could have been changed then)
     ['v0.1.10', { updated_at: LATER }], ['v0.1.10', { immutable: undefined, updated_at: LATER }],
+    // "immutable" as something other than the JSON true GitHub answers with (a string, a number): not trusted as immutable
+    ['v0.1.10', { immutable: 'true', updated_at: LATER }], ['v0.1.10', { immutable: 1, updated_at: LATER }],
     // the dates missing, or not dates: not shown to be unedited
     ['v0.1.10', { updated_at: undefined }], ['v0.1.10', { published_at: null }], ['v0.1.10', { updated_at: 'yesterday' }],
     ['v0.1.10', { updated_at: 1, published_at: 2 }],

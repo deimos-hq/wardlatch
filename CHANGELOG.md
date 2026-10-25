@@ -21,23 +21,23 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   commit, and neither list of planted bugs no test catches (`scripts/mutants-gaps.json`,
   `scripts/mutants-allowed.json`) gained an entry since the last release without the maintainer's approval written on
   it. The last release is the newest tag in this history, older than the version released, with a GitHub release that
-  github-actions[bot] published for a tag vX.Y.Z, neither a draft nor a prerelease, and either immutable or never
-  edited after it was published (its `updated_at` no later than its `published_at`); for one that isn't immutable
-  (0.1.3 to 0.1.9) the gate takes the tag in the clone as the one released, which the repository's tag ruleset (only
-  admins create, move or delete `v*` tags) protects. The gate reads the rest of a review neither for what it means nor
-  the way Markdown or HTML would show it: after the block it refuses, anywhere in a line, any character but printable
-  ASCII and tab (so no letter outside ASCII, as written or after NFKC folding, and no zero-width or format character),
-  `<` followed by a letter, `/`, `!` or `?`, `&` followed by `#` or a letter, a backslash, one or more of `*`, `_`,
-  `~` and backticks between two letters or digits, `]` followed (after any spaces or tabs) by `(` or `:`, letters,
-  digits, `_`, `+` or `-` between two colons, a `$`, three backticks or tildes followed (after any spaces or tabs) by
-  anything but another backtick or tilde, "verdict" or "ready" in any case (even inside another word), "commit" or
-  "commits" as a word, and a word of 4 or more hex digits, or 7 or more in a row inside another word, that git, asked
-  as written and in lower case, finds to be anything but one blob or one tree (the start of a commit's or a tag's id,
-  a branch or tag name, or more than one object), apart from the block's own commit written in full and an advisory id
-  ([docs/reviews/README.md](docs/reviews/README.md)). A review that contradicts its block in other words is for its
-  reader to catch. The release workflow repeats it in a job whose token only reads, checking that the tagged commit is
-  on `main` instead of the clean checkout of `main`, reads GitHub's checks and releases with its own token, refuses a
-  tag for a version older than 0.1.10, and publishes nothing without it.
+  github-actions[bot] published for a tag vX.Y.Z, neither a draft nor a prerelease, and either immutable (`immutable`
+  is `true`) or never edited after it was published (its `updated_at` no later than its `published_at`); for one that
+  isn't immutable (0.1.3 to 0.1.9) the gate takes the tag in the clone as the one released, which the repository's tag
+  ruleset (only admins create, move or delete `v*` tags) protects. The gate reads the verdict and the commit only from
+  the block. It doesn't read the rest of a review for what it means, or render it: after the block it refuses a listed
+  set of known ways to hide or add a verdict or a commit id ([docs/reviews/README.md](docs/reviews/README.md) lists
+  them, and what they don't catch: characters outside printable ASCII, HTML, character
+  references, backslashes, marks inside a word, links, emoji codes, `$`, fences with an info string, a commit as
+  `git describe` writes one, ordered-list markers of 2 or more digits, a table row with more cells than its header,
+  the block's words or "ship" again, also in ASCII look-alikes, a search of the commit messages, hex digits git
+  resolves to a commit or finds ambiguous, but the block's own commit in full and a whole advisory id, and a word
+  between spaces that git, reading it as written, resolves to a commit). It can't prove that the page GitHub shows
+  says what the text says, and a review that contradicts its block in other words is not refused: the pull request
+  into `main`, the maintainer's approval in the `release` environment and the reviewers' own reading stand behind
+  that. The release workflow repeats the gate in a job whose token only reads, checking that the tagged commit is on
+  `main` instead of the clean checkout of `main`, reads GitHub's checks and releases with its own token, refuses a tag
+  for a version older than 0.1.10, and publishes nothing without it.
 - The red team's 75 scenarios are part of `npm test` (`test/redteam.test.mjs`); the 14 limits the 0.1.9 changelog
   documents (13 under Known limits, one owner decision) run as todo.
 - CI also runs, on every push and pull request, the critical-mutant gate: each `'UNKNOWN'` and `'EXPOSED'` in the code

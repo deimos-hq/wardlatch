@@ -10,14 +10,14 @@
 //   1. package.json's version has a dated section at the top of CHANGELOG.md, right under an empty "Unreleased";
 //   2. docs/reviews/<version>/CLASS-AUDIT.md and INDEPENDENT-REVIEW.md exist, each beginning with the block the gate
 //      reads, its first four lines exactly, in ASCII: ```, "Commit: <sha>" (a commit this one descends from, in
-//      lower-case hex), "Verdict: READY", ```. A fenced block at the top of a file is shown as it is written: nothing
-//      before it can hide it. The rest of the file is the reviewer's. The gate reads it neither for meaning nor the way
-//      Markdown or HTML would show it: it refuses the file if a line after the block has anything that could show on
-//      the page as other words than are written there, says the block's words again, or has hex digits git could
-//      resolve as a commit other than the block's own in full (afterTheBlock and namesACommit, below, and
-//      docs/reviews/README.md, list each thing). And nothing that runs (bin/, lib/, fix/, test/, scripts/, .github/,
-//      and package.json apart from its version) changed after that commit, counting a rename as a deletion and an
-//      addition: the reviews are of the code being released;
+//      lower-case hex), "Verdict: READY", ```. The gate reads the verdict and the commit from that block only. The
+//      rest of the file is the reviewer's, and the gate doesn't read it for meaning or render it: it refuses a review
+//      that has, after the block, one of a listed set of known ways to hide or add a verdict or a commit id
+//      (afterTheBlock and namesACommit, below; docs/reviews/README.md lists each). It can't prove that the page GitHub
+//      shows says what the text says: the pull request into main, the maintainer's approval of the release job, and
+//      the reviewers' own reading are what stand behind that. And nothing that runs (bin/, lib/, fix/, test/,
+//      scripts/, .github/, and package.json apart from its version) changed after that commit, counting a rename as a
+//      deletion and an addition: the reviews are of the code being released;
 //   3. the class audit names every advisory in CHANGELOG.md, so each past advisory's kind of mistake was looked for again,
 //      and quotes the GATE PASSED line of the corpus gate run as root on this code: the line names the SHA-256 of the
 //      bin/ and lib/ it ran, which must be this commit's (and no GATE FAILED);
@@ -50,10 +50,11 @@ const RUNS_CODE = /^(bin|lib|fix|test|scripts|\.github)\//;   // and package.jso
 const normal = (s) => s.normalize('NFKC').replace(/\p{Cf}/gu, '');
 // a line without the quote, list, heading, table and emphasis marks around it
 const bare = (l) => l.replace(/^[\s>*_`#+|-]*(?:\d+[.)]\s*)?/, '').replace(/[*_`|]/g, '').trim();
-// A review after its block. The gate doesn't try to read it as Markdown, HTML or a browser would show it (CLAUDE.md,
-// rule 2): it refuses, anywhere in a line, anything that could show on the page as other words than are written there,
-// and then the block's own words. Each line is read once, by linear patterns, in this order; the first that matches is
-// the reason given.
+// A review after its block. The gate doesn't read it as Markdown, HTML or a browser would show it (CLAUDE.md, rule 2),
+// so it can't prove the page shows what the text says. It refuses a listed set of known ways to hide or add a verdict
+// or a commit id (docs/reviews/README.md lists them). Each line is read once, by linear patterns and loops, in this
+// order, and the first that matches is the reason given: the patterns below, anywhere in the line; a table row with
+// more cells than its header; the block's words, or "ship", again. Then git is asked about the commit ids it could see.
 const AFTER_THE_BLOCK = [
   // after this one, the line is printable ASCII and tabs: no letter outside ASCII, as written or after NFKC folding (a
   // full-width letter is one), no zero-width, format or control character, no look-alike symbol, no other space
@@ -66,10 +67,48 @@ const AFTER_THE_BLOCK = [
   [/:[A-Za-z0-9_+-]+:/, () => 'an emoji code: letters, digits, _, + or - between two colons (GitHub shows some as letters)'],
   [/\$/, () => 'a "$" (GitHub shows text between two as math, which joins letters)'],
   [/(?:```|~~~)[ \t]*[^\s`~]/, () => 'a fence with an info string (GitHub shows some as math or a diagram)'],
+  // git resolves v0.1.9-3-g0657 to the commit 0657 begins, with only 4 hex digits; refused whatever it resolves to
+  [/-[0-9]+-g[0-9A-Fa-f]{4}/, () => 'a commit as git describe writes one: "-", a number, "-g" and 4 or more hex digits (v0.1.9-3-g0657 names the commit 0657 begins)'],
+  // at the start of a line, after any quote marks, bullets or one-digit markers: GitHub shows 0657. as 657., and
+  // numbers the items after a list's first itself, whatever is written
+  [/^(?:[ \t>*+-]|[0-9][.)])*[0-9]{2,}[.)](?:[ \t]|$)/, () => 'an ordered-list marker of 2 or more digits (GitHub shows 0657. as 657., and numbers the items after the first itself: write 1. for each item)'],
 ];
-const BLOCK_WORDS = /verdict|ready|(?<![a-z])commits?(?![a-z])/i;
-// an advisory id: not read for a commit id (the class audit must name each one, and its groups can be hex)
-const ADVISORY = /GHSA-[0-9A-Za-z]{4}-[0-9A-Za-z]{4}-[0-9A-Za-z]{4}/gi;
+// A table: a delimiter row (only |, :, - and spaces or tabs, with a -, after any quote marks, spaces and tabs) starts
+// one, and a blank line ends it. GitHub doesn't show the cells of a row past its header's, and a header has as many as
+// its delimiter row, so a row with more cells than the delimiter row is refused. Its cells are its "|"s, plus one, less
+// one for a "|" at its start and one for a "|" at its end (a backslash, which could escape one, is refused above).
+const QUOTED = /^[ \t>]*/;
+const cells = (t) => {
+  let pipes = 0, end = t.length - 1;
+  for (let i = 0; i < t.length; i++) if (t[i] === '|') pipes++;
+  while (end > 0 && (t[end] === ' ' || t[end] === '\t')) end--;
+  return pipes + 1 - (t[0] === '|' ? 1 : 0) - (end > 0 && t[end] === '|' ? 1 : 0);
+};
+const delimiterRow = (t) => {
+  let dash = false;
+  for (const c of t) { if (c === '-') dash = true; else if (c !== '|' && c !== ':' && c !== ' ' && c !== '\t') return false; }
+  return dash;
+};
+// The block's words said again, in any case, after a fixed fold of ASCII look-alikes (l, I, 1 and | read as i; 0 as
+// o): "verdict" and "ready" anywhere, even inside another word; "commit", "commits", "ship" and "ships" as a word, its
+// edges read as written (so "1ship" is one, "ownership" and "committed" are not). The fold keeps every position.
+const fold = (s) => s.replace(/[lI1|]/g, 'i').replace(/0/g, 'o');
+const LETTER = /[A-Za-z]/;
+const blockWord = (l) => {
+  const f = fold(l), re = /verdict|ready|commit|ship/gi;
+  for (let m; (m = re.exec(f));) {
+    let end = m.index + m[0].length;
+    if (/^(?:commit|ship)$/i.test(m[0])) {
+      if (f[end] === 's' || f[end] === 'S') end++;
+      if (LETTER.test(l[m.index - 1] ?? '') || LETTER.test(l[end] ?? '')) continue;
+    }
+    return l.slice(m.index, end);
+  }
+  return undefined;
+};
+// an advisory id, as a whole word: its four words aren't read for a commit id (the class audit must name each one, and
+// its groups can be hex). Nothing is taken out of the line: every other word, and the words around it, are read.
+const ADVISORY = /\bGHSA-[0-9A-Za-z]{4}-[0-9A-Za-z]{4}-[0-9A-Za-z]{4}\b/g;
 const HEX = '0123456789abcdefABCDEF';
 const isHex = (s) => { for (const c of s) if (!HEX.includes(c)) return false; return true; };
 // the hex digits in a word (letters and digits between any other characters) that git could take for a commit: the
@@ -85,32 +124,55 @@ const hexIn = (w) => {
   }
   return runs;
 };
-// The first line after the block that the gate refuses, and why ({ why }); else the hex digits in it that git could
-// take for a commit, but the block's own commit in full (`full`), each with the first line it is on ({ hex: Map }), for
-// git to say which names one.
+// The first line after the block that the gate refuses, and why ({ why }); else, for git to say which name a commit,
+// the hex digits in it that git could take for a commit ({ hex: Map }) and its words between spaces and tabs, exactly
+// as written ({ tokens: Map }), each with the first line it is on, but the block's own commit in full (`full`).
 const afterTheBlock = (lines, from, full) => {
-  const hex = new Map();
+  const hex = new Map(), tokens = new Map();
+  let columns = 0;   // in a table, its header's cells; else 0
   for (let i = from; i < lines.length; i++) {
     const l = lines[i], at = `line ${i + 1}`;
     for (const [re, what] of AFTER_THE_BLOCK) {
       const m = re.exec(l);
       if (m) return { why: `${at} has ${what(m[0])}: write it plainly, in printable ASCII (docs/reviews/README.md)` };
     }
-    const word = BLOCK_WORDS.exec(l)?.[0];
-    if (word) return { why: `${at} says "${word}" outside the block: the block says the verdict and the commit reviewed once (change it there; don't say it again)` };
-    for (const w of l.replace(ADVISORY, ' ').split(/[^0-9A-Za-z]+/)) {
-      for (const h of hexIn(w)) if (h !== full && !hex.has(h)) hex.set(h, i + 1);
+    const t = l.slice(QUOTED.exec(l)[0].length);
+    if (!t.trim()) columns = 0;
+    else if (columns) {
+      const n = cells(t);
+      if (n > columns) return { why: `${at} has a table row with ${n} cells, more than the ${columns} of its header (GitHub doesn't show the cells after the header's; a line of only |, :, - and spaces starts a table, and a blank line ends one) (docs/reviews/README.md)` };
+    } else if (delimiterRow(t)) columns = cells(t);
+    const word = blockWord(l);
+    if (word) {
+      const as = fold(word).toLowerCase() === word.toLowerCase() ? '' : ` (read as "${fold(word).toLowerCase()}")`;
+      return { why: `${at} says "${word}"${as} outside the block: the block says the verdict and the commit reviewed once (change it there; don't say it again)` };
+    }
+    // the words of letters and digits, but the four of each advisory id: both in order, so a pass over each
+    const advisories = [...l.matchAll(ADVISORY)].map((m) => [m.index, m.index + m[0].length]);
+    let a = 0;
+    for (const m of l.matchAll(/[0-9A-Za-z]+/g)) {
+      while (a < advisories.length && advisories[a][1] <= m.index) a++;
+      if (a < advisories.length && advisories[a][0] <= m.index) continue;
+      for (const h of hexIn(m[0])) if (h !== full && !hex.has(h)) hex.set(h, i + 1);
+    }
+    for (const w of l.split(/[ \t]+/)) {
+      // git takes the rest of such a word as a pattern to search the commit messages with, and one such pattern kept
+      // git busy for over 20 seconds before it was stopped: refused here, never asked
+      if (w.startsWith(':/') || w.includes('^{/')) return { why: `${at} has "${w.slice(0, 80)}", which git reads as a search of the commit messages (":/" at the start of a word, or "^{/" in it), to name the commit it finds: write it another way` };
+      if (w && w !== full && !tokens.has(w)) tokens.set(w, i + 1);
     }
   }
-  return { hex };
+  return { hex, tokens };
 };
-// Of these words of hex digits, those git could resolve as a commit here (by an id it begins, or a ref it names): git
-// cat-file is asked about each, as written and in lower case, and a word passes only if git finds nothing by it, or
-// one blob or one tree. A commit, a tag, or more than one object ("ambiguous": git doesn't choose, as
-// core.disambiguate=none) is refused. (Not asked as <word>^{commit}: git says "missing" there for a prefix two commits
-// share, and anything that would resolve there is a commit, a tag or ambiguous here.)
-const namesACommit = (hex) => {
-  const names = [...new Set([...hex.keys()].flatMap((h) => [h, h.toLowerCase()]))];
+// Of these words, those git could resolve as a commit here: git cat-file, which reads a name as git rev-parse --verify
+// does, is asked about each word of hex digits, as written and in lower case (by an id it begins, or a ref it names),
+// and each word between spaces exactly as written (a branch, a tag, HEAD^^, @, <id>^, v0.1.9-3-g0657). A word passes
+// only if git finds nothing by it, or one blob or one tree. A commit, a tag, or more than one object ("ambiguous": git
+// doesn't choose, as core.disambiguate=none) is refused; when git stops on a word (@{u} with no upstream), the review
+// is refused. (Not asked as <word>^{commit}: git says "missing" there for a prefix two commits share.) Returns
+// [word, line] of each refused, by line.
+const namesACommit = (hex, tokens) => {
+  const names = [...new Set([...[...hex.keys()].flatMap((h) => [h, h.toLowerCase()]), ...tokens.keys()])];
   if (!names.length) return [];
   const input = names.map((h) => `${h}\n`).join('');
   const out = execFileSync('git', ['-c', 'core.disambiguate=none', 'cat-file', '--batch-check'], { cwd: ROOT, encoding: 'utf8', input,
@@ -122,8 +184,9 @@ const namesACommit = (hex) => {
     const [id, type, size, more] = line.split(' ');
     return more === undefined && id.length >= 40 && isHex(id) && /^\d/.test(size ?? '') && (type === 'blob' || type === 'tree');
   };
-  const named = new Set(names.filter((h, k) => !passes(h, out[k])).map((h) => h.toLowerCase()));
-  return [...hex.keys()].filter((h) => named.has(h.toLowerCase()));
+  const refused = new Set(names.filter((h, k) => !passes(h, out[k])));
+  return [...[...hex].filter(([h]) => refused.has(h) || refused.has(h.toLowerCase())), ...[...tokens].filter(([w]) => refused.has(w))]
+    .sort(([, a], [, b]) => a - b);
 };
 // bin/ and lib/ as one SHA-256: each file's path and the SHA-256 of its content, a line each, in path order, .DS_Store
 // left out. scripts/corpus/run.mjs prints the same of the code it ran, on its GATE PASSED line.
@@ -167,14 +230,15 @@ if (heads[1]?.name !== version) fail(`CHANGELOG.md: the first release section is
 else if (!/^- \d{4}-\d{2}-\d{2}$/.test(heads[1].rest)) fail(`CHANGELOG.md: [${version}] has no date ("## [${version}] - YYYY-MM-DD")`);
 else ok(`CHANGELOG.md has a dated [${version}] section under an empty Unreleased`);
 
-// 2. the two reviews, of this code. The gate reads one thing in each: the block its first four lines make, exactly, in
-// ASCII (a fenced block at the top of a file is shown as written; nothing before it can hide it):
+// 2. the two reviews, of this code. The gate reads the verdict and the commit in each from one place: the block its
+// first four lines make, exactly, in ASCII (a fenced block at the very top of the file):
 //   ```
 //   Commit: <sha>
 //   Verdict: READY
 //   ```
-// The rest of the file is the reviewer's, not read for meaning; it may hold nothing that could show other words than
-// are written there, nor say the block's words again, nor name a commit but the block's in full (afterTheBlock).
+// The rest of the file is the reviewer's, not read for meaning. The gate refuses it if it has one of the known ways
+// to hide or add a verdict or a commit id that afterTheBlock and namesACommit look for; what else the page shows is
+// for the people who read it.
 const FENCE = '```';
 const head = git('rev-parse', 'HEAD');
 for (const name of ['CLASS-AUDIT.md', 'INDEPENDENT-REVIEW.md']) {
@@ -193,10 +257,10 @@ for (const name of ['CLASS-AUDIT.md', 'INDEPENDENT-REVIEW.md']) {
   const after = afterTheBlock(lines, 4, full);
   if (after.why) { fail(`${p}, ${after.why}`); continue; }
   let named;
-  try { named = namesACommit(after.hex); } catch (e) { fail(`${p}: couldn't ask git which words of hex digits in it name a commit: ${String(e.message).split('\n')[0]}`); continue; }
+  try { named = namesACommit(after.hex, after.tokens); } catch (e) { fail(`${p}: couldn't ask git which words in it name a commit: ${String(e.message).split('\n')[0]}`); continue; }
   if (named.length) {
-    const [first] = named.sort((a, b) => after.hex.get(a) - after.hex.get(b));
-    fail(`${p}, line ${after.hex.get(first)} has "${first}", which git resolves as a commit here, or finds ambiguous${named.length > 1 ? ` (and ${named.length - 1} more)` : ''}: after the block a review names no commit but the block's, written in full (name a fix by what it changed; write a number or word that happens to begin a commit id another way)`);
+    const [[first, line]] = named;
+    fail(`${p}, line ${line} has "${first}", which git resolves as a commit here, or finds ambiguous${named.length > 1 ? ` (and ${named.length - 1} more)` : ''}: after the block a review names no commit but the block's, written in full (name a fix by what it changed; write a number, word, branch or tag name that git resolves another way, 0.1.9 for v0.1.9)`);
     continue;
   }
   try { git('merge-base', '--is-ancestor', full, head); } catch { fail(`${p}: reviewed commit ${sha} is not an ancestor of HEAD`); continue; }
