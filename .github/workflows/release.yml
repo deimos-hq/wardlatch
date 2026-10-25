@@ -19,6 +19,7 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    environment: release     # waits for a maintainer's approval (Settings → Environments → release; v* tags only)
     permissions:
       contents: write        # create the release
       id-token: write        # what lets Sigstore issue a keyless certificate
@@ -90,7 +91,9 @@ jobs:
 
           \`\`\`
           npm pack wardlatch@$VERSION
-          gh attestation verify wardlatch-$VERSION.tgz --repo $GITHUB_REPOSITORY
+          gh attestation verify wardlatch-$VERSION.tgz --repo $GITHUB_REPOSITORY \\
+            --signer-workflow $GITHUB_REPOSITORY/.github/workflows/release.yml --source-ref refs/tags/$GITHUB_REF_NAME \\
+            --deny-self-hosted-runners
           \`\`\`
 
           See docs/RELEASING.md for the offline check with the attached bundle, and for the signed tag.
