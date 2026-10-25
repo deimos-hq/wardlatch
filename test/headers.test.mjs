@@ -14,9 +14,12 @@ after(() => { for (const d of made) rmSync(d, { recursive: true, force: true });
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checked } from './support/output-checks.mjs';
 import { carries, parseGitConfig, headersInJson, headersInRc, headersInToml, stripJsonc, scanHeaders, identityFrom } from '../lib/headers.mjs';
 
 const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'wardlatch.mjs');
+// the command, with T0 and T1 checked on what it printed (test/support/output-checks.mjs)
+const cli = (args, env) => checked(args, spawnSync(process.execPath, [BIN, ...args], { encoding: 'utf8', env }));
 const ID = { name: 'Ada Lovelace', email: 'ada.lovelace@example.org' };
 const CLEAN = { PATH: process.env.PATH };   // no inherited *_HEADERS, GIT_AUTHOR_* or EMAIL variables
 let home;
@@ -74,19 +77,19 @@ test('header variables in the environment are read too', () => {
 });
 
 test('the command: EXPOSED exits 1, names the file and header, and never prints the value or who you are', () => {
-  const r = spawnSync(process.execPath, [BIN, '--incident', 'identity-headers-2026-10', '--paths', home], { encoding: 'utf8', env: { ...CLEAN, HOME: home } });
+  const r = cli(['--incident', 'identity-headers-2026-10', '--paths', home], { ...CLEAN, HOME: home });
   assert.equal(r.status, 1);
   assert.match(r.stdout, /EXPOSED  ~\/\.gitconfig · header "From"  carries your email, sent to every git remote/);
   assert.match(r.stdout, /UNKNOWN  ~\/\.codeium\/windsurf\/mcp_config\.json/);
   assert.doesNotMatch(r.stdout, /lovelace|Lovelace|someone@|abc123/);
-  const j = spawnSync(process.execPath, [BIN, '--incident', 'identity-headers-2026-10', '--json', '--paths', home], { encoding: 'utf8', env: { ...CLEAN, HOME: home } });
+  const j = cli(['--incident', 'identity-headers-2026-10', '--json', '--paths', home], { ...CLEAN, HOME: home });
   assert.doesNotMatch(j.stdout, /lovelace|Lovelace|someone@|abc123/);
   assert.ok(JSON.parse(j.stdout).results.some((x) => x.status === 'EXPOSED' && x.carries === 'your email'));
 });
 
 test('a home with no header settings is SAFE and says what it could not cover', () => {
   // --paths names an empty folder: one that isn't there is UNKNOWN (test/review2-0.1.9.test.mjs, M3)
-  const r = spawnSync(process.execPath, [BIN, '--incident', 'identity-headers-2026-10', '--paths', mkdtempSync(join(tmpdir(), 'wardlatch-none-root-'))], { encoding: 'utf8', env: { ...CLEAN, HOME: mkdtempSync(join(tmpdir(), 'wardlatch-none-')) } });
+  const r = cli(['--incident', 'identity-headers-2026-10', '--paths', mkdtempSync(join(tmpdir(), 'wardlatch-none-root-'))], { ...CLEAN, HOME: mkdtempSync(join(tmpdir(), 'wardlatch-none-')) });
   assert.equal(r.status, 0);
   assert.match(r.stdout, /SAFE     no name or email in the 0 header settings/);
   assert.match(r.stdout, /no git name or email is set/);

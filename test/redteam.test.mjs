@@ -13,6 +13,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, chmodSync,
 import { tmpdir, homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checked } from './support/output-checks.mjs';
 
 const WL = process.env.WARDLATCH_DIR || join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(WL, 'bin', 'wardlatch.mjs');
@@ -126,8 +127,8 @@ require('node:module').syncBuiltinESMExports();
   return ['--require', p];
 };
 
-const spawnCli = (args, env = {}, nodeArgs = [], { cwd = dir, json = true } = {}) => spawnSync(process.execPath, [...nodeArgs, BIN, ...args, ...(json ? ['--json'] : [])],
-  { encoding: 'utf8', env: { HOME: home, PATH: fresh('empty-path'), LANG: 'C', ...env }, cwd, timeout: 180000, killSignal: 'SIGKILL', maxBuffer: 64 * 1024 * 1024 });
+const spawnCli = (args, env = {}, nodeArgs = [], { cwd = dir, json = true } = {}) => checked([...args, ...(json ? ['--json'] : [])], spawnSync(process.execPath, [...nodeArgs, BIN, ...args, ...(json ? ['--json'] : [])],
+  { encoding: 'utf8', env: { HOME: home, PATH: fresh('empty-path'), LANG: 'C', ...env }, cwd, timeout: 180000, killSignal: 'SIGKILL', maxBuffer: 64 * 1024 * 1024 }));
 const run = (args, env = {}, nodeArgs = [], opts = {}) => {
   const r = spawnCli(args, env, nodeArgs, opts);
   let j; try { j = JSON.parse(r.stdout); } catch { assert.fail(`not JSON (exit ${r.status}, signal ${r.signal}): ${String(r.stderr).slice(0, 600)}`); }

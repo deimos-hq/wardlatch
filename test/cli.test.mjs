@@ -12,6 +12,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, exist
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { outputChecks } from './support/output-checks.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
@@ -24,6 +25,7 @@ let dir, home;
  *  an empty folder of the tests' own, never the one they run with. */
 const run = (args, env = {}, nodeArgs = [], cwd = undefined) => {
   const r = spawnSync(process.execPath, [...nodeArgs, BIN, ...args], { encoding: 'utf8', env: { ...process.env, HOME: home, ...env }, maxBuffer: 64 * 1024 * 1024, cwd });
+  outputChecks(args, r.stdout, r.stderr);   // T0 and T1 (test/support/output-checks.mjs)
   return { code: r.status, out: r.stdout, err: r.stderr };
 };
 const gitRepo = (path) => {

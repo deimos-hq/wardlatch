@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { envFor } from '../lib/run.mjs';
 import { probe } from '../lib/probe.mjs';
 import { discover } from '../lib/discover.mjs';
+import { checked } from './support/output-checks.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
@@ -51,7 +52,7 @@ require('node:module').syncBuiltinESMExports();
 `);
   return p;
 };
-const spawnCli = (args, env = {}, nodeArgs = []) => spawnSync(process.execPath, [...nodeArgs, BIN, ...args, '--json'], { encoding: 'utf8', env: { HOME: home, PATH: fresh('empty-path'), LANG: 'C', ...env }, cwd: dir, timeout: 120000, killSignal: 'SIGKILL' });
+const spawnCli = (args, env = {}, nodeArgs = []) => checked([...args, '--json'], spawnSync(process.execPath, [...nodeArgs, BIN, ...args, '--json'], { encoding: 'utf8', env: { HOME: home, PATH: fresh('empty-path'), LANG: 'C', ...env }, cwd: dir, timeout: 120000, killSignal: 'SIGKILL' }));
 const run = (args, env = {}, nodeArgs = []) => {
   const r = spawnCli(args, env, nodeArgs);
   let rows; try { rows = JSON.parse(r.stdout).results; } catch { assert.fail(`not JSON (exit ${r.status}): ${r.stderr.slice(0, 500)}`); }
@@ -86,8 +87,12 @@ const status = (rows, kind) => rows.filter((x) => x.kind === kind || (kind === '
 test('M1 a container that stops mid-check (docker exec fails with exit 1) is UNKNOWN, never SAFE', () => {
   const sane = run(['--incident', 'emudhra-2026-10', '--paths', fresh('m1a')], { PATH: engine('m1a', { curlBody: 'case "$u" in https://self-signed*) exit 60;; *) exit 0;; esac' }) }, ['--require', preload('m1-online', { online: true })]);
   assert.deepEqual(status(sane.rows, 'container'), ['EXPOSED'], 'harness sanity: the running container trusts the test hosts');
+  // an EXPOSED container carries the incident's fix for containers (bin/wardlatch.mjs:312); an UNKNOWN one, below, none
+  const fix = JSON.parse(readFileSync(join(ROOT, 'lib', 'incidents', 'emudhra-2026-10.json'), 'utf8')).fixes.container;
+  assert.deepEqual(sane.rows.filter((x) => x.kind === 'container').map((x) => x.fix), [fix]);
   const r = run(['--incident', 'emudhra-2026-10', '--paths', fresh('m1b')], { PATH: engine('m1b', { curlBody: 'case "$u" in https://self-signed*) exit 60;; *) exit 0;; esac', execFails: '*-emudhra.we-have-a-problem.com*' }) }, ['--require', preload('m1-online', { online: true })]);
   assert.deepEqual(status(r.rows, 'container'), ['UNKNOWN'], JSON.stringify(r.rows.filter((x) => x.kind === 'container')));
+  assert.deepEqual(r.rows.filter((x) => x.kind === 'container').map((x) => x.fix), [undefined]);
 });
 
 // ---- M2 ----------------------------------------------------------------------------------------------------------------

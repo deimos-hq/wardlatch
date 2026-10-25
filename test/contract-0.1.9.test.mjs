@@ -75,6 +75,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, delimiter, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { STAND_IN_MS } from './support/timeouts.mjs';
+import { checked, outputChecks } from './support/output-checks.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
@@ -114,6 +115,7 @@ const envOf = (extra = {}) => {
 };
 const run = (args, extra = {}, nodeArgs = [], timeout = 120000) => {
   const r = spawnSync(process.execPath, [...nodeArgs, BIN, ...args], { encoding: 'utf8', env: envOf(extra), cwd: dir, maxBuffer: 256 * 1024 * 1024, timeout, killSignal: 'SIGKILL' });
+  checked(args, r);   // T0 and T1 (test/support/output-checks.mjs)
   return { code: r.status, signal: r.signal, out: r.stdout ?? '', err: r.stderr ?? '' };
 };
 const runJson = (args, extra = {}, nodeArgs = [], timeout) => {
@@ -132,7 +134,7 @@ const runAsync = (args, extra = {}, nodeArgs = [], timeoutMs = 30000) => new Pro
   const finish = (code, signal) => { if (done) return; done = true; clearTimeout(timer); res({ code, signal, out, err, ms: Date.now() - t0 }); };
   // stdout is complete at 'close'; a grandchild left holding a pipe can't keep the test waiting more than 2 s after 'exit'
   c.on('exit', (code, signal) => { c.on('close', () => finish(code, signal)); setTimeout(() => finish(code, signal), 2000).unref(); });
-});
+}).then((r) => { outputChecks(args, r.out, r.err); return r; });   // T0 and T1 (test/support/output-checks.mjs)
 const lines = (out, status) => out.split('\n').filter((l) => new RegExp(`^${status} {2,}`).test(l));
 const mentions = (row, p) => JSON.stringify(row).includes(JSON.stringify(p).slice(1, -1));
 const exe = (p, body) => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, `#!/bin/sh\n${body}\n`, { mode: 0o755 }); return p; };
