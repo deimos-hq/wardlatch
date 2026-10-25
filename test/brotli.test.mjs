@@ -187,6 +187,22 @@ test('one file, every decoder it uses: each build of a universal file, and the l
   assert.equal(only.status, 'UNKNOWN'); assert.match(only.reason, /form Brotli 1\.0 writes them, but not as a whole table in Brotli's order.*could not be tested/);
 });
 
+test('a universal file whose every build lacks the fix is EXPOSED in that build\'s own words, and its package version can still be read; one build of two says so', () => {
+  const d = fresh('fat-all');
+  const lacks = judge(oldLib(join(d, 'thin'))).reason;
+  for (const is64 of [false, true]) {
+    // every build without the marker: the build's own reason, never "in one of the 2 builds", which would say the other
+    // build has the fix; and noMarker kept, so a distribution's library goes on to its package version
+    const all = judgeFile(fat(join(d, `fat-old-${is64}`), [[CONTROL], [CONTROL]], { is64 }), { markers: M });
+    assert.equal(all.status, 'EXPOSED'); assert.equal(all.reason, lacks); assert.equal(all.noMarker, true);
+    // the twin of one fixed build and one without: EXPOSED, saying it is one of the two, and no package version speaks
+    const one = judgeFile(fat(join(d, `fat-one-${is64}`), [[CONTROL, MARKER], [CONTROL]], { is64 }), { markers: M });
+    assert.equal(one.status, 'EXPOSED'); assert.equal(one.reason, `${lacks} (in one of the 2 builds this universal file holds)`); assert.equal(one.noMarker, undefined);
+    // and the clean twin, both fixed
+    assert.equal(judge(fat(join(d, `fat-new-${is64}`), [[CONTROL, MARKER], [CONTROL, MARKER]], { is64 })).status, 'SAFE');
+  }
+});
+
 // Brotli 1.0's error table as a library holds it: BrotliDecoderErrorString's strings with no prefix (1.0.x has
 // `return #NAME;`, 1.1.0 on `return #PREFIX #NAME;`), one NUL after each, in decode.h's order (as clang lays them out:
 // checked by compiling 1.0.9's and 1.0.10's lists; and as GCC does in Debian 12's libbrotli1, below). 1.0.10, the fix on
@@ -1064,6 +1080,37 @@ test('libnode is Node.js\'s own library: a node it decides is told the Node.js f
   // own decoder is Node.js's. The clean twin: libnode fixed
   elf(join(lib, 'libnode.so.108'), [CONTROL, MARKER, NODE_CONTROL, NODE_MARKER, 'nodejs.org/download/release/v22.23.4']);
   assert.deepEqual(rows().map((r) => r.status), ['SAFE', 'SAFE']);
+});
+
+test('a distribution\'s node whose libnode is found but can\'t be shown SAFE, or whose loader configuration could not all be read, is UNKNOWN, never SAFE', { skip: process.getuid?.() === 0 && 'root reads everything' }, () => {
+  const lib = fresh('libnode-unk-lib'), path = fresh('libnode-unk-path'), conf = fresh('libnode-unk-conf');
+  elf(join(path, 'node'), ['libnode.so.108', 'libc.so.6']);
+  const row = (places = {}) => run({}, { pathEnv: path, sonameDirs: [lib], places }).rows.find((r) => r.file === join(path, 'node'));
+  // libnode is there, but shows no table and links no Brotli library (stripped): the node can't be shown SAFE by it
+  elf(join(lib, 'libnode.so.108'), [NODE_CONTROL, 'nodejs.org/download/release/v22.1.0']);
+  const stripped = row();
+  assert.equal(stripped.status, 'UNKNOWN'); assert.equal(stripped.via, join(lib, 'libnode.so.108'));
+  assert.match(stripped.reason, /^it uses .*libnode\.so\.108, the library that holds Node\.js's code: no Brotli decoder's error texts are in this file.*could not be tested/);
+  // libnode links a Brotli library by a path it can't follow: the same
+  elf(join(lib, 'libnode.so.108'), [NODE_CONTROL, '@rpath/libbrotlidec.1.dylib']);
+  const rpath = row();
+  assert.equal(rpath.status, 'UNKNOWN'); assert.match(rpath.reason, /libnode\.so\.108, the library that holds Node\.js's code: it links @rpath\/libbrotlidec\.1\.dylib, which Wardlatch can't follow/);
+  // the clean twin: libnode with a fixed table
+  elf(join(lib, 'libnode.so.108'), [CONTROL, MARKER, NODE_CONTROL, NODE_MARKER]);
+  assert.equal(row().status, 'SAFE');
+  // with that fixed libnode, the loader's configuration names a folder it doesn't read (an include elsewhere), or a file
+  // it can't read: the loader may take libnode from there, so UNKNOWN
+  mkdirSync(join(conf, 'ld.so.conf.d'), { recursive: true });
+  const places = { ldSoConf: join(conf, 'ld.so.conf'), ldSoConfDir: join(conf, 'ld.so.conf.d') };
+  writeFileSync(places.ldSoConf, 'include ld.so.conf.d/*.conf\ninclude /opt/vendor/ld.conf.d/*.conf\n');
+  const gap = row(places);
+  assert.equal(gap.status, 'UNKNOWN'); assert.equal(gap.via, 'libnode.so.108');
+  assert.match(gap.reason, /^it links libnode\.so\.108, and what the dynamic loader is told to search could not all be read \(.*include \/opt\/vendor.*could not be tested/);
+  writeFileSync(places.ldSoConf, 'include ld.so.conf.d/*.conf\n'); writeFileSync(join(conf, 'ld.so.conf.d', 'vendor.conf'), '/opt/vendor/lib\n');
+  execFileSync('chmod', ['000', join(conf, 'ld.so.conf.d', 'vendor.conf')]);
+  try { assert.equal(row(places).status, 'UNKNOWN'); } finally { execFileSync('chmod', ['644', join(conf, 'ld.so.conf.d', 'vendor.conf')]); }
+  // the clean twin: everything the configuration names read
+  assert.equal(row(places).status, 'SAFE');
 });
 
 test('bun: 1.4.3\'s table is EXPOSED with the 1.4.4 fix, 1.4.4\'s is SAFE; Node\'s rules never apply; a bare bun is UNKNOWN', () => {
