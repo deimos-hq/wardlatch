@@ -4,18 +4,27 @@ Each release from 0.1.10 on has a folder here, `docs/reviews/X.Y.Z/`, holding th
 (`npm run release-check`, [docs/RELEASING.md](../RELEASING.md)) looks for. Releases up to 0.1.9 predate the gate; their
 reviews are summarised in CHANGELOG.md.
 
-Both files are written by someone, or a fresh agent, who wrote none of the code they review. Each needs exactly one of
-each of these two lines (a file with two verdicts, or two commits, is refused):
+Both files are written by someone, or a fresh agent, who wrote none of the code they review. Each holds one verdict
+and one reviewed commit, written so that the gate and a reader can only read them one way:
 
     Commit: <the full or short sha of the commit reviewed>
     Verdict: READY
 
-A line counts however it is dressed: `**Verdict:** NOT READY`, `> Verdict: ...`, `- Verdict: ...` and a sentence with
-"verdict:" in it are verdict lines too, so write the word followed by a colon once; a `Commit:` line counts after any
-quote, list or emphasis marks. Any other verdict (NOT READY, READY WITH NITS) fails the gate until the findings are
-fixed, each fix reviewed again, and the file updated with the new commit. The gate also refuses the release if anything
-that runs (`bin/`, `lib/`, `fix/`, `test/`, `scripts/`, `.github/`, and `package.json` apart from its version) changed
-after the reviewed commit; a file moved out of those folders counts as a change.
+- **The verdict is said once.** The word "verdict" appears once in the file, on its verdict line; READY in capitals
+  appears once, on that line; "not ready" and "ready with" appear nowhere, in any case. A heading, a table row, an
+  earlier round or a note of what the verdict will become is a second verdict, and the file is refused: change the one
+  line instead.
+- **The commit is labelled once.** One line labels a commit, the `Commit:` line. Another `Commit:`, `Commit (round
+  1):`, `Commit = ...`, `Commit — ...`, a table cell or a heading that says "Commit" is refused. "Commit" in a
+  sentence is fine.
+- **Nothing hidden.** No HTML comment (`<!--`): the gate would read what a reader doesn't see.
+
+Quote, list, heading and emphasis marks around either line don't matter (`> **Verdict:** READY` is a verdict line),
+and the gate reads the text with Unicode's look-alike forms folded (NFKC: a full-width colon is a colon) and invisible
+characters removed. Any other verdict (NOT READY, READY WITH NITS) fails the gate until the findings are fixed, each
+fix reviewed again, and the file updated with the new commit. The gate also refuses the release if anything that runs
+(`bin/`, `lib/`, `fix/`, `test/`, `scripts/`, `.github/`, and `package.json` apart from its version) changed after the
+reviewed commit; a file moved out of those folders counts as a change.
 
 ## CLASS-AUDIT.md
 

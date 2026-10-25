@@ -190,10 +190,10 @@ test('a review file with two verdicts, or two commits, is refused, even if one s
   const sha = git(dir, 'rev-parse', 'HEAD~1');
   put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `${review(sha)}\nRound 2\n${review(sha, 'NOT READY')}`);
   let r = gate(dir);
-  assert.equal(r.code, 1, r.out); assert.match(r.out, /exactly one "Verdict:" line \(found 2\)/);
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /exactly one "Verdict:" line[^\n]*\(found 2\)/);
   put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `Commit: ${sha}\nCommit: ${sha}\nVerdict: READY\n`);
   r = gate(dir);
-  assert.equal(r.code, 1, r.out); assert.match(r.out, /exactly one "Commit:" line \(found 2\)/);
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /exactly one "Commit:" line[^\n]*\(found 2\)/);
 });
 
 test('code moved out of lib/ after the review counts as lib/ changing', () => {
@@ -244,7 +244,7 @@ test('a verdict line counts however it is dressed: a second one in bold, a quote
     const dir = repo();
     put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `${review(git(dir, 'rev-parse', 'HEAD~1'))}\n${extra}\n`);
     const r = gate(dir);
-    assert.equal(r.code, 1, `${extra}\n${r.out}`); assert.match(r.out, /exactly one "Verdict:" line \(found 2\)/, extra);
+    assert.equal(r.code, 1, `${extra}\n${r.out}`); assert.match(r.out, /exactly one "Verdict:" line[^\n]*\(found 2\)/, extra);
   }
   // the one verdict, dressed: READY in bold is READY; NOT READY in a quote is not
   let dir = repo();
@@ -256,12 +256,66 @@ test('a verdict line counts however it is dressed: a second one in bold, a quote
   assert.equal(r.code, 1, r.out); assert.match(r.out, /no line "Verdict: READY" \(it says "NOT READY"\)/);
 });
 
+test('a NOT READY however it is written (a heading, a table, an em-dash, a round, "=", a full-width colon, a hidden character) beside a READY in a comment or code: refused', () => {
+  const hidden = '<!--\nVerdict: READY\n-->';
+  for (const text of [
+    '## Verdict\n\n**NOT READY**: S1 (a false SAFE) is open.\n\nWhen S1 is fixed and re-reviewed, this file is updated to `Verdict: READY`',
+    '| Verdict | NOT READY |\n|---|---|\n\nOnce fixed this becomes: Verdict: READY',
+    `**Verdict \u2014 NOT READY**\n\n${hidden}`,
+    `Verdict (round 2): NOT READY\n\n${hidden}`,
+    `VERDICT = NOT READY\n\n${hidden}`,
+    `Verdict\uFF1ANOT READY\n\n${hidden}`,
+    'Ver\u200Bdict: NOT READY\nVerdict: READY',
+    'Result: not ready, S1 is open.\nVerdict: READY',
+    'Outcome: READY WITH NITS\nVerdict: READY',
+  ]) {
+    const dir = repo();
+    put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `# Review\n\nCommit: ${git(dir, 'rev-parse', 'HEAD~1')}\n\n${text}\n`);
+    const r = gate(dir);
+    assert.equal(r.code, 1, `${text}\n${r.out}`); assert.doesNotMatch(r.out, /READY to tag/, text);
+    assert.match(r.out, /FAIL {2}docs\/reviews\/0\.2\.0\/INDEPENDENT-REVIEW\.md/, text);
+  }
+});
+
+test('a commit hidden in a comment behind another in a table, a heading or a round: refused', () => {
+  for (const shown of ['| Commit | 0000000 |\n|---|---|', '## Commit\n\n0000000', 'Commit (round 1): 0000000', 'Reviewed commit \u2014 0000000']) {
+    const dir = repo();
+    put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `# Review\n\n${shown}\n\n<!--\nCommit: ${git(dir, 'rev-parse', 'HEAD~1')}\n-->\n\nVerdict: READY\n`);
+    const r = gate(dir);
+    assert.equal(r.code, 1, `${shown}\n${r.out}`); assert.doesNotMatch(r.out, /READY to tag/, shown);
+  }
+  // and without the comment, two commits in sight: refused too
+  const dir = repo();
+  put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `| Commit | 0000000 |\n|---|---|\n\nCommit: ${git(dir, 'rev-parse', 'HEAD~1')}\nVerdict: READY\n`);
+  const r = gate(dir);
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /exactly one "Commit:" line[^\n]*\(found 2\)/);
+});
+
+test('the plain forms still pass: a verdict and a commit in a quote, a list or bold, with "commit" and "ready" in prose', () => {
+  for (const text of ['> **Commit:** SHA\n> **Verdict:** READY', '- Commit: SHA\n- Verdict: READY',
+    'Each fix\ncommit was checked again; the branch is ready to tag.\n\nCommit: SHA\nVerdict: READY']) {
+    const dir = repo();
+    put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `# Review\n\n${text.replace(/SHA/g, git(dir, 'rev-parse', 'HEAD~1'))}\n`);
+    const r = gate(dir);
+    assert.equal(r.code, 0, `${text}\n${r.out}`);
+  }
+});
+
+test('reading a review is linear: a 1 MB hostile line takes the gate no longer than a short one would', () => {
+  const dir = repo();
+  const hostile = ['commit ('.repeat(131072), 'not '.repeat(262144), '| commit x '.repeat(104858), '>'.repeat(1 << 20)].join('\n');
+  put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `${review(git(dir, 'rev-parse', 'HEAD~1'))}\n${hostile}\n`);
+  const t0 = Date.now(), r = gate(dir);
+  assert.equal(r.code, 0, r.out.slice(0, 2000));
+  assert.ok(Date.now() - t0 < 10000, `${Date.now() - t0} ms`);
+});
+
 test('a commit line counts however it is dressed: a second one in bold or a list is refused', () => {
   for (const extra of ['**Commit:** 0123456', '- Commit: 0123456', '> `Commit:` 0123456']) {
     const dir = repo();
     put(dir, 'docs/reviews/0.2.0/CLASS-AUDIT.md', `${review(git(dir, 'rev-parse', 'HEAD~1'))}\n${extra}\n${A} ${B}\n`);
     const r = gate(dir);
-    assert.equal(r.code, 1, `${extra}\n${r.out}`); assert.match(r.out, /exactly one "Commit:" line \(found 2\)/, extra);
+    assert.equal(r.code, 1, `${extra}\n${r.out}`); assert.match(r.out, /exactly one "Commit:" line[^\n]*\(found 2\)/, extra);
   }
 });
 

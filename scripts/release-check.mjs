@@ -8,12 +8,14 @@
 //
 // It refuses (exit 1) unless:
 //   1. package.json's version has a dated section at the top of CHANGELOG.md, right under an empty "Unreleased";
-//   2. docs/reviews/<version>/CLASS-AUDIT.md and INDEPENDENT-REVIEW.md exist, each with exactly one "Commit: <sha>"
-//      line, for a commit this one descends from, and exactly one "Verdict:" line, which says READY (a line counts
-//      however it is dressed: "> **Verdict:** NOT READY", "- Verdict: ..." and "Final verdict: ..." are verdicts too);
-//      and nothing that runs (bin/, lib/, fix/, test/, scripts/, .github/, and package.json apart from its version)
-//      changed after that commit, counting a rename as a deletion and an addition: the reviews are of the code being
-//      released;
+//   2. docs/reviews/<version>/CLASS-AUDIT.md and INDEPENDENT-REVIEW.md exist, each readable only one way: one
+//      "Verdict: READY" line, the word "verdict" nowhere else, READY in capitals nowhere else, "not ready" and
+//      "ready with" nowhere; one "Commit: <sha>" line, for a commit this one descends from, and nothing else labelling a
+//      commit (another "Commit:", "Commit (round 1):", "Commit = ...", "Commit — ...", a table cell or heading
+//      "Commit"); no HTML comment. Quote, list, heading and emphasis marks around a line don't matter, and the text is
+//      read with Unicode's look-alike forms folded (NFKC) and invisible characters removed. And nothing that runs
+//      (bin/, lib/, fix/, test/, scripts/, .github/, and package.json apart from its version) changed after that
+//      commit, counting a rename as a deletion and an addition: the reviews are of the code being released;
 //   3. the class audit names every advisory in CHANGELOG.md, so each past advisory's kind of mistake was looked for again;
 //   4. (not with --ci) the working tree is clean, on main, at origin/main;
 //   5. every check GitHub ran on this commit passed, every page of them, including the critical-mutant gate and the
@@ -29,11 +31,15 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CI = process.argv.includes('--ci');
 const REQUIRED_CHECKS = ['critical mutants', 'corpus (report against last release)'];   // job names in .github/workflows/ci.yml
 const RUNS_CODE = /^(bin|lib|fix|test|scripts|\.github)\//;   // and package.json, apart from "version" (below)
-// A verdict line however it is dressed (a quote, a list, bold, code), wherever "verdict:" stands on it, so a second
-// verdict can't hide; a commit line at the start of a line, after any quote, list or emphasis marks.
-const VERDICT = /\bverdict\b[\s*_`]*:(.*)$/i;
-const COMMIT = /^[\s>*_`#+-]*(?:\d+[.)]\s*)?commit\b[\s*_`]*:(.*)$/i;
-const plain = (s) => s.replace(/[*_`]/g, '').trim();
+// A review is read as a person reads it, and refused if it could be read two ways. Its text: look-alike forms folded
+// (a full-width colon is a colon) and invisible characters (zero-width spaces, soft hyphens) removed.
+const normal = (s) => s.normalize('NFKC').replace(/\p{Cf}/gu, '');
+// a line without the quote, list, heading, table and emphasis marks around it
+const bare = (l) => l.replace(/^[\s>*_`#+|-]*(?:\d+[.)]\s*)?/, '').replace(/[*_`|]/g, '').trim();
+// a line that labels a commit: "commit" followed by a colon, "=", a dash or "|" (after any parenthesis, as in
+// "Commit (round 2):"), a table cell that says only "Commit", or a heading that does
+const COMMIT_LABEL = [/\bcommit\b[\s*_`]*(?:\([^)\n]{0,40}\)[\s*_`]*)?(?:[:=|\u2012-\u2015]|\s-\s)/i,
+  /\|\s*[*_`]*commit\b[\s*_`]*(?:\([^)\n]{0,40}\)[\s*_`]*)?\|/i, /^\s*#+\s*[*_`]*commit\b[\s*_`]*(?:\([^)\n]{0,40}\)[\s*_`]*)?$/i];
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
 const git = (...a) => execFileSync('git', ['-c', 'core.quotePath=false', ...a], { cwd: ROOT, encoding: 'utf8' }).trim();
 // package.json as code: everything but the version, which is bumped after the reviews
@@ -65,14 +71,24 @@ const head = git('rev-parse', 'HEAD');
 for (const name of ['CLASS-AUDIT.md', 'INDEPENDENT-REVIEW.md']) {
   const p = `docs/reviews/${version}/${name}`;
   if (!existsSync(join(ROOT, p))) { fail(`${p} is missing`); continue; }
-  const text = read(p);
-  const verdicts = text.split('\n').map((l) => VERDICT.exec(l)).filter(Boolean).map((m) => plain(m[1]));
-  const commits = text.split('\n').map((l) => COMMIT.exec(l)).filter(Boolean).map((m) => plain(m[1]));
-  if (verdicts.length !== 1) { fail(`${p} must have exactly one "Verdict:" line (found ${verdicts.length})`); continue; }
-  if (verdicts[0] !== 'READY') { fail(`${p} has no line "Verdict: READY" (it says "${verdicts[0]}")`); continue; }
-  if (commits.length !== 1) { fail(`${p} must have exactly one "Commit:" line (found ${commits.length})`); continue; }
-  const sha = /^[0-9a-f]{7,40}$/.test(commits[0]) ? commits[0] : '';
-  if (!sha) { fail(`${p}: "Commit: ${commits[0]}" is not a commit id`); continue; }
+  const text = normal(read(p)), lines = text.split('\n');
+  if (text.includes('<!--')) { fail(`${p} has an HTML comment (<!--): text a reader doesn't see; take it out`); continue; }
+  // the verdict: the word once in the whole file, on a line that reads "Verdict: READY"
+  const said = text.match(/verdict/gi) ?? [];
+  if (said.length !== 1) { fail(`${p} must have exactly one "Verdict:" line, and the word "verdict" nowhere else (found ${said.length})`); continue; }
+  const vline = bare(lines.find((l) => /verdict/i.test(l)));
+  const verdict = /^verdict\s*:\s*(.*)$/i.exec(vline)?.[1].trim();
+  if (verdict === undefined) { fail(`${p}: the line with "verdict" on it must read "Verdict: READY" (it reads "${vline.slice(0, 80)}")`); continue; }
+  if (verdict !== 'READY') { fail(`${p} has no line "Verdict: READY" (it says "${verdict.slice(0, 80)}")`); continue; }
+  // and no other verdict beside it, however it is worded: READY in capitals once, "not ready" and "ready with" nowhere
+  const other = (text.match(/\bREADY\b/g) ?? []).length !== 1 ? 'READY a second time' : /\bnot[\W_]*ready\b/i.exec(text)?.[0] ?? /\bready[\W_]*with\b/i.exec(text)?.[0];
+  if (other) { fail(`${p} says "Verdict: READY" but also "${other.replace(/\s+/g, ' ')}": one verdict, said once (change that line; don't add another)`); continue; }
+  // the commit reviewed: one line labelling a commit, "Commit: <sha>"
+  const labels = lines.filter((l) => COMMIT_LABEL.some((re) => re.test(l)));
+  if (labels.length !== 1) { fail(`${p} must have exactly one "Commit:" line, and no other line labelling a commit (found ${labels.length})`); continue; }
+  const cline = bare(labels[0]);
+  const sha = /^commit\s*:\s*([0-9a-f]{7,40})$/i.exec(cline)?.[1] ?? '';
+  if (!sha) { fail(`${p}: the line labelling a commit must read "Commit: <sha>" (it reads "${cline.slice(0, 80)}")`); continue; }
   let full;
   try { full = git('rev-parse', '--verify', `${sha}^{commit}`); } catch { fail(`${p}: commit ${sha} is not in this repository`); continue; }
   try { git('merge-base', '--is-ancestor', full, head); } catch { fail(`${p}: reviewed commit ${sha} is not an ancestor of HEAD`); continue; }
