@@ -1,20 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Deimos AI LLC
-// The tests' safety net (test/support/no-real-home.cjs), tried against every way past it a review found. Each probe
-// runs on a made-up machine in this test's temporary folder: a home with a checkout inside it (as on a laptop: the
-// net's copy loads from there), and a temporary folder beside it. A Node started as a test file is (the net's copy
-// first, HOME the made-up home) tries each way in, and reports what was refused. Nothing here looks at the real home:
-// the folders probed are the made-up ones, so a probe run against a net with a hole in it reads only those.
+// The tests' safety net (test/support/no-real-home.cjs), tried on each route it watches (CONTRIBUTING.md, Testing
+// policy, lists those it doesn't), with a clean twin beside each. Each probe runs on a made-up machine in this test's
+// temporary folder: a home with a checkout inside it (as on a laptop: the net's copy loads from there), and a temporary
+// folder beside it. A Node started as a test file is (the net's copy first, HOME the made-up home) tries each way in,
+// and reports what was refused. Nothing here looks in a real home but for this checkout and the folder of the Node
+// running the tests, which the net leaves readable: the folders probed are the made-up ones, and the one path probed in
+// another account's home (root's, under sudo) has a name longer than any file system takes, so the system answers
+// without looking there. A probe run against a net with a hole in it reads only the made-up folders.
 import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
 import * as nodeFs from 'node:fs';
 import * as nodeModule from 'node:module';
-import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync, symlinkSync, linkSync, readFileSync, readdirSync, rmSync, constants } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync, symlinkSync, linkSync, readFileSync, readdirSync, realpathSync, rmSync, constants } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join, dirname, relative } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NET = join(ROOT, 'test', 'support', 'no-real-home.cjs');
@@ -39,8 +42,8 @@ const put = (m, name, text, mode = 0o644) => { const p = join(m.tmp, name); mkdi
 const reader = (m, name, file, first = '') => put(m, name, `${first}require('fs').readFileSync(${J(file)}); console.log('READ');\n`, 0o755);
 
 /** Run `body` (CommonJS; `m` is the machine, `report(x)` prints the result) in a Node started as a test file is: the
- *  net's copy loaded first, HOME the made-up home, the working folder its tmp → { code, out, err }. */
-const probe = (m, body, env = {}) => {
+ *  net's copy loaded first, HOME the made-up home, the working folder its tmp (or `cwd`) → { code, out, err }. */
+const probe = (m, body, env = {}, cwd = m.tmp) => {
   const script = put(m, `probe-${++n}.cjs`, `require(${J(m.net)});
 const m = ${J(m)};
 const fs = require('node:fs'), path = require('node:path'), cp = require('node:child_process');
@@ -48,7 +51,7 @@ const report = (x) => fs.writeSync(1, JSON.stringify(x) + '\\n');
 const tried = (f) => { try { f(); return 'not refused'; } catch (e) { return e.code === 'EREALHOME' ? 'refused' : 'not refused: ' + e.code; } };
 const triedAsync = async (f) => { try { await f(); return 'not refused'; } catch (e) { return e.code === 'EREALHOME' ? 'refused' : 'not refused: ' + e.code; } };
 ${body}`);
-  const r = spawnSync(process.execPath, [script], { encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL', cwd: m.tmp, maxBuffer: 64 * 1024 * 1024,
+  const r = spawnSync(process.execPath, [script], { encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL', cwd, maxBuffer: 64 * 1024 * 1024,
     env: { WARDLATCH_TEST_NO_HOME: '', HOME: m.home, TMPDIR: m.tmp, PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, LANG: 'C', ...env } });
   const last = r.stdout.trim().split('\n').pop();
   let out = null;
@@ -104,6 +107,22 @@ test('swallows a look at the home', () => { try { require('fs').readFileSync(${J
   const viaShell = probe(m, `let status = 0; try { cp.execSync('node --test ' + ${J(J(inner))}, { stdio: 'pipe' }); } catch (e) { status = e.status; } report({ status });`);
   assert.deepEqual(viaShell.out, { status: 1 }, viaShell.err);
   assert.equal(viaShell.code, 1, 'a refusal in a test file a nested node --test ran (started by a shell) did not fail the test');
+  // ...and a child of a test file that runner runs in its own process (--test-isolation=none): the runner keeps the
+  // net's variable for the test files it starts, which is no choice of that test file's, so the child gets the net
+  // (with the environment as it is, or a copy of it)
+  const isolation = ['--test-isolation', '--experimental-test-isolation'].find((f) => process.allowedNodeEnvironmentFlags.has(f));
+  if (isolation) {
+    const starts = (script) => `const { test } = require('node:test'), cp = require('child_process');
+test('starts a child and reads nothing of it', () => { cp.spawnSync(process.execPath, [${J(script)}]); cp.spawnSync(process.execPath, [${J(script)}], { env: { ...process.env } }); });\n`;
+    const none = (file) => probe(m, `const r = cp.spawnSync(process.execPath, ['--test', '${isolation}=none', ${J(file)}], { encoding: 'utf8' }); report({ status: r.status });`);
+    const inProcess = none(put(m, 'none/home.test.cjs', starts(home)));
+    assert.deepEqual(inProcess.out, { status: 0 }, inProcess.err);
+    assert.equal(inProcess.code, 1, 'a child of a test file run in the runner\'s own process looked in the home, and the test passed');
+    assert.equal(inProcess.err.match(/was stopped \(exit 70\)/g)?.length, 2, inProcess.err);
+    const inProcessOk = none(put(m, 'none/ok.test.cjs', starts(ok)));
+    assert.deepEqual(inProcessOk.out, { status: 0 }, inProcessOk.err);
+    assert.equal(inProcessOk.code, 0, inProcessOk.err);
+  }
   // a test file whose temporary folder is in the home keeps its notes elsewhere: the net writes nothing there
   mkdirSync(join(m.home, 't'));
   const inHome = probe(m, `cp.spawnSync(process.execPath, [${J(home)}]); report({ left: cp.execFileSync('/bin/ls', ['-A', path.join(m.home, 't')], { encoding: 'utf8' }) });`, { TMPDIR: join(m.home, 't') });
@@ -134,6 +153,10 @@ test('every spelling of a path in the home is refused: relative, links followed,
   symlinkSync(m.tmp, join(m.home, 'out'));                         // in the home, out of it: still a look in the home
   symlinkSync(join(m.tmp, 'okdir'), join(m.tmp, 'ok-link'));
   const s = join(m.home, 'secret');
+  // (macOS) the home's path through the start-up disk's link for its folder (/tmp or /var, for /private/tmp or
+  // /private/var, as a temporary folder is spelt on CI's runners): /System/Volumes/Data has no such link, so with the
+  // disk's other name before it the path names nothing, and the net refuses it by its text
+  const viaRoot = MAC ? realpathSync(s).replace(/^\/private(?=\/(?:tmp|var)\/)/, '') : s;
   const spellings = {
     plain: s, link: join(m.tmp, 'link', 'secret'), relative: join(m.tmp, 'rel', 'secret'), chain: join(m.tmp, 'chain', 'secret'),
     dotdot: `${join(m.tmp, 'inner-link')}/../secret`, escape: join(m.checkout, 'escape'), beside: join(m.home, 'dev', 'other'),
@@ -141,6 +164,8 @@ test('every spelling of a path in the home is refused: relative, links followed,
     ...(MAC ? {
       upper: s.toUpperCase(), data: `/System/Volumes/Data${s}`, dataTwice: `/System/Volumes/Data/System/Volumes/Data${s}`,
       volume: `/Volumes/Wardlatch Probe/System/Volumes/Data${s}`, volumeLower: `/volumes/x/volumes/y${s}`,
+      dataRootLink: `/System/Volumes/Data${viaRoot}`, volumeRootLink: `/Volumes/Wardlatch Probe${viaRoot}`,
+      volumeLink: `/Volumes/Wardlatch Probe${join(m.tmp, 'link', 'secret')}`,
     } : {}),
   };
   const r = probe(m, `const s = ${J(spellings)}, out = {};
@@ -148,15 +173,26 @@ for (const [k, p] of Object.entries(s)) out[k] = tried(() => fs.statSync(p));
 out.buffer = tried(() => fs.statSync(Buffer.from(s.plain)));
 out.uint8Array = tried(() => fs.statSync(new Uint8Array(Buffer.from(s.plain))));
 out.url = tried(() => fs.statSync(require('node:url').pathToFileURL(s.plain)));
-out.urlLike = tried(() => fs.statSync({ href: 'file:///nowhere', protocol: 'file:', hostname: '', pathname: s.plain }));
+// an object fs takes as a URL where this Node does (Node 20 on: href and protocol, no auth or path; Node 18: href and
+// origin). Where Node refuses that shape for a path outside the home too, it reads nothing: Node's own refusal is the
+// refusal. (With auth, no Node takes it: that branch runs on every Node.)
+const like = (p, more) => ({ href: 'file:///nowhere', protocol: 'file:', hostname: '', pathname: p, ...more });
+const urlLike = (more) => {
+  const home = tried(() => fs.statSync(like(s.plain, more)));
+  return home === 'not refused: ERR_INVALID_ARG_TYPE' && tried(() => fs.statSync(like(path.join(m.tmp, 'ok'), more))) === home ? 'refused' : home;
+};
+out.urlLike = urlLike({});
+out.urlLikeNodeRefuses = urlLike({ auth: '' });
 out.chdir = tried(() => process.chdir(path.join(m.tmp, 'link', 'inner')));
 // a 1 MB path is read in one pass: refused, and fast
 const t0 = Date.now();
 out.longDots = tried(() => fs.statSync('/.'.repeat(500000) + s.plain));
 if (${MAC}) out.longVolumes = tried(() => fs.statSync('/Volumes/x'.repeat(100000) + s.plain));
+if (${MAC}) out.longVolumesRootLink = tried(() => fs.statSync('/Volumes/x'.repeat(100000) + ${J(viaRoot)}));
 const ms = Date.now() - t0;
 report({ ...out, fast: ms < 2000 ? 'refused' : ms + ' ms' });`);
-  allRefused(r, [...Object.keys(spellings), 'buffer', 'uint8Array', 'url', 'urlLike', 'chdir', 'longDots', ...(MAC ? ['longVolumes'] : []), 'fast']);
+  allRefused(r, [...Object.keys(spellings), 'buffer', 'uint8Array', 'url', 'urlLike', 'urlLikeNodeRefuses', 'chdir', 'longDots',
+    ...(MAC ? ['longVolumes', 'longVolumesRootLink'] : []), 'fast']);
   // a readable folder that holds a whole home (a checkout with the home inside it) opens none of it
   const wide = machine('wide', { checkout: (base) => base });
   const w = probe(wide, `report({ inside: tried(() => fs.statSync(path.join(m.home, 'secret'))) });`);
@@ -198,6 +234,96 @@ fs.unwatchFile(h);
 report(out);`);
   allRefused(r, expected);
   assert.ok(expected.length >= 90, J(expected));
+});
+
+test('every fs function the net wraps still does its work on paths outside the home: callback, Sync and promise forms, both paths of those that take two', () => {
+  const m = machine('fs-clean');
+  // lchmod is macOS's alone (elsewhere Node has only a promise form, which says it isn't implemented)
+  const ones = ONE.filter((k) => k !== 'lchmod' || MAC);
+  const expected = [...[...ones, ...TWO].flatMap((k) => forms(nodeFs, k).map(([form]) => `${k} ${form}`)), 'realpath.native', 'realpathSync.native'];
+  // each in a folder of its own in tmp, holding f (a file) and l (a link to it): what it should leave there or return
+  const r = probe(m, `const uid = process.getuid(), gid = process.getgid();
+const forms = (k) => (${forms})(fs, k);
+let n = 0;
+const fresh = () => { const d = path.join(m.tmp, 'w' + ++n); fs.mkdirSync(d); fs.writeFileSync(path.join(d, 'f'), 'content'); fs.symlinkSync(path.join(d, 'f'), path.join(d, 'l')); return d; };
+const at = (d, x) => path.join(d, x), text = (p) => fs.readFileSync(p, 'utf8'), names = (v) => [...v].map(String).sort().join();
+const mode = (st) => st.mode & 0o777;
+// an event that writing f again and again brings, within 5 s
+const event = (start, d) => new Promise((resolve) => {
+  const iv = setInterval(() => fs.writeFileSync(at(d, 'f'), String(Date.now())), 50);
+  const t = setTimeout(() => end(false), 5000);
+  const end = (v) => { clearInterval(iv); clearTimeout(t); resolve(v); };
+  start(() => end(true));
+});
+const cases = {
+  access: (d) => [[at(d, 'f')], () => true],
+  appendFile: (d) => [[at(d, 'f'), '+'], () => text(at(d, 'f')) === 'content+'],
+  chmod: (d) => [[at(d, 'f'), 0o600], () => mode(fs.statSync(at(d, 'f'))) === 0o600],
+  chown: (d) => [[at(d, 'f'), uid, gid], () => fs.statSync(at(d, 'f')).uid === uid],
+  copyFile: (d) => [[at(d, 'f'), at(d, 'g')], () => text(at(d, 'g')) === 'content'],
+  cp: (d) => [[at(d, 'f'), at(d, 'g')], () => text(at(d, 'g')) === 'content'],
+  exists: (d) => [[at(d, 'f')], (v) => v === true],
+  glob: (d) => [['*', { cwd: d }], (v) => names(v) === 'f,l'],
+  lchmod: (d) => [[at(d, 'l'), 0o700], () => mode(fs.lstatSync(at(d, 'l'))) === 0o700],
+  lchown: (d) => [[at(d, 'l'), uid, gid], () => fs.lstatSync(at(d, 'l')).uid === uid],
+  link: (d) => [[at(d, 'f'), at(d, 'h')], () => fs.statSync(at(d, 'h')).nlink === 2],
+  lstat: (d) => [[at(d, 'l')], (v) => v.isSymbolicLink()],
+  lutimes: (d) => [[at(d, 'l'), 1000, 2000], () => fs.lstatSync(at(d, 'l')).mtimeMs === 2000000],
+  mkdir: (d) => [[at(d, 'new')], () => fs.statSync(at(d, 'new')).isDirectory()],
+  mkdtemp: (d) => [[at(d, 't-')], (v) => v.startsWith(at(d, 't-')) && fs.statSync(v).isDirectory()],
+  mkdtempDisposable: (d) => [[at(d, 't-')], async (v) => { const ok = v.path.startsWith(at(d, 't-')) && fs.statSync(v.path).isDirectory(); await v.remove(); return ok && !fs.existsSync(v.path); }],
+  open: (d) => [[at(d, 'f'), 'r'], async (v) => { if (typeof v === 'number') fs.closeSync(v); else await v.close(); return true; }],
+  openAsBlob: (d) => [[at(d, 'f')], async (v) => (await v.text()) === 'content'],
+  opendir: (d) => [[d], (v) => { const s = []; let e; while ((e = v.readSync())) s.push(e.name); v.closeSync(); return names(s) === 'f,l'; }],
+  readdir: (d) => [[d], (v) => names(v) === 'f,l'],
+  readFile: (d) => [[at(d, 'f'), 'utf8'], (v) => v === 'content'],
+  readlink: (d) => [[at(d, 'l')], (v) => v === at(d, 'f')],
+  realpath: (d) => [[at(d, 'l')], (v) => v.endsWith('/f') && fs.statSync(v).ino === fs.statSync(at(d, 'f')).ino],
+  rename: (d) => [[at(d, 'f'), at(d, 'g')], () => text(at(d, 'g')) === 'content' && !fs.existsSync(at(d, 'f'))],
+  rm: (d) => [[at(d, 'f')], () => !fs.existsSync(at(d, 'f'))],
+  rmdir: (d) => { fs.mkdirSync(at(d, 'e')); return [[at(d, 'e')], () => !fs.existsSync(at(d, 'e'))]; },
+  stat: (d) => [[at(d, 'l')], (v) => v.isFile()],
+  statfs: (d) => [[d], (v) => v.bsize > 0],
+  symlink: (d) => [[at(d, 'f'), at(d, 's')], () => fs.readlinkSync(at(d, 's')) === at(d, 'f') && text(at(d, 's')) === 'content'],
+  truncate: (d) => [[at(d, 'f'), 2], () => text(at(d, 'f')) === 'co'],
+  unlink: (d) => [[at(d, 'f')], () => !fs.existsSync(at(d, 'f'))],
+  utimes: (d) => [[at(d, 'f'), 1000, 2000], () => fs.statSync(at(d, 'f')).mtimeMs === 2000000],
+  writeFile: (d) => [[at(d, 'w'), 'x'], () => text(at(d, 'w')) === 'x'],
+};
+const special = {
+  'createReadStream callback': async (d) => { let s = ''; for await (const c of fs.createReadStream(at(d, 'f'), 'utf8')) s += c; return s === 'content'; },
+  'createWriteStream callback': async (d) => { const w = fs.createWriteStream(at(d, 'w')); await new Promise((res, rej) => w.on('error', rej).on('close', res).end('x')); return text(at(d, 'w')) === 'x'; },
+  'watch callback': (d) => event((done) => { const w = fs.watch(d, { persistent: false }, () => { w.close(); done(); }); }, d),
+  'watch promise': async (d) => {
+    const ac = new AbortController(), t = setTimeout(() => ac.abort(), 5000), iv = setInterval(() => fs.writeFileSync(at(d, 'f'), String(Date.now())), 50);
+    try { for await (const e of fs.promises.watch(d, { signal: ac.signal })) return typeof e.eventType === 'string'; } catch (e) { if (e.name !== 'AbortError') throw e; } finally { clearTimeout(t); clearInterval(iv); }
+    return false;
+  },
+  'watchFile callback': (d) => event((done) => fs.watchFile(at(d, 'f'), { persistent: false, interval: 20 }, () => { fs.unwatchFile(at(d, 'f')); done(); }), d),
+};
+// a callback form gets one (exists: its only argument is the answer); openAsBlob has no callback, it returns a promise
+const call = (k, form, f, args) => (form !== 'callback' || k === 'openAsBlob' ? f(...args)
+  : new Promise((res, rej) => f(...args, (e, v) => (k === 'exists' ? res(e) : e ? rej(e) : res(v)))));
+const collect = async (v) => { if (!v || typeof v[Symbol.asyncIterator] !== 'function' || v instanceof fs.Dir) return v; const a = []; for await (const x of v) a.push(x); return a; };
+(async () => {
+  const out = {};
+  const run = async (name, f) => { try { out[name] = (await f()) === true ? 'works' : 'wrong result'; } catch (e) { out[name] = 'failed: ' + (e.code ?? e.message); } };
+  for (const k of ${J([...ONE, ...TWO])}) {
+    if (k === 'lchmod' && !${MAC}) continue;
+    for (const [form, f] of forms(k)) {
+      const name = k + ' ' + form;
+      await run(name, async () => { if (special[name]) return special[name](fresh()); const [args, ok] = cases[k](fresh()); return ok(await collect(await call(k, form, f, args))); });
+    }
+  }
+  await run('realpath.native', () => new Promise((res, rej) => fs.realpath.native(path.join(fresh(), 'l'), (e, v) => (e ? rej(e) : res(v.endsWith('/f'))))));
+  await run('realpathSync.native', () => fs.realpathSync.native(path.join(fresh(), 'l')).endsWith('/f'));
+  report(out);
+})();`);
+  assert.ok(r.out, `the probe reported nothing: ${r.err.slice(-4000)}`);
+  assert.deepEqual(Object.entries(r.out).filter(([, v]) => v !== 'works'), [], 'these did not do their work outside the home');
+  assert.deepEqual(Object.keys(r.out).sort(), [...expected].sort());
+  assert.ok(expected.length >= 90, J(expected));
+  assert.equal(r.code, 0, r.err);
 });
 
 test('the routes a review found open are refused: glob, the stream classes, require and import (a path, a link, a package name), a change of folder, a program, its working folder or a PATH folder there', () => {
@@ -267,7 +393,8 @@ const h = m.home, s = path.join(h, 'secret'), url = (p) => pathToFileURL(p).href
     ...(has.glob ? ['globStart', 'globCwd', 'globWalk', 'globUp', 'globPromise'] : []),
     ...(has.hooks ? ['importPath', 'importMissing', 'importUp', 'importLinked', 'importPackage'] : []), ...(has.utf8 ? ['utf8Stream'] : [])]);
   // the clean twin: the same routes on the test's own folders, a module in the checkout that stays in it, and a program
-  // found before PATH reaches a folder in the home
+  // found before PATH reaches a folder in the home (a glob in a folder of its own: tmp holds a link into the home)
+  mkdirSync(join(m.tmp, 'clean')); writeFileSync(join(m.tmp, 'clean', 'f'), 'f\n');
   const c = probe(m, `const { pathToFileURL } = require('node:url');
 (async () => {
   const out = {
@@ -276,11 +403,317 @@ const h = m.home, s = path.join(h, 'secret'), url = (p) => pathToFileURL(p).href
     chdir: tried(() => process.chdir(m.tmp)), spawn: tried(() => cp.spawnSync('/bin/echo', [], { cwd: m.tmp })),
     pathBefore: tried(() => cp.spawnSync('echo', [], { env: { PATH: '/bin:' + path.join(m.home, 'bin') } })),
   };
-  if (${has.glob}) out.glob = tried(() => fs.globSync('*', { cwd: m.tmp }));
+  if (${has.glob}) out.glob = tried(() => fs.globSync('*', { cwd: path.join(m.tmp, 'clean') }));
   report(out);
 })();`);
   assert.deepEqual(c.out, { readStream: 'not refused', require: 'not refused', import: 'not refused', chdir: 'not refused', spawn: 'not refused', pathBefore: 'not refused', ...(has.glob ? { glob: 'not refused' } : {}) }, c.err);
   assert.equal(c.code, 0, c.err);
+});
+
+test('a walk that can reach the home is refused: a recursive readdir (every form) or opendir, a copy, a recursive watch or a glob below which a link leads into it, and one of those or rm from a folder that holds it; the same walks elsewhere do their work', () => {
+  const m = machine('walks');
+  // tmp/start/sub/link: a link to the home's folder, two folders down (a fixture that links to a home, say)
+  mkdirSync(join(m.tmp, 'start', 'sub'), { recursive: true }); symlinkSync(m.home, join(m.tmp, 'start', 'sub', 'link'));
+  // a link to a file in the home (readdir stats what each name leads to), and a link to tmp/start (two hops)
+  mkdirSync(join(m.tmp, 'file-link')); symlinkSync(join(m.home, 'secret'), join(m.tmp, 'file-link', 'secret'));
+  mkdirSync(join(m.tmp, 'hop')); symlinkSync(join(m.tmp, 'start'), join(m.tmp, 'hop', 'to-start'));
+  // clean: a link that stays outside the home, a link back up (a loop), and one in a folder rm empties (rm never follows it)
+  mkdirSync(join(m.tmp, 'clean', 'a'), { recursive: true }); writeFileSync(join(m.tmp, 'clean', 'a', 'f'), 'f\n');
+  mkdirSync(join(m.tmp, 'elsewhere')); writeFileSync(join(m.tmp, 'elsewhere', 'g'), 'g\n');
+  symlinkSync(join(m.tmp, 'elsewhere'), join(m.tmp, 'clean', 'a', 'there'));
+  mkdirSync(join(m.tmp, 'loop', 'a'), { recursive: true }); symlinkSync('..', join(m.tmp, 'loop', 'a', 'up'));
+  mkdirSync(join(m.tmp, 'gone')); symlinkSync(m.home, join(m.tmp, 'gone', 'link'));
+  const has = { glob: typeof nodeFs.globSync === 'function' };
+  // (no probe walks /, /System, /System/Volumes or /Volumes, which hold the real home: a net with a hole would walk it)
+  const r = probe(m, `const s = path.join(m.tmp, 'start'), base = path.dirname(m.home), noop = () => {}, has = ${J(has)};
+(async () => {
+  const out = {
+    readdirSync: tried(() => fs.readdirSync(s, { recursive: true })),
+    readdirSyncTypes: tried(() => fs.readdirSync(s, { recursive: true, withFileTypes: true })),
+    readdirCallback: tried(() => fs.readdir(s, { recursive: true }, noop)),
+    readdirPromise: await triedAsync(() => fs.promises.readdir(s, { recursive: true })),
+    readdirFileLink: tried(() => fs.readdirSync(path.join(m.tmp, 'file-link'), { recursive: true })),
+    readdirTwoHops: tried(() => fs.readdirSync(path.join(m.tmp, 'hop'), { recursive: true })),
+    opendirSync: tried(() => fs.opendirSync(s, { recursive: true }).closeSync()),
+    opendirPromise: await triedAsync(async () => (await fs.promises.opendir(s, { recursive: true })).close()),
+    cpSync: tried(() => fs.cpSync(s, path.join(m.tmp, 'copy-1'), { recursive: true, dereference: true })),
+    cpPromise: await triedAsync(() => fs.promises.cp(s, path.join(m.tmp, 'copy-2'), { recursive: true, dereference: true })),
+    watch: tried(() => fs.watch(s, { recursive: true, persistent: false }).close()),
+    readdirHolds: tried(() => fs.readdirSync(base, { recursive: true })),
+    cpHolds: tried(() => fs.cpSync(base, path.join(m.tmp, 'copy-3'), { recursive: true })),
+    watchHolds: tried(() => fs.watch(base, { recursive: true, persistent: false }).close()),
+  };
+  if (has.glob) Object.assign(out, {
+    glob: tried(() => fs.globSync('*/link/*', { cwd: s })),
+    globPromise: await triedAsync(async () => { for await (const x of fs.promises.glob('*/link/*', { cwd: s })) void x; }),
+  });
+  // last: rm from a folder that holds the home would remove this whole made-up machine
+  out.rmHolds = tried(() => fs.rmSync(base, { recursive: true, force: true }));
+  out.rmPromiseHolds = await triedAsync(() => fs.promises.rm(base, { recursive: true, force: true }));
+  report(out);
+})();`);
+  allRefused(r, ['readdirSync', 'readdirSyncTypes', 'readdirCallback', 'readdirPromise', 'readdirFileLink', 'readdirTwoHops', 'opendirSync', 'opendirPromise',
+    'cpSync', 'cpPromise', 'watch', 'readdirHolds', 'cpHolds', 'watchHolds', ...(has.glob ? ['glob', 'globPromise'] : []), 'rmHolds', 'rmPromiseHolds']);
+  // the clean twin: the same walks where every link stays outside the home, a loop, and rm of a folder with a link in it
+  const c = probe(m, `const s = path.join(m.tmp, 'clean'), names = (v) => [...v].map(String).sort(), has = ${J(has)};
+const p = require('node:util').promisify;
+(async () => {
+  const out = {
+    readdirSync: names(fs.readdirSync(s, { recursive: true })),
+    readdirCallback: names(await p(fs.readdir)(s, { recursive: true })),
+    readdirPromise: names(await fs.promises.readdir(s, { recursive: true })),
+    loop: tried(() => fs.readdirSync(path.join(m.tmp, 'loop'), { recursive: true })),
+    opendirSync: (() => { const d = fs.opendirSync(s, { recursive: true }), a = []; let e; while ((e = d.readSync())) a.push(path.relative(s, path.join(e.parentPath ?? e.path ?? s, e.name))); d.closeSync(); return names(a); })(),
+    cpSync: (fs.cpSync(s, path.join(m.tmp, 'copy-c'), { recursive: true, dereference: true }), fs.readFileSync(path.join(m.tmp, 'copy-c', 'a', 'there', 'g'), 'utf8')),
+    watch: (() => { try { fs.watch(s, { recursive: true, persistent: false }).close(); return 'watched'; } catch (e) { return e.code; } })(),
+    rm: (fs.rmSync(path.join(m.tmp, 'gone'), { recursive: true }), fs.existsSync(path.join(m.tmp, 'gone'))),
+  };
+  if (has.glob) out.glob = names(fs.globSync('*/there/*', { cwd: s }));
+  report(out);
+})();`);
+  assert.ok(c.out, `the probe reported nothing: ${c.err.slice(-4000)}`);
+  const { opendirSync, watch, ...rest } = c.out;
+  const all = ['a', 'a/f', 'a/there', 'a/there/g'];
+  assert.deepEqual(rest, { readdirSync: all, readdirCallback: all, readdirPromise: all, loop: 'not refused', cpSync: 'g\n', rm: false, ...(has.glob ? { glob: ['a/there/g'] } : {}) }, c.err);
+  // a recursive opendir doesn't follow links (a Node without its recursive option lists the top only); a recursive
+  // watch is Linux's from Node 20
+  assert.ok([J(all.slice(0, 3)), J(['a'])].includes(J(opendirSync)), J(opendirSync));
+  assert.ok(watch === 'watched' || (!MAC && watch === 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM'), watch);
+  assert.equal(c.code, 0, c.err);
+  assert.equal(readFileSync(join(m.home, 'secret'), 'utf8'), 'secret\n', 'rm followed the link into the home');
+});
+
+test('the routes that open files without fs are refused: a Worker thread (its own fs, at any depth, its environment shared or not), process.loadEnvFile, and node:sqlite (a database, a backup, an extension, a file SQL attaches) however it is loaded or its class reached', () => {
+  const m = machine('threads');
+  writeFileSync(join(m.home, 'mod.cjs'), 'module.exports = 1;\n'); writeFileSync(join(m.home, '.env'), 'WL_FROM_ENV=home\n'); writeFileSync(join(m.tmp, '.env'), 'WL_FROM_ENV=tmp\n');
+  const esm = put(m, 'esm-worker.mjs', `import { readFileSync } from 'node:fs';\nreadFileSync(${J(join(m.home, 'secret'))});\n`);
+  // what this Node has, asked of a Node of its own without the net (so this test file never loads node:sqlite, and a
+  // net that refused a way in tmp couldn't make it read as missing): it opens a database in tmp, nothing more
+  const has = JSON.parse(execFileSync(process.execPath, ['--no-warnings', '-e', `let s = null; try { s = require('node:sqlite'); } catch {}
+const opens = (p) => { try { new s.DatabaseSync(p).close(); return true; } catch { return false; } };
+console.log(JSON.stringify({ loadEnvFile: typeof process.loadEnvFile === 'function', sqlite: !!s, authorizer: typeof s?.DatabaseSync.prototype.setAuthorizer === 'function',
+  backup: typeof s?.backup === 'function', database: typeof s?.Database === 'function', loadExtension: typeof s?.DatabaseSync.prototype.loadExtension === 'function',
+  bufferPath: !!s && opens(Buffer.from(${J(join(m.tmp, 'has.db'))})), urlPath: !!s && opens(require('node:url').pathToFileURL(${J(join(m.tmp, 'has.db'))})),
+  getBuiltin: typeof process.getBuiltinModule === 'function', hooks: typeof require('node:module').registerHooks === 'function' }));`],
+  { encoding: 'utf8', env: { ...process.env, WARDLATCH_TEST_NO_HOME: '' } }));
+  const workers = `const { Worker, SHARE_ENV } = require('node:worker_threads');
+const reads = (f) => "require('fs').readFileSync(" + JSON.stringify(f) + "); require('worker_threads').parentPort.postMessage('READ');";
+const run = (code, o = {}) => new Promise((res) => {
+  let w, got = null;
+  try { w = new Worker(code, { eval: true, ...o }); } catch (e) { return res(e.code === 'EREALHOME' ? 'refused' : 'threw ' + e.code); }
+  w.on('message', (x) => { got = x; }).on('error', (e) => res('error ' + (e.code ?? e.message))).on('exit', (c) => res(got ?? c));
+});\n`;
+  const s = join(m.home, 'secret');
+  const w = probe(m, `${workers}(async () => report({
+  worker: await run(reads(${J(s)})),
+  ownEnv: await run(reads(${J(s)}), { env: { PATH: '/usr/bin:/bin' } }),
+  sharedEnv: await run(reads(${J(s)}), { env: SHARE_ENV }),
+  execArgv: await run(reads(${J(s)}), { execArgv: ['--no-warnings'] }),
+  esm: await run(${J(esm)}, { eval: false }),
+  fileThere: await run(${J(join(m.home, 'mod.cjs'))}, { eval: false }),
+  nested: await run("new (require('worker_threads').Worker)(" + JSON.stringify(reads(${J(s)})) + ", { eval: true }).on('exit', (c) => require('worker_threads').parentPort.postMessage(c));"),
+}))();`);
+  assert.deepEqual(w.out, { worker: 70, ownEnv: 70, sharedEnv: 70, execArgv: 70, esm: 70, fileThere: 'refused', nested: 70 }, w.err);
+  assert.equal(w.code, 1, w.err);
+  // a refusal in a Worker whose end nothing reads still fails the test file
+  const quiet = probe(m, `${workers}new Worker(reads(${J(s)}), { eval: true }).on('exit', () => report({ ended: true }));`);
+  assert.deepEqual(quiet.out, { ended: true }, quiet.err);
+  assert.equal(quiet.code, 1, 'the test file passed though a Worker it started was stopped');
+  assert.match(quiet.err, /process \d+, thread \d+ .*was stopped \(exit 70\)/);
+  // the clean twin: the same Workers reading tmp, and what one sees: its own NODE_OPTIONS, not the net's variable, and
+  // SHARE_ENV still shared
+  const ok = join(m.tmp, 'ok');
+  const sees = "require('worker_threads').parentPort.postMessage([process.env.NODE_OPTIONS ?? null, 'WARDLATCH_TEST_NO_HOME' in process.env]);";
+  const wc = probe(m, `${workers}(async () => report({
+  worker: await run(reads(${J(ok)})),
+  ownEnv: await run(reads(${J(ok)}), { env: { PATH: '/usr/bin:/bin' } }),
+  sharedEnv: await run(reads(${J(ok)}), { env: SHARE_ENV }),
+  execArgv: await run(reads(${J(ok)}), { execArgv: ['--no-warnings'] }),
+  sees: await run(${J(sees)}, { env: { ...process.env, NODE_OPTIONS: '--no-deprecation' } }),
+  seesUnset: await run(${J(sees)}),
+  shared: (await run("process.env.WL_SHARED = 'yes';", { env: SHARE_ENV }), process.env.WL_SHARED),
+}))();`);
+  assert.deepEqual(wc.out, { worker: 'READ', ownEnv: 'READ', sharedEnv: 'READ', execArgv: 'READ', sees: ['--no-deprecation', false], seesUnset: [null, false], shared: 'yes' }, wc.err);
+  assert.equal(wc.code, 0, wc.err);
+
+  if (has.loadEnvFile) {
+    const e = probe(m, `report({ path: tried(() => process.loadEnvFile(${J(join(m.home, '.env'))})), buffer: tried(() => process.loadEnvFile(Buffer.from(${J(join(m.home, '.env'))}))),
+  url: tried(() => process.loadEnvFile(require('node:url').pathToFileURL(${J(join(m.home, '.env'))}))), fromCwd: tried(() => process.loadEnvFile()) });`, {}, m.home);
+    allRefused(e, ['path', 'buffer', 'url', 'fromCwd']);
+    const ec = probe(m, `process.loadEnvFile(); const a = process.env.WL_FROM_ENV; delete process.env.WL_FROM_ENV; process.loadEnvFile(${J(join(m.tmp, '.env'))}); report([a, process.env.WL_FROM_ENV]);`);
+    assert.deepEqual(ec.out, ['tmp', 'tmp'], ec.err);
+    assert.equal(ec.code, 0, ec.err);
+  }
+
+  if (has.sqlite) {
+    const h = (x) => J(join(m.home, x)), t = (x) => J(join(m.tmp, x));
+    // the database opened first by each way of loading node:sqlite, so each wraps it; and require() on a Node without
+    // module.registerHooks (22.5 to 22.14), whose hook would otherwise see it first
+    const older = put(m, 'older-node.cjs', 'require(\'node:module\').registerHooks = undefined;\n');
+    const ways = { require: ["require('node:sqlite')"], olderRequire: ["require('node:sqlite')", { NODE_OPTIONS: `--require ${older}` }],
+      ...(has.getBuiltin ? { getBuiltin: ["process.getBuiltinModule('node:sqlite')"] } : {}), ...(has.hooks ? { import: ["await import('node:sqlite')"] } : {}) };
+    for (const [way, [load, env]] of Object.entries(ways)) {
+      const r = probe(m, `(async () => { const { DatabaseSync } = ${load}; report({ open: tried(() => new DatabaseSync(${h('x.db')})) }); })();`, env);
+      assert.deepEqual(r.out, { open: 'refused' }, `${way}: ${r.err}`);
+    }
+    const r = probe(m, `const sq = require('node:sqlite'), { DatabaseSync, Database } = sq, c = sq.constants, has = ${J(has)};
+(async () => {
+  const db = new DatabaseSync(':memory:', { allowExtension: true });
+  const out = { uri: tried(() => new DatabaseSync('file:' + ${t('uri.db')})),
+    // the class as its prototype and every database it makes give it
+    rawConstructor: tried(() => new db.constructor(${h('x.db')})),
+    prototypeConstructor: tried(() => new (Object.getPrototypeOf(db).constructor)(${h('x.db')})) };
+  if (has.database) out.databaseConstructor = tried(() => new Database.prototype.constructor(${h('x.db')}));
+  if (has.database) out.database = tried(() => new Database(${h('x.db')}));
+  if (has.bufferPath) out.buffer = tried(() => new DatabaseSync(Buffer.from(${h('x.db')})));
+  if (has.urlPath) out.url = tried(() => new DatabaseSync(require('node:url').pathToFileURL(${h('x.db')})));
+  if (has.loadExtension) out.loadExtension = tried(() => db.loadExtension(${h('ext')}));
+  if (has.backup) out.backup = await triedAsync(() => sq.backup(db, ${h('b.db')}));
+  if (has.authorizer) Object.assign(out, {
+    attach: tried(() => db.exec("ATTACH DATABASE " + ${J(`'${join(m.home, 'a.db')}'`)} + " AS a")),
+    vacuumInto: tried(() => db.exec("VACUUM INTO " + ${J(`'${join(m.home, 'v.db')}'`)})),
+    attachUri: tried(() => db.exec("ATTACH 'file:" + ${t('a.db')} + "' AS b")),
+    attachBound: tried(() => db.prepare('ATTACH ? AS c')),
+    loadExtensionSql: tried(() => db.exec("SELECT load_extension('x')")),
+    afterOwn: tried(() => { db.setAuthorizer(() => c.SQLITE_OK); db.exec("ATTACH DATABASE " + ${J(`'${join(m.home, 'a.db')}'`)} + " AS d"); }),
+    afterNull: tried(() => { db.setAuthorizer(null); db.exec("ATTACH DATABASE " + ${J(`'${join(m.home, 'a.db')}'`)} + " AS e"); }),
+    opened: tried(() => { const d = new DatabaseSync(':memory:', { open: false }); d.open(); d.exec("ATTACH DATABASE " + ${J(`'${join(m.home, 'a.db')}'`)} + " AS f"); }),
+  });
+  report(out);
+})();`);
+    allRefused(r, ['uri', 'rawConstructor', 'prototypeConstructor', ...(has.database ? ['databaseConstructor'] : []),
+      ...['database', 'buffer', 'url', 'loadExtension', 'backup'].filter((k) => has[k === 'buffer' || k === 'url' ? `${k}Path` : k]),
+      ...(has.authorizer ? ['attach', 'vacuumInto', 'attachUri', 'attachBound', 'loadExtensionSql', 'afterOwn', 'afterNull', 'opened'] : [])]);
+    assert.deepEqual(readdirSync(m.home).filter((f) => f.endsWith('.db')), [], 'a database was made in the home');
+    // the clean twin: the same in tmp, and the test's own authorizer still has its say
+    const sc = probe(m, `const sq = require('node:sqlite'), { DatabaseSync, Database } = sq, c = sq.constants, has = ${J(has)};
+(async () => {
+  const db = new DatabaseSync(${t('ok.db')});
+  db.exec('CREATE TABLE t (x); INSERT INTO t VALUES (7)');
+  const out = { read: db.prepare('SELECT x FROM t').get().x, memory: (new DatabaseSync(':memory:').close(), 'opened'),
+    rawConstructor: new db.constructor(${t('ok.db')}).prepare('SELECT x FROM t').get().x, sameClass: new db.constructor(':memory:') instanceof DatabaseSync };
+  if (has.database) out.database = (new Database(${t('d.db')}).close(), 'opened');
+  if (has.bufferPath) out.buffer = (new DatabaseSync(Buffer.from(${t('ok.db')})).close(), 'opened');
+  if (has.urlPath) out.url = new DatabaseSync(require('node:url').pathToFileURL(${t('ok.db')})).prepare('SELECT x FROM t').get().x;
+  if (has.loadExtension) out.loadExtension = tried(() => new DatabaseSync(':memory:', { allowExtension: true }).loadExtension(${t('no-such-ext')}));
+  if (has.backup) out.backup = (await sq.backup(db, ${t('b.db')}), new DatabaseSync(${t('b.db')}).prepare('SELECT x FROM t').get().x);
+  if (has.authorizer) {
+    db.exec("ATTACH DATABASE " + ${J(`'${join(m.tmp, 'a.db')}'`)} + " AS a; CREATE TABLE a.u (y); DETACH a");
+    db.exec("VACUUM INTO " + ${J(`'${join(m.tmp, 'v.db')}'`)});
+    out.attached = new DatabaseSync(${t('a.db')}).prepare("SELECT name FROM sqlite_master").get().name;
+    out.vacuumed = new DatabaseSync(${t('v.db')}).prepare('SELECT x FROM t').get().x;
+    db.setAuthorizer((action) => (action === c.SQLITE_DELETE ? c.SQLITE_DENY : c.SQLITE_OK));
+    out.ownDenies = tried(() => db.exec('DELETE FROM t'));
+  }
+  report(out);
+})();`);
+    assert.ok(sc.out, `the probe reported nothing: ${sc.err.slice(-4000)}`);
+    const { loadExtension, ...rest } = sc.out;
+    assert.deepEqual(rest, { read: 7, memory: 'opened', rawConstructor: 7, sameClass: true, ...(has.database ? { database: 'opened' } : {}), ...(has.bufferPath ? { buffer: 'opened' } : {}),
+      ...(has.urlPath ? { url: 7 } : {}), ...(has.backup ? { backup: 7 } : {}), ...(has.authorizer ? { attached: 'u', vacuumed: 7, ownDenies: 'not refused: ERR_SQLITE_ERROR' } : {}) }, sc.err);
+    // (there is no extension to load: SQLite answers, not the net)
+    if (has.loadExtension) assert.match(loadExtension, /^not refused: /);
+    assert.equal(sc.code, 0, sc.err);
+  }
+});
+
+test('a package in the checkout\'s own node_modules loads by name, by require() and import, from a checkout in the home; going on into the home\'s node_modules above it is refused, for a package name or a \'#\' name of package.json\'s imports', () => {
+  const m = machine('packages');
+  writeFileSync(join(m.checkout, 'package.json'), J({ name: 'wardlatch-probe-checkout', private: true }));
+  const pkg = (dir, name, value, main = 'main.js') => {
+    const d = join(dir, 'node_modules', name); mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'package.json'), J({ name, main })); writeFileSync(join(d, 'main.js'), `module.exports = ${J(value)};\n`);
+  };
+  pkg(m.checkout, 'wl-local', 'local'); pkg(m.checkout, '@wl/scoped', 'scoped');
+  // in the home above the checkout: packages the checkout lacks, one in a scope the checkout has (import goes on up past
+  // node_modules/@wl when node_modules/@wl/<name> isn't there), and ones whose main is missing, so Node finds no file
+  // there and only a refusal before it looks can tell (a package found there is also refused after, where it led)
+  const up = join(m.home, 'dev');
+  pkg(up, 'wl-above', 'above'); pkg(up, '@wl/above', 'above'); pkg(up, 'wl-broken', 'broken', 'missing.js'); pkg(up, '@wl/broken', 'broken', 'missing.js');
+  // and one linked into the checkout's node_modules from the home (as npm link makes one)
+  pkg(join(m.home, 'linked'), 'wl-linked', 'linked', 'missing.js'); symlinkSync(join(m.home, 'linked', 'node_modules', 'wl-linked'), join(m.checkout, 'node_modules', 'wl-linked'));
+  const mod = (name, text) => { writeFileSync(join(m.checkout, name), text); return J(pathToFileURL(join(m.checkout, name)).href); };
+  const local = { cjs: mod('local.cjs', "module.exports = [require('wl-local'), require('@wl/scoped'), require('wl-local/main.js')];\n"),
+    mjs: mod('local.mjs', "import a from 'wl-local'; import b from '@wl/scoped'; export default [a, b];\n") };
+  const names = ['wl-above', '@wl/above', 'wl-broken', '@wl/broken', 'wl-nowhere', 'wl-linked'];
+  const above = Object.fromEntries(names.flatMap((x, i) => [[`require ${x}`, JSON.parse(mod(`above-${i}.cjs`, `require(${J(x)});\n`))], [`import ${x}`, JSON.parse(mod(`above-${i}.mjs`, `import ${J(x)};\n`))]]));
+  // a '#' name of package.json's imports that names a package the checkout lacks: Node looks for that package as an
+  // import does, up from the folder of that package.json (each in a folder of its own in the checkout, with a
+  // package.json of its own; a condition and a pattern among them)
+  const hashes = { 'wl-above': 'wl-above', '@wl/above': '@wl/above', 'wl-broken': 'wl-broken', 'wl-nowhere': 'wl-nowhere',
+    condition: { node: 'wl-nowhere', default: './x.js' }, pattern: 'wl-*' };
+  Object.entries(hashes).forEach(([x, target], i) => {
+    mkdirSync(join(m.checkout, `hash-${i}`));
+    writeFileSync(join(m.checkout, `hash-${i}`, 'package.json'), J({ imports: { [x === 'pattern' ? '#p/*' : '#x']: target } }));
+    const name = x === 'pattern' ? '#p/nowhere' : '#x';
+    above[`require #${x}`] = JSON.parse(mod(`hash-${i}/use.cjs`, `require(${J(name)});\n`));
+    above[`import #${x}`] = JSON.parse(mod(`hash-${i}/use.mjs`, `import ${J(name)};\n`));
+  });
+  // and one whose package.json Node reads though JSON.parse can't (Node parses only the fields it reads)
+  const junk = '{"imports":{"#x":"wl-nowhere"},"junk":[1,,]}';
+  mkdirSync(join(m.checkout, 'hash-junk')); writeFileSync(join(m.checkout, 'hash-junk', 'package.json'), junk);
+  above['require #junk'] = JSON.parse(mod('hash-junk/use.cjs', "require('#x');\n"));
+  above['import #junk'] = JSON.parse(mod('hash-junk/use.mjs', "import '#x';\n"));
+  const all = [...names, ...Object.keys(hashes).map((x) => `#${x}`), '#junk'];
+  const hooks = typeof nodeModule.registerHooks === 'function';
+  // require() on a Node without module.registerHooks (before 22.15), whose hook would otherwise see the name first
+  const older = put(m, 'older-node.cjs', 'require(\'node:module\').registerHooks = undefined;\n');
+  const run = (env) => probe(m, `const { fileURLToPath } = require('node:url'), above = ${J(above)};
+(async () => {
+  const out = {
+    resolvePathsAbove: tried(() => require.resolve('wl-above', { paths: [path.join(m.home, 'dev')] })),
+    resolvePathsBroken: tried(() => require.resolve('wl-broken', { paths: [path.join(m.home, 'dev')] })),
+  };
+  for (const [k, u] of Object.entries(above)) {
+    if (k.startsWith('require')) out[k] = tried(() => require(fileURLToPath(u)));
+    else if (${hooks} && !${!!env}) out[k] = await triedAsync(() => import(u));
+  }
+  report(out);
+})();`, env);
+  allRefused(run(), ['resolvePathsAbove', 'resolvePathsBroken', ...all.map((x) => `require ${x}`), ...(hooks ? all.map((x) => `import ${x}`) : [])]);
+  allRefused(run({ NODE_OPTIONS: `--require ${older}` }), ['resolvePathsAbove', 'resolvePathsBroken', ...all.map((x) => `require ${x}`)]);
+  // the clean twin: the checkout's own packages, by require(), import and require.resolve's paths, and by '#' names a
+  // package.json in the checkout maps to them, to a file of its own and (import) to a module of Node's
+  const inner = join(m.checkout, 'inner'); mkdirSync(inner);
+  writeFileSync(join(inner, 'package.json'), J({ imports: { '#local': 'wl-local', '#scoped': '@wl/scoped', '#file': './file.js', '#builtin': 'path' } }));
+  writeFileSync(join(inner, 'file.js'), "module.exports = 'file';\n");
+  const hashCjs = mod('inner/use.cjs', "module.exports = [require('#local'), require('#scoped'), require('#file')];\n");
+  const hashMjs = mod('inner/use.mjs', "import a from '#local'; import b from '#scoped'; import c from '#file'; import { join } from '#builtin';\nexport default [a, b, c, typeof join];\n");
+  // ...and such a package.json outside the home, mapping a '#' name to a file of its own: what Node makes of it is
+  // Node's (Node 26 reads it; a Node that parses the whole file refuses it), the same with the net as without
+  mkdirSync(join(m.tmp, 'junk'));
+  writeFileSync(join(m.tmp, 'junk', 'package.json'), junk.replace('wl-nowhere', './file.js')); writeFileSync(join(m.tmp, 'junk', 'file.js'), "module.exports = 'file';\n");
+  writeFileSync(join(m.tmp, 'junk', 'use.cjs'), "module.exports = require('#x');\n"); writeFileSync(join(m.tmp, 'junk', 'use.mjs'), "export { default } from '#x';\n");
+  const junkLoads = `(async () => {
+  const out = {}, said = (e) => 'Node: ' + (e.code ?? e.name);
+  try { out.requireJunk = require(${J(join(m.tmp, 'junk', 'use.cjs'))}); } catch (e) { out.requireJunk = said(e); }
+  try { out.importJunk = (await import(${J(pathToFileURL(join(m.tmp, 'junk', 'use.mjs')).href)})).default; } catch (e) { out.importJunk = said(e); }
+  return out;
+})()`;
+  const bareJunk = JSON.parse(execFileSync(process.execPath, ['-e', `${junkLoads}.then((o) => console.log(JSON.stringify(o)));`],
+    { encoding: 'utf8', env: { WARDLATCH_TEST_NO_HOME: '', PATH: '/usr/bin:/bin' } }));
+  if (Number(process.versions.node.split('.')[0]) >= 26) assert.deepEqual(bareJunk, { requireJunk: 'file', importJunk: 'file' });
+  const clean = (env) => probe(m, `const { fileURLToPath } = require('node:url');
+(async () => report({
+  require: require(fileURLToPath(${local.cjs})),
+  import: (await import(${local.mjs})).default,
+  resolvePaths: path.relative(m.checkout, require.resolve('wl-local', { paths: [m.checkout] })),
+  requireHash: require(fileURLToPath(${hashCjs})),
+  importHash: (await import(${hashMjs})).default,
+  ...(await ${junkLoads}),
+}))();`, env);
+  for (const c of [clean(), clean({ NODE_OPTIONS: `--require ${older}` })]) {
+    assert.deepEqual(c.out, { require: ['local', 'scoped', 'local'], import: ['local', 'scoped'], resolvePaths: join('node_modules', 'wl-local', 'main.js'),
+      requireHash: ['local', 'scoped', 'file'], importHash: ['local', 'scoped', 'file', 'function'], ...bareJunk }, c.err);
+    assert.equal(c.code, 0, c.err);
+  }
+  // a '#' name from a checkout with no package.json: Node reads those above it, in the home, for one (the net reads
+  // none there); the same outside the home finds none, and Node says so
+  const bare = machine('packages-bare');
+  writeFileSync(join(bare.checkout, 'use.mjs'), "import '#x';\n"); writeFileSync(join(bare.tmp, 'use.mjs'), "import '#x';\n");
+  const b = probe(bare, `const { pathToFileURL } = require('node:url'), at = (d) => pathToFileURL(path.join(d, 'use.mjs')).href;
+(async () => report(${hooks} ? { checkout: await triedAsync(() => import(at(m.checkout))), outside: await triedAsync(() => import(at(m.tmp))) } : {}))();`);
+  assert.deepEqual(b.out, hooks ? { checkout: 'refused', outside: 'not refused: ERR_PACKAGE_IMPORT_NOT_DEFINED' } : {}, b.err);
 });
 
 test('the net goes with every Node a test starts: fork, exec, execSync, node by name, a #! script, a shell, another Node, and below the command; the child\'s own NODE_OPTIONS stay its own', () => {
@@ -353,6 +786,55 @@ report({
   assert.equal(env.code, 0, env.err);
 });
 
+test('a Node a test starts with a flag that reads a file as it starts is refused when that file is in the home: --env-file, --env-file-if-exists, --experimental-config-file, --config-file, --experimental-default-config-file, by spawn, execFile, name or fork', () => {
+  const m = machine('flags');
+  for (const [d, v] of [[m.home, 'home'], [m.tmp, 'tmp']]) { writeFileSync(join(d, '.env'), `WL_FROM_ENV=${v}\n`); writeFileSync(join(d, 'node.config.json'), '{}\n'); }
+  const show = put(m, 'show.cjs', "console.log(process.env.WL_FROM_ENV ?? 'none');\n");
+  // each flag as flag=path and as flag path (a relative path is from the child's working folder, the probe's: tmp); and
+  // node.config.json in that folder, which the config flags without '=' read too on Node 26 (the next word is the script)
+  const flags = (d) => ({
+    envFile: [`--env-file=${join(d, '.env')}`], envFileWord: ['--env-file', join(d, '.env')],
+    envFileIfExists: [`--env-file-if-exists=${join(d, '.env')}`], envFileIfExistsWord: ['--env-file-if-exists', join(d, '.env')],
+    envFileRelative: [`--env-file=${relative(m.tmp, join(d, '.env'))}`],
+    configFile: [`--experimental-config-file=${join(d, 'node.config.json')}`], configFileWord: ['--experimental-config-file', join(d, 'node.config.json')],
+    configFileStable: [`--config-file=${join(d, 'node.config.json')}`],
+  });
+  const defaults = { defaultConfig: ['--experimental-default-config-file'], configFileAlone: ['--experimental-config-file'], configFileStableAlone: ['--config-file'] };
+  const r = probe(m, `const flags = ${J(flags(m.home))}, show = ${J(show)}, out = {};
+for (const [k, f] of Object.entries(flags)) out[k] = tried(() => cp.spawnSync(process.execPath, [...f, show]));
+out.execFile = tried(() => cp.execFileSync(process.execPath, [...flags.envFile, show]));
+out.byName = tried(() => cp.spawnSync('node', [...flags.envFile, show]));
+out.fork = tried(() => cp.fork(show, [], { execArgv: flags.envFile, stdio: 'ignore' }));
+report(out);`);
+  allRefused(r, [...Object.keys(flags(m.home)), 'execFile', 'byName', 'fork']);
+  // node.config.json in the working folder: a probe working in the home
+  const d = probe(m, `const out = {};
+for (const [k, f] of Object.entries(${J(defaults)})) out[k] = tried(() => cp.spawnSync(process.execPath, [...f, ${J(show)}]));
+report(out);`, {}, m.home);
+  allRefused(d, Object.keys(defaults));
+  // the clean twin: the same flags on tmp's files give what they give without the net (a Node without one says so)
+  const said = (x) => (x.status === 0 ? x.stdout.trim() : /bad option/.test(x.stderr) ? 'no such flag' : `failed: ${x.status} ${x.stderr}`);
+  const all = { ...flags(m.tmp), ...defaults };
+  const bare = Object.fromEntries(Object.entries(all).map(([k, f]) => [k,
+    said(spawnSync(process.execPath, [...f, show], { cwd: m.tmp, encoding: 'utf8', env: { WARDLATCH_TEST_NO_HOME: '', PATH: '/usr/bin:/bin' } }))]));
+  const c = probe(m, `const all = ${J(all)}, show = ${J(show)}, out = {}, said = ${said};
+(async () => {
+  for (const [k, f] of Object.entries(all)) out[k] = said(cp.spawnSync(process.execPath, [...f, show], { encoding: 'utf8' }));
+  out.byName = said(cp.spawnSync('node', [...all.envFile, show], { encoding: 'utf8' }));
+  out.fork = await new Promise((res) => {
+    const ch = cp.fork(show, [], { execArgv: all.envFile, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    let stdout = '', stderr = '';
+    ch.stdout.on('data', (b) => { stdout += b; }); ch.stderr.on('data', (b) => { stderr += b; });
+    ch.on('exit', (status) => res(said({ status, stdout, stderr })));
+  });
+  report(out);
+})();`);
+  assert.deepEqual(c.out, { ...bare, byName: bare.envFile, fork: bare.envFile }, c.err);
+  // (from Node 20.6 the flag reads the file: the twin shows the net left it its work)
+  if (Number(process.versions.node.split('.')[0]) >= 22) assert.equal(c.out.envFile, 'tmp');
+  assert.equal(c.code, 0, c.err);
+});
+
 test('the PATH a test file starts with loses its folders in the home, however they are spelt; the checkout\'s stay', () => {
   const m = machine('path');
   symlinkSync(m.home, join(m.tmp, 'link'));
@@ -364,9 +846,12 @@ test('the PATH a test file starts with loses its folders in the home, however th
 test('under sudo, SUDO_USER\'s own home is off limits too: /Users/<name> or /home/<name>, and its home in /etc/passwd', () => {
   const m = machine('sudo');
   const theirs = join(MAC ? '/Users' : '/home', 'wardlatch-probe-user', 'x');
-  // root's line in /etc/passwd stands in for a real user's: its home is named only there (/var/root on macOS, /root)
+  // root's line in /etc/passwd stands in for a real user's: its home is named only there (/var/root on macOS, /root).
+  // That home is another account's real one: the name probed in it is longer than any file system takes (255 bytes),
+  // so it can never exist, and a net with a hole in it has the system answer ENAMETOOLONG without looking in the folder
   const rootHome = (readFileSync('/etc/passwd', 'utf8').split('\n').find((l) => l.startsWith('root:')) ?? '').split(':')[5];
-  const body = (p) => `report({ named: tried(() => fs.statSync(${J(theirs)})), passwd: ${p ? `tried(() => fs.statSync(${J(join(p, 'wardlatch-probe'))}))` : '"refused"'} });`;
+  const never = `wardlatch-probe-${'x'.repeat(300)}`;
+  const body = (p) => `report({ named: tried(() => fs.statSync(${J(theirs)})), passwd: ${p ? `tried(() => fs.statSync(${J(join(p, never))}))` : '"refused"'} });`;
   const named = probe(m, body(null), { SUDO_USER: 'wardlatch-probe-user' });
   assert.deepEqual(named.out, { named: 'refused', passwd: 'refused' }, named.err);
   if (rootHome) {
