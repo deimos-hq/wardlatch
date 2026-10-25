@@ -13,12 +13,13 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ### Fixed
 
-- Python is started with `-B` as well as `-I -S`, in the trust probe and inside containers, so it writes no `.pyc`
-  cache. Under `-I -S` alone, python.org, Homebrew, pyenv and uv Pythons may write `__pycache__` beside a standard-library
-  module whose cache is missing or stale, in a folder you own, or inside a running container whose image ships its
-  standard library without `.pyc` files. Apple's `/usr/bin/python3` was not affected: under `-I` it writes no cache
-  (checked with its Python 3.9.6 on macOS 26: a 0.1.9 run with a HOME of its own left that HOME empty). Its plain runs
-  do cache into `~/Library/Caches/com.apple.python`, which is what the test suite's own `python3` runs did (below).
+- Python is started with `-B` as well as `-I -S`, in the trust probe and inside containers, and with `-B` in
+  the version check (`python3 -B -V`), so it writes no `.pyc` cache. Under `-I -S` alone, python.org, Homebrew,
+  pyenv and uv Pythons may write `__pycache__` beside a standard-library module whose cache is missing or
+  stale, in a folder you own, or inside a running container whose image ships its standard library without
+  `.pyc` files. Apple's `/usr/bin/python3` was not affected: under `-I` it writes no cache (checked with its
+  Python 3.9.6 on macOS 26: a 0.1.9 run with a HOME of its own left that HOME empty). Its plain runs do cache
+  into `~/Library/Caches/com.apple.python`, which is what the test suite's own `python3` runs did (below).
   `PYTHONDONTWRITEBYTECODE` would not have done it: `-I` ignores every `PYTHON*` variable.
 
 ### Development
