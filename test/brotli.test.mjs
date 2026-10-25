@@ -1822,32 +1822,40 @@ test('rule 6: a program whose PT_INTERP names a loader that is not the system\'s
     assert.equal(judge(prog(interp)).status, 'SAFE', String(interp));
   }
   // the list, exactly: glibc's and musl's per-architecture names, under /lib, /lib64, /usr/lib and /usr/lib64 and the
-  // multiarch folders /lib/<triplet> and /usr/lib/<triplet> (round 11), and x32's /libx32/ld-linux-x32.so.2
+  // multiarch folders /lib/<triplet> and /usr/lib/<triplet> (round 11), and no x32 spelling (round 12: x32's own folders,
+  // /libx32 and /usr/libx32, are not among the system's folders, so an x32 program's loader is no system loader here)
   assert.ok(brotli.SYSTEM_LOADERS?.includes('/lib64/ld-linux-x86-64.so.2'));
-  assert.ok(brotli.SYSTEM_LOADERS.every((p) => p === '/libx32/ld-linux-x32.so.2' || /^\/(?:lib|lib64|usr\/lib|usr\/lib64|(?:usr\/)?lib\/[a-z0-9_]+-linux-gnu[a-z0-9]*)\/(?:ld-linux[a-z0-9_-]*\.so\.[123]|ld64\.so\.[12]|ld\.so\.1|ld-musl-[a-z0-9_]+\.so\.1)$/.test(p)), 'nothing else');
+  assert.ok(brotli.SYSTEM_LOADERS.every((p) => /^\/(?:lib|lib64|usr\/lib|usr\/lib64|(?:usr\/)?lib\/[a-z0-9_]+-linux-gnu[a-z0-9]*)\/(?:ld-linux[a-z0-9_-]*\.so\.[123]|ld64\.so\.[12]|ld\.so\.1|ld-musl-[a-z0-9_]+\.so\.1)$/.test(p)), 'nothing else');
+  assert.deepEqual(brotli.SYSTEM_LOADERS.filter((p) => p.includes('x32')), [], 'no x32 spelling');
 });
 
-test('rule 6 (round 11): PT_INTERP\'s other spellings of the system\'s loaders, /usr/lib64 and the multiarch folders, x32\'s /libx32/ld-linux-x32.so.2, and repeated slashes, are the system\'s; any other spelling stays UNKNOWN', () => {
+test('rule 6 (round 11): PT_INTERP\'s other spellings of the system\'s loaders, /usr/lib64 and the multiarch folders, and repeated slashes, are the system\'s; any other spelling, and any x32 loader (round 12), stays UNKNOWN, the reason naming exactly the folders in the list', () => {
   const d = fresh('r11-interp');
   fixedLib(join(d, 'lib', 'libbrotlidec.so.1'));
   const prog = (interp) => elf(join(d, 'bin', 'prog'), [CONTROL, MARKER], { needed: ['libbrotlidec.so.1', 'libc.so.6'], runpath: '$ORIGIN/../lib', interp });
-  // Fedora's real file, Debian's and Ubuntu's (the multiarch folder, with /lib64's a link to it), merged /usr, x32's
-  // standard loader, and a doubled slash: round 10 read each UNKNOWN (probes H6b to H6e)
+  // Fedora's real file, Debian's and Ubuntu's (the multiarch folder, with /lib64's a link to it), merged /usr, and a
+  // doubled slash: round 10 read each UNKNOWN (probes H6b to H6e)
   for (const interp of ['/usr/lib64/ld-linux-x86-64.so.2', '/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2', '/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1',
-    '/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3', '/libx32/ld-linux-x32.so.2', '/lib64//ld-linux-x86-64.so.2', '//lib64///ld-linux-x86-64.so.2']) {
+    '/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3', '/lib64//ld-linux-x86-64.so.2', '//lib64///ld-linux-x86-64.so.2']) {
     const r = judge(prog(interp));
     assert.equal(r.status, 'SAFE', `${interp}: ${r.reason}`);
   }
   // the twins: anything else is another loader's, or can't be told from one, UNKNOWN: '.' or '..' (nothing but slashes
-  // is cleaned up), a folder or a triplet not in the list, x32's loader under another folder, another loader in /libx32
+  // is cleaned up), a folder or a triplet not in the list, another loader in /libx32, a trailing slash; and every x32
+  // loader (round 12): glibc's x32 ld.so searches /libx32 and /usr/libx32 (its configure.ac's LIBC_SLIBDIR_RTLDDIR),
+  // which are not among the system's folders, so an x32 program may load an unfixed /usr/libx32 copy beside a fixed
+  // x86-64 one (the round 11 verifier's probe X1: round 11 read /libx32/ld-linux-x32.so.2 SAFE)
+  const folders = 'not one of the system\'s (glibc\'s or musl\'s, except x32\'s, under /lib, /lib64, /usr/lib or /usr/lib64, or under /lib/<triplet> or /usr/lib/<triplet> for one of 21 Debian multiarch triplets such as x86_64-linux-gnu)';
   for (const interp of ['/lib64/./ld-linux-x86-64.so.2', '/lib/x86_64-linux-gnu/../ld-linux-x86-64.so.2', '/usr/local/lib/ld-linux-x86-64.so.2',
-    '/lib/x86_64-linux-musl/ld-linux-x86-64.so.2', '/usr/libx32/ld-linux-x32.so.2', '/libx32/ld-linux-x86-64.so.2', '/lib64/ld-linux-x86-64.so.2/']) {
+    '/lib/x86_64-linux-musl/ld-linux-x86-64.so.2', '/libx32/ld-linux-x86-64.so.2', '/lib64/ld-linux-x86-64.so.2/',
+    '/libx32/ld-linux-x32.so.2', '/usr/libx32/ld-linux-x32.so.2', '/lib/ld-linux-x32.so.2', '/lib64/ld-linux-x32.so.2', '/usr/lib/ld-linux-x32.so.2',
+    '/lib/x86_64-linux-gnux32/ld-linux-x32.so.2', '/usr/lib/x86_64-linux-gnux32/ld-linux-x32.so.2', '/lib/x86_64-linux-gnux32/ld-linux-x86-64.so.2', '/lib/ld-musl-x32.so.1', '/usr/lib/ld-musl-x32.so.1']) {
     const r = judge(prog(interp));
-    assert.equal(r.status, 'UNKNOWN', interp); assert.ok(r.reason.includes(`it names its own dynamic loader, ${interp} (PT_INTERP), not one of the system's`), r.reason);
+    assert.equal(r.status, 'UNKNOWN', `${interp}: ${r.reason}`); assert.ok(r.reason.includes(`it names its own dynamic loader, ${interp} (PT_INTERP), ${folders}, and such a loader`), r.reason);
   }
 });
 
-test('rule c (round 11): the walk below a searched folder never goes into a package folder (site-packages, dist-packages, node_modules) or one named debug, and a file named *.debug (debugging information) is passed over; a folder a search path names is searched whatever its name', () => {
+test('rule c (round 11): the walk below a searched folder never goes into a package folder (site-packages, dist-packages, node_modules) or one named debug; a folder a search path names is searched whatever its name, and a file named *.debug in a folder looked in is a candidate like any other (round 12)', () => {
   const d = fresh('r11-pkgdirs');
   // Homebrew's node on an Intel Mac, as round 10's verifier laid it out: node links @rpath/libnode.147.dylib (LC_RPATH
   // @loader_path/../lib), which links Homebrew's fixed Brotli by its path; the system's folder (a stand-in for
@@ -1892,16 +1900,20 @@ test('rule c (round 11): the walk below a searched folder never goes into a pack
     assert.equal(f.status, 'SAFE', `${rel}, named and fixed: ${f.reason}`); assert.ok(f.searched.includes(bad), rel);
     rmSync(bad);
   }
-  // a file named *.debug, in a folder looked in or beside the library (Fedora's name for the debugging information of
-  // libbrotlidec.so.1.1.0, with its soname): no loader loads it for libbrotlidec.so.1, passed over. Round 10: UNKNOWN
-  const unfixed10 = ['_SUCCESS', CONTROL, '_ERROR_UNREACHABLE'];
-  for (const dbg of [join(sys, 'x86_64', 'libbrotlidec.so.1.1.0-1.1.0-4.fc40.x86_64.debug'), join(sys, 'libbrotlidec.so.1.0.9.debug')]) elf(dbg, unfixed10, { type: 3, soname: 'libbrotlidec.so.1' });
-  const g = judge(prog(), [sys]);
-  assert.equal(g.status, 'SAFE', g.reason); assert.deepEqual(g.searched, [join(d, 'bin', 'prog'), join(sys, 'libbrotlidec.so.1')]);
-  // the twin: the same file under a library's name is a candidate, UNKNOWN
-  const renamed = elf(join(sys, 'x86_64', 'libbrotlidec.so.1.1.0'), unfixed10, { type: 3, soname: 'libbrotlidec.so.1' });
-  const h = judge(prog(), [sys]);
-  assert.equal(h.status, 'UNKNOWN', h.reason); assert.equal(h.via, renamed);
+  // a file named *.debug in a folder looked in, in a subfolder or beside the library (Fedora's name for the debugging
+  // information of libbrotlidec.so.1.1.0, here a loadable library with its soname): a candidate like any other, as
+  // ldconfig caches a library by its own file name and glibc can load it (round 12; round 11 passed it over, a false
+  // SAFE: the verifier's probe C7). A folder named debug is still not walked (above). Unfixed beside the fixed one,
+  // UNKNOWN; the clean twin, fixed, SAFE, naming it
+  for (const dbg of [join(sys, 'x86_64', 'libbrotlidec.so.1.1.0-1.1.0-4.fc40.x86_64.debug'), join(sys, 'libbrotlidec.so.1.0.9.debug')]) {
+    elf(dbg, ['_SUCCESS', CONTROL, '_ERROR_UNREACHABLE'], { type: 3, soname: 'libbrotlidec.so.1' });
+    const g = judge(prog(), [sys]);
+    assert.equal(g.status, 'UNKNOWN', `${dbg}: ${g.reason}`); assert.equal(g.via, dbg);
+    elf(dbg, ['_SUCCESS', CONTROL, MARKER, '_ERROR_UNREACHABLE'], { type: 3, soname: 'libbrotlidec.so.1' });
+    const h = judge(prog(), [sys]);
+    assert.equal(h.status, 'SAFE', `${dbg}, fixed: ${h.reason}`); assert.ok(h.searched.includes(dbg), h.searched.join());
+    rmSync(dbg);
+  }
   // a link whose own name ends in .debug: the loader opens the file it names, so that file is a candidate, judged
   const e = fresh('r11-pkgdirs-debuglink'), named = elf(join(e, 'lib', 'libbrotlidec.so.1.debug'), ['_SUCCESS', CONTROL, MARKER, '_ERROR_UNREACHABLE'], { type: 3 });
   const k = judge(elf(join(e, 'bin', 'prog'), [], { needed: ['libbrotlidec.so.1.debug', 'libc.so.6'], runpath: '$ORIGIN/../lib' }));
@@ -1970,6 +1982,23 @@ test('ELF (round 11, H2a, H2f): DT_AUXILIARY and DT_FILTER are links, like DT_NE
     const r = judge(node, [sys]);
     assert.equal(r.status, 'UNKNOWN', `${id}: ${r.reason}`); assert.equal(r.via, evil, id);
     assert.deepEqual(linkTable(foo, { size: statSync(foo).size }).links, ['libc.so.6', evil], id);
+    // the clean twin: that copy fixed, SAFE, naming it
+    fixedLib(evil, { soname: 'libbrotlidec.so.1' });
+    const t = judge(node, [sys]);
+    assert.equal(t.status, 'SAFE', `${id}, the clean twin: ${t.reason}`); assert.ok(t.searched.includes(evil), t.searched.join());
+  }
+});
+
+test('ELF: a library whose only links are DT_AUXILIARY or DT_FILTER entries (no DT_NEEDED, no DT_SONAME, no search path) links what they name (mutant N3d, a false SAFE: it read such a library as linking nothing)', () => {
+  for (const [id, tag] of [['aux', 0x7ffffffd], ['filter', 0x7fffffff]]) {
+    const d = fresh(`r12-n3d-${id}`), sys = join(d, 'sys'), evil = join(d, 'evil', 'libbrotlidec.so.1'), foo = join(d, 'lib', 'libfoo.so.1');
+    fixedLib(join(sys, 'libbrotlidec.so.1')); oldLib(evil, { soname: 'libbrotlidec.so.1' });
+    // libfoo's dynamic table holds that one entry, naming the unfixed copy by its path, and nothing else that names
+    const node = nodeWith(d, { soname: undefined, needed: [], extra: [[tag, evil]] });
+    const lt = linkTable(foo, { size: statSync(foo).size });
+    assert.deepEqual([lt.links, lt.id, lt.rpath, lt.runpath], [[evil], null, null, null], id);
+    const r = judge(node, [sys]);
+    assert.equal(r.status, 'UNKNOWN', `${id}: ${r.reason}`); assert.equal(r.via, evil, id);
     // the clean twin: that copy fixed, SAFE, naming it
     fixedLib(evil, { soname: 'libbrotlidec.so.1' });
     const t = judge(node, [sys]);
@@ -2061,6 +2090,28 @@ test('every file of a Brotli library\'s name in a subfolder looked in is a candi
   fixedLib(deep, { soname: 'libbrotlidec.so.2' });
   const t = judge(prog, [sys]);
   assert.equal(t.status, 'SAFE', t.reason); assert.ok(t.searched.includes(deep), t.searched.join());
+});
+
+test('round 12, C7: an unfixed library named like a debugging-information file (libbrotlidec.so.1.0.9.debug, soname libbrotlidec.so.1) in glibc-hwcaps/x86-64-v3 is a candidate: ldconfig caches a glibc-hwcaps library by its own file name and accepts any lib*.so* name, so glibc can load it (round 11 passed it over, a false SAFE)', () => {
+  const d = fresh('r12-c7'), sys = join(d, 'sys'), deep = join(sys, 'glibc-hwcaps', 'x86-64-v3', 'libbrotlidec.so.1.0.9.debug');
+  fixedLib(join(sys, 'libbrotlidec.so.1'));
+  elf(deep, ['_SUCCESS', CONTROL, '_ERROR_UNREACHABLE'], { type: 3, soname: 'libbrotlidec.so.1' });
+  const prog = elf(join(d, 'bin', 'prog'), [], { needed: ['libbrotlidec.so.1', 'libc.so.6'] });
+  const r = judge(prog, [sys]);
+  assert.equal(r.status, 'UNKNOWN', r.reason); assert.equal(r.via, deep);
+  // the clean twin: that library fixed, SAFE, naming it
+  elf(deep, ['_SUCCESS', CONTROL, MARKER, '_ERROR_UNREACHABLE'], { type: 3, soname: 'libbrotlidec.so.1' });
+  const t = judge(prog, [sys]);
+  assert.equal(t.status, 'SAFE', t.reason); assert.ok(t.searched.includes(deep), t.searched.join());
+});
+
+test('docs (round 12): the /etc/ld.so.preload sentence says exactly what holds: with no \'#\' and no NUL in the file, the words are every name glibc may load, and more; with a \'#\' or a NUL, every link is UNKNOWN (glibc may then load a fragment that is no word)', () => {
+  for (const f of ['README.md', 'CHANGELOG.md', 'ASSURANCE_CASE.md', join('docs', 'ARCHITECTURE.md')]) {
+    const text = readFileSync(join(ROOT, f), 'utf8').replace(/\s+/g, ' ');
+    assert.ok(/with no `#` and no NUL in the file, the words are every name glibc may load, and more; with a `#` or a NUL, every link (?:is "could not be tested"|is UNKNOWN)/.test(text), `${f}: the sentence with its condition`);
+    // round 11's sentence said it of every file
+    assert.ok(!/(?:so this reads|read this way, the words are|so) every name glibc(?:'s own reading)? may load/.test(text), `${f}: round 11's sentence`);
+  }
 });
 
 test('rule 1: a libnode reached by two paths is judged from every folder it was reached by: its $ORIGIN copy found only through the second path decides (mutant R1b, a more cautious one, which reads it not found)', () => {

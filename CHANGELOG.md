@@ -89,9 +89,9 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     `libnode_*`), compared ignoring case on macOS, is a candidate, and so is the name itself when it is an absolute
     path, or an `@` or `$ORIGIN` path (probes G2, G2b: ldconfig caches a `glibc-hwcaps` subfolder's
     `libbrotlidec.so.1.2.0` by its own file, under its soname); only a file no loader can load is passed over, a static
-    archive (`!<arch>`), plain text (a linker script, a `pkg-config` or libtool file) or a separate
-    debugging-information file (found by a name ending in `.debug`, unless the link's own does), and any other file
-    that can't be read as Mach-O or ELF is "could not be tested", so Debian's `libbrotli-dev` layout
+    archive (`!<arch>`) or plain text (a linker script, a `pkg-config` or libtool file), never a file for its name
+    alone (one whose name ends in `.debug` is a candidate like any other), and any other file that can't be read as
+    Mach-O or ELF is "could not be tested", so Debian's `libbrotli-dev` layout
     (`libbrotlidec.so` → `.so.1` → `.so.1.0.9`, `libbrotlidec.a`, `pkgconfig/libbrotlidec.pc`) and Homebrew's
     (`libbrotlidec.dylib` → `.1.dylib` → `.1.2.1.dylib`) read as the one file each installs; and a wider name never
     stands in for the link: a
@@ -103,41 +103,48 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     link followed, so a folder whose file system ignores case (ext4 with casefold, vfat, exFAT, WSL's `/mnt/c`) gives
     its copy under another case, and a library found so is followed too (probe G6; round 9 compared names by case off
     macOS); (6) the loader's inputs that are not variables: every word in `/etc/ld.so.preload` (split on spaces, tabs,
-    line feeds and `:` as glibc's `elf/rtld.c` splits it, with no comment taken out: glibc's own loop for its comments
-    can leave a later comment's words in, so this reads every name glibc may load, and more) is a library that joins
-    the closure, looked for as the program's own links, and its Brotli links count under (2), while a preload file that
-    can't be read, a word in it with a `#` or a NUL in it, or a name in it that can't be followed, makes every link
-    "could not be tested"; and a program whose `PT_INTERP` is not one of the system's loaders, glibc's or musl's
-    per-architecture names under `/lib`, `/lib64`, `/usr/lib` and `/usr/lib64` and the multiarch folders
-    `/lib/<triplet>` and `/usr/lib/<triplet>` (Debian's tuples), compared with repeated slashes read as one and nothing
-    else cleaned up (`ld-linux-x86-64.so.2`, `ld-linux-x32.so.2`, `ld-linux.so.2`, `ld-linux-aarch64.so.1`,
+    line feeds and `:` as glibc's `elf/rtld.c` splits it, with no comment taken out, as glibc's own loop for its
+    comments can leave a later comment's words in, or parts of them: with no `#` and no NUL in the file, the words are
+    every name glibc may load, and more; with a `#` or a NUL, every link is "could not be tested") is a library that
+    joins the closure, looked for as the program's own links, and its Brotli links count under (2), while a preload
+    file that can't be read, a word in it with a `#` or a NUL in it, or a name in it that can't be followed, makes
+    every link "could not be tested"; and a program whose `PT_INTERP` is not one of the system's loaders, glibc's or
+    musl's per-architecture names under `/lib`, `/lib64`, `/usr/lib` and `/usr/lib64` and the multiarch folders
+    `/lib/<triplet>` and `/usr/lib/<triplet>` (21 of Debian's tuples, x32's not among them), compared with repeated
+    slashes read as one and nothing else cleaned up (`ld-linux-x86-64.so.2`, `ld-linux.so.2`, `ld-linux-aarch64.so.1`,
     `ld-linux-aarch64_be.so.1`, `ld-linux-armhf.so.3`, `ld-linux.so.3`, `ld64.so.1`, `ld64.so.2`, `ld.so.1`, the riscv32
-    and riscv64, loongarch64, ia64 and MIPS NaN2008 names, and musl's `ld-musl-<arch>.so.1` for `x86_64`, `i386`, `x32`,
+    and riscv64, loongarch64, ia64 and MIPS NaN2008 names, and musl's `ld-musl-<arch>.so.1` for `x86_64`, `i386`,
     `aarch64`, `aarch64_be`, `arm`, `armhf`, `armeb`, `armebhf`, `riscv32`, `riscv64`, `powerpc`, `powerpc64`,
-    `powerpc64le`, `s390x`, the MIPS names, `loongarch64`, `m68k`, `microblaze`, `microblazeel`, `or1k` and `sh`; and
-    x32's `/libx32/ld-linux-x32.so.2`: `SYSTEM_LOADERS`), or whose `PT_INTERP` can't be read, is "could not be tested",
-    since another loader (Homebrew's on Linux, Nix's, Guix's, a vendored glibc) searches its own folders. The cost: on
-    a machine that also holds an unfixed copy in a system folder (an old 32-bit copy, say), a program with a fixed
-    private copy is "could not be tested", and that system copy's own
-    row is EXPOSED; a program whose closure reaches both a fixed and an unfixed copy is "could not be tested", even
-    where one library certainly loads the unfixed one; a second libnode version installed beside the one a node links is
-    a candidate too; an empty element in a search path (`a::b`, `a:`, or a whole empty `DT_RUNPATH` or `DT_RPATH`) is
-    read as a folder named by a relative path, "could not be tested", because glibc 2.36 keeps an empty element beside
-    others as the folder the program is started in (`fillin_rpath`), though it ignores a search path that is empty as a
-    whole (`decompose_rpath`) and musl skips every empty element; an `/etc/ld.so.preload` with a `#` in it (a comment)
-    makes every link "could not be tested"; so does a `PT_INTERP` spelled any other way
-    (`/lib64/./ld-linux-x86-64.so.2`); and so do more than 65,536 folders to look in, or 4,096 libraries to follow,
-    for one file (not measured on a large Linux `/usr/lib` or `/usr/local/lib`, where package folders are not walked
-    either; on the Mac this was checked on, `/usr/local/lib` and `/usr/lib` are 184 folders). Round 11 (decision #25
-    standing, the owner's safe-side rules after round 10's verifier): package folders and `debug` folders are no longer
-    walked, and a `*.debug` file is no candidate, so Pillow's unfixed copy under an Intel Mac's
+    `powerpc64le`, `s390x`, the MIPS names, `loongarch64`, `m68k`, `microblaze`, `microblazeel`, `or1k` and `sh`; no x32
+    loader, by any name or in any folder, as x32's own folders, `/libx32` and `/usr/libx32`, are not looked in:
+    `SYSTEM_LOADERS`), or whose `PT_INTERP` can't be read, is "could not be tested", since another loader (Homebrew's
+    on Linux, Nix's, Guix's, a vendored glibc) searches its own folders. The cost: on a machine that also holds an
+    unfixed copy in a system folder (an old 32-bit copy, say), a program with a fixed private copy is "could not be
+    tested", and that system copy's own row is EXPOSED; a program whose closure reaches both a fixed and an unfixed
+    copy is "could not be tested", even where one library certainly loads the unfixed one; a second libnode version
+    installed beside the one a node links is a candidate too; an empty element in a search path (`a::b`, `a:`, or a
+    whole empty `DT_RUNPATH` or `DT_RPATH`) is read as a folder named by a relative path, "could not be tested",
+    because glibc 2.36 keeps an empty element beside others as the folder the program is started in (`fillin_rpath`),
+    though it ignores a search path that is empty as a whole (`decompose_rpath`) and musl skips every empty element; an
+    `/etc/ld.so.preload` with a `#` (a comment) or a NUL in it makes every link "could not be tested"; so does a
+    `PT_INTERP` spelled any other way (`/lib64/./ld-linux-x86-64.so.2`), and any x32 program's; and so do more than
+    65,536 folders to look in, or 4,096 libraries to follow, for one file (not measured on a large Linux `/usr/lib` or
+    `/usr/local/lib`, where package folders are not walked either; on the Mac this was checked on, `/usr/local/lib` and
+    `/usr/lib` are 184 folders).
+    Round 11 (decision #25 standing, the owner's safe-side rules after round 10's verifier): package folders and
+    `debug` folders are no longer walked, so Pillow's unfixed copy under an Intel Mac's
     `/usr/local/lib/python3.13/site-packages/PIL/.dylibs` no longer makes Homebrew's node "could not be tested"
     (Pillow's own row reads it EXPOSED), nor Fedora's `/usr/lib/debug/usr/lib64/libbrotlidec.so.1.1.0-….debug` every
     Brotli link; `/etc/ld.so.preload` is read with no comment taken out (probe H1: glibc's comment loop may leave a
     second comment's path in, and preload it); `DT_AUXILIARY` and `DT_FILTER` are links (H2a, H2f); a library on the
     way whose own Brotli link can't be followed leaves the closure incomplete (H4); every followed library's name is
-    opened in each folder (H3); and the `PT_INTERP` list takes `/usr/lib64`, the multiarch folders, x32's loader and
-    repeated slashes. Each path is handed to the operating system as written (`realpath(3)`), so `..` after a link goes
+    opened in each folder (H3); and the `PT_INTERP` list takes `/usr/lib64`, the multiarch folders and repeated
+    slashes. Round 12 (the owner's safe-side fixes after round 11's verifier): no x32 loader is in the `PT_INTERP` list
+    any more, by any name or in any folder, so an x32 program, which may load an unfixed copy from `/libx32` or
+    `/usr/libx32`, folders not looked in, is "could not be tested" (probe X1 read SAFE in round 11); and a file is
+    never passed over for its name, so an unfixed library named `libbrotlidec.so.1.0.9.debug` in
+    `glibc-hwcaps/x86-64-v3`, which ldconfig caches by its own file name, is a candidate (probe C7 read SAFE in round
+    11). Each path is handed to the operating system as written (`realpath(3)`), so `..` after a link goes
     where the kernel goes (Node's own `realpathSync` cleans it up as text first). An ELF file contradicts itself and is
     "could not be tested" when its dynamic table at `PT_DYNAMIC`'s `p_offset` isn't the one the loader reads at its
     `p_vaddr`, and when its dynamic table or string table (`DT_STRTAB`) is at an address in the page-rounded range of
