@@ -38,6 +38,10 @@ A review of all the code by kind of bug, not by diff:
 - **Nothing found is run:** no program, script or config found on the machine is executed.
 - **Every advisory, again:** one line per advisory in CHANGELOG.md (`GHSA-xxxx-xxxx-xxxx: ...`) saying how its kind of
   mistake was looked for in all the code, and what was found. The gate checks every advisory is named.
+- **The corpus gate:** the last line of `node scripts/corpus/run.mjs <corpus> <last-release>/bin/wardlatch.mjs
+  bin/wardlatch.mjs --gate`, run as root with real owners for the service and other-person folders
+  ([docs/RELEASING.md](../RELEASING.md), step 5), quoted as it printed it: `GATE PASSED for B ...`. The gate checks
+  the line is there and that no `GATE FAILED` is.
 
 ## INDEPENDENT-REVIEW.md
 

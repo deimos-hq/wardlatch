@@ -28,12 +28,12 @@ before(() => { base = mkdtempSync(join(realpathSync(tmpdir()), 'wardlatch-corpus
 after(() => rmSync(base, { recursive: true, force: true }));
 
 const bin = (() => { let b; return () => { if (!b) { b = join(base, 'wl', 'bin', 'wardlatch.mjs'); mkdirSync(dirname(b), { recursive: true }); writeFileSync(b, FAKE); writeFileSync(join(base, 'wl', 'package.json'), '{"version":"fake"}'); } return b; }; })();
-// layouts: [name, class, catchBy, FAKE]
+// layouts: [name, class, catchBy, FAKE, expect (what a bad layout's incident must find: EXPOSED or REVIEW)]
 const corpus = (layouts) => {
   const dir = join(base, `c${++n}`); mkdirSync(dir);
-  for (const [name, cls, catchBy, fake] of layouts) {
+  for (const [name, cls, catchBy, fake, expect] of layouts) {
     const home = join(dir, name, 'home'); mkdirSync(home, { recursive: true });
-    writeFileSync(join(dir, name, 'manifest.json'), JSON.stringify({ name, group: 't', class: cls, catchBy, HOME: home, paths: [], env: { FAKE: fake } }));
+    writeFileSync(join(dir, name, 'manifest.json'), JSON.stringify({ name, group: 't', class: cls, catchBy, expect, HOME: home, paths: [], env: { FAKE: fake } }));
   }
   writeFileSync(join(dir, 'corpus.json'), JSON.stringify({ layouts: layouts.map(([name]) => name) }));
   return dir;
@@ -44,19 +44,21 @@ const run = (dir, ...extra) => {
 };
 const KEYS = 'committed-keys-2026-10', WP = 'wordpress-plugins-2026-10';
 const CLEAN = ['laptop', 'clean', [], 'clean'];
-const BAD_EXPOSED = ['old-plugin', 'bad', [WP], `exposed:${WP}`];
-const BAD_REVIEW = ['committed-key', 'bad', [KEYS], `review:${KEYS}`];
+const BAD_EXPOSED = ['old-plugin', 'bad', [WP], `exposed:${WP}`, 'EXPOSED'];
+const BAD_REVIEW = ['committed-key', 'bad', [KEYS], `review:${KEYS}`, 'REVIEW'];
 
 test('--gate: every clean layout exits 0, every bad layout is caught with the exit code its finding gives: passes', () => {
   const r = run(corpus([CLEAN, BAD_EXPOSED, BAD_REVIEW]), '--gate');
   assert.equal(r.code, 0, r.out);
-  assert.match(r.out, /GATE PASSED for B fake: every clean layout exits 0 \(1\) and every bad layout is caught, with the exit code it should have \(2\)/);
+  assert.match(r.out, /GATE PASSED for B fake: every clean layout exits 0 \(1\) and every bad layout is caught as it should be \(EXPOSED where it must be\), with the exit code it should have \(2\)/);
 });
 
-test('--gate: a bad layout not caught, an EXPOSED that exits 0, or a clean layout that doesn\'t exit 0 fails (exit 1)', () => {
+test('--gate: a bad layout not caught, one that must read EXPOSED reading REVIEW only, an EXPOSED that exits 0, or a clean layout that doesn\'t exit 0 fails (exit 1)', () => {
   for (const [layouts, why] of [
-    [[CLEAN, ['old-plugin', 'bad', [WP], `missed:${WP}`]], /1 bad not caught/],
-    [[CLEAN, ['old-plugin', 'bad', [WP], `exposed-exit-0:${WP}`]], /1 bad with the wrong exit code/],
+    [[CLEAN, ['old-plugin', 'bad', [WP], `missed:${WP}`, 'EXPOSED']], /1 bad not caught/],
+    [[CLEAN, ['old-plugin', 'bad', [WP], `exposed-exit-0:${WP}`, 'EXPOSED']], /1 bad with the wrong exit code/],
+    // a bad layout that must read EXPOSED reading REVIEW only: still a finding, but a weaker one than it should be
+    [[CLEAN, ['old-plugin', 'bad', [WP], `review:${WP}`, 'EXPOSED']], /1 bad finding less than it should/],
     [[['laptop', 'clean', [], `exit-1:${KEYS}`], BAD_EXPOSED], /1 clean not exiting 0/],
   ]) {
     const r = run(corpus(layouts), '--gate');
@@ -64,11 +66,13 @@ test('--gate: a bad layout not caught, an EXPOSED that exits 0, or a clean layou
   }
 });
 
-test('--gate never passes having checked nothing: no clean layout, no bad layout, or a bad layout no incident here checks (exit 2)', () => {
+test('--gate never passes having checked nothing: no clean layout, no bad layout, a bad layout no incident here checks, or one that doesn\'t say what it must find (exit 2)', () => {
   for (const [layouts, why] of [
     [[CLEAN], /--gate needs at least one clean layout and one bad layout \(here 1 clean, 0 bad\)/],
     [[BAD_EXPOSED], /--gate needs at least one clean layout and one bad layout \(here 0 clean, 1 bad\)/],
-    [[CLEAN, ['tls-only', 'bad', ['emudhra-2026-10'], 'clean']], /a bad layout must name in catchBy an incident run here[^\n]*tls-only/],
+    [[CLEAN, ['tls-only', 'bad', ['emudhra-2026-10'], 'clean', 'EXPOSED']], /a bad layout must name in catchBy an incident run here[^\n]*tls-only/],
+    [[CLEAN, ['old-plugin', 'bad', [WP], `exposed:${WP}`]], /every bad layout says what its incident must find[^\n]*old-plugin/],
+    [[CLEAN, ['old-plugin', 'bad', [WP], `exposed:${WP}`, 'SAFE']], /every bad layout says what its incident must find[^\n]*old-plugin/],
     [[CLEAN, ['odd', 'maybe', [], 'clean']], /every layout's class is clean or bad \(not: odd\)/],
   ]) {
     const r = run(corpus(layouts), '--gate');

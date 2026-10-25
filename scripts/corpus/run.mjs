@@ -11,11 +11,12 @@
 // Each run gets --json --no-containers --incident <id>, the layout's --paths, and an environment of only the layout's
 // HOME, PATH=/usr/bin:/bin and the layout's own variables; it starts in the layout's HOME.
 // --gate: exit 1 only when B, the candidate, misses its layouts' own expectations: a clean layout × incident that doesn't
-// exit 0 with its JSON, a bad layout its incident (catchBy) doesn't catch (no EXPOSED or REVIEW row), a bad layout with
-// the wrong exit code for what it found (1 with an EXPOSED row; 0 or 2 with REVIEW rows only, which don't change the exit
-// code: README, "exit code"), or a run that timed out. Differences from A are listed for review but don't fail. A gate
-// needs something to check: it stops (exit 2) unless the corpus has at least one clean layout and one bad layout, and
-// every bad layout names an incident this script runs. Without --gate, any difference exits 1, as before.
+// exit 0 with its JSON, a bad layout its incident (catchBy) doesn't catch (no EXPOSED or REVIEW row), a bad layout that
+// must read EXPOSED ("expect" in its manifest) reading REVIEW only, a bad layout with the wrong exit code for what it
+// found (1 with an EXPOSED row; 0 or 2 with REVIEW rows only, which don't change the exit code: README, "exit code"), or
+// a run that timed out. Differences from A are listed for review but don't fail. A gate needs something to check: it
+// stops (exit 2) unless the corpus has at least one clean layout and one bad layout, every bad layout names an incident
+// this script runs, and says what it must find ("expect": EXPOSED or REVIEW). Without --gate, any difference exits 1.
 // Either way an --only name that is not in the corpus, no layout to run at all, or a --jobs or --timeout that isn't a
 // whole number of at least 1 (or has no value) stops it (exit 2); and the gate stops (exit 2) rather than pass unless
 // every layout × incident ran.
@@ -76,6 +77,8 @@ if (GATE) {
   if (odd.length) stop(`--gate: every layout's class is clean or bad (not: ${odd.join(', ')})`);
   if (!clean.length || !bad.length) stop(`--gate needs at least one clean layout and one bad layout (here ${clean.length} clean, ${bad.length} bad): it would check nothing`);
   if (unchecked.length) stop(`--gate: a bad layout must name in catchBy an incident run here (${INCIDENTS.join(', ')}), or nothing checks it: ${unchecked.join(', ')}`);
+  const unstated = bad.filter((L) => !['EXPOSED', 'REVIEW'].includes(L.expect)).map((L) => L.name);
+  if (unstated.length) stop(`--gate: every bad layout says what its incident must find ("expect": "EXPOSED" or "REVIEW"), or a weaker finding would pass: ${unstated.join(', ')}`);
 }
 
 /** One run of one version on one layout for one incident. */
@@ -123,7 +126,7 @@ async function worker() {
     const { L, inc } = tasks[next++];
     const A = await runOne(binA, L, inc);
     const B = await runOne(binB, L, inc);
-    results.push({ layout: L.name, group: L.group, class: L.class, catchBy: L.catchBy, incident: inc, A, B });
+    results.push({ layout: L.name, group: L.group, class: L.class, catchBy: L.catchBy, expect: L.expect, incident: inc, A, B });
     doneCount++;
     if (process.stderr.isTTY) process.stderr.write(`\r${doneCount}/${tasks.length} pairs`);
   }
@@ -178,20 +181,22 @@ md.push('');
 // the release criterion, per version: clean layouts exit 0; each bad layout's incident finds something (EXPOSED or REVIEW)
 md.push('## Against the layouts\' own expectations');
 md.push('');
-md.push('| version | clean layout × incident not exiting 0 | bad layouts not caught by their incident | bad layouts with the wrong exit code |');
-md.push('|---|---|---|---|');
+md.push('| version | clean layout × incident not exiting 0 | bad layouts not caught by their incident | bad layouts finding less than they should | bad layouts with the wrong exit code |');
+md.push('|---|---|---|---|---|');
 const expectations = {};
 for (const v of ['A', 'B']) {
   const notZero = results.filter((r) => r.class === 'clean' && (r[v].exit !== 0 || r[v].parseError)).map((r) => `${r.layout}/${r.incident} (${r[v].parseError ? 'no JSON' : r[v].exit})`);
   const caughtBy = results.filter((r) => r.class === 'bad' && (r.catchBy ?? []).includes(r.incident));
   const found = (r) => (r[v].counts.EXPOSED ?? 0) + (r[v].counts.REVIEW ?? 0);
   const missed = caughtBy.filter((r) => !found(r)).map((r) => `${r.layout}/${r.incident}`);
+  // a layout that must read EXPOSED reading REVIEW only: a weaker finding, and an exit code that no longer fails
+  const weaker = caughtBy.filter((r) => found(r) && r.expect === 'EXPOSED' && !(r[v].counts.EXPOSED ?? 0)).map((r) => `${r.layout}/${r.incident} (REVIEW only, expected EXPOSED)`);
   // exit 1 when anything is EXPOSED; REVIEW rows don't change the exit code, so a REVIEW-only catch exits 0 or 2
   const wrongExit = caughtBy.filter((r) => found(r) && !((r[v].counts.EXPOSED ?? 0) ? [1] : [0, 2]).includes(r[v].exit))
     .map((r) => `${r.layout}/${r.incident} (${r[v].exit}${r[v].counts.EXPOSED ? ', EXPOSED' : ', REVIEW only'})`);
-  expectations[v] = { notZero, missed, wrongExit };
+  expectations[v] = { notZero, missed, weaker, wrongExit };
   const list = (l) => (l.length ? esc(l.join(', ')) : 'none');
-  md.push(`| ${v} ${VERSIONS[v].version} | ${list(notZero)} | ${list(missed)} | ${list(wrongExit)} |`);
+  md.push(`| ${v} ${VERSIONS[v].version} | ${list(notZero)} | ${list(missed)} | ${list(weaker)} | ${list(wrongExit)} |`);
 }
 md.push('');
 md.push('## Time');
@@ -218,11 +223,11 @@ if (GATE) {
     console.log(`\nGATE STOPPED: ${results.length} of the ${want} layout × incident pairs ran; a gate that didn't run them all checked nothing.`);
     process.exit(2);
   }
-  const { notZero, missed, wrongExit } = expectations.B;
-  const failed = notZero.length + missed.length + wrongExit.length + timeouts('B');
+  const { notZero, missed, weaker, wrongExit } = expectations.B;
+  const failed = notZero.length + missed.length + weaker.length + wrongExit.length + timeouts('B');
   const ran = (c) => new Set(results.filter((r) => r.class === c).map((r) => r.layout)).size;
-  console.log(failed ? `\nGATE FAILED for B ${VERSIONS.B.version}: ${notZero.length} clean not exiting 0, ${missed.length} bad not caught, ${wrongExit.length} bad with the wrong exit code, ${timeouts('B')} timed out.`
-    : `\nGATE PASSED for B ${VERSIONS.B.version}: every clean layout exits 0 (${ran('clean')}) and every bad layout is caught, with the exit code it should have (${ran('bad')}); ${diffs.length} difference(s) from A listed above for review.`);
+  console.log(failed ? `\nGATE FAILED for B ${VERSIONS.B.version}: ${notZero.length} clean not exiting 0, ${missed.length} bad not caught, ${weaker.length} bad finding less than it should, ${wrongExit.length} bad with the wrong exit code, ${timeouts('B')} timed out.`
+    : `\nGATE PASSED for B ${VERSIONS.B.version}: every clean layout exits 0 (${ran('clean')}) and every bad layout is caught as it should be (EXPOSED where it must be), with the exit code it should have (${ran('bad')}); ${diffs.length} difference(s) from A listed above for review.`);
   process.exitCode = failed ? 1 : 0;
 } else {
   process.exitCode = diffs.length ? 1 : 0;

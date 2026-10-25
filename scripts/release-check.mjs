@@ -16,7 +16,8 @@
 //      read with Unicode's look-alike forms folded (NFKC) and invisible characters removed. And nothing that runs
 //      (bin/, lib/, fix/, test/, scripts/, .github/, and package.json apart from its version) changed after that
 //      commit, counting a rename as a deletion and an addition: the reviews are of the code being released;
-//   3. the class audit names every advisory in CHANGELOG.md, so each past advisory's kind of mistake was looked for again;
+//   3. the class audit names every advisory in CHANGELOG.md, so each past advisory's kind of mistake was looked for again,
+//      and quotes the GATE PASSED line of the corpus gate run as root (and no GATE FAILED);
 //   4. the working tree is clean, on main, at origin/main; with --ci (a tag's checkout), the tagged commit is on
 //      origin/main;
 //   5. every check GitHub ran on this commit passed, every page of them, including the critical-mutant gate and the
@@ -128,6 +129,16 @@ const missing = ghsas.filter((g) => !auditLower.includes(g)).map((g) => ghsaName
 if (!ghsas.length) fail('CHANGELOG.md names no advisory: the pattern no longer matches it');
 else if (missing.length) fail(`the class audit doesn't name ${missing.length} of the ${ghsas.length} advisories: ${missing.join(', ')}`);
 else ok(`the class audit names all ${ghsas.length} advisories in CHANGELOG.md`);
+
+// 3b. the corpus gate, run as root with real owners before the release (docs/RELEASING.md, step 5): the class audit
+// quotes its GATE PASSED line, and no GATE FAILED. A quoted line, not a proof; it makes the step one that can't be skipped
+// unsaid.
+{
+  const said = normal(audit).split('\n').map(bare);
+  if (said.some((l) => /^GATE FAILED\b/.test(l))) fail('the class audit quotes a GATE FAILED from the corpus gate: fix what it found, run it again');
+  else if (!said.some((l) => /^GATE PASSED for B \S+: /.test(l))) fail('the class audit doesn\'t quote the corpus gate\'s GATE PASSED line (scripts/corpus/run.mjs ... --gate, run as root: docs/RELEASING.md, step 5)');
+  else ok('the class audit quotes the corpus gate\'s GATE PASSED');
+}
 
 // 4. the machine this is released from; in the release workflow, that the tagged commit is on main (check runs from a
 // pull request are attached to its head commit though they tested a merge commit: a commit never merged was never

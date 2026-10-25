@@ -70,12 +70,13 @@ const lock = (p, mode, layout) => { locks.push({ p, mode }); layout.locked.push(
 
 const layouts = [];
 /** A layout: <OUT>/<name>/ with home/ (its HOME) and whatever else it builds. */
-function layout(name, { group, cls, catchBy = [], paths = (L) => [], env = {}, notes = '' }, build) {
+// expect: what a bad layout's incident must find, EXPOSED or REVIEW (run.mjs --gate fails a weaker finding)
+function layout(name, { group, cls, catchBy = [], expect, paths = (L) => [], env = {}, notes = '' }, build) {
   const root = mk(join(OUT, name));
   const L = { name, root, home: mk(join(root, 'home')), tmp: mk(join(root, 'tmp')), locked: [] };
   build(L);
   layouts.push({
-    name, group, class: cls, catchBy, HOME: L.home, paths: paths(L),
+    name, group, class: cls, catchBy, ...(expect ? { expect } : {}), HOME: L.home, paths: paths(L),
     // TMPDIR: the layout's own temp folder, so the LiteLLM marker check reads it rather than this machine's
     env: { TMPDIR: L.tmp, ...(typeof env === 'function' ? env(L) : env) },
     locked: L.locked, notes,
@@ -186,7 +187,8 @@ for (const mode of [0o700, 0o000]) {
 
 for (const withOutdated of [false, true]) {
   layout(withOutdated ? 'server-www' : 'server-www-clean', {
-    group: 'server', cls: withOutdated ? 'bad' : 'clean', catchBy: withOutdated ? ['wordpress-plugins-2026-10'] : [],
+    // UpdraftPlus 1.26.12 is older than its fix (1.26.13): EXPOSED
+    group: 'server', cls: withOutdated ? 'bad' : 'clean', catchBy: withOutdated ? ['wordpress-plugins-2026-10'] : [], expect: withOutdated ? 'EXPOSED' : undefined,
     paths: (L) => [join(L.root, 'var', 'www')],
     notes: withOutdated ? 'var/www with a clean site (UpdraftPlus 1.26.13) and an outdated one (1.26.12); .ssh at 700'
       : 'var/www with a clean site (UpdraftPlus 1.26.13); .ssh at 700',
@@ -392,7 +394,7 @@ layout('ci-git-dir', {
 // ---- bad layouts: each must still be caught -------------------------------------------------------------------------
 
 layout('bad-committed-aws-key', {
-  group: 'bad', cls: 'bad', catchBy: ['committed-keys-2026-10'], paths: (L) => [join(L.home, 'Development')],
+  group: 'bad', cls: 'bad', catchBy: ['committed-keys-2026-10'], expect: 'REVIEW', paths: (L) => [join(L.home, 'Development')],
   notes: 'an AWS-format access key id committed in config/aws.js',
 }, (L) => {
   laptopHome(L);
@@ -403,7 +405,7 @@ layout('bad-committed-aws-key', {
 });
 
 layout('bad-key-in-large-file', {
-  group: 'bad', cls: 'bad', catchBy: ['committed-keys-2026-10'], paths: (L) => [join(L.home, 'Development')],
+  group: 'bad', cls: 'bad', catchBy: ['committed-keys-2026-10'], expect: 'REVIEW', paths: (L) => [join(L.home, 'Development')],
   notes: 'an AWS-format key near the end of a 1.5 MB tracked text file',
 }, (L) => {
   laptopHome(L);
@@ -415,7 +417,7 @@ layout('bad-key-in-large-file', {
 });
 
 layout('bad-new-workflow', {
-  group: 'bad', cls: 'bad', catchBy: ['github-actions-2026-10'], paths: (L) => [join(L.home, 'Development')],
+  group: 'bad', cls: 'bad', catchBy: ['github-actions-2026-10'], expect: 'REVIEW', paths: (L) => [join(L.home, 'Development')],
   notes: '.github/workflows/new.yml added in a commit dated 2026-09-15, after the incident\'s 2026-09-01',
 }, (L) => {
   laptopHome(L);

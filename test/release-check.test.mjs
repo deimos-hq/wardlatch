@@ -26,6 +26,8 @@ const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, env: ENV, encoding
 const changelog = (version, { unreleased = '', date = ' - 2026-11-02' } = {}) =>
   `# Changelog\n\n## [Unreleased]\n${unreleased}\n## [${version}]${date}\n\n- ${A} and ${B}.\n\n## [0.1.9] - 2026-10-23\n`;
 const review = (sha, verdict = 'READY') => `# Review\n\nCommit: ${sha}\nVerdict: ${verdict}\n`;
+// the corpus gate's last line (scripts/corpus/run.mjs --gate, run as root before a release), quoted in the class audit
+const CORPUS = 'GATE PASSED for B 0.2.0: every clean layout exits 0 (13) and every bad layout is caught as it should be.';
 
 // a repository at the given version with the release commit reviewed, after the last release (a commit tagged v0.1.9
 // holding the files in `last`, unless tag is false); `files` go into the release commit; returns its folder
@@ -43,7 +45,7 @@ const repo = ({ version = '0.2.0', log, audit, skip = [], last = {}, files = {},
   for (const [p, t] of Object.entries(files)) put(dir, p, t);
   git(dir, 'add', '-A'); git(dir, 'commit', '-q', '-m', 'release');
   const sha = git(dir, 'rev-parse', 'HEAD');
-  if (!skip.includes('class')) put(dir, `docs/reviews/${version}/CLASS-AUDIT.md`, audit ?? `${review(sha)}\n${A}: looked again.\n${B}: looked again.\n`);
+  if (!skip.includes('class')) put(dir, `docs/reviews/${version}/CLASS-AUDIT.md`, audit ?? `${review(sha)}\n${A}: looked again.\n${B}: looked again.\n\n${CORPUS}\n`);
   if (!skip.includes('independent')) put(dir, `docs/reviews/${version}/INDEPENDENT-REVIEW.md`, review(sha));
   git(dir, 'add', '-A'); git(dir, 'commit', '-q', '--allow-empty', '-m', 'reviews');
   return dir;
@@ -149,6 +151,20 @@ test('a class audit that leaves out one advisory: refused, naming it', () => {
   assert.match(r.out, new RegExp(`doesn't name 1 of the 2 advisories: ${B}`));
 });
 
+test('the class audit quotes the corpus gate\'s GATE PASSED (docs/RELEASING.md, step 5): missing, or a GATE FAILED beside it, is refused', () => {
+  for (const [extra, why] of [['', /the class audit doesn't quote the corpus gate's GATE PASSED/],
+    [`${CORPUS}\nGATE FAILED for B 0.2.0: 0 clean not exiting 0, 1 bad not caught`, /the class audit quotes a GATE FAILED/]]) {
+    const dir = repo();
+    put(dir, 'docs/reviews/0.2.0/CLASS-AUDIT.md', `${review(git(dir, 'rev-parse', 'HEAD~1'))}\n${A} ${B}\n${extra}\n`);
+    const r = gate(dir);
+    assert.equal(r.code, 1, r.out); assert.match(r.out, why); assert.doesNotMatch(r.out, /READY to tag/);
+  }
+  // quoted in a code block or a quote, it counts
+  const dir = repo();
+  put(dir, 'docs/reviews/0.2.0/CLASS-AUDIT.md', `${review(git(dir, 'rev-parse', 'HEAD~1'))}\n${A} ${B}\n\n\`\`\`\n${CORPUS}\n\`\`\`\n`);
+  assert.equal(gate(dir).code, 0);
+});
+
 test('the changelog: lines left under Unreleased, a missing date, or a top section for another version: refused', () => {
   for (const [log, why] of [
     [changelog('0.2.0', { unreleased: '\n- something\n' }), /Unreleased" is not empty/],
@@ -203,7 +219,7 @@ test('package.json is code: a script or bin changed after the review is refused;
   put(ok, 'package.json', JSON.stringify({ name: 'wardlatch', version: '0.2.0' }));
   put(ok, 'CHANGELOG.md', changelog('0.2.0'));
   const sha = git(ok, 'rev-parse', 'HEAD~1');
-  put(ok, 'docs/reviews/0.2.0/CLASS-AUDIT.md', `${review(sha)}\n${A} ${B}\n`); put(ok, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', review(sha));
+  put(ok, 'docs/reviews/0.2.0/CLASS-AUDIT.md', `${review(sha)}\n${A} ${B}\n${CORPUS}\n`); put(ok, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', review(sha));
   commit(ok, 'version and changelog after the reviews');
   r = gate(ok);
   assert.equal(r.code, 0, r.out);
