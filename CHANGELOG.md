@@ -40,10 +40,17 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   REVIEW only), the tests on Node 24 and 26 too, and the full mutation report weekly, in four shards, which also plants
   `'REVIEW'` changed to `'SAFE'` (26 places in the 0.1.9 code).
 - The tests never look in the home folder of the person running them (where macOS keeps Desktop, Documents, Downloads,
-  Library, Photos and Mail): every test file loads `test/support/no-real-home.cjs` first, which refuses any look there,
-  in the test and in every Node process it starts, and drops the home's folders from the `PATH` the tests start with.
-  The sudo test and the two tests of macOS's own Library build a `/Users/<name>` home of their own
-  (`test/support/fake-home.cjs`); `test/cli.test.mjs` gives the command an empty HOME of its own.
+  Library, Photos and Mail): every test file loads `test/support/no-real-home.cjs` first, which refuses any look there
+  by Node (fs in every form, globs, streams, `require()` and, from Node 22.15, `import`, a change of folder, a program,
+  working folder or `PATH` folder there), in the test and in every Node process it starts at any depth; a refusal in a
+  process the test started fails the test even when nothing reads that process's exit code. Paths are compared as the
+  system reads them (links and `..` followed, and on macOS in any case and under the start-up disk's other names), and
+  under sudo SUDO_USER's home is off limits too. It drops the home's folders from the `PATH` the tests start with. The
+  sudo test and the two tests of macOS's own Library build a `/Users/<name>` home of their own
+  (`test/support/fake-home.cjs`); `test/cli.test.mjs` gives the command an empty HOME of its own, and the version test
+  gives the go check one. `test/no-real-home.test.mjs` tries every way past the net that a review found. What it can't
+  stop: a program that isn't Node (and a Node one starts below the command), and macOS's own read of
+  `~/.CFUserTextEncoding` as any process starts (CONTRIBUTING.md, Testing policy).
 - Rules for AI coding agents: [CLAUDE.md](CLAUDE.md).
 
 ## [0.1.9] - 2026-10-23

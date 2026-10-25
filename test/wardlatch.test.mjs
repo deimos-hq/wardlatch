@@ -25,6 +25,13 @@ import { STAND_IN_MS } from './support/timeouts.mjs';
 const OPENSSL = ['/opt/homebrew/bin/openssl', '/usr/local/bin/openssl', '/usr/bin/openssl'].find(existsSync);
 let dir, server, canary, badCa, otherCa;
 const node = (env) => ({ kind: 'node', bin: process.execPath, env: { NODE_EXTRA_CA_CERTS: '', NODE_USE_SYSTEM_CA: '', NODE_OPTIONS: '', ...env } });
+/** f() with these environment variables set (undefined: unset), then put back. */
+const withEnv = (vars, f) => {
+  const saved = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+  const set = (o) => { for (const [k, v] of Object.entries(o)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } };
+  set(vars);
+  try { return f(); } finally { set(saved); }
+};
 
 before(async () => {
   dir = mkdtempSync(join(tmpdir(), 'wardlatch-'));
@@ -146,7 +153,11 @@ test('version checks: affected range, fixed version, one fix per release line', 
   fake('ovhcloud', 'ovhcloud CLI 0.13.0'); fake('cloudflared', 'cloudflared version 2026.9.1 (built x)'); fake('go', 'go version go1.26.10 darwin/arm64');
   assert.equal(checkBinary({ binary: 'ovhcloud', bad: { from: '0.11.0', to: '0.15.0' } }, bin).status, 'EXPOSED');
   assert.equal(checkBinary({ binary: 'cloudflared', versionRe: 'version (\\d+\\.\\d+\\.\\d+)', fixedIn: '2026.10.2' }, bin).status, 'EXPOSED');
-  assert.equal(checkBinary({ binary: 'go', versionArgs: ['version'], versionRe: 'go(\\d+\\.\\d+(?:\\.\\d+)?)', fixedIn: ['1.26.10', '1.27.3'] }, bin).status, 'SAFE');
+  // the go check reads GOTOOLCHAIN from the go env file in the home folder (os.homedir() reads HOME): a home of the
+  // test's own, with no setting from the environment the tests run in
+  const home = join(dir, 'go-home'); mkdirSync(home, { recursive: true });
+  const go = withEnv({ HOME: home, GOTOOLCHAIN: undefined, GOENV: undefined, XDG_CONFIG_HOME: undefined }, () => checkBinary({ binary: 'go', versionArgs: ['version'], versionRe: 'go(\\d+\\.\\d+(?:\\.\\d+)?)', fixedIn: ['1.26.10', '1.27.3'] }, bin));
+  assert.equal(go.status, 'SAFE');
   assert.equal(checkBinary({ binary: 'not-installed-anywhere' }, bin), null);
 });
 
