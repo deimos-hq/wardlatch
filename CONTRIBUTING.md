@@ -114,7 +114,8 @@ Two more checks test the tests, and CI runs both on every push and pull request:
   p⁴(1−p)³ for one planted bug (at most 0.84%), and less for the whole gate to pass with it (`scripts/mutate.mjs` works
   it out). A survivor, a timeout or an error fails CI unless `scripts/mutants-allowed.json` lists the survivor with the
   reason no behaviour can tell it apart, or `scripts/mutants-gaps.json` lists it as a known test gap. The gaps list is
-  the honest record of what the tests don't catch yet (42 of the 107 places in the 0.1.9 code). Both lists may only
+  the honest record of what the tests don't catch yet (8 of the 107 places in the 0.1.9 code, each approved by the
+  maintainer on 2026-10-25; the other 34 the 0.1.9 list named are now caught). Both lists may only
   shrink: CI fails when a listed one starts being caught until it comes off its list, and on a change that adds an
   entry to either (`scripts/gaps-only-shrink.mjs`); and the release gate refuses a release while any entry added since
   the last release lacks the maintainer's approval written on it (`"approved": "maintainer, YYYY-MM-DD"`). For a

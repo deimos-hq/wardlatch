@@ -310,8 +310,9 @@ No runtime or development dependencies: `npm install` of Wardlatch fetches only 
 pull request: the tests on Node 18, 20, 22, 24 and 26 on Linux and macOS with deprecations as errors (the red-team
 scenarios among them); a mutation gate that changes each `'UNKNOWN'` and `'EXPOSED'` in the code to `'SAFE'` in turn and
 counts one caught only when a test fails on its own on it and passes on its own without it, three times each, and
-never when that test also fails on an inert SAFE in code that never runs (the 0.1.9 code has 107 such places, 42 of
-them listed as known test gaps in `scripts/mutants-gaps.json`, a list that only shrinks: CI checks each push and pull
+never when that test also fails on an inert SAFE in code that never runs (the 0.1.9 code has 107 such places, 8 of
+them listed as known test gaps in `scripts/mutants-gaps.json` and approved by the maintainer on 2026-10-25, after
+tests closed 34 more; a list that only shrinks: CI checks each push and pull
 request, and the release gate needs the maintainer's approval on any entry added since the last release; how many the
 tests catch under this rule is not measured yet, and the job's first run on GitHub measures it. The gate fails on any
 other survivor and on any test that gives different results on the same code; a test that fails at random can still,

@@ -33,7 +33,8 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   own without it, three times each; a test that also fails on an inert SAFE in code that never runs reads the code's
   text and is never the catch (the suite runs there at least twice, and a test that fails there only some of the time
   is unreliable); and a test that gives different results on the same code fails the gate. The 0.1.9 code
-  has 107 such places; 42 are listed as known test gaps in `scripts/mutants-gaps.json`, a list that may only shrink,
+  has 107 such places; 8 are listed as known test gaps in `scripts/mutants-gaps.json` (the other 34 first listed are
+  now caught by tests; the 8 are approved by the maintainer, 2026-10-25), a list that may only shrink,
   which CI checks on every push and pull request and the release gate against the last release. How many the tests
   catch under these rules is not measured yet: the job's first run on GitHub measures it. Also a corpus report against
   the last release (as a gate, run as root before a release, a bad layout that must read EXPOSED fails if it reads

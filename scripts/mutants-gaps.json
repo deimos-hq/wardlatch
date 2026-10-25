@@ -3,49 +3,57 @@
   "file": "bin/wardlatch.mjs",
   "op": "unknown->safe",
   "before": "results.push({ incident: inc.id, kind, status: 'UNKNOWN', reason });",
-  "why": "test gap: no test reaches this result, or checks its status, on this path"
+  "why": "test gap: no test reaches this result, or checks its status, on this path",
+  "approved": "maintainer, 2026-10-25"
  },
  {
   "file": "bin/wardlatch.mjs",
   "op": "unknown->safe",
   "before": "print('UNKNOWN', reason);",
-  "why": "test gap: no test checks the status word on this text line (the --json row is a separate line)"
+  "why": "test gap: no test checks the status word on this text line (the --json row is a separate line)",
+  "approved": "maintainer, 2026-10-25"
  },
  {
   "file": "bin/wardlatch.mjs",
   "op": "exposed->safe",
   "before": "print(r.status, what, r.status === 'EXPOSED' ? c('31', `  trusts ${r.trusted.length}/${r.tested}`) : '');",
-  "why": "test gap: no test checks what this comparison controls (a note, a fix line, a colour or the summary)"
+  "why": "test gap: no test checks what this comparison controls (a note, a fix line, a colour or the summary)",
+  "approved": "maintainer, 2026-10-25"
  },
  {
   "file": "bin/wardlatch.mjs",
   "op": "unknown->safe",
   "before": "if (r.status === 'UNKNOWN') note('33', r.reason);",
-  "why": "test gap: no test checks what this comparison controls (a note, a fix line, a colour or the summary)"
+  "why": "test gap: no test checks what this comparison controls (a note, a fix line, a colour or the summary)",
+  "approved": "maintainer, 2026-10-25"
  },
  {
   "file": "bin/wardlatch.mjs",
   "op": "exposed->safe",
   "before": "print(r.status, `${engine} ${ct.name}  ${ct.image}${r.tool ? `  (via ${r.tool})` : ''}`, r.status === 'EXPOSED' ? c('31', `  trusts ${r.trusted.length}/${r.tested}`) : '');",
-  "why": "test gap: no test checks what this comparison controls (a note, a fix line, a colour or the summary)"
+  "why": "test gap: no test checks what this comparison controls (a note, a fix line, a colour or the summary)",
+  "approved": "maintainer, 2026-10-25"
  },
  {
   "file": "bin/wardlatch.mjs",
   "op": "unknown->safe",
   "before": "if (r.status === 'UNKNOWN') note('33', r.reason);",
   "nth": 2,
-  "why": "test gap: no test checks what this comparison controls (a note, a fix line, a colour or the summary)"
+  "why": "test gap: no test checks what this comparison controls (a note, a fix line, a colour or the summary)",
+  "approved": "maintainer, 2026-10-25"
  },
  {
   "file": "bin/wardlatch.mjs",
   "op": "unknown->safe",
   "before": "const onlyEngineGaps = counted(results).every((r) => r.engine && (r.status === 'UNKNOWN' || r.notRunning));",
-  "why": "test gap: no test checks what this comparison controls (a note, a fix line, a colour or the summary)"
+  "why": "test gap: no test checks what this comparison controls (a note, a fix line, a colour or the summary)",
+  "approved": "maintainer, 2026-10-25"
  },
  {
   "file": "bin/wardlatch.mjs",
   "op": "unknown->safe",
   "before": "for (const r of withdrawUnreceipted(all)) { print('UNKNOWN', `the SAFE line for ${r.kind} above is withdrawn`); note('33', r.reason); }",
-  "why": "test gap: no test checks the status word on this text line (the --json row is a separate line)"
+  "why": "test gap: no test checks the status word on this text line (the --json row is a separate line)",
+  "approved": "maintainer, 2026-10-25"
  }
 ]
