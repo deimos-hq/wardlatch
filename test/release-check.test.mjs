@@ -149,10 +149,22 @@ test('the changelog: lines left under Unreleased, a missing date, or a top secti
   }
 });
 
-test('0.1.9 and earlier predate the gate: nothing to check', () => {
+test('0.1.0 to 0.1.9, released before the gate: nothing to check on the maintainer\'s machine; a tag for one now is refused', () => {
+  for (const version of ['0.1.0', '0.1.9']) {
+    const r = gate(repo({ version, skip: ['class', 'independent'] }), { ci: false });
+    assert.equal(r.code, 0, r.out); assert.match(r.out, /predates the release gate/);
+  }
+  // the release workflow: a tag for 0.1.9 now would attest another commit as 0.1.9, with no reviews
   const r = gate(repo({ version: '0.1.9', skip: ['class', 'independent'] }));
-  assert.equal(r.code, 0, r.out);
-  assert.match(r.out, /predates the release gate/);
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /0\.1\.9 is older than the release gate[^\n]*re-tag/); assert.doesNotMatch(r.out, /READY to tag/);
+});
+
+test('a version older than the gate that was never released (0.0.3): refused, with --ci or without', () => {
+  for (const ci of [false, true]) {
+    const r = gate(repo({ version: '0.0.3', skip: ['class', 'independent'] }), { ci });
+    assert.equal(r.code, 1, r.out); assert.match(r.out, /0\.0\.3 is older than the release gate[^\n]*never released/);
+    assert.doesNotMatch(r.out, /predates|READY to tag/);
+  }
 });
 
 test('the changelog: no Unreleased section first, or no advisory named anywhere: refused', () => {

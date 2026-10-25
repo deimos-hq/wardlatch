@@ -21,7 +21,8 @@
 //   5. every check GitHub ran on this commit passed, every page of them, including the critical-mutant gate and the
 //      corpus report (gh reads them: signed in, or GH_TOKEN). With --ci the commit is GITHUB_SHA, which must be HEAD,
 //      and the jobs of this workflow run itself (GITHUB_RUN_ID), still running, are left out.
-// Releases up to 0.1.9 predate this gate and are not checked by it.
+// Releases 0.1.0 to 0.1.9 predate this gate: on the maintainer's machine it has nothing to check for them; with --ci (a
+// tag pushed for one now) it refuses, as it does any other version older than 0.1.10, none of which was released.
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -49,12 +50,23 @@ const ok = (msg) => console.log(`ok    ${msg}`);
 const fail = (msg) => { console.log(`FAIL  ${msg}`); fails.push(msg); };
 
 const version = JSON.parse(read('package.json')).version;
+// the releases cut before this gate existed (all on npm, all tagged); every later version is checked
+const BEFORE_GATE = ['0.1.0', '0.1.1', '0.1.2', '0.1.3', '0.1.4', '0.1.5', '0.1.6', '0.1.7', '0.1.8', '0.1.9'];
 const older = (v, than) => { const a = v.split(/[.-]/).map(Number), b = than.split(/[.-]/).map(Number); for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] < b[i]; return false; };
 console.log(`release gate for wardlatch ${version}${CI ? ' (--ci)' : ''}`);
 if (!/^\d+\.\d+\.\d+$/.test(version)) { fail(`package.json version "${version}" is not X.Y.Z`); }
 else if (older(version, '0.1.10')) {
-  console.log(`${version} predates the release gate (0.1.10 and later are checked): nothing to check.`);
-  process.exit(0);
+  // Only the releases cut before the gate are let through, and only on the maintainer's machine: a tag for any of them
+  // now would attest another commit under an old version, and an older version was never released at all.
+  if (!CI && BEFORE_GATE.includes(version)) {
+    console.log(`${version} predates the release gate (0.1.10 and later are checked): nothing to check.`);
+    process.exit(0);
+  }
+  console.log(`FAIL  ${version} is older than the release gate (0.1.10), ${BEFORE_GATE.includes(version)
+    ? 'and was released before it: a tag for it now would be a re-tag, released without reviews'
+    : `and was never released (only ${BEFORE_GATE[0]} to ${BEFORE_GATE.at(-1)} were, before the gate)`}`);
+  console.log('\nNOT READY: 1 problem(s). Fix each one; don\'t work around the gate.');
+  process.exit(1);
 }
 
 // 1. the changelog
