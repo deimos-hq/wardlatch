@@ -2,19 +2,22 @@
 // Copyright 2026 Deimos AI LLC
 // The release gate, scripts/release-check.mjs, on throwaway repositories: it passes a release whose reviews are on file
 // for the code being released, and refuses each way one can be wrong. It needs every GitHub check passed, with --ci too
-// (gh is always a stand-in on PATH, which answers only for HEAD, and gives every page only to --paginate --slurp, as gh
-// does); without --ci, also a clean main at origin/main (a local bare repository). Offline; git runs with no user config,
-// and no GITHUB_* variable of a CI runner reaches the gate.
+// (gh is always a stand-in on PATH, which answers the checks only for HEAD, lists v0.1.9 as released unless a test says
+// otherwise, and gives every page only to --paginate --slurp, as gh does); without --ci, also a clean main at origin/main
+// (a local bare repository). Offline; git runs with no user config, and no GITHUB_* variable of a CI runner reaches the
+// gate.
 import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, realpathSync, renameSync, chmodSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const GATE = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'release-check.mjs'), 'utf8');
+const RUN = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'corpus', 'run.mjs');
 const ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x',
   GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x' };
 const A = 'GHSA-aaaa-bbbb-cccc', B = 'GHSA-dddd-eeee-ffff';
@@ -26,9 +29,17 @@ const put = (dir, p, text) => { mkdirSync(dirname(join(dir, p)), { recursive: tr
 const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, env: ENV, encoding: 'utf8' }).trim();
 const changelog = (version, { unreleased = '', date = ' - 2026-11-02' } = {}) =>
   `# Changelog\n\n## [Unreleased]\n${unreleased}\n## [${version}]${date}\n\n- ${A} and ${B}.\n\n## [0.1.9] - 2026-10-23\n`;
-const review = (sha, verdict = 'READY') => `# Review\n\nCommit: ${sha}\nVerdict: ${verdict}\n`;
-// the corpus gate's last line (scripts/corpus/run.mjs --gate, run as root before a release), quoted in the class audit
-const CORPUS = 'GATE PASSED for B 0.2.0: every clean layout exits 0 (13) and every bad layout is caught as it should be.';
+// the block a review begins with: all the gate reads of it
+const review = (sha, verdict = 'READY') => `\`\`\`\nCommit: ${sha}\nVerdict: ${verdict}\n\`\`\`\n\n# Review\n`;
+// the corpus gate's last line (scripts/corpus/run.mjs --gate, run as root before a release) for the code in dir's bin/
+// and lib/, quoted in the class audit; its SHA-256 worked out here from the files, as the corpus gate does
+const sha256 = (x) => createHash('sha256').update(x).digest('hex');
+const corpusLine = (dir, version = '0.2.0') => {
+  const code = sha256(git(dir, 'ls-files', '-z', '--', 'bin', 'lib').split('\0').filter(Boolean).sort()
+    .map((f) => `${f}\0${sha256(readFileSync(join(dir, f)))}\n`).join(''));
+  return `GATE PASSED for B ${version} (bin/ and lib/ sha256 ${code}): every clean layout exits 0 (13) and every bad layout is caught `
+    + 'as it should be (EXPOSED where it must be), with the exit code it should have (8); 0 difference(s) from A listed above for review.';
+};
 
 // a repository at the given version with the release commit reviewed, after the last release (a commit tagged v0.1.9
 // holding the files in `last`, unless tag is false); `files` go into the release commit; returns its folder
@@ -46,22 +57,26 @@ const repo = ({ version = '0.2.0', log, audit, skip = [], last = {}, files = {},
   for (const [p, t] of Object.entries(files)) put(dir, p, t);
   git(dir, 'add', '-A'); git(dir, 'commit', '-q', '-m', 'release');
   const sha = git(dir, 'rev-parse', 'HEAD');
-  if (!skip.includes('class')) put(dir, `docs/reviews/${version}/CLASS-AUDIT.md`, audit ?? `${review(sha)}\n${A}: looked again.\n${B}: looked again.\n\n${CORPUS}\n`);
+  if (!skip.includes('class')) put(dir, `docs/reviews/${version}/CLASS-AUDIT.md`, audit ?? `${review(sha)}\n${A}: looked again.\n${B}: looked again.\n\n${corpusLine(dir, version)}\n`);
   if (!skip.includes('independent')) put(dir, `docs/reviews/${version}/INDEPENDENT-REVIEW.md`, review(sha));
   git(dir, 'add', '-A'); git(dir, 'commit', '-q', '--allow-empty', '-m', 'reviews');
   return dir;
 };
 const CHECKS = ['critical mutants', 'corpus (report against last release)', 'test (node 22, ubuntu-latest)'];
 const PASSING = CHECKS.map((name) => ({ name, status: 'completed', conclusion: 'success' }));
-// gh replaced by a script that prints the given pages of check runs for HEAD (none for any other commit): every page with
-// --paginate --slurp, as gh does, and only the first without
-const ghStub = (dir, { runs = PASSING, pages = [runs], ghFails = false } = {}) => {
+// a GitHub release, as the release workflow publishes one
+const REL = (tag, extra = {}) => ({ tag_name: tag, draft: false, author: { login: 'github-actions[bot]' }, ...extra });
+// gh replaced by a script that prints the given pages of check runs for HEAD (none for any other commit), and the given
+// pages of releases (v0.1.9's by default): every page with --paginate --slurp, as gh does, and only the first without
+const ghStub = (dir, { runs = PASSING, pages = [runs], ghFails = false, releases = [[REL('v0.1.9')]] } = {}) => {
   const bin = mkdtempSync(join(base, 'gh-')), sha = git(dir, 'rev-parse', 'HEAD');
   const all = pages.map((p) => ({ total_count: pages.flat().length, check_runs: p }));
   writeFileSync(join(bin, 'all.json'), JSON.stringify(all)); writeFileSync(join(bin, 'first.json'), JSON.stringify(all[0]));
+  writeFileSync(join(bin, 'rel-all.json'), JSON.stringify(releases)); writeFileSync(join(bin, 'rel-first.json'), JSON.stringify(releases[0]));
   writeFileSync(join(bin, 'gh'), ghFails ? '#!/bin/sh\necho "gh: not logged in" >&2\nexit 1\n' : `#!/bin/sh
 p=; s=; u=
 for a in "$@"; do case "$a" in --paginate) p=1 ;; --slurp) s=1 ;; repos/*) u="$a" ;; esac; done
+case "$u" in */releases*) if [ -n "$p" ] && [ -n "$s" ]; then cat '${join(bin, 'rel-all.json')}'; else cat '${join(bin, 'rel-first.json')}'; fi; exit 0 ;; esac
 case "$u" in */commits/${sha}/check-runs*) ;; *) echo '[{"total_count":0,"check_runs":[]}]'; exit 0 ;; esac
 if [ -n "$p" ] && [ -n "$s" ]; then cat '${join(bin, 'all.json')}'; else cat '${join(bin, 'first.json')}'; fi
 `);
@@ -109,7 +124,7 @@ test('a review whose verdict is not READY: refused', () => {
   put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', review(git(dir, 'rev-parse', 'HEAD~1'), 'NOT READY'));
   const r = gate(dir);
   assert.equal(r.code, 1, r.out);
-  assert.match(r.out, /no line "Verdict: READY"/);
+  assert.match(r.out, /the block's verdict is "NOT READY", not READY/);
 });
 
 test('code changed after the reviewed commit: refused; a docs-only change after it is fine', () => {
@@ -152,18 +167,23 @@ test('a class audit that leaves out one advisory: refused, naming it', () => {
   assert.match(r.out, new RegExp(`doesn't name 1 of the 2 advisories: ${B}`));
 });
 
-test('the class audit quotes the corpus gate\'s GATE PASSED (docs/RELEASING.md, step 5): missing, or a GATE FAILED beside it, is refused', () => {
-  for (const [extra, why] of [['', /the class audit doesn't quote the corpus gate's GATE PASSED/],
-    [`${CORPUS}\nGATE FAILED for B 0.2.0: 0 clean not exiting 0, 1 bad not caught`, /the class audit quotes a GATE FAILED/]]) {
+test('the class audit quotes the corpus gate\'s GATE PASSED for this code (docs/RELEASING.md, step 5): missing, a GATE FAILED beside it, one for other code, or one that doesn\'t name the code is refused', () => {
+  for (const [extra, why] of [[() => '', /the class audit doesn't quote the corpus gate's GATE PASSED/],
+    [(d) => `${corpusLine(d)}\nGATE FAILED for B 0.2.0: 0 clean not exiting 0, 1 bad not caught`, /the class audit quotes a GATE FAILED/],
+    // a run on other code: the SHA-256 of another bin/ and lib/
+    [(d) => corpusLine(d).replace(/sha256 [0-9a-f]{64}/, `sha256 ${'0'.repeat(64)}`), /quotes a GATE PASSED for other code \(bin\/ and lib\/ sha256 0{12}\), not for this commit's \([0-9a-f]{12}\)/],
+    // the line as the corpus gate printed it before it named the code it ran
+    [(d) => corpusLine(d).replace(/ \(bin\/ and lib\/ sha256 [0-9a-f]{64}\)/, ''), /the class audit doesn't quote the corpus gate's GATE PASSED/]]) {
     const dir = repo();
-    put(dir, 'docs/reviews/0.2.0/CLASS-AUDIT.md', `${review(git(dir, 'rev-parse', 'HEAD~1'))}\n${A} ${B}\n${extra}\n`);
+    put(dir, 'docs/reviews/0.2.0/CLASS-AUDIT.md', `${review(git(dir, 'rev-parse', 'HEAD~1'))}\n${A} ${B}\n${extra(dir)}\n`);
     const r = gate(dir);
     assert.equal(r.code, 1, r.out); assert.match(r.out, why); assert.doesNotMatch(r.out, /READY to tag/);
   }
   // quoted in a code block or a quote, it counts
   const dir = repo();
-  put(dir, 'docs/reviews/0.2.0/CLASS-AUDIT.md', `${review(git(dir, 'rev-parse', 'HEAD~1'))}\n${A} ${B}\n\n\`\`\`\n${CORPUS}\n\`\`\`\n`);
-  assert.equal(gate(dir).code, 0);
+  put(dir, 'docs/reviews/0.2.0/CLASS-AUDIT.md', `${review(git(dir, 'rev-parse', 'HEAD~1'))}\n${A} ${B}\n\n\`\`\`\n${corpusLine(dir)}\n\`\`\`\n`);
+  const r = gate(dir);
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /quotes the corpus gate's GATE PASSED for this code/);
 });
 
 test('the changelog: lines left under Unreleased, a missing date, or a top section for another version: refused', () => {
@@ -220,21 +240,24 @@ test('package.json is code: a script or bin changed after the review is refused;
   put(ok, 'package.json', JSON.stringify({ name: 'wardlatch', version: '0.2.0' }));
   put(ok, 'CHANGELOG.md', changelog('0.2.0'));
   const sha = git(ok, 'rev-parse', 'HEAD~1');
-  put(ok, 'docs/reviews/0.2.0/CLASS-AUDIT.md', `${review(sha)}\n${A} ${B}\n${CORPUS}\n`); put(ok, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', review(sha));
+  put(ok, 'docs/reviews/0.2.0/CLASS-AUDIT.md', `${review(sha)}\n${A} ${B}\n${corpusLine(ok)}\n`); put(ok, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', review(sha));
   commit(ok, 'version and changelog after the reviews');
   r = gate(ok);
   assert.equal(r.code, 0, r.out);
 });
 
-test('a review file with two verdicts, or two commits, is refused, even if one says READY', () => {
+test('a review with a second verdict, or a second commit, after its block is refused, even though the block says READY', () => {
   const dir = repo();
   const sha = git(dir, 'rev-parse', 'HEAD~1');
-  put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `${review(sha)}\nRound 2\n${review(sha, 'NOT READY')}`);
+  put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `${review(sha)}\nRound 2\n\n${review(sha, 'NOT READY')}`);
   let r = gate(dir);
-  assert.equal(r.code, 1, r.out); assert.match(r.out, /exactly one "Verdict:" line[^\n]*\(found 2\)/);
-  put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `Commit: ${sha}\nCommit: ${sha}\nVerdict: READY\n`);
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /INDEPENDENT-REVIEW\.md, line 11 says "Commit" outside the block/);
+  put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `${review(sha)}\nVerdict: NOT READY\n`);
   r = gate(dir);
-  assert.equal(r.code, 1, r.out); assert.match(r.out, /exactly one "Commit:" line[^\n]*\(found 2\)/);
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /INDEPENDENT-REVIEW\.md, line 8 says "Verdict" outside the block/);
+  put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `${review(sha)}\nCommit: ${sha}\n`);
+  r = gate(dir);
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /INDEPENDENT-REVIEW\.md, line 8 says "Commit" outside the block/);
 });
 
 test('code moved out of lib/ after the review counts as lib/ changing', () => {
@@ -279,57 +302,66 @@ test('full gate: a failed check, a required check missing, or gh unable to answe
   assert.equal(r.code, 1, r.out); assert.match(r.out, /couldn't read GitHub's checks/);
 });
 
-test('a verdict line counts however it is dressed: a second one in bold, a quote, a list, code or a sentence is refused', () => {
+test('a second verdict after the block counts however it is dressed: in bold, a quote, a list, code or a sentence it is refused', () => {
   for (const extra of ['**Verdict:** NOT READY', '> Verdict: NOT READY', '- Verdict: NOT READY', '**Verdict**: NOT READY', '`Verdict: NOT READY`',
     'Final verdict: NOT READY', '> **Verdict:** READY WITH NITS']) {
     const dir = repo();
     put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `${review(git(dir, 'rev-parse', 'HEAD~1'))}\n${extra}\n`);
     const r = gate(dir);
-    assert.equal(r.code, 1, `${extra}\n${r.out}`); assert.match(r.out, /exactly one "Verdict:" line[^\n]*\(found 2\)/, extra);
+    assert.equal(r.code, 1, `${extra}\n${r.out}`); assert.match(r.out, /line 8 says "verdict" outside the block/i, extra);
   }
-  // the one verdict, dressed: READY in bold is READY; NOT READY in a quote is not
-  let dir = repo();
-  put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `Commit: ${git(dir, 'rev-parse', 'HEAD~1')}\n**Verdict:** READY\n`);
-  assert.equal(gate(dir).code, 0);
-  dir = repo();
-  put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `Commit: ${git(dir, 'rev-parse', 'HEAD~1')}\n> Verdict: NOT READY\n`);
-  const r = gate(dir);
-  assert.equal(r.code, 1, r.out); assert.match(r.out, /no line "Verdict: READY" \(it says "NOT READY"\)/);
 });
 
-test('a NOT READY however it is written (a heading, a table, an em-dash, a round, "=", a full-width colon, a hidden character) beside a READY in a comment or code: refused', () => {
+test('the block is read only as it is written, at the top: dressed, indented, under a title, or with a look-alike or hidden character in it, it is refused', () => {
+  for (const text of [(sha) => `**Commit:** ${sha}\n**Verdict:** READY\n`, (sha) => `> \`\`\`\n> Commit: ${sha}\n> Verdict: READY\n> \`\`\`\n`,
+    (sha) => `# Review\n\n${review(sha)}`, (sha) => `    Commit: ${sha}\n    Verdict: READY\n`, (sha) => `\`\`\`text\nCommit: ${sha}\nVerdict: READY\n\`\`\`\n`,
+    (sha) => review(sha).replace('Verdict: ', 'Verdict： '), (sha) => review(sha).replace('READY', 'READY​'),
+    (sha) => `﻿${review(sha)}`, (sha) => review(sha).replace(/\n/g, '\r\n'), (sha) => review(sha, 'READY WITH NITS'),
+    (sha) => review(sha).replace('Commit', 'Commit (round 2)')]) {
+    const dir = repo(), t = text(git(dir, 'rev-parse', 'HEAD~1'));
+    put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', t);
+    const r = gate(dir);
+    assert.equal(r.code, 1, `${t}\n${r.out}`); assert.doesNotMatch(r.out, /READY to tag/, t);
+    assert.match(r.out, /FAIL {2}docs\/reviews\/0\.2\.0\/INDEPENDENT-REVIEW\.md(:| must begin with the block)/, t);
+  }
+});
+
+test('a NOT READY however it is written (a heading, a table, an em-dash, a round, "=", a full-width colon, a hidden character) after a READY block: refused', () => {
   const hidden = '<!--\nVerdict: READY\n-->';
   for (const text of [
     '## Verdict\n\n**NOT READY**: S1 (a false SAFE) is open.\n\nWhen S1 is fixed and re-reviewed, this file is updated to `Verdict: READY`',
     '| Verdict | NOT READY |\n|---|---|\n\nOnce fixed this becomes: Verdict: READY',
-    `**Verdict \u2014 NOT READY**\n\n${hidden}`,
+    `**Verdict — NOT READY**\n\n${hidden}`,
     `Verdict (round 2): NOT READY\n\n${hidden}`,
     `VERDICT = NOT READY\n\n${hidden}`,
-    `Verdict\uFF1ANOT READY\n\n${hidden}`,
-    'Ver\u200Bdict: NOT READY\nVerdict: READY',
-    'Result: not ready, S1 is open.\nVerdict: READY',
-    'Outcome: READY WITH NITS\nVerdict: READY',
+    `Verdict：NOT READY\n\n${hidden}`,
+    'Ver​dict: NOT READY',
+    'Result: not ready, S1 is open.',
+    'Outcome: READY WITH NITS',
+    hidden,
   ]) {
     const dir = repo();
-    put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `# Review\n\nCommit: ${git(dir, 'rev-parse', 'HEAD~1')}\n\n${text}\n`);
+    put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `${review(git(dir, 'rev-parse', 'HEAD~1'))}\n${text}\n`);
     const r = gate(dir);
     assert.equal(r.code, 1, `${text}\n${r.out}`); assert.doesNotMatch(r.out, /READY to tag/, text);
-    assert.match(r.out, /FAIL {2}docs\/reviews\/0\.2\.0\/INDEPENDENT-REVIEW\.md/, text);
+    assert.match(r.out, /FAIL {2}docs\/reviews\/0\.2\.0\/INDEPENDENT-REVIEW\.md, line 8 (says "(verdict|ready)" outside the block|has an HTML comment)/i, text);
   }
 });
 
-test('a commit hidden in a comment behind another in a table, a heading or a round: refused', () => {
-  for (const shown of ['| Commit | 0000000 |\n|---|---|', '## Commit\n\n0000000', 'Commit (round 1): 0000000', 'Reviewed commit \u2014 0000000']) {
+test('another commit shown after the block, in a table, a heading, a round or a sentence, is refused; so is the reviewed one hidden in a comment behind one shown', () => {
+  for (const shown of ['| Commit | 0000000 |\n|---|---|', '## Commit\n\n0000000', 'Commit (round 1): 0000000', 'Reviewed commit — 0000000',
+    'Reviewed at 0000000, before the fixes.']) {
     const dir = repo();
-    put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `# Review\n\n${shown}\n\n<!--\nCommit: ${git(dir, 'rev-parse', 'HEAD~1')}\n-->\n\nVerdict: READY\n`);
+    put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `${review(git(dir, 'rev-parse', 'HEAD~1'))}\n${shown}\n`);
     const r = gate(dir);
     assert.equal(r.code, 1, `${shown}\n${r.out}`); assert.doesNotMatch(r.out, /READY to tag/, shown);
+    assert.match(r.out, /INDEPENDENT-REVIEW\.md, line 8 (says "commit" outside the block|has "0000000", a commit id, outside the block)/i, shown);
   }
-  // and without the comment, two commits in sight: refused too
+  // with no block, the commit read was the one hidden: now there is nothing to read
   const dir = repo();
-  put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `| Commit | 0000000 |\n|---|---|\n\nCommit: ${git(dir, 'rev-parse', 'HEAD~1')}\nVerdict: READY\n`);
+  put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `# Review\n\n| Commit | 0000000 |\n|---|---|\n\n<!--\nCommit: ${git(dir, 'rev-parse', 'HEAD~1')}\n-->\n\nVerdict: READY\n`);
   const r = gate(dir);
-  assert.equal(r.code, 1, r.out); assert.match(r.out, /exactly one "Commit:" line[^\n]*\(found 2\)/);
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /INDEPENDENT-REVIEW\.md must begin with the block the gate reads/);
 });
 
 test('a commit id must be written as git prints it, lower-case hex: "Commit: <SHA in capitals>" or a name is refused', () => {
@@ -337,35 +369,72 @@ test('a commit id must be written as git prints it, lower-case hex: "Commit: <SH
     const dir = repo(), sha = git(dir, 'rev-parse', 'HEAD~1');
     put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', review(id === 'UPPER' ? sha.toUpperCase() : id));
     const r = gate(dir);
-    assert.equal(r.code, 1, `${id}\n${r.out}`); assert.match(r.out, /the line labelling a commit must read "Commit: <sha>"/, id);
+    assert.equal(r.code, 1, `${id}\n${r.out}`); assert.match(r.out, /the block's commit must read "Commit: <sha>", in lower-case hex/, id);
   }
 });
 
-test('the plain forms still pass: a verdict and a commit in a quote, a list or bold, with "commit" and "ready" in prose', () => {
-  for (const text of ['> **Commit:** SHA\n> **Verdict:** READY', '- Commit: SHA\n- Verdict: READY',
-    'Each fix\ncommit was checked again; the branch is ready to tag.\n\nCommit: SHA\nVerdict: READY']) {
-    const dir = repo();
-    put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `# Review\n\n${text.replace(/SHA/g, git(dir, 'rev-parse', 'HEAD~1'))}\n`);
+test('the plain form passes: the block, then prose that says neither a verdict nor a commit again, with tables, advisories, a SHA-256 and an incident named committed-keys', () => {
+  const prose = '# Independent review\n\nEach fix was checked again by a fresh agent, who wrote none of it; the branch can be tagged.\n\n'
+    + '| finding | class | fixed |\n|---|---|---|\n| S1 | MUST-FIX | yes, with a test that fails without it |\n\n'
+    + `The committed-keys-2026-10 check reads at most 1 MiB of a file. fix/fix-macos.sh: sha256 ${'ab'.repeat(32)}.\n\n${A}: looked again.\n`;
+  const dir = repo();
+  put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `${review(git(dir, 'rev-parse', 'HEAD~1'))}\n${prose}`);
+  const r = gate(dir);
+  assert.equal(r.code, 0, r.out);
+});
+
+// The verifier's probes (F1). Each passed beside "Verdict: READY": a READY hidden from the page in a link reference
+// definition's title that spans lines, a NOT READY in look-alike letters, "isn't ready" in lower case, and a second
+// commit labelled "Commit reviewed:". The gate now reads only the block at the top, shown as written, and nothing after
+// it may say its words again or name a commit; each probe, and its kin, is refused.
+test('F1: a READY hidden in a link reference definition, a look-alike NOT READY, a lower-case "isn\'t ready", or "Commit reviewed:": refused', () => {
+  const probes = [
+    [(sha) => `# Review\n\nThe release isn't ready yet: S1 is open.\n\n[r]: https://example.com "\nCommit: ${sha}\nVerdict: READY\n"\n`, /must begin with the block/],
+    [(sha) => `[r]: https://example.com "\n${review(sha)}"\n\nS1 is open.\n`, /must begin with the block/],
+    [(sha) => `${review(sha)}\n[//]: # (Verdict: NOT READY)\n`, /line 8 says "Verdict" outside the block/],
+    [(sha) => `${review(sha)}\n[S1](https://example.com "\nVerdict: NOT READY\n")\n`, /line 9 says "Verdict" outside the block/],
+    [(sha) => `<script>\n${review(sha)}</script>\n\nS1 is open.\n`, /must begin with the block/],
+    // look-alike letters: Cyrillic in NOT READY, an all-Greek NOT, an all-Cherokee READY, a READY struck through
+    [(sha) => `${review(sha)}\nOutcome: NОТ RЕАDY\n`, /line 8 has a letter outside ASCII \("О", U\+041E\)/],
+    [(sha) => `${review(sha)}\nOutcome: ΝΟΤ so.\n`, /line 8 has a letter outside ASCII \("Ν", U\+039D\)/],
+    [(sha) => `${review(sha)}\nOutcome: ᏒᎬᎪᎠᎽ? No.\n`, /line 8 has a letter outside ASCII \("Ꮢ", U\+13D2\)/],
+    [(sha) => `${review(sha)}\nOutcome: R̶E̶A̶D̶Y̶\n`, /line 8 has a letter outside ASCII \("̶", U\+0336\)/],
+    // "ready" in lower case, inside other words, or split by an invisible character
+    [(sha) => `${review(sha)}\nThe code isn't ready yet; not yet ready to ship.\n`, /line 8 says "ready" outside the block/],
+    [(sha) => `${review(sha)}\nUnready: S1 is open.\n`, /line 8 says "ready" outside the block/],
+    [(sha) => `${review(sha)}\nnot_ready, see S1\n`, /line 8 says "ready" outside the block/],
+    [(sha) => `${review(sha)}\nrea­dy? Not yet.\n`, /line 8 says "ready" outside the block/],
+    // a second commit, labelled any way, or named with no label
+    [(sha, other) => `${review(sha)}\nCommit reviewed: ${other}\n`, /line 8 says "Commit" outside the block/],
+    [(sha, other) => `${review(sha)}\nCode reviewed: ${other.slice(0, 7)}\n`, /line 8 has "[0-9a-f]{7}", a commit id, outside the block/],
+    [(sha, other) => `${review(sha)}\nReviewed at ${other.toUpperCase()}.\n`, /line 8 has "[0-9A-F]{40}", a commit id, outside the block/],
+    [(sha) => `${review(sha)}\nCommits reviewed: main\n`, /line 8 says "Commits" outside the block/],
+  ];
+  for (const [probe, why] of probes) {
+    const dir = repo(), text = probe(git(dir, 'rev-parse', 'HEAD~1'), git(dir, 'rev-parse', 'HEAD~2'));
+    put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', text);
     const r = gate(dir);
-    assert.equal(r.code, 0, `${text}\n${r.out}`);
+    assert.equal(r.code, 1, `${text}\n${r.out}`); assert.doesNotMatch(r.out, /READY to tag/, text);
+    assert.match(r.out, /FAIL {2}docs\/reviews\/0\.2\.0\/INDEPENDENT-REVIEW\.md/, text); assert.match(r.out, why, text);
   }
 });
 
 test('reading a review is linear: a 1 MB hostile line takes the gate no longer than a short one would', () => {
   const dir = repo();
-  const hostile = ['commit ('.repeat(131072), 'not '.repeat(262144), '| commit x '.repeat(104858), '>'.repeat(1 << 20)].join('\n');
+  const hostile = ['commitment '.repeat(95326), 'not '.repeat(262144), '0123456789abcdef'.repeat(65536), '>'.repeat(1 << 20), 'rea'.repeat(349526)].join('\n');
   put(dir, 'docs/reviews/0.2.0/INDEPENDENT-REVIEW.md', `${review(git(dir, 'rev-parse', 'HEAD~1'))}\n${hostile}\n`);
+  put(dir, 'docs/reviews/0.2.0/CLASS-AUDIT.md', `${readFileSync(join(dir, 'docs/reviews/0.2.0/CLASS-AUDIT.md'), 'utf8')}\nGATE PASSED for B ${'x'.repeat(1 << 20)}\n${hostile}\n`);
   const t0 = Date.now(), r = gate(dir);
   assert.equal(r.code, 0, r.out.slice(0, 2000));
   assert.ok(Date.now() - t0 < 10000, `${Date.now() - t0} ms`);
 });
 
-test('a commit line counts however it is dressed: a second one in bold or a list is refused', () => {
+test('a second commit after the block counts however it is dressed: in bold, a list or code it is refused', () => {
   for (const extra of ['**Commit:** 0123456', '- Commit: 0123456', '> `Commit:` 0123456']) {
     const dir = repo();
-    put(dir, 'docs/reviews/0.2.0/CLASS-AUDIT.md', `${review(git(dir, 'rev-parse', 'HEAD~1'))}\n${extra}\n${A} ${B}\n`);
+    put(dir, 'docs/reviews/0.2.0/CLASS-AUDIT.md', `${review(git(dir, 'rev-parse', 'HEAD~1'))}\n${extra}\n${A} ${B}\n${corpusLine(dir)}\n`);
     const r = gate(dir);
-    assert.equal(r.code, 1, `${extra}\n${r.out}`); assert.match(r.out, /exactly one "Commit:" line[^\n]*\(found 2\)/, extra);
+    assert.equal(r.code, 1, `${extra}\n${r.out}`); assert.match(r.out, /CLASS-AUDIT\.md, line 8 says "Commit" outside the block/, extra);
   }
 });
 
@@ -418,7 +487,65 @@ test('the lists of survivors: one that shrank, or an entry added with the mainta
 
 test('no earlier release tag in this history to compare the lists with: refused', () => {
   const r = gate(repo({ tag: false }));
-  assert.equal(r.code, 1, r.out); assert.match(r.out, /no earlier release tag/);
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /no earlier release \(a tag older than v0\.2\.0 in this history, with a GitHub release the release workflow published\)/);
+});
+
+test('the lists are compared with the last release GitHub has, published by the release workflow: a tag with none (pushed by hand, or refused by the gate) launders no entry', () => {
+  // v0.1.10 tags the release commit, which already holds the unapproved entry: as the baseline, nothing would be added since
+  const make = () => { const dir = repo({ last: { [GAPS]: json([L(1)]) }, files: { [GAPS]: json([L(1), L(2)]) } }); git(dir, 'tag', 'v0.1.10', 'HEAD~1'); return dir; };
+  for (const releases of [[[REL('v0.1.9')]], [[REL('v0.1.10', { draft: true }), REL('v0.1.9')]],
+    [[REL('v0.1.10', { author: { login: 'someone' } }), REL('v0.1.9')]]]) {
+    const dir = make();
+    const r = gate(dir, { env: ghStub(dir, { releases }) });
+    assert.equal(r.code, 1, r.out); assert.doesNotMatch(r.out, /READY to tag/);
+    assert.match(r.out, /mutants-gaps\.json: 1 of the 1 entry added since v0\.1\.9 lacks the maintainer's approval[^\n]*lib\/a\.mjs \[unknown->safe\] line 2/);
+  }
+  // the twin: v0.1.10, released by the workflow, is the last release, and nothing was added since
+  const dir = make();
+  const r = gate(dir, { env: ghStub(dir, { releases: [[REL('v0.1.10'), REL('v0.1.9')]] }) });
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /mutants-gaps\.json: no entry added since v0\.1\.10/);
+});
+
+test('GitHub\'s releases are read page by page; a release on the second page counts, and none older in this history is refused', () => {
+  let dir = repo();
+  let r = gate(dir, { env: ghStub(dir, { releases: [[REL('v0.0.1')], [REL('v0.1.9')]] }) });
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /no entry added since v0\.1\.9/);
+  dir = repo();
+  r = gate(dir, { env: ghStub(dir, { releases: [[REL('v0.0.1')]] }) });
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /no earlier release \(a tag older than v0\.2\.0/);
+});
+
+test('the corpus gate\'s own GATE PASSED, run on the release\'s bin/ and lib/, passes the release gate; its line for a copy with other code in lib/ is refused', () => {
+  // a stand-in for Wardlatch as the release's bin/ (it finds what each layout's FAKE says), and a corpus of a clean layout
+  // and a bad one
+  const fake = `const inc = process.argv[process.argv.indexOf('--incident') + 1];
+const [what, on] = (process.env.FAKE ?? 'clean').split(':');
+const status = what === 'exposed' && on === inc ? 'EXPOSED' : 'SAFE';
+console.log(JSON.stringify({ version: 'fake', results: [{ incident: inc, status }] }));
+process.exitCode = status === 'EXPOSED' ? 1 : 0;
+`;
+  const WP = 'wordpress-plugins-2026-10', corpus = join(base, `corpus${++n}`);
+  for (const [name, cls, catchBy, fakeIs, expect] of [['laptop', 'clean', [], 'clean'], ['old-plugin', 'bad', [WP], `exposed:${WP}`, 'EXPOSED']]) {
+    const home = join(corpus, name, 'home'); mkdirSync(home, { recursive: true });
+    writeFileSync(join(corpus, name, 'manifest.json'), JSON.stringify({ name, group: 't', class: cls, catchBy, expect, HOME: home, paths: [], env: { FAKE: fakeIs } }));
+  }
+  writeFileSync(join(corpus, 'corpus.json'), JSON.stringify({ layouts: ['laptop', 'old-plugin'] }));
+  const passed = (dir) => {
+    const bin = join(dir, 'bin', 'wardlatch.mjs');
+    const r = spawnSync(process.execPath, [RUN, corpus, bin, bin, '--gate', '--out', join(corpus, 'results.json')], { encoding: 'utf8', timeout: 120000 });
+    assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+    return r.stdout.trim().split('\n').at(-1);
+  };
+  const dir = repo({ files: { 'bin/wardlatch.mjs': fake } }), sha = git(dir, 'rev-parse', 'HEAD~1');
+  const audit = (line) => `${review(sha)}\n${A}: looked again.\n${B}: looked again.\n\n${line}\n`;
+  put(dir, 'docs/reviews/0.2.0/CLASS-AUDIT.md', audit(passed(dir))); commit(dir, 'the corpus gate, quoted');
+  let r = gate(dir);
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /quotes the corpus gate's GATE PASSED for this code/);
+  const other = join(base, `other${n}`);
+  put(other, 'package.json', JSON.stringify({ version: '0.2.0' })); put(other, 'bin/wardlatch.mjs', fake); put(other, 'lib/a.mjs', 'export const a = 2;\n');
+  put(dir, 'docs/reviews/0.2.0/CLASS-AUDIT.md', audit(passed(other))); commit(dir, 'a corpus gate run on other code, quoted');
+  r = gate(dir);
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /quotes a GATE PASSED for other code/); assert.doesNotMatch(r.out, /READY to tag/);
 });
 
 test('--ci: the tagged commit must be on main: one on a branch never merged, or with no origin/main to tell, is refused; one behind main passes', () => {
@@ -448,5 +575,5 @@ test('--ci (the release workflow) reads GitHub\'s checks too, for GITHUB_SHA, le
   r = gate(dir, { env: { ...ghStub(dir), GITHUB_SHA: git(dir, 'rev-parse', 'HEAD~1') } });
   assert.equal(r.code, 1, r.out); assert.match(r.out, /GITHUB_SHA [0-9a-f]{12} is not HEAD/);
   r = gate(dir, { env: ghStub(dir, { ghFails: true }) });
-  assert.equal(r.code, 1, r.out); assert.match(r.out, /couldn't read GitHub's checks/);
+  assert.equal(r.code, 1, r.out); assert.match(r.out, /couldn't read GitHub's checks/); assert.match(r.out, /couldn't read GitHub's releases/);
 });

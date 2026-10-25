@@ -306,8 +306,9 @@ test('passes once', () => { try { mkdirSync(join(process.env.WL_ONCE, 'm')); } c
 // ---- a test that fails at random ------------------------------------------------------------------------------------
 // One planted bug no test catches (the only UNKNOWN), beside a test that passes or fails as $WL_SCHEDULE says, one
 // character per run of it anywhere in the gate, in the order the runs take a number in $WL_SEQ (f fails; p, or past the
-// end, passes). The gate runs it: the 2 unmutated suite runs (0 and 1, side by side), the suite on the static probe (2),
-// the planted bug's suite run (3), then that test alone, on the copy and on the unmutated code by turns (4 to 9).
+// end, passes). The gate runs it: the 2 unmutated suite runs (0 and 1, side by side), the 2 suite runs on the static
+// probe (2 and 3, side by side), the planted bug's suite run (4), then that test alone, on the copy and on the unmutated
+// code by turns (5 to 10).
 const LIB_U = `${HEAD}export const check = (known) => (!known ? { status: 'UNKNOWN' } : { status: 'OK' });\n`;
 const KNOWN = `${IMPORTS}test('known', () => assert.equal(check(true).status, 'OK'));\n`;
 const SCHEDULED = `${IMPORTS}import { mkdirSync } from 'node:fs';\nimport { join } from 'node:path';
@@ -316,13 +317,14 @@ test('fails on schedule', () => {
   for (;; n++) { try { mkdirSync(join(process.env.WL_SEQ, String(n))); break; } catch (e) { if (e.code !== 'EEXIST') throw e; } }
   assert.notEqual((process.env.WL_SCHEDULE ?? '')[n], 'f', \`run \${n} fails on schedule\`);
 });\n`;
-// what the rule gives for a schedule: 2 when the test is seen unreliable, 1 when the planted bug survives (a test that
-// failed on the static probe is never a catch), 0 when it is counted caught (wrongly: nothing catches it)
+// what the rule gives for a schedule: 2 when the test is seen unreliable (a static probe run that failed beside one that
+// passed among them), 1 when the planted bug survives (a test that failed in every run on the static probe is never a
+// catch), 0 when it is counted caught (wrongly: nothing catches it)
 const expected = (sch) => {
   const f = (k) => sch[k] === 'f';
-  if (f(0) || f(1)) return 2;
-  if (f(2) || !f(3)) return 1;
-  for (let k = 4; k <= 9; k++) if (f(k) !== (k % 2 === 0)) return 2;   // on the copy (4, 6, 8) it must fail, unmutated pass
+  if (f(0) || f(1) || f(2) !== f(3)) return 2;
+  if (f(2) || !f(4)) return 1;
+  for (let k = 5; k <= 10; k++) if (f(k) !== (k % 2 === 1)) return 2;   // on the copy (5, 7, 9) it must fail, unmutated pass
   return 0;
 };
 const gateAsync = (dir, extra, env) => new Promise((res) => {
@@ -343,29 +345,32 @@ test('a test with a different result on the same code, anywhere, ends the run wi
   const cases = [
     ['fp', /not stably green over 2 suite runs at --jobs 2: 1 run\(s\) failed, 1 test\(s\) gave different results[^]*test\/s\.test\.mjs: fails on schedule \((pass; fail|fail; pass)\)/],
     ['ff', /not stably green over 2 suite runs at --jobs 2: 2 run\(s\) failed/],
-    ['pppp', /SURVIVED lib\/x\.mjs:3 \[unknown->safe\]/],
-    ['pppfp', /UNRELIABLE test\/s\.test\.mjs: fails on schedule: failed in the suite on the planted bug, then passed on its own on it/],
-    ['pppfff', /UNRELIABLE test\/s\.test\.mjs: fails on schedule: passed in every suite run of the unmutated code, but failed on its own on it/],
-    ['pppffpp', /UNRELIABLE test\/s\.test\.mjs: fails on schedule: failed on its own on the planted bug, then passed on the same code/],
-    ['pppffpff', /UNRELIABLE test\/s\.test\.mjs: fails on schedule: passed on its own on the unmutated code, then failed on the same code/],
+    ['ppppp', /SURVIVED lib\/x\.mjs:3 \[unknown->safe\]/],
+    ['ppppfp', /UNRELIABLE test\/s\.test\.mjs: fails on schedule: failed in the suite on the planted bug, then passed on its own on it/],
+    ['ppppfff', /UNRELIABLE test\/s\.test\.mjs: fails on schedule: passed in every suite run of the unmutated code, but failed on its own on it/],
+    ['ppppffpp', /UNRELIABLE test\/s\.test\.mjs: fails on schedule: failed on its own on the planted bug, then passed on the same code/],
+    ['ppppffpff', /UNRELIABLE test\/s\.test\.mjs: fails on schedule: passed on its own on the unmutated code, then failed on the same code/],
     // two good rounds are not enough: the third run on the copy passes
-    ['pppffpfpp', /UNRELIABLE test\/s\.test\.mjs: fails on schedule: failed on its own on the planted bug, then passed on the same code/],
-    ['pppffpfpff', /UNRELIABLE test\/s\.test\.mjs: fails on schedule: passed on its own on the unmutated code, then failed on the same code/],
+    ['ppppffpfpp', /UNRELIABLE test\/s\.test\.mjs: fails on schedule: failed on its own on the planted bug, then passed on the same code/],
+    ['ppppffpfpff', /UNRELIABLE test\/s\.test\.mjs: fails on schedule: passed on its own on the unmutated code, then failed on the same code/],
     // the residual scripts/mutate.mjs computes: passing on the static probe, failing in the suite and then in exactly
     // the right 6 runs alone, it reads as a catch
-    ['pppffpfpfp', /caught 1, survived 0/],
-    // the same, but failing on the static probe too: never a catch
-    ['ppfffpfpfp', /^STATIC test\/s\.test\.mjs: fails on schedule[^]*SURVIVED lib\/x\.mjs:3 \[unknown->safe\]/m],
+    ['ppppffpfpfp', /caught 1, survived 0/],
+    // the same, but failing in both runs on the static probe: never a catch
+    ['ppffffpfpfp', /^STATIC test\/s\.test\.mjs: fails on schedule[^]*SURVIVED lib\/x\.mjs:3 \[unknown->safe\]/m],
+    // failing in one run on the static probe and passing in the other: unreliable, not static (whichever run it was)
+    ['ppfpffpfpfp', /UNRELIABLE \(different results on the same code, the static probe\)[^]*test\/s\.test\.mjs: fails on schedule \(failed in 1 of the 2 runs\)/],
+    ['pppfffpfpfp', /UNRELIABLE \(different results on the same code, the static probe\)[^]*test\/s\.test\.mjs: fails on schedule \(failed in 1 of the 2 runs\)/],
   ];
   const got = await onSchedule(cases.map(([sch]) => sch));
   cases.forEach(([sch, why], i) => {
     assert.equal(got[i].code, expected(sch), `${sch}\n${got[i].out}`);
     assert.match(got[i].out, why, sch);
-    if (got[i].code === 2 && expected(sch) === 2 && sch.length > 2) assert.match(got[i].out, /UNRELIABLE: 1 test\(s\) gave different results/, sch);
+    if (got[i].code === 2 && expected(sch) === 2 && sch.length > 2 && sch[2] === sch[3]) assert.match(got[i].out, /UNRELIABLE: 1 test\(s\) gave different results/, sch);
   });
 });
 
-test('a test failing at random (p = 0.3, 24 seeded schedules): the gate never passes; failing on the static probe it is never a catch (exit 1), and otherwise it exits 2 whenever that test failed', { skip: SKIP }, async () => {
+test('a test failing at random (p = 0.3, 24 seeded schedules): the gate never passes; failing in every run on the static probe it is never a catch (exit 1), and otherwise it exits 2 whenever that test failed', { skip: SKIP }, async () => {
   // mulberry32: the same schedules every run of this test
   const draw = (seed) => {
     let a = seed >>> 0;
@@ -379,9 +384,9 @@ test('a test failing at random (p = 0.3, 24 seeded schedules): the gate never pa
   schedules.forEach((sch, i) => {
     assert.notEqual(got[i].code, 0, `${sch}: the gate passed\n${got[i].out}`);
     assert.equal(got[i].code, expected(sch), `${sch}\n${got[i].out}`);
-    // exit 1 only when the test failed on the static probe (never a catch then), or never failed before the planted
-    // bug's suite run passed: nothing showed it
-    if (got[i].code === 1) assert.match(sch, /^pp(f|pp)/);
+    // exit 1 only when the test failed in both runs on the static probe (never a catch then), or never failed before the
+    // planted bug's suite run passed: nothing showed it
+    if (got[i].code === 1) assert.match(sch, /^pp(ff|ppp)/);
   });
   assert.deepEqual([...new Set(got.map((g) => g.code))].sort(), [1, 2]);
 });

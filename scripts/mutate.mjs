@@ -22,12 +22,14 @@
 // for every planted bug (never reused), each read for that exact test (--test-name-pattern, its name escaped, so a
 // pattern that matches nothing is never a pass or a fail); that test is recorded. A suite that times out, is killed by
 // a signal, crashes, exits other than 0 or 1, or fails with no test named, is a timeout or an error, never a catch. A
-// static test, one that also fails on the static probe (an inert SAFE in code that never runs, below), is never a catch.
+// static test, one that also fails in every run on the static probe (an inert SAFE in code that never runs, below), is
+// never a catch.
 //
 // A test whose result on the same code ever differs is UNRELIABLE, and named: between the unmutated suite runs, between
-// a suite failure on a copy and the same test on its own there, between its own runs alone, or a test that passes in
-// the unmutated suite but fails on its own on the unmutated code. Any unreliable test ends the run with exit 2,
-// whatever else it found, gate or report: what it measured can't be trusted until the test is fixed.
+// the suite runs on the static probe, between a suite failure on a copy and the same test on its own there, between its
+// own runs alone, or a test that passes in the unmutated suite but fails on its own on the unmutated code. Any
+// unreliable test ends the run with exit 2, whatever else it found, gate or report: what it measured can't be trusted
+// until the test is fixed.
 //
 // What that guarantees, and what it doesn't. A test that fails at random is very likely to be seen, not certain to be.
 // A planted bug no test catches is still counted caught if an unrelated test that fails at random, independently, with
@@ -35,9 +37,10 @@
 // in each of its K runs alone on the unmutated code: probability p^(K+1)(1-p)^K, at most 0.84% (at p = 4/7) for K = 3.
 // For the whole run to pass with it, the R unmutated suite runs must all have passed too: p^(K+1)(1-p)^(K+R), at most
 // 0.21% (p = 4/9) with R = 2, 0.074% (p = 4/11) with R = 4 as in CI, and 0.14% at p = 0.3 with R = 2 (and it must have
-// passed on the static probe as well, one more factor (1-p), so these are upper bounds). That is for each
-// such planted bug; once a real catching test is confirmed, the other tests that failed beside it are not examined. A
-// test that passes at random can make a caught bug look like a survivor: that errs on the side of the gate failing.
+// passed in each of the R suite runs on the static probe as well, R more factors (1-p), so these are upper bounds).
+// That is for each such planted bug; once a real catching test is confirmed, the other tests that failed beside it are
+// not examined. A test that passes at random can make a caught bug look like a survivor: that errs on the side of the
+// gate failing.
 //
 // Two lists explain a survivor. scripts/mutants-allowed.json: planted bugs a reviewer judged EQUIVALENT (no behaviour
 // can tell them apart). scripts/mutants-gaps.json: known TEST GAPS, real bugs no test catches yet, listed so they are
@@ -323,24 +326,35 @@ const BASE = copy('baseline');   // kept until the end: each catching test must 
 // nothing calls). A test that fails on that copy fails on a SAFE literal whatever the code does, as G3 does, so it would
 // make every planted SAFE look caught: it is a STATIC test, named, and never counted as a catch. That holds however it
 // is named, so a stub under G3's name with the real check renamed, or a second check like G3, catches nothing. The
-// control: G3 itself must fail on this copy, or the probe is not the kind of change a static test sees, and the run
-// stops (exit 2), as it does if the suite on the probe ends other than by passing or failing named tests.
+// suite runs on the probe --baseline-runs times (at least 2, at the same --jobs), each on a copy of its own: a static
+// test fails in every run, and one that fails in some and passes in others is UNRELIABLE, named, and the run stops
+// (exit 2). The control: G3 itself must fail on the probe, or the probe is not the kind of change a static test sees,
+// and the run stops (exit 2), as it does if a suite on the probe ends other than by passing or failing named tests.
 const PROBE = "\n// scripts/mutate.mjs, the static probe: an inert SAFE that nothing calls\nexport const mutateStaticProbe = (r) => (r === 'SAFE' ? { status: 'SAFE' } : r);\n";
 const staticTests = new Map();   // label → the test
 {
-  const dir = copy('static-probe');
-  for (const f of all) writeFileSync(join(dir, f), `${readFileSync(join(dir, f), 'utf8')}${PROBE}`);
-  const g3 = await runTests(dir, [`--test-name-pattern=${STATIC}`, STATIC_FILE]);
+  const dirs = Array.from({ length: BASELINE_RUNS }, (_, i) => copy(`static-probe-${i + 1}`));
+  for (const dir of dirs) for (const f of all) writeFileSync(join(dir, f), `${readFileSync(join(dir, f), 'utf8')}${PROBE}`);
+  const g3 = await runTests(dirs[0], [`--test-name-pattern=${STATIC}`, STATIC_FILE]);
   const g3failed = g3.events.filter((e) => e.name === STATIC_NAME && e.nesting === 0 && e.ev === 'fail' && !e.skip).length === 1;
-  const o = outcome(await suite(dir), dir);
-  drop(dir);
+  const outcomes = [];
+  await pool(dirs, JOBS, async (d, k) => { outcomes[k] = outcome(await suite(d), d); drop(d); });
   if (!g3failed) {
     die(`the static probe didn't make "${STATIC_NAME}" fail: a SAFE literal in code that never runs should, so either that `
       + 'test no longer checks the code\'s text (a stub under its name?) or the probe is not the kind of change it sees');
   }
-  if (o.kind === 'timeout' || o.kind === 'error') die(`the suite on the static probe ended in ${o.kind === 'timeout' ? 'a timeout' : `an error (${o.why})`}: which tests are static can't be told`);
-  for (const t of o.failed) staticTests.set(label(t), t);
-  console.error(`static probe: ${staticTests.size ? `${staticTests.size} static test(s), never counted as a catch: ${[...staticTests.keys()].join('; ')}` : 'no test besides G3 fails on it'}`);
+  const o = outcomes.find((x) => x.kind === 'timeout' || x.kind === 'error');
+  if (o) die(`the suite on the static probe ended in ${o.kind === 'timeout' ? 'a timeout' : `an error (${o.why})`}: which tests are static can't be told`);
+  // every test that failed on the probe, and in how many of the runs
+  const failedIn = new Map();
+  for (const x of outcomes) for (const t of new Map(x.failed.map((f) => [label(f), f])).values()) failedIn.set(label(t), { t, n: (failedIn.get(label(t))?.n ?? 0) + 1 });
+  const sometimes = [...failedIn].filter(([, { n }]) => n < outcomes.length).map(([l, { n }]) => `${l} (failed in ${n} of the ${outcomes.length} runs)`);
+  if (sometimes.length) {
+    die(`UNRELIABLE (different results on the same code, the static probe): ${sometimes.length} test(s) failed in some suite runs on `
+      + `the static probe and passed in others, so whether each reads the code's text can't be told:\n  ${sometimes.join('\n  ')}`);
+  }
+  for (const [l, { t }] of failedIn) staticTests.set(l, t);
+  console.error(`static probe, ${outcomes.length} runs: ${staticTests.size ? `${staticTests.size} static test(s), never counted as a catch: ${[...staticTests.keys()].join('; ')}` : 'no test besides G3 fails on it'}`);
 }
 
 // One test that failed in the suite on a copy: on its own on the copy, then on the unmutated code, K times, afresh.

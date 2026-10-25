@@ -77,7 +77,8 @@ jobs:
 
   gaps-only-shrink:
     # scripts/mutants-gaps.json (known test gaps) and scripts/mutants-allowed.json (judged equivalent) may only shrink
-    # (CLAUDE.md): an entry comes off when a test catches it, and only the maintainer adds one. An entry the same list at
+    # (CLAUDE.md): an entry comes off when a test catches it, and only the maintainer adds one (to the allow list,
+    # deliberately stricter than CLAUDE.md, which takes a reason a reviewer agreed to). An entry the same list at
     # the base doesn't have (the pull request's base, or main before this push; a list not there is compared with the last
     # release's, or with none) fails this job, naming it; the maintainer's own addition fails it on that one change, as
     # its record. The release gate checks both lists again against the last release, where each entry added since needs

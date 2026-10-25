@@ -3,9 +3,10 @@
 // Copyright 2026 Deimos AI LLC
 // The two lists of planted bugs no test catches only shrink: scripts/mutants-gaps.json (known test gaps) and
 // scripts/mutants-allowed.json (judged equivalent). An entry comes off when a test catches it, and only the maintainer
-// adds one (CLAUDE.md). This fails (exit 1) when either list has an entry, a planted bug named by its file, operator,
-// line text and occurrence (nth), that the same list at <base> doesn't have; an entry moved from one list to the other
-// is an addition to the other. A reworded reason is not a new entry.
+// adds one (CLAUDE.md; to the allow list, deliberately stricter than CLAUDE.md, which takes a reason a reviewer agreed
+// to). This fails (exit 1) when either list has an entry, a planted bug named by its file, operator, line text and
+// occurrence (nth), that the same list at <base> doesn't have; an entry moved from one list to the other is an addition
+// to the other. A reworded reason is not a new entry.
 //
 //   node scripts/gaps-only-shrink.mjs [<base>]    # default: where HEAD left origin/main (git merge-base HEAD origin/main)
 //

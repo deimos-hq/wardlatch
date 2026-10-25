@@ -29,18 +29,21 @@ being reviewed ([CLAUDE.md](../CLAUDE.md), rule 3).
    shrink`. Read the job summary of `corpus (report against last release)`: every difference from the last release is
    intended, or it is a finding. Then run the corpus as a gate, as root with real owners for the service and
    other-person folders, as the 0.1.9 review did: `node scripts/corpus/run.mjs <corpus> <last-release>/bin/wardlatch.mjs
-   bin/wardlatch.mjs --gate` must print GATE PASSED, and the class audit quotes that line. Read the todo lines of `npm
-   test` too (the documented limits): a todo test is not checked further, so a limit that got worse still reads as the
-   same todo; one that fails differently from its documented limit is a finding.
+   bin/wardlatch.mjs --gate` must print GATE PASSED, and the class audit quotes that line. The line names the SHA-256
+   of the `bin/` and `lib/` it ran, and the release gate needs the release commit's: run it on the code being released.
+   Read the todo lines of `npm test` too (the documented limits): a todo test is not checked further, so a limit that
+   got worse still reads as the same todo; one that fails differently from its documented limit is a finding.
 6. **`npm run release-check` prints READY** on that commit, from a clean checkout of `main` (gh signed in). It checks
    1 to 5 where a machine can (the dated changelog section under an empty Unreleased, both reviews READY for this code
    with nothing that runs changed since, package.json apart from its version included, every advisory named in the
-   class audit, the corpus gate's GATE PASSED quoted there, every GitHub check passed), and that nothing was added to
-   `scripts/mutants-gaps.json` or `scripts/mutants-allowed.json` since the last release without the maintainer's
-   approval written on the entry (`"approved": "maintainer, YYYY-MM-DD"`). The release workflow repeats its checks in a
-   job whose token only reads, checking that the tagged commit is on `main` instead of the clean checkout of `main`
-   (and reading GitHub's checks with its own token); it refuses a tag for a version older than 0.1.10, and publishes
-   nothing without them.
+   class audit, the corpus gate's GATE PASSED for this code quoted there, every GitHub check passed), and that nothing
+   was added to `scripts/mutants-gaps.json` or `scripts/mutants-allowed.json` since the last release (the newest tag
+   in this history with a GitHub release the release workflow published) without the maintainer's approval written on
+   the entry (`"approved": "maintainer, YYYY-MM-DD"`). That is deliberately stricter than [CLAUDE.md](../CLAUDE.md),
+   which lets an equivalent survivor onto the allow list with a reason a reviewer agreed to: for a release, only the
+   maintainer adds to either list. The release workflow repeats its checks in a job whose token only reads, checking
+   that the tagged commit is on `main` instead of the clean checkout of `main` (and reading GitHub's checks and
+   releases with its own token); it refuses a tag for a version older than 0.1.10, and publishes nothing without them.
 
 Fewer, reviewed releases beat many fast ones. After a security release, releases pause for the freeze the maintainer
 sets (after 0.1.9: at least a week); whether anything breaks it is the maintainer's call.

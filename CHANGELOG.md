@@ -14,20 +14,25 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 ### Development (no code in the package changes; package.json gains three npm scripts)
 
 - The release gate: `npm run release-check` refuses a release unless both reviews are on file for the code being
-  released (`docs/reviews/<version>/`, each readable only one way: one verdict, READY, and one reviewed commit, with no
-  second verdict or commit anywhere in the file however it is written, and nothing in an HTML comment), nothing that
-  runs (package.json apart from its version included) changed after them, the class audit names every advisory and
-  quotes the corpus gate's GATE PASSED, every GitHub check passed on the release commit, and neither list of planted
-  bugs no test catches (`scripts/mutants-gaps.json`, `scripts/mutants-allowed.json`) gained an entry since the last
-  release without the maintainer's approval written on it. The release workflow repeats it in a job whose token only
-  reads, checking that the tagged commit is on `main` instead of the clean checkout of `main`, reads GitHub's checks
-  with its own token, refuses a tag for a version older than 0.1.10, and publishes nothing without it.
+  released (`docs/reviews/<version>/`, each beginning with the block the gate reads, four lines exactly: a fence,
+  `Commit: <sha>`, `Verdict: READY`, a fence; after it, no letter outside ASCII, no "verdict" or "ready" in any case,
+  no "commit" as a word, no commit id and no HTML comment. The gate doesn't read the rest of a review for what it
+  means: one that contradicts its block in other words is for its reader to catch), nothing that runs (package.json
+  apart from its version included) changed after them, the class audit names every advisory and quotes the corpus
+  gate's GATE PASSED for this code (the line names the SHA-256 of the `bin/` and `lib/` the corpus gate ran), every
+  GitHub check passed on the release commit, and neither list of planted bugs no test catches
+  (`scripts/mutants-gaps.json`, `scripts/mutants-allowed.json`) gained an entry since the last release (the newest
+  with a GitHub release the release workflow published, not just a tag) without the maintainer's approval written on
+  it. The release workflow repeats it in a job whose token only reads, checking that the tagged commit is on `main`
+  instead of the clean checkout of `main`, reads GitHub's checks and releases with its own token, refuses a tag for a
+  version older than 0.1.10, and publishes nothing without it.
 - The red team's 75 scenarios are part of `npm test` (`test/redteam.test.mjs`); the 14 limits the 0.1.9 changelog
   documents (13 under Known limits, one owner decision) run as todo.
 - CI also runs, on every push and pull request, the critical-mutant gate: each `'UNKNOWN'` and `'EXPOSED'` in the code
   changed to `'SAFE'` must be caught by a behaviour test, one that fails on its own on the planted bug and passes on its
   own without it, three times each; a test that also fails on an inert SAFE in code that never runs reads the code's
-  text and is never the catch; and a test that gives different results on the same code fails the gate. The 0.1.9 code
+  text and is never the catch (the suite runs there at least twice, and a test that fails there only some of the time
+  is unreliable); and a test that gives different results on the same code fails the gate. The 0.1.9 code
   has 107 such places; 42 are listed as known test gaps in `scripts/mutants-gaps.json`, a list that may only shrink,
   which CI checks on every push and pull request and the release gate against the last release. How many the tests
   catch under these rules is not measured yet: the job's first run on GitHub measures it. Also a corpus report against

@@ -23,7 +23,7 @@ jobs:
     name: release gate
     runs-on: ubuntu-latest
     permissions:
-      contents: read         # the checkout
+      contents: read         # the checkout, and the releases the release gate compares the survivor lists with
       checks: read           # the release gate reads every check GitHub ran on the tagged commit
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1

@@ -8,6 +8,7 @@ import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -48,10 +49,13 @@ const CLEAN = ['laptop', 'clean', [], 'clean'];
 const BAD_EXPOSED = ['old-plugin', 'bad', [WP], `exposed:${WP}`, 'EXPOSED'];
 const BAD_REVIEW = ['committed-key', 'bad', [KEYS], `review:${KEYS}`, 'REVIEW'];
 
-test('--gate: every clean layout exits 0, every bad layout is caught with the exit code its finding gives: passes', () => {
+test('--gate: every clean layout exits 0, every bad layout is caught with the exit code its finding gives: passes, naming the SHA-256 of the code B ran', () => {
   const r = run(corpus([CLEAN, BAD_EXPOSED, BAD_REVIEW]), '--gate');
   assert.equal(r.code, 0, r.out);
-  assert.match(r.out, /GATE PASSED for B fake: every clean layout exits 0 \(1\) and every bad layout is caught as it should be \(EXPOSED where it must be\), with the exit code it should have \(2\)/);
+  // B's bin/ and lib/: here only bin/wardlatch.mjs, the stand-in (a line per file: its path and the SHA-256 of its content)
+  const sha256 = (x) => createHash('sha256').update(x).digest('hex');
+  const code = sha256(`bin/wardlatch.mjs\0${sha256(FAKE)}\n`);
+  assert.match(r.out, new RegExp(`GATE PASSED for B fake \\(bin/ and lib/ sha256 ${code}\\): every clean layout exits 0 \\(1\\) and every bad layout is caught as it should be \\(EXPOSED where it must be\\), with the exit code it should have \\(2\\)`));
 });
 
 test('--gate: a bad layout not caught, one that must read EXPOSED reading REVIEW only, an EXPOSED that exits 0, or a clean layout that doesn\'t exit 0 fails (exit 1)', () => {
