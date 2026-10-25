@@ -8,7 +8,7 @@ import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, realpathSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -487,6 +487,23 @@ test('SSL_CERT_DIR is a list: each relative folder in it is made absolute, an ab
   run(['--incident', 'emudhra-2026-10', '--json', '--no-containers', '--paths', join(dir, 'nothing-here')], { PATH: bin, SSL_CERT_DIR: 'rel/a:/abs/b' }, ['--require', online], work);
   const real = realpathSync(work);
   assert.match(readFileSync(log, 'utf8'), new RegExp(`^SSL_CERT_DIR=${join(real, 'rel', 'a').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:/abs/b$`, 'm'));
+});
+
+test('a relative CA setting with a \'..\' is made absolute as written, so the OS takes the \'..\' after the link before it (round 8, rule 5)', () => {
+  // lnk is a link to elsewhere/deep: lnk/../mine.pem is elsewhere/mine.pem to the person's own programs, which open it
+  // as written; path.resolve made it <work>/mine.pem, another file
+  const { online } = preloads();
+  const work = join(dir, 'dotdot-ca-work'), elsewhere = join(dir, 'dotdot-ca-elsewhere');
+  mkdirSync(work, { recursive: true }); mkdirSync(join(elsewhere, 'deep'), { recursive: true }); symlinkSync(join(elsewhere, 'deep'), join(work, 'lnk'));
+  const bin = join(dir, 'dotdot-ca-bin'), log = join(dir, 'dotdot-ca-env'); mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'node'), `#!/bin/sh\ncase "$1" in -v) echo v26.12.1;; *) echo "SSL_CERT_FILE=$SSL_CERT_FILE SSL_CERT_DIR=$SSL_CERT_DIR" >> "${log}"; exit 3;; esac\n`, { mode: 0o755 });
+  const real = realpathSync(work), esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  run(['--incident', 'emudhra-2026-10', '--json', '--no-containers', '--paths', join(dir, 'nothing-here')], { PATH: bin, SSL_CERT_FILE: 'lnk/../mine.pem', SSL_CERT_DIR: 'lnk/../certs:/abs/b' }, ['--require', online], work);
+  assert.match(readFileSync(log, 'utf8'), new RegExp(`^SSL_CERT_FILE=${esc(`${real}/lnk/../mine.pem`)} SSL_CERT_DIR=${esc(`${real}/lnk/../certs`)}:/abs/b$`, 'm'));
+  // the clean twin: no '..', made absolute as before
+  rmSync(log, { force: true });
+  run(['--incident', 'emudhra-2026-10', '--json', '--no-containers', '--paths', join(dir, 'nothing-here')], { PATH: bin, SSL_CERT_FILE: 'certs/mine.pem', SSL_CERT_DIR: 'rel/a' }, ['--require', online], work);
+  assert.match(readFileSync(log, 'utf8'), new RegExp(`^SSL_CERT_FILE=${esc(join(real, 'certs', 'mine.pem'))} SSL_CERT_DIR=${esc(join(real, 'rel', 'a'))}$`, 'm'));
 });
 
 test('PATH holding "." or an empty entry never runs a program from the current folder', () => {

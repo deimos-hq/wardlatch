@@ -20,7 +20,7 @@ import { reposUnder, workflowsAddedSince } from '../lib/workflows.mjs';
 import { scanRepo } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
 import { scanHeaders } from '../lib/headers.mjs';
-import { pathState, readText, listDir } from '../lib/files.mjs';
+import { pathState, readText, listDir, joinAsWritten } from '../lib/files.mjs';
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
 import { safe, withdrawUnreceipted } from '../lib/report.mjs';
 
@@ -34,12 +34,14 @@ import { safe, withdrawUnreceipted } from '../lib/report.mjs';
 const kept = (process.env.PATH ?? '').split(delimiter).filter((d) => d && isAbsolute(d) && !/[\\/]node_modules[\\/]\.bin[\\/]?$/.test(d));
 process.env.PATH = kept.length ? kept.join(delimiter) : ['/usr/bin', '/bin'].join(delimiter);
 // Programs run from /, so a relative CA file or folder in the person's own environment is made absolute first, against
-// the folder Wardlatch was started from, as their own programs would read it.
+// the folder Wardlatch was started from, as their own programs would read it: put in front of it as written, so a '..'
+// in it is still taken after the link before it (path.resolve cleaned it up as text, which may be another file).
+const absolute = (p) => joinAsWritten(process.cwd(), p);
 for (const k of ['SSL_CERT_FILE', 'SSL_CERT_DIR', 'CURL_CA_BUNDLE', 'NODE_EXTRA_CA_CERTS', 'REQUESTS_CA_BUNDLE']) {
   if (!process.env[k]) continue;
   // SSL_CERT_DIR may be a list of folders
-  process.env[k] = k === 'SSL_CERT_DIR' ? process.env[k].split(delimiter).map((d) => (d && !isAbsolute(d) ? resolve(d) : d)).join(delimiter)
-    : isAbsolute(process.env[k]) ? process.env[k] : resolve(process.env[k]);
+  process.env[k] = k === 'SSL_CERT_DIR' ? process.env[k].split(delimiter).map((d) => (d && !isAbsolute(d) ? absolute(d) : d)).join(delimiter)
+    : isAbsolute(process.env[k]) ? process.env[k] : absolute(process.env[k]);
 }
 
 const LIB = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib');

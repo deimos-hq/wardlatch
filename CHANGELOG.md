@@ -58,18 +58,30 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     takes is not emulated: where dyld or ld.so could take a different copy, every candidate must be SAFE, or the file
     is "could not be tested" (EXPOSED if any candidate is EXPOSED). That covers each `LC_RPATH`, `DT_RUNPATH` or
     `DT_RPATH` folder that holds a file of that name, not just the first (dyld and ld.so pass over a copy they can't
-    load and look on); a candidate that isn't a loadable Mach-O or ELF library for the file's CPU type (another
-    `cputype` or `cpusubtype`, ELF class, byte order or machine, or not a dylib or shared object), which is "could not
-    be tested"; the `glibc-hwcaps/*` subfolders of every folder searched for a soname; and, on ELF, a library's
-    program's folders too (its `DT_RPATH`, as glibc reads it for a library with no `DT_RUNPATH`, and its `DT_RUNPATH`,
-    as musl does), so a library read without its program is "could not be tested" when its own folders don't hold the
-    copy (an ELF file is a program when it is `ET_EXEC` or flagged `DF_1_PIE`). An absolute path is taken as it is,
-    `@loader_path` as the file's real folder, `$ORIGIN` as both its real folder and the folder it was reached by,
-    `@executable_path` only in a main program, then for a soname the system's library folders (every copy there a
-    candidate). Each path is handed to the operating system as written (`realpath(3)`), so `..` after a link goes where
-    the kernel goes (Node's own `realpathSync` cleans it up as text first), and an ELF file whose dynamic table at
-    `PT_DYNAMIC`'s `p_offset` isn't the one the loader reads at its `p_vaddr` contradicts itself and is "could not be
-    tested". Each is judged, one level, and an EXPOSED one decides. The rest of the file is read only for a
+    load and look on); a candidate that isn't a loadable Mach-O or ELF library for the file's CPU (another Mach-O
+    `cputype`, another ELF class, byte order or machine, or not a dylib or shared object), which is "could not be
+    tested", while a Mach-O library of the same `cputype` is a candidate whatever its `cpusubtype` (dyld loads an arm64e
+    dylib into an arm64 program; x86_64h beside x86_64); the `glibc-hwcaps/*` subfolders of every folder searched for a
+    soname; and, on ELF, a library's program's folders too (its `DT_RPATH`, as glibc reads it for a library with no
+    `DT_RUNPATH`, and its `DT_RUNPATH`, as musl does), so a library read without its program is "could not be tested"
+    when its own folders don't stop the search (an ELF file is a program when it is `ET_EXEC` or flagged `DF_1_PIE`).
+    An absolute path is taken as it is, `@loader_path` as the file's real folder, `$ORIGIN` as both its real folder and
+    the folder it was reached by, `@executable_path` only in a main program; on Mach-O only the file's own resolved
+    `@rpath`, `@loader_path` or absolute path is looked in. For an ELF soname the system's library folders come next
+    (every copy there a candidate), and one thing only stops the search before them: a copy the loader can load in a
+    plain folder (not a `glibc-hwcaps` one) of the file's own `DT_RUNPATH`, or of its own `DT_RPATH` when it has none,
+    there however `$ORIGIN` reads, with every copy found loadable and nothing left that couldn't be followed. A copy
+    found through the program's folders, or only in a `glibc-hwcaps` subfolder, is a candidate that must be SAFE and
+    never stops it: glibc never takes a program's `DT_RUNPATH` for a library, nor its `DT_RPATH` for a library with a
+    `DT_RUNPATH`, and looks in a hwcaps subfolder only on a CPU of that level; musl never does. Each path is handed to
+    the operating system as written (`realpath(3)`), so `..` after a link goes where the kernel goes (Node's own
+    `realpathSync` cleans it up as text first). An ELF file contradicts itself and is "could not be tested" when its
+    dynamic table at `PT_DYNAMIC`'s `p_offset` isn't the one the loader reads at its `p_vaddr`, and when its dynamic
+    table or string table (`DT_STRTAB`) is at an address in the page-rounded range of more than one `PT_LOAD` (the
+    kernel and ld.so map them a page at a time, a later one over the earlier, so another segment's bytes may be there;
+    a segment's page is its `p_align`, at most 64 KB, and 64 KB when that is under 4 KB); with one `PT_LOAD` for each
+    address it reads as before. Every read of a candidate's headers, a universal file's list of builds included, is
+    charged to the run's reading budget before it is made. Each is judged, one level, and an EXPOSED one decides. The rest of the file is read only for a
     library it may load while it runs (`dlopen`): a Brotli library's or libnode's file name the loader can load
     (`libbrotlidec.so.1`, `libnode.147.dylib`, `libbrotlidec-ba690955.so.1.1.0`, in a message or a path too) that is not
     one of the file's own (in its link table, a whole copy of one of its links or of its own install name or soname, its
@@ -142,8 +154,11 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     platform, its code signature, its version) are not read, so such a copy is judged as the one it takes; dyld's
     fallback folders after an absolute path it can't load are not read either, nor glibc's legacy hwcaps subfolders
     (`tls`, `haswell`, `x86_64` and the like, searched before glibc 2.37); and a position-independent program without
-    `DF_1_PIE` (an older toolchain's) is read as a library. nvm, fnm and n kept outside their usual folders (`NVM_DIR`
-    and the like) are not read. An asdf plugin for Node.js named other than `nodejs` or `node` is not read, so its shim
+    `DF_1_PIE` (an older toolchain's) is read as a library. A copy found only through the program's folders never
+    stops the search, so a program whose fixed copy glibc takes that way (its `DT_RPATH`, for a library with neither)
+    reads EXPOSED beside an unfixed copy in the system's folders: a false EXPOSED, on the safe side, never a false
+    SAFE. A loader whose pages are larger than 64 KB is not covered by the page rule. nvm, fnm and n kept outside
+    their usual folders (`NVM_DIR` and the like) are not read. An asdf plugin for Node.js named other than `nodejs` or `node` is not read, so its shim
     reads "could not be tested". mise's settings in its configuration files (`shims_dir`, `system_installs_dir`,
     `shared_install_dirs`) are not read, only its variables. What the dynamic loader is told when a program starts
     (`LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`, `DYLD_FALLBACK_LIBRARY_PATH`) is not known. A partial backport that adds
@@ -160,6 +175,23 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   in the test and in every Node process it starts, and drops the home's folders from the `PATH` the tests start with.
   The sudo test and the two tests of macOS's own Library build a `/Users/<name>` home of their own
   (`test/support/fake-home.cjs`); `test/cli.test.mjs` gives the command an empty HOME of its own.
+
+### Fixed
+
+- **A path with `..` after a link was cleaned up as text, so Wardlatch read, ran or hashed another file than the one
+  your programs use** (0.1.0 to 0.1.9). With `PATH` holding `x/link/../bin`, the shell runs the program in the folder
+  above the link's target, then `bin`; Wardlatch put `x/bin/<name>` together with `path.join` and checked that one
+  (and a second real file in `x/bin` was dropped as one already read). Each `PATH` copy is now the folder and the name
+  as written, `${folder}/${name}`, resolved by the operating system (`realpath(3)`), and copies are told apart by that
+  real path; the same for PHP's versioned names on `PATH`, the trust check's runtimes and the curl that tests the
+  Linux trust store, `$TMPDIR` (a temp folder could be taken for `/tmp`, and `/tmp` left unsearched), a relative CA
+  setting made absolute (`SSL_CERT_FILE=lnk/../ca.pem`), a Python package's `RECORD` path, and the folders the home
+  folder or a variable names (a version manager's, `XDG_CONFIG_HOME`, `CURL_HOME`, `NPM_CONFIG_USERCONFIG`, a library
+  or site-packages place under `~`). Where the programs that read a path disagree (git, curl, wget, Codex, the shell
+  and volta, mise, proto and nodenv take a `..` after the link; npm, the Node-based agents and editors, and asdf's Go
+  clean it up as text), both readings are read. An `ld.so.conf` `include` with a `..` is not followed (a gap, so an ELF
+  soname is "could not be tested"). Folders named with `--paths` are still read as text, as the shell's `cd` reads
+  them.
 
 ## [0.1.9] - 2026-10-23
 
