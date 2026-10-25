@@ -1,3 +1,9 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/deimos-hq/wardlatch/main/.github/assets/banner-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/deimos-hq/wardlatch/main/.github/assets/banner-light.png">
+  <img alt="Wardlatch, a free leak check from Deimos AI LLC. Run npx wardlatch@latest: it runs on your machine, sends no telemetry and changes nothing. The drawing shows a key sliding into a warded lock and stopping against the first ward." src="https://raw.githubusercontent.com/deimos-hq/wardlatch/main/.github/assets/banner-light.png" width="1600">
+</picture>
+
 # Wardlatch
 
 [![CI](https://github.com/deimos-hq/wardlatch/actions/workflows/ci.yml/badge.svg)](https://github.com/deimos-hq/wardlatch/actions/workflows/ci.yml)
