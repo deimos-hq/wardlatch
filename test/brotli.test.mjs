@@ -174,13 +174,136 @@ test('one file, every decoder it uses: each build of a universal file, and the l
   assert.equal(judge(bin(join(d, 'table-few'), [CONTROL, MARKER, good, ...decoys(10)])).status, 'SAFE', 'the clean twin');
   // a decoder library's own name (its install name or soname) is not a link: still SAFE by its table
   assert.equal(judge(bin(join(d, 'self', 'libbrotlidec.1.2.1.dylib'), [CONTROL, MARKER, '/DLC/PIL/.dylibs/libbrotlidec.1.2.1.dylib'])).status, 'SAFE');
-  // a fixed 1.1-form table beside a 1.0-form one (Brotli 1.0's error texts have no prefix): never SAFE on the 1.1 marker
+  // a fixed 1.1-form table beside a 1.0-form name that is no whole table (Brotli 1.0's error texts have no prefix):
+  // never SAFE on the 1.1 marker
   const mix = judge(bin(join(d, 'two-forms'), [CONTROL, MARKER, 'BLOCK_LENGTH_1']));
   assert.equal(mix.status, 'UNKNOWN'); assert.match(mix.reason, /form Brotli 1\.0 writes them.*could not be tested/);
   assert.equal(judge(bin(join(d, 'one-form'), [CONTROL, MARKER, 'BLOCK_LENGTH'])).status, 'SAFE', 'the clean twin');
-  // a 1.0-form table alone (Debian 12's 1.0.9): not judged yet, UNKNOWN with the reason
+  // a 1.0-form name alone is no table: UNKNOWN with the reason (the 1.0 form's tests are below)
   const only = judge(bin(join(d, 'old-form'), ['SUCCESS', 'BLOCK_LENGTH_1']));
-  assert.equal(only.status, 'UNKNOWN'); assert.match(only.reason, /form Brotli 1\.0 writes them, which Wardlatch doesn't judge yet/);
+  assert.equal(only.status, 'UNKNOWN'); assert.match(only.reason, /form Brotli 1\.0 writes them, but not as a whole table in Brotli's order.*could not be tested/);
+});
+
+// Brotli 1.0's error table as a library holds it: BrotliDecoderErrorString's strings with no prefix (1.0.x has
+// `return #NAME;`, 1.1.0 on `return #PREFIX #NAME;`), one NUL after each, in decode.h's order (as clang lays them out:
+// checked by compiling 1.0.9's and 1.0.10's lists). 1.0.10, the fix on the 1.0 line, added BLOCK_SWITCH (code -17) right
+// after DISTANCE (-16), before DICTIONARY_NOT_SET (-19). 1.0.0 to 1.0.2 had COMPOUND_DICTIONARY where DISTANCE is, and
+// 1.0.3 both
+const T10_HEAD = ['NO_ERROR', 'SUCCESS', 'NEEDS_MORE_INPUT', 'NEEDS_MORE_OUTPUT', 'EXUBERANT_NIBBLE', 'RESERVED', 'EXUBERANT_META_NIBBLE', 'SIMPLE_HUFFMAN_ALPHABET', 'SIMPLE_HUFFMAN_SAME', 'CL_SPACE', 'HUFFMAN_SPACE', 'CONTEXT_MAP_REPEAT', 'BLOCK_LENGTH_1', 'BLOCK_LENGTH_2', 'TRANSFORM', 'DICTIONARY', 'WINDOW_BITS', 'PADDING_1', 'PADDING_2'];
+const T10_TAIL = ['DICTIONARY_NOT_SET', 'INVALID_ARGUMENTS', 'CONTEXT_MODES', 'TREE_GROUPS', 'CONTEXT_MAP', 'RING_BUFFER_1', 'RING_BUFFER_2', 'BLOCK_TYPE_TREES', 'UNREACHABLE', 'INVALID'];
+const V109 = [...T10_HEAD, 'DISTANCE', ...T10_TAIL], V1010 = [...T10_HEAD, 'DISTANCE', 'BLOCK_SWITCH', ...T10_TAIL];
+const V102 = [...T10_HEAD, 'COMPOUND_DICTIONARY', ...T10_TAIL], V103 = [...T10_HEAD, 'DISTANCE', 'COMPOUND_DICTIONARY', ...T10_TAIL];
+/** Strings as a compiler packs them: a NUL after each, and NULs after that up to `align` bytes (a compiler that aligns
+ *  each string, as GCC does on some targets). */
+const packed = (names, align = 1) => Buffer.concat([Buffer.alloc(1), ...names.map((n) => { const b = Buffer.from(`${n}\0`); return Buffer.concat([b, Buffer.alloc((align - (b.length % align)) % align)]); })]);
+
+// Brotli 1.0's form is judged (maintainer, 2026-10-25)
+test('Brotli 1.0\'s form: a whole table in Brotli\'s order decides; 1.0.9 is EXPOSED, 1.0.10 SAFE', () => {
+  const d = fresh('form10');
+  // packed or padded, in decode.h's order or the other way round (by code), Mach-O or ELF
+  for (const align of [1, 8, 16]) {
+    for (const [order, way] of [['listed', (x) => x], ['by-code', (x) => [...x].reverse()]]) {
+      for (const [kind, make] of [['macho', bin], ['elf', elf]]) {
+        const at = `${kind}-${order}-${align}`;
+        const bad = judge(make(join(d, `libbrotlidec-109-${at}.so.1`), [packed(way(V109), align)]));
+        assert.equal(bad.status, 'EXPOSED', `1.0.9 ${at}`); assert.match(bad.reason, /lacks the fix.*form Brotli 1\.0 writes them/, at);
+        // the clean twin: 1.0.10
+        const good = judge(make(join(d, `libbrotlidec-1010-${at}.so.1`), [packed(way(V1010), align)]));
+        assert.equal(good.status, 'SAFE', `1.0.10 ${at}`); assert.match(good.reason, /has the fix.*form Brotli 1\.0 writes them/, at);
+      }
+    }
+  }
+  // a program with 1.0.9 built in (a Brotli binding's own copy), and one that links a 1.0.9 library: EXPOSED; twins SAFE
+  const old = bin(join(d, 'lib', 'libbrotlidec.1.dylib'), [packed(V109)]);
+  assert.equal(judge(bin(join(d, '_brotli.so'), [packed(V109)])).status, 'EXPOSED');
+  assert.equal(judge(bin(join(d, 'prog'), [old])).status, 'EXPOSED');
+  bin(old, [packed(V1010)]);
+  assert.equal(judge(bin(join(d, 'prog'), [old])).status, 'SAFE');
+  assert.equal(judge(bin(join(d, '_brotli.so'), [packed(V1010)])).status, 'SAFE');
+  // and beside the 1.1 form: a fixed 1.1 table with an unfixed 1.0 one is EXPOSED (one decoder lacks the fix), with a
+  // fixed one SAFE; an unfixed 1.1 table is EXPOSED whatever the 1.0 one says
+  const both = judge(bin(join(d, 'both-old'), [CONTROL, MARKER, packed(V109)]));
+  assert.equal(both.status, 'EXPOSED'); assert.match(both.reason, /more than one Brotli decoder/);
+  assert.equal(judge(bin(join(d, 'both-new'), [CONTROL, MARKER, packed(V1010)])).status, 'SAFE');
+  assert.equal(judge(bin(join(d, 'new-old'), [CONTROL, packed(V1010)])).status, 'EXPOSED');
+  // a fixed 1.0 table in a file that also links an unfixed library: that library is used too, EXPOSED; a link it can't
+  // follow, or names past the ones kept, UNKNOWN; the clean twin links a fixed one
+  const unfixed = oldLib(join(d, 'lib11', 'libbrotlidec.1.dylib')), fixed = fixedLib(join(d, 'lib12', 'libbrotlidec.1.dylib'));
+  const linked = judge(bin(join(d, 'old10-links-old'), [packed(V1010), unfixed]));
+  assert.equal(linked.status, 'EXPOSED'); assert.match(linked.reason, /its own Brotli decoder has the fix, but it uses .*lib11/);
+  assert.equal(judge(bin(join(d, 'old10-links-rpath'), [packed(V1010), '@rpath/libbrotlidec.1.dylib'])).status, 'UNKNOWN');
+  assert.equal(judge(bin(join(d, 'old10-crowded'), [packed(V1010), fixed, ...Array.from({ length: 70 }, (_, i) => `libbrotlidec mention ${i}`)])).status, 'UNKNOWN');
+  const twin = judge(bin(join(d, 'old10-links-new'), [packed(V1010), fixed]));
+  assert.equal(twin.status, 'SAFE'); assert.deepEqual(twin.searched, [join(d, 'old10-links-new'), fixed]);
+});
+
+test('Brotli 1.0\'s form, near misses: names scattered, out of order, alone, or the fix\'s name away from its place are UNKNOWN, never SAFE', () => {
+  const d = fresh('form10-near');
+  const swap = (x, a, b) => { const y = [...x], i = y.indexOf(a), j = y.indexOf(b); [y[i], y[j]] = [y[j], y[i]]; return y; };
+  for (const [name, parts] of [
+    ['scattered', V1010.map((n) => packed([n, 'some other text']))],
+    ['out-of-order', [packed(swap(V1010, 'BLOCK_LENGTH_2', 'TRANSFORM'))]],
+    ['marker-out-of-order', [packed(swap(V1010, 'BLOCK_SWITCH', 'DICTIONARY_NOT_SET'))]],
+    ['shuffled', [packed([...V1010].sort())]],
+    ['anchor-alone', [packed(['BLOCK_LENGTH_1'])]],
+    ['anchor-and-marker', [packed(['BLOCK_LENGTH_1', 'BLOCK_SWITCH'])]],
+    ['half-a-run', [packed(T10_HEAD), packed(['some other text', 'DISTANCE', 'BLOCK_SWITCH', 'DICTIONARY_NOT_SET'])]],
+    // the names after the control's in order, but not the ones before it
+    ['no-earlier', [packed(['some other text', ...V1010.slice(V1010.indexOf('BLOCK_LENGTH_1'))])]],
+    // the fix's name in its place, but not followed by the next name of the table
+    ['marker-not-followed', [packed([...T10_HEAD, 'DISTANCE', 'BLOCK_SWITCH', 'some other text'])]],
+    // an unfixed table with the fix's name elsewhere in the file: a stray copy never counts, and the table's own may have
+    // been moved there by the linker, so it is not EXPOSED either
+    ['old-and-stray-marker', [packed(V109), packed(['some other text', 'BLOCK_SWITCH'])]],
+    // a fixed table and a second copy of the table's name that is in no table
+    ['new-and-stray-anchor', [packed(V1010), packed(['some other text', 'BLOCK_LENGTH_1'])]],
+    // more NULs between two names than a compiler's alignment pads with
+    ['wide-gap', [Buffer.concat([packed(V1010.slice(0, 13)), Buffer.alloc(40), packed(V1010.slice(13))])]],
+    // 1.0.0 to 1.0.2 (no DISTANCE yet: not affected) and 1.0.3 (DISTANCE, then COMPOUND_DICTIONARY): neither form
+    ['1.0.2', [packed(V102)]], ['1.0.3', [packed(V103)]],
+    // more copies of the table than are kept (64): the ones past them are not read, and an unfixed one could be there
+    ['crowded', [...Array.from({ length: 64 }, () => packed(V1010)), packed(V109)]],
+  ]) {
+    const r = judge(bin(join(d, name), parts));
+    assert.equal(r.status, 'UNKNOWN', name); assert.match(r.reason, /form Brotli 1\.0 writes them.*could not be tested/, name);
+  }
+  // the last name cut by the end of the file (no NUL after it): not seen whole, so not the table's
+  const cutEnd = join(d, 'cut-by-the-end');
+  writeFileSync(cutEnd, Buffer.concat([MACHO, packed(V1010.slice(0, V1010.indexOf('DICTIONARY_NOT_SET'))), Buffer.from('DICTIONARY_NOT_SET')]));
+  assert.equal(judge(cutEnd).status, 'UNKNOWN');
+  // the clean twins: the whole table, packed or padded by 2 (separate C strings)
+  assert.equal(judge(bin(join(d, 'whole'), [packed(V1010)])).status, 'SAFE');
+  assert.equal(judge(bin(join(d, 'whole-separate'), V1010)).status, 'SAFE');
+  // a stray BLOCK_SWITCH beside the 1.1 form only is no 1.0 table: the 1.1 table decides
+  assert.equal(judge(bin(join(d, 'stray-11-new'), [CONTROL, MARKER, packed(['BLOCK_SWITCH'])])).status, 'SAFE');
+  assert.equal(judge(bin(join(d, 'stray-11-old'), [CONTROL, packed(['BLOCK_SWITCH'])])).status, 'EXPOSED');
+});
+
+test('Brotli 1.0\'s form is read in linear time: 1 MB of hostile table names', () => {
+  const d = fresh('form10-time');
+  for (const [name, body] of [
+    ['anchors', Buffer.from('\0BLOCK_LENGTH_1'.repeat(70000))],
+    ['runs', Buffer.concat(Array.from({ length: 4000 }, () => packed([...T10_HEAD, 'DISTANCE'])))],
+    ['nul-gaps', Buffer.concat(Array.from({ length: 33000 }, () => Buffer.concat([Buffer.from('\0BLOCK_LENGTH_1'), Buffer.alloc(16)])))],
+  ]) {
+    const f = join(d, name);
+    writeFileSync(f, Buffer.concat([MACHO, body]));
+    assert.ok(body.length >= 1e6, `${name}: ${body.length} bytes`);
+    const t = Date.now();
+    const r = judge(f);
+    assert.ok(Date.now() - t < 3000, `${name}: ${Date.now() - t} ms`);
+    assert.equal(r.status, 'UNKNOWN', name);
+  }
+});
+
+test('the incident\'s 1.0 form: plain names, the anchor and the marker among them as the 1.1 names say', () => {
+  const t = INC.markers.table10, strip = (s) => s.replace(/^_ERROR_FORMAT_/, '');
+  assert.ok(Array.isArray(t) && t.length >= 4 && t.every((n) => /^[A-Z0-9_]+$/.test(n)));
+  assert.ok(t.includes(strip(CONTROL)) && !t.includes(strip(MARKER)), 'the run holds the control\'s name, not the marker\'s');
+  assert.match(INC.markers.after10, /^[A-Z0-9_]+$/);
+  // the run is decode.h's order, right before the place of the fix's name
+  const at = V1010.indexOf(t[0]);
+  assert.deepEqual(V1010.slice(at, at + t.length + 2), [...t, strip(MARKER), INC.markers.after10]);
 });
 
 test('names lie: a file named 1.2.1 without the marker is EXPOSED, one named 1.2.0 with it is SAFE', () => {
@@ -921,14 +1044,43 @@ test('a distribution\'s library without the marker: its own package version deci
     dpkg(st);
     assert.equal(distroVerdict(sys, INC.distro, { osRelease: osr, dpkgStatus: status, dpkgInfo: info }).status, 'UNKNOWN', st.split('\n').filter((l) => /^(Source|Version)/.test(l)).join(' '));
   }
-  // Debian 12 as it really is: Brotli 1.0's error texts have no _ERROR_FORMAT_ prefix (BrotliDecoderErrorString returns
-  // the bare name before 1.1.0), so no table is seen and the package record is not reached: UNKNOWN, never SAFE
+  // Brotli 1.0's error texts (no _ERROR_FORMAT_ prefix) that are no whole table: no table is seen and the package record
+  // is not reached, UNKNOWN, never SAFE (Debian 12's whole table is the next test)
   const old10 = bin(join(d, 'sys12', 'libbrotlidec.so.1'), ['SUCCESS', 'BLOCK_LENGTH_1', 'UNREACHABLE']);
   writeFileSync(osr, 'ID=debian\nVERSION_ID="12"\nVERSION_CODENAME=bookworm\n');
   dpkg(stanza('1.0.9-2+deb12u1'));
   md5sums(info, [old10]);
   const r12 = run({ libPlaces: [{ pattern: old10, label: 'the system\'s libbrotlidec', system: true }] }, { places: { osRelease: osr, dpkgStatus: status, dpkgInfo: info } }).rows[0];
   assert.equal(r12.status, 'UNKNOWN'); assert.match(r12.reason, /could not be tested/);
+});
+
+test('Debian 12\'s libbrotli1 1.0.9, in Brotli 1.0\'s form: its table without the fix\'s name hands over to its package version, as before', () => {
+  const d = fresh('deb12'), path = fresh('deb12-path');
+  const sys = bin(join(d, 'usr', 'lib', 'x86_64-linux-gnu', 'libbrotlidec.so.1'), [packed(V109)]);
+  const status = join(d, 'status'), osr = join(d, 'os-release'), info = join(d, 'info');
+  writeFileSync(osr, 'ID=debian\nVERSION_ID="12"\nVERSION_CODENAME=bookworm\n');
+  const places = { osRelease: osr, dpkgStatus: status, dpkgInfo: info };
+  const libPlaces = [{ pattern: sys, label: 'the system\'s libbrotlidec', system: true }];
+  // Debian's own node links it by soname
+  elf(join(path, 'node'), [NODE_CONTROL, 'libbrotlidec.so.1', 'nodejs.org/download/release/v18.19.0']);
+  const go = () => { const { rows } = run({ libPlaces }, { pathEnv: path, places, sonameDirs: [dirname(sys)] }); return { lib: rows.find((r) => r.what === 'library'), node: rows.find((r) => r.what === 'node') }; };
+  // the security build (DLA-4855-1), the file it installed: SAFE by the package's version, the program too
+  dpkgStatus(status, stanza('1.0.9-2+deb12u1')); md5sums(info, [sys]);
+  let { lib, node } = go();
+  assert.equal(lib.status, 'SAFE'); assert.match(lib.reason, /Debian's fixed package libbrotli1 1\.0\.9-2\+deb12u1 \(DLA-4855-1/);
+  assert.equal(node.status, 'SAFE');
+  // stock bookworm (1.0.9-2): EXPOSED, told Debian 12's fixed package
+  dpkgStatus(status, stanza('1.0.9-2')); md5sums(info, [sys]);
+  ({ lib, node } = go());
+  assert.equal(lib.status, 'EXPOSED'); assert.match(lib.fix, /Debian 12's fixed package is 1\.0\.9-2\+deb12u1/);
+  assert.equal(node.status, 'EXPOSED'); assert.match(node.fix, /not Node\.js: sudo apt update/);
+  // a version not in the table, and a file no package record names: UNKNOWN
+  dpkgStatus(status, stanza('1.0.9-2+deb12u2')); md5sums(info, [sys]);
+  assert.equal(go().lib.status, 'UNKNOWN');
+  dpkgStatus(status); assert.equal(go().lib.status, 'UNKNOWN');
+  // the clean twin: a 1.0.10 table needs no package record
+  bin(sys, [packed(V1010)]);
+  assert.equal(go().lib.status, 'SAFE'); assert.equal(go().node.status, 'SAFE');
 });
 
 test('a distribution\'s package version speaks only for a file that package installed, as dpkg installed it', () => {

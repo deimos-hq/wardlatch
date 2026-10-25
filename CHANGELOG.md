@@ -25,21 +25,34 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   the same idea, built into the check: an exact, NUL-delimited match plus a control string every decoder has
   (`_ERROR_FORMAT_BLOCK_LENGTH_1`), reading bytes only. Trail of Bits' brotli-checker is another tool that finds bundled
   copies; it checks source trees and ELF builds, and Wardlatch points to it.
+  - Brotli 1.0 writes the same table without the prefix (1.0.x's `BrotliDecoderErrorString` has `return #NAME;`, 1.1.0
+    on `return #PREFIX #NAME;`; both read in google/brotli's own `c/dec/decode.c` at v1.0.9, v1.0.10 and v1.1.0), so
+    Debian 12's libbrotli1 1.0.9 holds `BLOCK_LENGTH_1`, and 1.0.10, the fix on the 1.0 line, adds `BLOCK_SWITCH`
+    (code -17, right after `DISTANCE`). Those short words could be in any program, so that form is judged only as a
+    whole table (maintainer, 2026-10-25): the names from `HUFFMAN_SPACE` to `DISTANCE` in Brotli's order
+    around `BLOCK_LENGTH_1`, each NUL-delimited (up to 16 NULs between two, as a compiler pads strings it aligns),
+    either way round (the order `decode.h` lists them, as clang lays them out, or by code), then `BLOCK_SWITCH` and
+    `DICTIONARY_NOT_SET` (1.0.10) or `DICTIONARY_NOT_SET` at once (1.0.4 to 1.0.9).
   - What proves SAFE: the marker exactly as often as the control, in the file (in each build of a universal Mach-O file,
     with every Brotli library a file with a table also links SAFE too) or in the Brotli library it links (every
     candidate, by its real path, named in the receipt), or a Debian package version its table lists as fixed, for the
-    very file that package installed (dpkg's md5sums list names it with the same MD5).
+    very file that package installed (dpkg's md5sums list names it with the same MD5). In Brotli 1.0's form: every copy
+    of `BLOCK_LENGTH_1` in a whole table with `BLOCK_SWITCH` in its place, and `BLOCK_SWITCH` nowhere else.
   - What is EXPOSED: the control without the marker (or fewer markers than controls), in the file or its library; a
-    Debian package built from a source version its table lists as without the fix (every rebuild, such as 1.1.0-2+b7,
-    keeps its source's version), again for the file that package installed. A bundled copy with no fixed release yet
+    whole Brotli 1.0 table without `BLOCK_SWITCH` (a fixed 1.1-form table beside it included), which for a Debian
+    library hands over to its package version as the 1.1 form does (Debian 12's fixed 1.0.9-2+deb12u1 keeps 1.0.9's
+    table); a Debian package built from a source version its table lists as without the fix (every rebuild, such as
+    1.1.0-2+b7, keeps its source's version), again for the file that package installed. A bundled copy with no fixed release yet
     (Pillow, opencv-python) is EXPOSED, and its fix line says no release had a fixed Brotli on 24 October and to update
     when one ships.
   - What is "could not be tested": the marker without the control; no table and no library it can follow (a stripped
     static copy, `@rpath`, `@executable_path`, `$ORIGIN`, a program with its own `RUNPATH`, a soname when the loader's
     configuration or a library folder couldn't all be read, a library name in a string that isn't whole, or at the end
-    of a path that starts more than 1024 bytes before it); Brotli 1.0's unprefixed error texts, alone or beside a fixed
-    table; a file it can't read (a node or bun at mode 0111 included), over 512 MB or bigger than what is left of the
-    run's 4 GB reading budget; a universal file whose builds overlap (read build by build, they would read the same
+    of a path that starts more than 1024 bytes before it); Brotli 1.0's unprefixed error texts that are not whole tables
+    (scattered, out of order, only some of them, a table followed by neither form, which is how 1.0.0 to 1.0.3 read,
+    more copies than the 64 kept, or `BLOCK_SWITCH` anywhere but in its place), alone or beside a fixed table; a file
+    it can't read (a node or bun at mode 0111 included), over 512 MB or bigger than what is left of the run's 4 GB
+    reading budget; a universal file whose builds overlap (read build by build, they would read the same
     bytes again); a zipped egg of a Brotli package; a distribution library without the marker whose package version
     isn't in the table or can't be read, or that no package installed as it is now. Node's `zlib.constants` names, which
     contain the marker as a substring, never decide.
@@ -60,8 +73,11 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     kept outside their usual folders (`NVM_DIR` and the like) are not read. What the dynamic loader is told when a
     program starts (`LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`) is not known. A partial backport that adds the new error
     code without the decoder's fix would read SAFE, and so would an unfixed table beside one stray NUL-delimited copy of
-    the marker. Brotli 1.0's error texts have no `_ERROR_FORMAT_` prefix, so a 1.0.x library (Debian 12's libbrotli1
-    1.0.9, fixed or not) reads "could not be tested" until that form is judged.
+    the marker (in the 1.1 form; in the 1.0 form a stray copy makes it UNKNOWN). Brotli 1.0's table layout was checked
+    against clang's (1.0.9's and 1.0.10's lists compiled at -O0, -O2 and -Os), not yet against a real Debian 12
+    library built by GCC: if GCC lays the names out in another order, that library reads "could not be tested", never
+    SAFE. A linker that merges a 1.0 name into a longer string ending in it (`BLOCK_LENGTH_1` into
+    `_ERROR_FORMAT_BLOCK_LENGTH_1`) hides that table, as with two decoders in one image.
 - The tests never look in the home folder of the person running them (where macOS keeps Desktop, Documents, Downloads,
   Library, Photos and Mail): every test file loads `test/support/no-real-home.cjs` first, which refuses any look there,
   in the test and in every Node process it starts, and drops the home's folders from the `PATH` the tests start with.
