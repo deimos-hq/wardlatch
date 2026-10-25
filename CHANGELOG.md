@@ -54,35 +54,37 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     `LC_ID_DYLIB` and `LC_DYLD_ENVIRONMENT`; 32- and 64-bit, either byte order, each build of a universal file on its
     own) and an ELF file's dynamic table (`DT_NEEDED`, `DT_SONAME`, `DT_RPATH`, `DT_RUNPATH`, through `DT_STRTAB`),
     every read bounded and checked against the file. Its Brotli libraries and libnode are exactly the entries named
-    `libbrotlidec*`, or `libnode` and `libnode.*`, `libnode-*`, `libnode_*` (any case). Which copy of each the loader
-    takes is not emulated: where dyld or ld.so could take a different copy, every candidate must be SAFE, or the file
-    is "could not be tested" (EXPOSED if any candidate is EXPOSED). That covers each `LC_RPATH`, `DT_RUNPATH` or
-    `DT_RPATH` folder that holds a file of that name, not just the first (dyld and ld.so pass over a copy they can't
-    load and look on); a candidate that isn't a loadable Mach-O or ELF library for the file's CPU (another Mach-O
-    `cputype`, another ELF class, byte order or machine, or not a dylib or shared object), which is "could not be
-    tested", while a Mach-O library of the same `cputype` is a candidate whatever its `cpusubtype` (dyld loads an arm64e
-    dylib into an arm64 program; x86_64h beside x86_64); the `glibc-hwcaps/*` subfolders of every folder searched for a
-    soname; and, on ELF, a library's program's folders too (its `DT_RPATH`, as glibc reads it for a library with no
-    `DT_RUNPATH`, and its `DT_RUNPATH`, as musl does), so a library read without its program is "could not be tested"
-    when its own folders don't stop the search (an ELF file is a program when it is `ET_EXEC` or flagged `DF_1_PIE`).
-    An absolute path is taken as it is, `@loader_path` as the file's real folder, `$ORIGIN` as both its real folder and
-    the folder it was reached by, `@executable_path` only in a main program; on Mach-O only the file's own resolved
-    `@rpath`, `@loader_path` or absolute path is looked in. For an ELF soname the system's library folders come next
-    (every copy there a candidate), and one thing only stops the search before them: a copy the loader can load in a
-    plain folder (not a `glibc-hwcaps` one) of the file's own `DT_RUNPATH`, or of its own `DT_RPATH` when it has none,
-    there however `$ORIGIN` reads, with every copy found loadable and nothing left that couldn't be followed. A copy
-    found through the program's folders, or only in a `glibc-hwcaps` subfolder, is a candidate that must be SAFE and
-    never stops it: glibc never takes a program's `DT_RUNPATH` for a library, nor its `DT_RPATH` for a library with a
-    `DT_RUNPATH`, and looks in a hwcaps subfolder only on a CPU of that level; musl never does. Each path is handed to
-    the operating system as written (`realpath(3)`), so `..` after a link goes where the kernel goes (Node's own
-    `realpathSync` cleans it up as text first). An ELF file contradicts itself and is "could not be tested" when its
-    dynamic table at `PT_DYNAMIC`'s `p_offset` isn't the one the loader reads at its `p_vaddr`, and when its dynamic
-    table or string table (`DT_STRTAB`) is at an address in the page-rounded range of more than one `PT_LOAD` (the
-    kernel and ld.so map them a page at a time, a later one over the earlier, so another segment's bytes may be there;
-    a segment's page is its `p_align`, at most 64 KB, and 64 KB when that is under 4 KB); with one `PT_LOAD` for each
-    address it reads as before. Every read of a candidate's headers, a universal file's list of builds included, is
-    charged to the run's reading budget before it is made. Each is judged, one level, and an EXPOSED one decides. The rest of the file is read only for a
-    library it may load while it runs (`dlopen`): a Brotli library's or libnode's file name the loader can load
+    `libbrotlidec*`, or `libnode` and `libnode.*`, `libnode-*`, `libnode_*` (any case). Which copy of each a loader
+    takes is not predicted (maintainer's decision #25; rounds 6 to 8 modelled where dyld and ld.so look first, and each
+    verifier found another way a real loader takes a different copy: x86_64h under Rosetta, glibc 2.36's old hardware
+    subfolders, a library another library loaded first, the kernel's page size, ABI flags). (1) Candidates: every
+    regular file, or link to one, of exactly the library's file name (compared ignoring case on macOS) in any folder a
+    loader might look in: every folder named by the file's own search paths and those of every library followed from it
+    (`DT_RPATH` and `DT_RUNPATH`, both, and `LC_RPATH`, with `$ORIGIN` and `@loader_path` as the object's real folder and
+    the folder it was reached by, and `@executable_path` as the program's, in a program); the system's folders (on Linux
+    `/lib`, `/usr/lib`, `/lib64`, `/usr/lib64`, `/usr/local/lib`, the multiarch folders and those `/etc/ld.so.conf`,
+    its usual `ld.so.conf.d/*.conf` include and musl's `/etc/ld-musl-*.path` name; on macOS `/usr/local/lib` and
+    `/usr/lib`, dyld's fallback folders); and every folder below those, down to 3 levels (`glibc-hwcaps/x86-64-v3`,
+    `tls/haswell/x86_64`, a link to a folder included). A name that is an absolute path, or an `@` or `$ORIGIN` path, is
+    a candidate itself too. (2) Following: every library the file links, and every library those link, is looked for
+    the same way, and every candidate followed, so its search paths join the folders: a library another library loads
+    first is covered. (3) The link is SAFE when every candidate is SAFE and EXPOSED when every candidate is EXPOSED; a
+    mix, a candidate that can't be judged, none, a folder or library on the way that can't be read, a path that can't be
+    followed, or the reading budget spent is "could not be tested". Which copy a loader takes first, and whether it can
+    load a copy (its CPU type, subtype, platform or ABI flags), decide nothing. The cost: on a machine that also holds an
+    unfixed copy in a system folder (an old 32-bit copy, say), a program with a fixed private copy is "could not be
+    tested"; that system copy's own row is EXPOSED. Each path is handed to the operating system as written
+    (`realpath(3)`), so `..` after a link goes where the kernel goes (Node's own `realpathSync` cleans it up as text
+    first). (4) An ELF file contradicts itself and is "could not be tested" when its dynamic table at `PT_DYNAMIC`'s
+    `p_offset` isn't the one the loader reads at its `p_vaddr`, and when its dynamic table or string table (`DT_STRTAB`)
+    is at an address in the page-rounded range of more than one `PT_LOAD` (the kernel and ld.so map them a page at a
+    time, a later one over the earlier, so another segment's bytes may be there), with every page a kernel for its
+    machine may use: 4 KB on x86 and x86-64, and 4, 16 and 64 KB on any other machine, never the file's `p_align`; with
+    one `PT_LOAD` for each address it reads as before. Every read is charged to the run's reading budget before it is
+    made: each file's first 8 bytes and a universal file's list of builds, the headers of each library followed, and
+    each folder listed (4 KB before it is listed, then 256 bytes an entry, once a run). Each candidate is judged, one
+    level, and a link whose every candidate is EXPOSED decides over one that isn't SAFE. The rest of the file is read
+    only for a library it may load while it runs (`dlopen`): a Brotli library's or libnode's file name the loader can load
     (`libbrotlidec.so.1`, `libnode.147.dylib`, `libbrotlidec-ba690955.so.1.1.0`, in a message or a path too) that is not
     one of the file's own (in its link table, a whole copy of one of its links or of its own install name or soname, its
     code-signing identifier when that is its own file name, and nothing else) makes it "could not be tested"; a static
@@ -94,8 +96,9 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   - What is "could not be tested": the marker without the control; no table and no library it can follow (a stripped
     static copy, a link not found or behind a folder it can't look into, `@executable_path` in a library, `$LIB` or
     `$PLATFORM`, a relative path such as `lib/libbrotlidec.1.dylib` or `../lib/libbrotlidec.so.1`, or a relative search
-    folder, which dyld and ld.so look for from the folder the program is started in and which the reason names, a soname
-    when the loader's configuration or a library folder couldn't all be read; each of these beside a table too); headers
+    folder, which dyld and ld.so look for from the folder the program is started in and which the reason names, any link
+    when the loader's configuration or a folder looked in couldn't all be read; each of these beside a table too); copies
+    of a linked library that disagree, or one that can't be judged (a FIFO, a link into a closed folder); headers
     that don't fit their format, a file that is neither Mach-O nor ELF, `LC_DYLD_ENVIRONMENT`, a library a program links
     that links a Brotli library or libnode of its own, and a name it may load while it runs (above), or more mentions of
     the names than the 65,536 a build is looked at for, beside a table too; Brotli 1.0's unprefixed error texts that are
@@ -147,21 +150,17 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   - Known limits: not yet run on a Linux nodejs.org build, whose linker may have merged the decoder's strings into
     Node's constant names; such a node would read "could not be tested" until that is checked on CI. A Brotli library
     loaded under another name (a link called `libfoo.dylib`, a name a program puts together while it runs, or a name
-    with other bytes in it, such as `libbrotlidec\x01.so.1`) can't be seen. A library a program's `@rpath` finds only
-    through the `LC_RPATH` of the program that loads it, or only through `DYLD_` or `LD_` variables, reads "not found".
-    Which copy of an ELF soname the loader takes among the system's folders is decided by its cache, which isn't read,
-    so every copy there must be SAFE. A loader's other reasons to pass over a copy of the right format and CPU (its
-    platform, its code signature, its version) are not read, so such a copy is judged as the one it takes; dyld's
-    fallback folders after an absolute path it can't load are not read either, nor glibc's legacy hwcaps subfolders
-    (`tls`, `haswell`, `x86_64` and the like, searched before glibc 2.37); and a position-independent program without
-    `DF_1_PIE` (an older toolchain's) is read as a library. A copy found only through the program's folders never
-    stops the search, so a program whose fixed copy glibc takes that way (its `DT_RPATH`, for a library with neither)
-    reads EXPOSED beside an unfixed copy in the system's folders: a false EXPOSED, on the safe side, never a false
-    SAFE. A loader whose pages are larger than 64 KB is not covered by the page rule. nvm, fnm and n kept outside
+    with other bytes in it, such as `libbrotlidec\x01.so.1`) can't be seen. Loader variables set when a program runs
+    (`LD_LIBRARY_PATH`, `LD_PRELOAD`, `DYLD_*`) are not known; `ld.so.cache` entries outside the folders the loader's
+    configuration names are not read; a library a program opens with `dlopen` by a path that isn't in its link table
+    can't be seen (when its name is in the file, the file is still "could not be tested"); folders more than 3 levels
+    below a searched one are not looked in. Nor are the folders of the program that loads a library read on its own (a
+    Python package's file, read without Python), a library not found as a file (macOS keeps its own in dyld's shared
+    cache, so they aren't followed), or a folder below a searched one that another account owns and this account
+    can't open (no program this account runs can load from it). nvm, fnm and n kept outside
     their usual folders (`NVM_DIR` and the like) are not read. An asdf plugin for Node.js named other than `nodejs` or `node` is not read, so its shim
     reads "could not be tested". mise's settings in its configuration files (`shims_dir`, `system_installs_dir`,
-    `shared_install_dirs`) are not read, only its variables. What the dynamic loader is told when a program starts
-    (`LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`, `DYLD_FALLBACK_LIBRARY_PATH`) is not known. A partial backport that adds
+    `shared_install_dirs`) are not read, only its variables. A partial backport that adds
     the new error code without the decoder's fix would read SAFE, and so would an unfixed table beside one stray
     NUL-delimited copy of the marker (in the 1.1 form; in the 1.0 form a stray copy makes it UNKNOWN). Brotli 1.0's
     table layout was checked against clang's (1.0.9's and 1.0.10's lists compiled at -O0, -O2 and -Os) and against
