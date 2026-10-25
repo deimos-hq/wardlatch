@@ -12,26 +12,35 @@ being reviewed ([CLAUDE.md](../CLAUDE.md), rule 3).
    final. After the reviews below, only the changelog, the version and other documents may change; the gate refuses a
    release whose code changed after its reviews.
 2. **The class audit**, `docs/reviews/X.Y.Z/CLASS-AUDIT.md`: a review of all the code, not just the change, by kind of
-   bug: every input source each check trusts (each environment variable a child process inherits, the working
-   directory, `PATH`, config files, files on disk), every path that ends in SAFE or exit 0 and what it proves, every
-   read and pattern (bounded?), and that nothing found on the machine is run. It names every advisory in CHANGELOG.md
-   and says how that advisory's kind of mistake was looked for again. Format: [docs/reviews/README.md](reviews/README.md).
+   bug: every input source each check trusts (each environment variable a child process inherits, the working directory,
+   `PATH`, config files, files on disk), every path that ends in SAFE or exit 0 and what it proves, every read and
+   pattern (bounded?), and that nothing found on the machine is run. It names every advisory in CHANGELOG.md and says
+   how that advisory's kind of mistake was looked for again. Format: [docs/reviews/README.md](reviews/README.md).
 3. **The independent review**, `docs/reviews/X.Y.Z/INDEPENDENT-REVIEW.md`: a strict review of the release's changes by
    someone, or a fresh agent, who wrote none of them. Every finding is fixed (each fix gets its own new review) or
    written into the changelog's Known limits, until the verdict is READY.
-4. **Read the latest weekly mutation report** (Actions, "Mutation (full, report)") and the known test gaps in
-   `scripts/mutants-gaps.json`. A survivor or a gap in code this release touched gets a test first, or the class audit
-   says why it can't matter.
-5. **Push and let CI finish.** Every check must pass on the release commit, including `critical mutants` (each `'UNKNOWN'`
-   and `'EXPOSED'` in the code changed to `'SAFE'` is caught by a behaviour test). Read the job summary of `corpus (report against last release)`: every
-   difference from the last release is intended, or it is a finding. Then run the corpus as a gate, as root with real
-   owners for the service and other-person folders, as the 0.1.9 review did: `node scripts/corpus/run.mjs <corpus>
-   <last-release>/bin/wardlatch.mjs bin/wardlatch.mjs --gate` must print GATE PASSED, and the class audit says so.
+4. **Read the latest weekly mutation report** (Actions, "Mutation (full, report)"; it plants `'REVIEW'` changed to
+   `'SAFE'` too, which the per-commit gate doesn't) and the known test gaps in `scripts/mutants-gaps.json`. A survivor
+   or a gap in code this release touched gets a test first, or the class audit says why it can't matter.
+5. **Push and let CI finish.** Every check must pass on the release commit, including `critical mutants` (it exits 0:
+   no survivor outside the two lists, and no closed or stale entry; each `'UNKNOWN'` and `'EXPOSED'` in the code
+   changed to `'SAFE'` is either caught by a behaviour test, named in the job summary, or a known gap in
+   `scripts/mutants-gaps.json`; no test gave different results on the same code) and `gaps and allow lists only
+   shrink`. Read the job summary of `corpus (report against last release)`: every difference from the last release is
+   intended, or it is a finding. Then run the corpus as a gate, as root with real owners for the service and
+   other-person folders, as the 0.1.9 review did: `node scripts/corpus/run.mjs <corpus> <last-release>/bin/wardlatch.mjs
+   bin/wardlatch.mjs --gate` must print GATE PASSED, and the class audit quotes that line. Read the todo lines of `npm
+   test` too (the documented limits): a todo test is not checked further, so a limit that got worse still reads as the
+   same todo; one that fails differently from its documented limit is a finding.
 6. **`npm run release-check` prints READY** on that commit, from a clean checkout of `main` (gh signed in). It checks
    1 to 5 where a machine can (the dated changelog section under an empty Unreleased, both reviews READY for this code
    with nothing that runs changed since, package.json apart from its version included, every advisory named in the
-   class audit, every GitHub check passed). The release workflow repeats the checks that need only the
-   checkout and publishes nothing without them.
+   class audit, the corpus gate's GATE PASSED quoted there, every GitHub check passed), and that nothing was added to
+   `scripts/mutants-gaps.json` or `scripts/mutants-allowed.json` since the last release without the maintainer's
+   approval written on the entry (`"approved": "maintainer, YYYY-MM-DD"`). The release workflow repeats its checks in a
+   job whose token only reads, checking that the tagged commit is on `main` instead of the clean checkout of `main`
+   (and reading GitHub's checks with its own token); it refuses a tag for a version older than 0.1.10, and publishes
+   nothing without them.
 
 Fewer, reviewed releases beat many fast ones. After a security release, releases pause for the freeze the maintainer
 sets (after 0.1.9: at least a week); whether anything breaks it is the maintainer's call.
@@ -53,9 +62,10 @@ git tag -s vX.Y.Z -m "wardlatch X.Y.Z"
 git push origin vX.Y.Z
 ```
 
-The tag push runs `.github/workflows/release.yml`: the full test suite, a check that the tag matches
-`package.json`, then it builds the source archive (`git archive`) and the npm package (`npm pack`), attests both with
-Sigstore, and publishes a GitHub release with the changelog section as its notes. **If any step fails, no release
+The tag push runs `.github/workflows/release.yml`: first, in a job whose token can only read, the full test suite and
+the release gate (`release-check.mjs --ci`); then, in a job that runs only after both pass, a check that the tag
+matches `package.json`, and it builds the source archive (`git archive`) and the npm package (`npm pack`), attests both
+with Sigstore, and publishes a GitHub release with the changelog section as its notes. **If any step fails, no release
 appears.** The workflow never publishes to npm.
 
 ```bash

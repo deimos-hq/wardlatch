@@ -22,13 +22,15 @@ why on the thread.
 
 ## Review
 
-Today the maintainer commits to `main` directly and there is no second reviewer. CI runs on every push and pull
-request (tests on Node 18, 20, 22, 24 and 26 on Linux and macOS, the critical-mutant gate, the corpus report, ShellCheck,
-the Mac fix's checksum and a run on copies of the certificate file, licence and sign-off checks, CodeQL, OpenSSF
-Scorecard). The maintainer tags a release only when `npm run release-check` prints READY; the release workflow repeats the checks
-that need only the checkout and publishes nothing without them ([docs/RELEASING.md](docs/RELEASING.md)). Requiring an approving review from
-someone other than the author, as Deimos's Crimp and Ratchet do, needs a second person with access first; it is on
-the [roadmap](ROADMAP.md).
+Today the maintainer commits to `main` directly and there is no second reviewer. CI runs on every push and pull request
+(tests on Node 18, 20, 22, 24 and 26 on Linux and macOS, the critical-mutant gate and the check that its two lists of
+known survivors only shrink, the corpus report, ShellCheck, the Mac fix's checksum and a run on copies of the
+certificate file, licence and sign-off checks, CodeQL). OpenSSF Scorecard runs on every push to `main` and weekly. The
+maintainer tags a release only when `npm run release-check` prints READY; the release workflow repeats its checks,
+GitHub's among them, except that it checks the tagged commit is on `main` instead of the clean checkout of `main`, and
+publishes nothing without them ([docs/RELEASING.md](docs/RELEASING.md)). Requiring an approving review from someone
+other than the author, as Deimos's Crimp and Ratchet do, needs a second person with access first; it is on the
+[roadmap](ROADMAP.md).
 
 ## Continuity
 

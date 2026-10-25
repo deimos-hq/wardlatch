@@ -70,7 +70,9 @@ never against the advisory's real hosts.
 | `test/conventions.test.mjs` | The coding standard below, where a machine can check it |
 | `test/redteam.test.mjs` | Real-world machine setups from the 0.1.9 red team, each asserting what a correct tool says; the limits the 0.1.9 changelog documents run as todo |
 | `test/release-check.test.mjs` | The release gate, `scripts/release-check.mjs`, on throwaway repositories |
-| `test/mutate.test.mjs` | The mutation gate, `scripts/mutate.mjs --critical`, on a tiny throwaway repository |
+| `test/mutate.test.mjs` | The mutation gate, `scripts/mutate.mjs --critical`, on a tiny throwaway repository, driven by tests that fail on a fixed schedule and at random; and `scripts/gaps-only-shrink.mjs` |
+| `test/corpus.test.mjs` | The corpus runner, `scripts/corpus/run.mjs`, on tiny made-up corpora |
+| `test/guardrails.test.mjs` | The workflows' tokens and concurrency, and what the documents say about the gates, read as text |
 | `test/fix-macos.check.sh` | `fix/fix-macos.sh` on copies of a Mac's `/etc/ssl/cert.pem` (CI, macOS) |
 
 `npm run coverage` (Node 22.8 or later) reports line, branch and function coverage of `bin/` and `lib/` with Node's
@@ -78,20 +80,37 @@ built-in coverage, and fails below 80% of lines or functions.
 
 Two more checks test the tests, and CI runs both on every push and pull request:
 
-- **Critical mutants** (`npm run mutate:critical`, Node 22.1 or later): each `'UNKNOWN'` and `'EXPOSED'` in `bin/` and
-  `lib/` (a status made, passed, returned or compared) is changed to `'SAFE'` in a copy of the code, one occurrence at a
-  time, and the suite must fail on every copy. The static test that rejects any SAFE literal outside `safe()` is
-  skipped in the copies, so behaviour tests must do the catching, and the tests that caught each one are recorded. The
-  unmutated copy must pass first. A survivor or a timeout fails CI unless `scripts/mutants-allowed.json` lists the
-  survivor with the reason no behaviour can tell it apart, or `scripts/mutants-gaps.json` lists it as a known test gap.
-  The gaps list is the honest record of what the tests don't catch yet (42 of 107 on 24 October 2026); it may only
-  shrink: CI fails when a listed gap starts being caught until it comes off the list, and a new survivor never goes
-  on it without the maintainer's word. `npm run mutate` plants every kind of bug and only reports;
-  it runs weekly on GitHub in four shards (`.github/workflows/mutation.yml`), not on a laptop.
+- **Critical mutants** (`npm run mutate:critical`, Node 22.1 or later): each `'UNKNOWN'` and `'EXPOSED'` in
+  `bin/wardlatch.mjs` and `lib/*.mjs` (a status made, passed, returned or compared; the JSON in `lib/incidents/` is not
+  planted) is changed to `'SAFE'` in a copy of the code, one occurrence at a time, and the suite must fail on every
+  copy. The static test that rejects any SAFE literal outside `safe()` is skipped in the copies, so behaviour tests must
+  do the catching, and any other test that reads the code's text instead of running it is found and set aside: a test
+  that fails on one more copy, with an inert SAFE in code that never runs at the end of every file planted in, is never
+  counted as a catch (and the static test itself must fail there, or the run stops). A planted bug counts as caught
+  only when a test that failed in the suite then fails on its own on the copy and passes on its own on the unmutated
+  code, 3 times each, interleaved; that test is recorded (results.json, and the job summary in CI). The unmutated code
+  must pass first, at least twice at the same load, every test the same each time. A test seen giving different
+  results on the same code ends the run with exit 2, named. What that leaves: an uncaught planted bug still reads as
+  caught if an unrelated test that fails at random with probability p fails in exactly the right runs, at most
+  p⁴(1−p)³ for one planted bug (at most 0.84%), and less for the whole gate to pass with it (`scripts/mutate.mjs` works
+  it out). A survivor, a timeout or an error fails CI unless `scripts/mutants-allowed.json` lists the survivor with the
+  reason no behaviour can tell it apart, or `scripts/mutants-gaps.json` lists it as a known test gap. The gaps list is
+  the honest record of what the tests don't catch yet (42 of the 107 places in the 0.1.9 code). Both lists may only
+  shrink: CI fails when a listed one starts being caught until it comes off its list, and on a change that adds an
+  entry to either (`scripts/gaps-only-shrink.mjs`); and the release gate refuses a release while any entry added since
+  the last release lacks the maintainer's approval written on it (`"approved": "maintainer, YYYY-MM-DD"`; only the
+  maintainer adds to these lists, [CLAUDE.md](CLAUDE.md)). It runs one suite at a time unless `--jobs` says more (CI
+  runs 4). `npm run mutate` plants every kind of bug, `'REVIEW'` changed to `'SAFE'` among them (26 places in the 0.1.9
+  code), and only reports what it catches; it runs weekly on GitHub in four shards (`.github/workflows/mutation.yml`),
+  not on a laptop.
 - **The corpus** (`scripts/corpus/`): realistic machine layouts, clean and bad, run with the change and with the last
   release; every difference is listed in the job summary for review. In CI it is a report: some layouts stand in for
   folders a service or another person owns, which only root can set up. As a gate (`run.mjs --gate`: clean layouts
-  exit 0, bad layouts are caught) it is run as root with real owners before a release.
+  exit 0; each bad layout is caught as its manifest says it must be, EXPOSED where it must be EXPOSED, with exit 1 for
+  an EXPOSED finding) it is run as root with real owners before a release, and the class audit quotes its GATE PASSED
+  line, which the release gate looks for. It stops, never passing, when it would check nothing: no clean or no bad
+  layout, a bad layout that doesn't say what it must find, an unknown `--only` name, a `--jobs` or `--timeout` that
+  isn't a whole number of at least 1, or fewer layout × incident runs than the corpus has.
 
 ## Coding standards
 

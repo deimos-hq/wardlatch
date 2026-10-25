@@ -127,8 +127,10 @@ when the file and its folder are writable by the user (as in the tests, which po
 
 ## Tests and CI
 
-`test/` runs offline against stand-ins: a throwaway CA and HTTPS server on 127.0.0.1, fake programs on a private
-`PATH`, fake containers, throwaway git repositories and WordPress sites. CI (`.github/workflows/`) runs it on Node 18,
-20, 22, 24 and 26 on Linux and macOS, and adds the critical-mutant gate (`scripts/mutate.mjs --critical`), the corpus
-report against the last release (`scripts/corpus/`), ShellCheck, the Mac fix on copies of a real `cert.pem`, the Mac fix's checksum,
-REUSE and DCO checks, CodeQL and OpenSSF Scorecard. Details: [CONTRIBUTING.md](../CONTRIBUTING.md#testing-policy).
+`test/` runs offline against stand-ins: a throwaway CA and HTTPS server on 127.0.0.1, fake programs on a private `PATH`,
+fake containers, throwaway git repositories and WordPress sites. CI (`.github/workflows/`) runs it on Node 18, 20, 22,
+24 and 26 on Linux and macOS, and adds the critical-mutant gate (`scripts/mutate.mjs --critical`) and the check that its
+two lists of known survivors only shrink (`scripts/gaps-only-shrink.mjs`), the corpus report against the last release
+(`scripts/corpus/`), ShellCheck, the Mac fix on copies of a real `cert.pem`, the Mac fix's checksum, REUSE and DCO
+checks, and CodeQL; OpenSSF Scorecard runs on pushes to `main` and weekly. Details:
+[CONTRIBUTING.md](../CONTRIBUTING.md#testing-policy).

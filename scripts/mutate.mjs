@@ -13,7 +13,8 @@
 // run only: a gate (--critical, or --gate) plants every one in the files asked for (--only; all of them by default), and
 // stops (exit 2) if that is none. Each 'REVIEW' becoming 'SAFE' is a false all-clear too, but it is planted only by
 // the report run (without --critical), with every other kind of bug: making it part of the gate needs a test for each
-// one no test catches yet, or the maintainer's word to list it as a known gap (CONTRIBUTING.md says how many).
+// one no test catches yet, or the maintainer's word to list it as a known gap (CONTRIBUTING.md says how many are
+// planted; the weekly report, how many are caught).
 //
 // What "caught" means. A planted bug counts as caught only when the suite on its copy exits 1 with at least one named
 // failing test, and one of those tests (up to five are tried, in turn) then fails on its own on the copy and passes on

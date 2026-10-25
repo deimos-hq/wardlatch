@@ -89,6 +89,11 @@ test('certificate checking is never switched off, except the one reachability ha
   }
 });
 
+test('no unfilled placeholder: no white square bracket (U+27E6, U+27E7) in any text file, so no number still to be measured ships', () => {
+  const found = TEXT.filter((f) => /[\u27E6\u27E7]/.test(read(f)));
+  assert.deepEqual(found, [], 'fill these in from a measured run');
+});
+
 test('layout: UTF-8 text with LF line ends, no tabs, no trailing spaces, a final newline', () => {
   assert.ok(TEXT.length >= 20);
   for (const f of TEXT) {

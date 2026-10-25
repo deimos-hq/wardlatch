@@ -14,17 +14,26 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 ### Development (no code in the package changes; package.json gains three npm scripts)
 
 - The release gate: `npm run release-check` refuses a release unless both reviews are on file for the code being
-  released (`docs/reviews/<version>/`, exactly one verdict each, READY), nothing that runs (package.json apart from its
-  version included) changed after them, the class audit names every advisory, and every GitHub check passed on the
-  release commit. The release workflow repeats the checks that need only the code (the
-  changelog, the reviews, the advisories) and publishes nothing without them.
+  released (`docs/reviews/<version>/`, each readable only one way: one verdict, READY, and one reviewed commit, with no
+  second verdict or commit anywhere in the file however it is written, and nothing in an HTML comment), nothing that
+  runs (package.json apart from its version included) changed after them, the class audit names every advisory and
+  quotes the corpus gate's GATE PASSED, every GitHub check passed on the release commit, and neither list of planted
+  bugs no test catches (`scripts/mutants-gaps.json`, `scripts/mutants-allowed.json`) gained an entry since the last
+  release without the maintainer's approval written on it. The release workflow repeats it in a job whose token only
+  reads, checking that the tagged commit is on `main` instead of the clean checkout of `main`, reads GitHub's checks
+  with its own token, refuses a tag for a version older than 0.1.10, and publishes nothing without it.
 - The red team's 75 scenarios are part of `npm test` (`test/redteam.test.mjs`); the 14 limits the 0.1.9 changelog
   documents (13 under Known limits, one owner decision) run as todo.
-- CI also runs, on every push and pull request, the critical-mutant gate (each `'UNKNOWN'` and `'EXPOSED'` in the code
-  changed to `'SAFE'` must be caught by a behaviour test; on 24 October 2026 the tests catch 65 of 107, and the 42 they
-  don't are listed as known test gaps in `scripts/mutants-gaps.json`, a list that may only shrink) and a corpus report
-  against the last release; the tests on
-  Node 24 and 26 too; and the full mutation report weekly, in four shards.
+- CI also runs, on every push and pull request, the critical-mutant gate: each `'UNKNOWN'` and `'EXPOSED'` in the code
+  changed to `'SAFE'` must be caught by a behaviour test, one that fails on its own on the planted bug and passes on its
+  own without it, three times each; a test that also fails on an inert SAFE in code that never runs reads the code's
+  text and is never the catch; and a test that gives different results on the same code fails the gate. The 0.1.9 code
+  has 107 such places; 42 are listed as known test gaps in `scripts/mutants-gaps.json`, a list that may only shrink,
+  which CI checks on every push and pull request and the release gate against the last release. How many the tests
+  catch under these rules is not measured yet: the job's first run on GitHub measures it. Also a corpus report against
+  the last release (as a gate, run as root before a release, a bad layout that must read EXPOSED fails if it reads
+  REVIEW only), the tests on Node 24 and 26 too, and the full mutation report weekly, in four shards, which also plants
+  `'REVIEW'` changed to `'SAFE'` (26 places in the 0.1.9 code).
 - Rules for AI coding agents: [CLAUDE.md](CLAUDE.md).
 
 ## [0.1.9] - 2026-10-23

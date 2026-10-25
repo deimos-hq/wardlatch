@@ -308,10 +308,17 @@ rehearsed a release (see [GOVERNANCE.md](GOVERNANCE.md#continuity)).
 
 No runtime or development dependencies: `npm install` of Wardlatch fetches only Wardlatch. CI runs on every push and
 pull request: the tests on Node 18, 20, 22, 24 and 26 on Linux and macOS with deprecations as errors (the red-team
-scenarios among them), a mutation gate that changes each `'UNKNOWN'` and `'EXPOSED'` in the code to `'SAFE'` in turn and
-fails unless a behaviour test catches every one (the unmutated code passing first), a corpus of realistic machines run against the last release, `node --check` on every module,
-ShellCheck, the Mac fix on copies of a real `cert.pem` and its checksum, REUSE licence and DCO sign-off checks,
-and CodeQL with `security-and-quality`. OpenSSF Scorecard runs on every push to `main` and weekly. Every action is
+scenarios among them); a mutation gate that changes each `'UNKNOWN'` and `'EXPOSED'` in the code to `'SAFE'` in turn and
+counts one caught only when a test fails on its own on it and passes on its own without it, three times each, and
+never when that test also fails on an inert SAFE in code that never runs (the 0.1.9 code has 107 such places, 42 of
+them listed as known test gaps in `scripts/mutants-gaps.json`, a list that only shrinks: CI checks each push and pull
+request, and the release gate needs the maintainer's approval on any entry added since the last release; how many the
+tests catch under this rule is not measured yet, and the job's first run on GitHub measures it. The gate fails on any
+other survivor and on any test that gives different results on the same code; a test that fails at random can still,
+rarely, make an uncaught one read as caught, with the odds `scripts/mutate.mjs` works out); a corpus of realistic
+machines run against the last release;
+`node --check` on every module, ShellCheck, the Mac fix on copies of a real `cert.pem` and its checksum, REUSE licence
+and DCO sign-off checks, and CodeQL with `security-and-quality`. OpenSSF Scorecard runs on every push to `main` and weekly. Every action is
 pinned to a full commit SHA, workflows get read-only tokens unless a job needs more, and Dependabot proposes action
 updates weekly. GitHub secret scanning and push protection are on for the repository. A release cut from a tag gets a
 Sigstore attestation of its source archive and npm package ([docs/RELEASING.md](docs/RELEASING.md)); 0.1.3 and every

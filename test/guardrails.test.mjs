@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Deimos AI LLC
 // The guardrails' own wiring, read as text: the workflows give each job only the token it needs and the concurrency the
-// release gate relies on. These files never touch bin/ or lib/, so the mutation copies don't run this test.
+// release gate relies on, and the documents say what the gates do, no more. Nothing here touches bin/ or lib/, so the
+// mutation copies don't run this test.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -51,4 +52,38 @@ test('ci.yml: on main every commit keeps its own critical-mutants run (the relea
   // must be the commit itself, or a commit pushed between two others could end cancelled
   assert.match(c[1], /^critical-mutants-\$\{\{ github\.event_name == 'pull_request' && github\.ref \|\| github\.sha \}\}$/);
   assert.equal(c[2], "${{ github.event_name == 'pull_request' }}");
+});
+
+// ---- what the documents say about the gates --------------------------------------------------------------------------
+const DOCS = ['README.md', 'CONTRIBUTING.md', 'GOVERNANCE.md', 'ASSURANCE_CASE.md', 'CHANGELOG.md', 'docs/ARCHITECTURE.md', 'docs/RELEASING.md'];
+// a document's sentences: its paragraphs and list items, lines folded, split after "." or ";" before a capital; of
+// CHANGELOG.md only what is not released yet (a past release's entry records what was said then)
+const text = (f) => (f === 'CHANGELOG.md' ? read(f).split(/\n## \[(?!Unreleased)/)[0] : read(f));
+const sentences = (f) => text(f).split(/\n\s*\n|\n\s*(?:[-*]|\d+\.) /).flatMap((p) => p.replace(/\s*\n\s*/g, ' ').split(/(?<=[.;])\s+(?=[A-Z`(*[])/));
+
+test('CONTRIBUTING says which files the mutation gate plants in, as scripts/mutate.mjs chooses them', () => {
+  assert.match(read('scripts/mutate.mjs'), /^const all = \[\.\.\.readdirSync\(join\(REPO, 'lib'\)\)\.filter\(\(f\) => f\.endsWith\('\.mjs'\)\)\.map\(\(f\) => `lib\/\$\{f\}`\), 'bin\/wardlatch\.mjs'\];$/m,
+    'top-level lib/*.mjs and bin/wardlatch.mjs: not lib/incidents/, not other files in bin/');
+  const critical = read('CONTRIBUTING.md').replace(/\s*\n\s*/g, ' ').split(' - **').find((p) => p.startsWith('Critical mutants**'));
+  assert.ok(critical, 'the Critical mutants item');
+  assert.match(critical, /in `bin\/wardlatch\.mjs` and `lib\/\*\.mjs`/);
+  assert.doesNotMatch(critical, /in `bin\/` and `lib\/`/);
+});
+
+test('no document lists OpenSSF Scorecard among the checks on every push and pull request: it runs on pushes to main and weekly', () => {
+  const on = read('.github/workflows/scorecard.yml');
+  assert.doesNotMatch(on.slice(0, on.indexOf('\njobs:')), /pull_request/, 'scorecard.yml runs on no pull request');
+  for (const f of DOCS) for (const s of sentences(f)) if (/every push and pull request/.test(s)) assert.doesNotMatch(s, /Scorecard/, `${f}: ${s.slice(0, 300)}`);
+});
+
+test('no document says the release workflow repeats the release gate\'s checks without saying what it does instead of the clean checkout of main', () => {
+  let seen = 0;
+  for (const f of DOCS) {
+    for (const s of sentences(f)) {
+      if (!/release workflow repeats/.test(s)) continue;
+      seen++;
+      assert.match(s, /on `main` instead of the clean checkout of `main`/, `${f}: ${s.slice(0, 300)}`);
+    }
+  }
+  assert.ok(seen >= 3, `the claim is made in CHANGELOG.md, GOVERNANCE.md and docs/RELEASING.md (seen ${seen})`);
 });
