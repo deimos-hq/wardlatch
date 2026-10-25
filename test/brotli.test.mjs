@@ -9,7 +9,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, openSync, ftruncateSync, closeSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, openSync, ftruncateSync, closeSync, realpathSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -374,6 +374,45 @@ test('site-packages: a clean twin with a fixed Brotli binding and no bundled cop
   writeFileSync(join(sp, 'brotli-1.2.1.dist-info', 'RECORD'), '_brotli.cpython-314-darwin.so,,\n');
   const { rows } = run({}, { siteDirs: [sp] });
   assert.deepEqual(rows.map((r) => [r.file, r.status, r.searched]), [[join(sp, '_brotli.cpython-314-darwin.so'), 'SAFE', [join(sp, '_brotli.cpython-314-darwin.so')]]]);
+});
+
+test('site-packages: Brotli bindings without a RECORD (egg-info, .egg folders, distribution packages) and symlinked folders are found', () => {
+  const sp = fresh('eggs/site-packages'), libs = fresh('eggs/elsewhere');
+  const meta = (path, name, version) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, `Metadata-Version: 2.1\nName: ${name}\nVersion: ${version}\n\n`); };
+  // brotlicffi installed by setup.py: an egg-info with pip's installed-files.txt (paths relative to the egg-info folder)
+  oldLib(join(sp, 'brotlicffi', '_brotlicffi.abi3.so'));
+  meta(join(sp, 'brotlicffi-1.1.0.0-py3.12.egg-info', 'PKG-INFO'), 'brotlicffi', '1.1.0.0');
+  writeFileSync(join(sp, 'brotlicffi-1.1.0.0-py3.12.egg-info', 'installed-files.txt'), '../brotlicffi/__init__.py\n../brotlicffi/_brotlicffi.abi3.so\nPKG-INFO\n');
+  // brotlipy (brotli/_brotli.*) from a distribution's package: a dist-info whose RECORD was dropped
+  oldLib(join(sp, 'brotli', '_brotli.abi3.so'));
+  meta(join(sp, 'brotlipy-0.7.0.dist-info', 'METADATA'), 'brotlipy', '0.7.0');
+  // pip's Brotli as an .egg folder, and brotlicffi inside another one
+  oldLib(join(sp, 'Brotli-1.1.0-py3.12-macosx-14.0-arm64.egg', '_brotli.cpython-312-darwin.so'));
+  meta(join(sp, 'Brotli-1.1.0-py3.12-macosx-14.0-arm64.egg', 'EGG-INFO', 'PKG-INFO'), 'Brotli', '1.1.0');
+  oldLib(join(sp, 'brotlicffi-1.0.9.2-py3.12.egg', 'brotlicffi', '_brotlicffi.abi3.so'));
+  // Pillow's package and vendored-library folders as links to folders elsewhere, with no install record
+  oldLib(join(libs, 'PIL', '.dylibs', 'libbrotlidec.1.2.0.dylib')); oldLib(join(libs, 'pillow.libs', 'libbrotlidec-9ea4d3f1.so.1.2.0'));
+  symlinkSync(join(libs, 'PIL'), join(sp, 'PIL')); symlinkSync(join(libs, 'pillow.libs'), join(sp, 'pillow.libs'));
+  // a zipped egg of a binding: can't be looked inside
+  writeFileSync(join(sp, 'brotlipy-0.6.0-py2.7-linux-x86_64.egg'), 'PK\x03\x04');
+  const want = {
+    'brotlicffi/_brotlicffi.abi3.so': 'brotlicffi 1.1.0.0', 'brotli/_brotli.abi3.so': '',
+    'Brotli-1.1.0-py3.12-macosx-14.0-arm64.egg/_brotli.cpython-312-darwin.so': 'Brotli 1.1.0',
+    'brotlicffi-1.0.9.2-py3.12.egg/brotlicffi/_brotlicffi.abi3.so': 'brotlicffi 1.0.9.2',
+    'PIL/.dylibs/libbrotlidec.1.2.0.dylib': '', 'pillow.libs/libbrotlidec-9ea4d3f1.so.1.2.0': '',
+  };
+  const c = sitePackagesCandidates(sp);
+  assert.deepEqual(Object.fromEntries(c.files.map((x) => [x.file.slice(sp.length + 1), x.owners.map((o) => `${o.name} ${o.version}`).join(', ')])), want);
+  assert.deepEqual(c.zipped, [join(sp, 'brotlipy-0.6.0-py2.7-linux-x86_64.egg')]);
+  const { rows } = run({}, { siteDirs: [sp] });
+  for (const rel of Object.keys(want)) assert.equal(rows.find((r) => r.file === join(sp, rel))?.status, 'EXPOSED', rel);
+  assert.match(rows.find((r) => r.file === join(sp, 'brotlicffi', '_brotlicffi.abi3.so')).fix, /'brotlicffi>=1\.2\.1\.0'/);
+  const z = rows.find((r) => r.file === join(sp, 'brotlipy-0.6.0-py2.7-linux-x86_64.egg'));
+  assert.equal(z.status, 'UNKNOWN'); assert.match(z.reason, /zipped egg.*could not be tested/);
+  // the clean twin: the same places with fixed copies are SAFE, each with its receipt
+  for (const rel of Object.keys(want)) fixedLib(realpathSync(join(sp, rel)));
+  rmSync(join(sp, 'brotlipy-0.6.0-py2.7-linux-x86_64.egg'));
+  assert.deepEqual(run({}, { siteDirs: [sp] }).rows.map((r) => r.status), Object.keys(want).map(() => 'SAFE'));
 });
 
 test('site-packages: a folder or a RECORD that can\'t be read is reported, never read as empty', { skip: process.getuid?.() === 0 && 'root reads everything' }, () => {
