@@ -1,28 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Deimos AI LLC
-// The tests' safety net: no test looks in the real home folder of the person running them, where macOS keeps
-// Desktop, Documents, Downloads, Library, iCloud Drive, Photos and Mail. Every test file loads it first, and it goes
-// with every Node process a test starts, at any depth, with the same folders. Off limits: the home the tests were
-// started with (os.homedir() before any test changes HOME), the account's own (its home in the user database, and
-// /Users/<name> on macOS or /home/<name> elsewhere) and, under sudo, SUDO_USER's (/Users/<name> or /home/<name>, and
-// its line in /etc/passwd). Inside them, this checkout and the folder of the Node running the tests (nvm and the like
-// keep it there) stay readable.
+// The tests' safety net: it catches a test that reads or writes the real home folder of the person running them (where
+// macOS keeps Desktop, Documents, Downloads, Library, iCloud Drive, Photos and Mail) by accident, and fails that test.
+// It is not a sandbox: code written to get past it can (CONTRIBUTING.md, Testing policy, lists the routes it doesn't
+// watch). Every test file loads it first, and it goes with every Node process a test starts through child_process, and
+// those they start in turn, with the same folders. Off limits: the home the tests were started with (os.homedir()
+// before any test changes HOME), the account's own (its home in the user database, and /Users/<name> on macOS or
+// /home/<name> elsewhere) and, under sudo, SUDO_USER's (/Users/<name> or /home/<name>, and its line in /etc/passwd).
+// Inside them, this checkout and the folder of the Node running the tests (nvm and the like keep it there) stay
+// readable.
 // A path is compared as the system reads it: '.', '..' and links followed in order, and on macOS in any case and with
-// the start-up disk's folders also spelt under /System/Volumes/Data or /Volumes/<x>, however many times. Following a
-// link never looks inside a home: a folder off limits is never looked at, but for those on the way to this checkout.
-// A look under them is never made: a read, a listing, a stat, an open, a write, a glob, a stream, a require() or an
-// import, a change of folder, a program started there or in a working folder there, or found through a PATH folder
-// there; nor a walk that can reach one (a recursive listing, copy, watch or removal of a folder that holds one, and a
-// recursive listing, copy, watch or glob below which a link leads into one). It goes with every Worker thread too (a
-// Worker has an fs of its own), and covers process.loadEnvFile and node:sqlite, which open files without fs.
+// the start-up disk's folders also spelt under /System/Volumes/Data or /Volumes/<x>, however many times (read by its
+// text too, where the system would find nothing). Following a link never looks inside a home: a folder off limits is
+// never looked at, but for those on the way to this checkout.
+// A look under them by these routes is refused before it is made: a path given to an fs function or stream class, a
+// glob, a require() or an import (of a file, a package name or a '#' name of package.json's imports), a change of
+// folder, a program started there or in a working folder there, or found through a PATH folder there, a Node started
+// with a flag that reads a file there as it starts (--env-file and the like); and a walk that can reach one (a
+// recursive listing, copy, watch or removal of a folder that holds one, and a recursive listing, copy, watch or glob
+// below which a link leads into one). It goes with each Worker thread started with worker_threads.Worker (a Worker has
+// an fs of its own), and covers process.loadEnvFile and node:sqlite, which open files without fs.
 // In the test it throws, says so on stderr and fails the test file. In a process a test started it ends that
 // process at once (exit 70; a Worker thread, that thread), whatever would catch the error (lib/files.mjs reads one as
 // "can't be opened"), and leaves a note the test file reads when it exits: a refusal anywhere below a test fails the
 // test file, even when nothing checks that process's exit code.
 // The PATH the tests were started with loses its folders under them, so no test, and no command a test runs with that
 // PATH, looks for a program there (~/.local/bin, ~/.cargo/bin).
-// What no net inside Node can stop: a program that isn't Node (and a Node one starts below the command), and macOS's
-// own libraries reading ~/.CFUserTextEncoding as any process starts (CONTRIBUTING.md, Testing policy).
 'use strict';
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), cp = require('node:child_process');
 const Module = require('node:module'), wt = require('node:worker_threads');
@@ -118,7 +121,15 @@ const where = (p) => {
   try { cwd = process.cwd(); } catch { /* the working folder is gone: a relative path opens nothing */ }
   return path.isAbsolute(s) ? s : `${cwd}/${s}`;
 };
-const offLimits = (abs) => shut(key(physical(abs, stop)));
+// on macOS a path is also read by its text with the start-up disk's other names taken off before any link is followed
+// ('.', '..' and doubled slashes read as written): a spelling of the home under them is refused even where the system
+// would find nothing (/System/Volumes/Data has no /tmp or /var: those links are the system volume's alone)
+const offLimits = (abs) => {
+  if (shut(key(physical(abs, stop)))) return true;
+  if (!MAC) return false;
+  const n = path.posix.normalize(abs), t = strip(n);
+  return t !== n && shut(key(physical(t, stop)));
+};
 
 // where a process a test started leaves its note: the test file's own folder, made when it first starts a process (a
 // test file that is killed can't remove it) and removed when it exits; never one in a home
@@ -295,6 +306,9 @@ const sqlite = (m) => {
       if (typeof open === 'function') P.open = function (...a) { const r = open.apply(this, a); own(this); return r; };
       if (typeof loadExtension === 'function') P.loadExtension = function (p, ...a) { check(p); return loadExtension.call(this, p, ...a); };
       made.set(C, new Proxy(C, { construct(t, a, nt) { dbAt(a[0]); const db = Reflect.construct(t, a, nt); own(db); return db; } }));
+      // the class its prototype and every database give (db.constructor) is that same guarded one
+      const d = Object.getOwnPropertyDescriptor(P, 'constructor');
+      if (d?.value === C) Object.defineProperty(P, 'constructor', { ...d, value: made.get(C) });
     }
     m[name] = made.get(C);
   }
@@ -317,7 +331,11 @@ if (typeof getBuiltin === 'function') process.getBuiltinModule = function (id, .
 const pathLike = (s) => /^(?:\/|\.\.?(?:\/|$))/.test(s);
 const resolveFilename = Module._resolveFilename;
 Module._resolveFilename = function (request, parent, ...rest) {
-  if (typeof request === 'string' && !Module.isBuiltin(request) && pathLike(request)) check(path.resolve(parent?.filename ? path.dirname(parent.filename) : process.cwd(), request));
+  if (typeof request === 'string' && !Module.isBuiltin(request)) {
+    const from = parent?.filename ? path.dirname(parent.filename) : process.cwd();
+    if (pathLike(request)) check(path.resolve(from, request));
+    else if (request.startsWith('#')) hashSearch(from);
+  }
   return resolveFilename.call(this, request, parent, ...rest);
 };
 // require()'s search for a package name (Module._findPath, as Node calls it, with require.resolve's paths too); in a
@@ -349,6 +367,36 @@ const importSearch = (spec, from) => {
     try { if (statSync(p).isDirectory()) return; } catch { /* not here: on up */ }
   }
 };
+// A '#' name (package.json's imports), by require() or import: Node reads the nearest package.json up from the
+// importing file's folder (not past a node_modules folder) and, for a target that names a package, looks for that
+// package as import does, up from that package.json's folder: in the checkout's own node_modules it loads, and going on
+// into a home's is refused. The net doesn't work out which target Node takes: it checks that search for every package
+// any target in that file's imports names (any name, condition or fallback; a pattern's '*' kept, so that name is
+// looked for in every folder). A package.json in a home on the way is refused, as Node would read it; one the net
+// can't read as JSON is read as naming any package.
+const hashSearch = (from) => {
+  for (let d = from; path.basename(d) !== 'node_modules'; d = path.dirname(d)) {
+    const f = path.join(d, 'package.json');
+    check(f);
+    let text;
+    try { text = readFileSync(f, 'utf8'); } catch { if (d === path.dirname(d)) return; continue; }   // none here: on up
+    let imports;
+    try { imports = JSON.parse(text.replace(/^\uFEFF/, '')).imports; } catch {
+      for (const n of Module._nodeModulePaths(d)) check(n);
+      return;
+    }
+    const todo = [imports];
+    while (todo.length) {
+      const v = todo.pop();
+      if (v && typeof v === 'object') for (const x of Object.values(v)) todo.push(x);
+      // (a target that isn't a package: './' a file of the package, a builtin; '../', '/' and a URL Node refuses)
+      else if (typeof v === 'string' && !/^(?:\.?\.?\/|[a-z][a-z\d+.-]*:)/i.test(v) && !Module.isBuiltin(v)) {
+        importSearch(v, d);
+      }
+    }
+    return;
+  }
+};
 if (typeof Module.registerHooks === 'function') {
   Module.registerHooks({
     resolve(spec, context, next) {
@@ -358,9 +406,11 @@ if (typeof Module.registerHooks === 'function') {
         let url = null;
         try { url = /^[a-z][a-z\d+.-]*:/i.test(spec) || pathLike(spec) ? new URL(spec, parent ?? pathToFileURL(`${process.cwd()}/`)) : null; } catch { url = null; }
         const conditions = Array.isArray(context?.conditions) ? context.conditions : [];
+        const from = () => (parent ? path.dirname(fileURLToPath(parent)) : process.cwd());
         if (url?.protocol === 'file:') check(url);
+        else if (!url && spec.startsWith('#')) hashSearch(from());
         // (a require() goes on to Module._findPath, above)
-        else if (!url && !spec.startsWith('#') && !(conditions.includes('require') && !conditions.includes('import'))) importSearch(spec, parent ? path.dirname(fileURLToPath(parent)) : process.cwd());
+        else if (!url && !(conditions.includes('require') && !conditions.includes('import'))) importSearch(spec, from());
       }
       const r = next(spec, context);
       if (typeof r?.url === 'string' && r.url.startsWith('file:')) check(new URL(r.url));
@@ -412,6 +462,25 @@ const payload = (extra) => JSON.stringify({ homes: HOMES, marks: marks(), ...ext
 // (quoted only when it must be: a path with a space, a quote or a backslash)
 const REQUIRE = `--require ${/[\s"'\\]/.test(__filename) ? JSON.stringify(__filename) : __filename}`;
 const withOptions = (env) => ({ ...env, NODE_OPTIONS: `${REQUIRE}${env.NODE_OPTIONS ? ` ${env.NODE_OPTIONS}` : ''}`, [KEY]: payload({ nodeOptions: env.NODE_OPTIONS ?? null }) });
+// a Node's own flags that read a file as it starts, before any code of it runs (this file's too), from its working
+// folder: --env-file, --env-file-if-exists, --experimental-config-file and --config-file (flag=path, or the path as
+// the next word), and --experimental-default-config-file (node.config.json; Node 26 reads the two config flags without
+// '=' so too, the next word being the script: both readings are checked). Node takes none of them from NODE_OPTIONS.
+// Every word of a Node's arguments (a fork's: its execArgv) is read so, a word after the script too (the script's own:
+// when in doubt, refuse); a shell command's words and a #! line's are not read.
+const FLAG_FILES = ['--env-file', '--env-file-if-exists', '--experimental-config-file', '--config-file'];
+const DEFAULT_CONFIG = ['--experimental-default-config-file', '--experimental-config-file', '--config-file'];
+const nodeFlags = (words, cwd) => {
+  if (!Array.isArray(words)) return;
+  words.forEach((w, i) => {
+    const s = String(w);
+    if (DEFAULT_CONFIG.includes(s)) check(path.join(cwd, 'node.config.json'));
+    for (const f of FLAG_FILES) {
+      if (s === f && i + 1 < words.length) check(path.resolve(cwd, String(words[i + 1])));
+      else if (s.startsWith(`${f}=`)) check(path.resolve(cwd, s.slice(f.length + 1)));
+    }
+  });
+};
 const carry = (kind, o) => function (file, ...a) {
   const shellCmd = kind === 'execSync';
   const args = shellCmd ? null : Array.isArray(a[0]) ? a.shift() : a[0] == null && a.length ? (a.shift(), []) : [];
@@ -424,11 +493,15 @@ const carry = (kind, o) => function (file, ...a) {
   if (Object.prototype.hasOwnProperty.call(env, KEY) && env[KEY] !== undefined && `${env[KEY]}` !== process.env[KEY]) return call(args, opts);
   const cwd = where(opts.cwd ?? '.') ?? '/';
   if (opts.cwd != null) check(opts.cwd);
-  if (kind === 'fork') check(typeof file === 'string' ? path.resolve(cwd, file) : file);
+  if (kind === 'fork') {
+    check(typeof file === 'string' ? path.resolve(cwd, file) : file);
+    nodeFlags(opts.execArgv ?? process.execArgv, cwd);
+  }
   // a fork's execArgv is left as it is: Node takes -e out of its own execArgv only when it is that same list (else a
   // fork from node -e runs the -e code again, and forks again)
   if (kind === 'fork' || shellCmd || opts.shell) return call(args, { ...opts, env: withOptions(env) });
   const how = nodeKind(locate(file, env, cwd));
+  if (how) nodeFlags(args, cwd);
   if (how === 'self') return call(['--require', __filename, ...args], { ...opts, env: { ...env, [KEY]: payload() } });
   if (how === 'node' || !child) return call(args, { ...opts, env: withOptions(env) });
   return call(args, opts);

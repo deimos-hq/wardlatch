@@ -62,28 +62,47 @@ Tests run offline. A check that needs the network is tested against a local stan
 certificate authority and a canary server on 127.0.0.1, fake programs on a private `PATH`, and fake containers),
 never against the advisory's real hosts.
 
-Tests never look in the home folder of the person running them. Every test file loads `test/support/no-real-home.cjs`
-first (a test checks it), and it goes with every Node process the test starts, at any depth (by `--require`, or by
-`NODE_OPTIONS`, which the process gets back as it was), and with every Worker thread. A look there by Node fails the
-test: a read, listing, stat, open or write in any form, a glob, a stream, a `require()` or (from Node 22.15) an
-`import`, a change of folder, a program, working folder or `PATH` folder there, a `.env` file `process.loadEnvFile`
-reads, or a `node:sqlite` database, backup or extension there (and, on a Node with `setAuthorizer`, a file SQL
-attaches); and a walk that can reach it: a recursive listing, copy, watch or `rm` of a folder that holds it, or a
-recursive listing, copy, watch or glob below which a link leads into it. A package in the checkout's own
-`node_modules` loads by name; Node's search going on into the home's `node_modules` above the checkout is refused. In
-the test it throws; in a process or Worker the test started it stops that process or thread (exit 70) and leaves a note
-that fails the test even when nothing reads that exit code. A path is compared as the system reads it (links and `..`
-followed, and on macOS in any case and under `/System/Volumes/Data` or `/Volumes/<x>`), and under sudo SUDO_USER's home
-is off limits too. The `PATH` the tests start with loses its folders there. `test/no-real-home.test.mjs` tries every
-way past the net that a review found, and checks that each wrapped fs function still does its work outside the home. A
-test that needs a home builds one in its own temporary folder; `test/support/fake-home.cjs` makes one appear at
-`/Users/<name>` (or `/home/<name>`).
+Tests must never read or write the home folder of the person running them. Every test file loads
+`test/support/no-real-home.cjs` first (a test checks it). Its purpose is narrow: to catch a test of this project, or a
+process it starts, that reads or writes a real home by accident, and fail that test. It is not a sandbox, and code
+written to get past it can. It goes with every Node process a test starts through `child_process` (spawn, exec,
+execFile, fork and their Sync forms), and with those they start in turn (by `--require`, or by `NODE_OPTIONS`, which the
+process gets back as it was), and with each Worker thread one of them starts with `worker_threads.Worker`. There, a look
+in a home by these routes fails the test: a path given to an `fs` function (callback, Sync and promise forms) or stream
+class, a glob, a `require()` or (from Node 22.15) an `import` of a file, of a package name or of a `#` name of
+package.json's `imports` (a package in the checkout's own `node_modules` loads; Node's search going on into a home's
+`node_modules` is refused), a change of folder, a program, working folder or `PATH` folder there, a `.env` file
+`process.loadEnvFile` reads, a `node:sqlite` database, backup or extension there (on a Node with `setAuthorizer`, a file
+SQL attaches too; a SQLite URI is refused whole), a Node started with `--env-file`, `--env-file-if-exists`,
+`--experimental-config-file`, `--config-file` or `--experimental-default-config-file` reading a file there; and a walk
+that can reach one: a recursive listing, copy, watch or `rm` of a folder that holds it, or a recursive listing, copy,
+watch or glob below which a link leads into it. In the test it throws; in a process or Worker the test started it stops
+that process or thread (exit 70) and leaves a note that fails the test even when nothing reads that exit code. A path is
+compared as the system reads it (links and `..` followed; on macOS in any case, and also by its text with any
+`/System/Volumes/Data` or `/Volumes/<x>` at its start taken off, so such a spelling is refused even where it names
+nothing), and under sudo SUDO_USER's home is off limits too. The `PATH` the tests start with loses its folders there.
+`test/no-real-home.test.mjs` tries each of these routes on a made-up home, and checks that each wrapped fs function
+still does its work outside it. A test that needs a home builds one in its own temporary folder;
+`test/support/fake-home.cjs` makes one appear at `/Users/<name>` (or `/home/<name>`).
 
-What the net can't stop, said plainly: it works inside Node, so a program that isn't Node (git, curl, a shell) is not
-watched, nor is a Node that such a program starts below the command (the command builds its children's environments,
-and tests read them); and on macOS every process, Node included, has the system's CoreFoundation library read
-`~/.CFUserTextEncoding` from the home folder as it starts, before any code of the test runs, which no net inside Node
-can stop.
+The routes the net doesn't watch, said plainly. A test must not reach a home by one of them; the net won't notice.
+
+- A program that isn't Node (git, curl, a shell), and a Node that such a program starts below the command (the command
+  builds its children's environments, and tests read them); a program started with `process.execve`.
+- What Node itself reads or writes as a process starts or ends, outside any test code: command-line flags other than the
+  five above that name a file or folder (`--snapshot-blob`, `--openssl-config`, `--redirect-warnings`,
+  `--localstorage-file`, `--tls-keylog`, `--watch-path`, `--test-reporter-destination`, the report, profile and
+  diagnostic folders), those five in a shell command's words or a `#!` line, variables such as `NODE_EXTRA_CA_CERTS`,
+  `NODE_V8_COVERAGE`, `NODE_COMPILE_CACHE` and `NODE_REPL_HISTORY`, and, for a module outside any package, the
+  package.json Node looks for in each folder above it (for the module's type); and, on macOS, the system's
+  CoreFoundation library reading `~/.CFUserTextEncoding` as every process starts, Node included, before any code of the
+  test runs.
+- Node functions that open a file or socket without `fs`: a unix socket (`net`'s listen and connect, `http`'s
+  `socketPath`), `v8.writeHeapSnapshot`, `process.report.writeReport`, `process.dlopen`, WASI's preopened folders.
+- Threads the net isn't given: `module.register`'s hooks thread, and a Worker made from the class its prototype gives
+  (`Worker.prototype.constructor`).
+- Code written to get past it: an option whose getter gives another value when Node reads it, a link or file changed
+  between the net's look and Node's, an `fs` function kept from before the net loaded, Node's internal bindings.
 
 | File | For |
 |---|---|
@@ -96,7 +115,7 @@ can stop.
 | `test/mutate.test.mjs` | The mutation gate, `scripts/mutate.mjs --critical`, on a tiny throwaway repository, driven by tests that fail on a fixed schedule and at random; and `scripts/gaps-only-shrink.mjs` |
 | `test/corpus.test.mjs` | The corpus runner, `scripts/corpus/run.mjs`, on tiny made-up corpora |
 | `test/guardrails.test.mjs` | The workflows' tokens and concurrency, and what the documents say about the gates, read as text |
-| `test/no-real-home.test.mjs` | The tests' safety net, `test/support/no-real-home.cjs`, against every way past it a review found, on a made-up home |
+| `test/no-real-home.test.mjs` | The tests' safety net, `test/support/no-real-home.cjs`: each route it watches, on a made-up home, and its clean twin |
 | `test/fix-macos.check.sh` | `fix/fix-macos.sh` on copies of a Mac's `/etc/ssl/cert.pem` (CI, macOS) |
 
 `npm run coverage` (Node 22.8 or later) reports line, branch and function coverage of `bin/` and `lib/` with Node's
