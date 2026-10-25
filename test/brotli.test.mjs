@@ -14,6 +14,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scanBytes, readAt } from '../lib/files.mjs';
 import { judgeFile, evidence, resolveLink, isDecoderLibName, recordPaths, sitePackagesCandidates, distroVerdict, checkBundled, elfSearchPath, ldSoConfDirs } from '../lib/brotli.mjs';
+import { SITE_PATTERNS } from '../lib/installs.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
@@ -481,6 +482,24 @@ test('libraries: Homebrew\'s, MacPorts\' and conda\'s, and a program linking one
   assert.deepEqual(good[0].searched, [join(path, 'node'), realpathSync(brew)]);
 });
 
+test('conda: the Brotli library of every conda home whose Python packages are read is read too, base and environments', () => {
+  const conda = INC.libPlaces.filter((p) => p.fix === 'conda').map((p) => p.pattern);
+  // every conda home the Python search knows (lib/installs.mjs), in the same form: <home>/lib/libbrotlidec.*
+  const homes = SITE_PATTERNS.filter((p) => /conda|miniforge|mambaforge|micromamba|Caskroom\/mini/.test(p) && p.endsWith('/lib/python3*/site-packages')).map((p) => p.slice(0, -'/lib/python3*/site-packages'.length));
+  assert.ok(homes.length >= 15, `${homes.length} conda homes in the Python search`);
+  for (const h of homes) assert.ok(conda.includes(`${h}/lib/libbrotlidec.*`), `${h}: its libbrotlidec is read`);
+  // and each place, moved into a scratch root, finds an unfixed library there: EXPOSED, with the conda fix for its env
+  const root = fresh('conda-root'), home = fresh('conda-home');
+  const moved = conda.map((p) => (p.startsWith('~/') ? join(home, p.slice(2)) : join(root, p)));
+  const files = moved.map((p) => oldLib(p.replaceAll('*', 'x').replace(/libbrotlidec\.x$/, 'libbrotlidec.1.1.0.dylib')));
+  const { rows } = run({ libPlaces: moved.map((pattern) => ({ pattern, label: 'conda\'s libbrotlidec', fix: 'conda' })) });
+  for (const f of files) {
+    const r = rows.find((x) => x.file === realpathSync(f));
+    assert.equal(r?.status, 'EXPOSED', f);
+    assert.match(r.fix, new RegExp(`^conda install -n ${f.includes('/envs/') ? 'x' : 'base'} 'libbrotlidec>=1\\.2\\.1'`), f);
+  }
+});
+
 test('a distribution\'s library without the marker: its own package version decides, by exact string; anything else is UNKNOWN', () => {
   const d = fresh('distro'), path = fresh('distro-path');
   const sys = oldLib(join(d, 'sys', 'libbrotlidec.so.1'));
@@ -603,6 +622,15 @@ test('CLI: an exposed copy is exit 1 with its fix, a fixed-only machine exit 0 w
   // a copy whose table is stripped is exit 2, not 0
   bin(join(sp, 'PIL', '.dylibs', 'libbrotlidec.1.2.0.dylib'), [MARKER]);
   assert.equal(cli(['--incident', 'brotli-2026-10', '--json', '--paths', join(home, 'Development')], env).code, 2);
+  // conda's own library in conda homes beyond the first three (mambaforge, ~/.conda/envs): read, EXPOSED, exit 1
+  const chome = fresh('cli-conda-home');
+  oldLib(join(chome, 'mambaforge', 'lib', 'libbrotlidec.1.1.0.dylib')); oldLib(join(chome, '.conda', 'envs', 'work', 'lib', 'libbrotlidec.1.1.0.dylib'));
+  const cbad = cli(['--incident', 'brotli-2026-10', '--json', '--paths', fresh('cli-conda-empty')], { HOME: chome, PATH: fresh('cli-conda-path') });
+  assert.equal(cbad.code, 1, cbad.out);
+  assert.deepEqual(JSON.parse(cbad.out).results.filter((r) => r.what === 'library').map((r) => [r.status, r.file.slice(realpathSync(chome).length)]).sort(),
+    [['EXPOSED', '/.conda/envs/work/lib/libbrotlidec.1.1.0.dylib'], ['EXPOSED', '/mambaforge/lib/libbrotlidec.1.1.0.dylib']]);
+  fixedLib(join(chome, 'mambaforge', 'lib', 'libbrotlidec.1.1.0.dylib')); fixedLib(join(chome, '.conda', 'envs', 'work', 'lib', 'libbrotlidec.1.1.0.dylib'));
+  assert.equal(cli(['--incident', 'brotli-2026-10', '--json', '--paths', fresh('cli-conda-empty')], { HOME: chome, PATH: fresh('cli-conda-path') }).code, 0, 'the clean twin');
   // nothing anywhere: one SAFE row naming where it looked
   const empty = fresh('cli-empty');
   const none = cli(['--incident', 'brotli-2026-10', '--json', '--paths', empty], { HOME: fresh('cli-empty-home'), PATH: fresh('cli-empty-path') });
