@@ -47,9 +47,12 @@ jobs:
     name: critical mutants
     runs-on: ubuntu-latest
     timeout-minutes: 150
-    # one run per pull request: a new push cancels the run it replaces; on main every commit keeps its own run
+    # One run per pull request: a new push cancels the run it replaces. On main every commit keeps its own run, so its
+    # group is the commit itself: GitHub keeps one running and one pending run per group, and a newly queued run cancels
+    # the pending one, so a shared group would leave a commit pushed between two others with a cancelled check, which
+    # the release gate refuses.
     concurrency:
-      group: critical-mutants-${{ github.ref }}
+      group: critical-mutants-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1

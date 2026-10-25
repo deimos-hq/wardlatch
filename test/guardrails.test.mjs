@@ -41,3 +41,14 @@ test('release.yml: the release gate runs in a job of its own with a read-only to
     }
   }
 });
+
+test('ci.yml: on main every commit keeps its own critical-mutants run (the release gate needs it on the release commit); a pull request\'s new push cancels its last', () => {
+  const j = jobs('.github/workflows/ci.yml')['critical-mutants'];
+  assert.ok(j, 'the critical-mutants job');
+  const c = /\n {4}concurrency:\n {6}group: (.*)\n {6}cancel-in-progress: (.*)\n/.exec(j.text);
+  assert.ok(c, 'it has a concurrency group');
+  // a group keeps one running and one pending run, and a newly queued one cancels the pending one: on a push the group
+  // must be the commit itself, or a commit pushed between two others could end cancelled
+  assert.match(c[1], /^critical-mutants-\$\{\{ github\.event_name == 'pull_request' && github\.ref \|\| github\.sha \}\}$/);
+  assert.equal(c[2], "${{ github.event_name == 'pull_request' }}");
+});
