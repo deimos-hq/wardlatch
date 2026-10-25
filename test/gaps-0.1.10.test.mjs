@@ -220,7 +220,7 @@ test('#37 GitLab: a version file larger than expected is UNKNOWN; beside a file 
 });
 
 test('#38 the trust probe: when no test host chained to one of the two roots answers, a runtime that refused the rest is UNKNOWN', async () => {
-  // lib/probe.mjs:148 (a refusal proves nothing about a root that had no test host to refuse)
+  // lib/probe.mjs:156 (a refusal proves nothing about a root that had no test host to refuse)
   const d = fresh('p38'), pem = (r) => put(join(d, `${r}.pem`), `-----BEGIN CERTIFICATE-----\n${r}\n-----END CERTIFICATE-----\n`);
   // a curl that connects with only the forced root trusted (the control passes) and refuses every test host without it
   const curl = exe(join(d, 'curl'), 'case "$*" in *--cacert*) exit 0;; *) exit 60;; esac');

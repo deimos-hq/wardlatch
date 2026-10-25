@@ -151,16 +151,20 @@ const AWS = 'AKIA' + 'Z7Q4R2M8K3W6P5N1';   // shaped like a real key ID, no plac
 const EMAIL = 'ada.lovelace@example.org';
 const gitconfigId = (h) => put(join(h, '.gitconfig'), `[user]\n\tname = Ada Lovelace\n\temail = ${EMAIL}\n`);
 
-// stand-in runtimes. The positive control forces the incident's root PEMs in (node: WARDLATCH_CA, python: a 6th arg,
-// curl: a --cacert ending in root-*.pem / roots.pem).
+// stand-in runtimes. The positive control forces the incident's root PEMs in (node: WARDLATCH_CA, python: an argument
+// after the URL, curl: a --cacert ending in root-*.pem / roots.pem).
 const ROOTPEM = 'root-aaa.pem|*root-emsign.pem|*roots.pem';
 const nodeRt = (d, normal = 'exit 1', forced = 'exit 0') => exe(join(d, 'node'), `[ "$1" = -v ] && { echo v22.0.0; exit 0; }
 u="$3"
 if [ -n "$WARDLATCH_CA" ]; then ${forced}; fi
 ${normal}`);
-const pythonRt = (d, normal = 'exit 1', forced = 'exit 0') => exe(join(d, 'python3'), `[ "$1" = -V ] && { echo "Python 3.12.1"; exit 0; }
-u="$5"
-if [ -n "$6" ]; then ${forced}; fi
+// the URL and the forced CA file follow the script, wherever the options before -c put it (0.1.9 had -I -S, now -I -S -B);
+// the version is answered wherever -V is among those options (the version check runs python3 -B -V), as in
+// test/bughunt-0.1.9.test.mjs
+const pythonRt = (d, normal = 'exit 1', forced = 'exit 0') => exe(join(d, 'python3'), `for a in "$@"; do [ "$a" = -c ] && break; [ "$a" = -V ] && { echo "Python 3.12.1"; exit 0; }; done
+while [ $# -gt 0 ] && [ "$1" != -c ]; do shift; done; shift 2
+u="$1"
+if [ -n "$2" ]; then ${forced}; fi
 ${normal}`);
 const curlRt = (d, normal = 'exit 60', forced = 'exit 0') => exe(join(d, 'curl'), `[ "$1" = --version ] && { echo "curl 8.7.1 (x86_64-apple-darwin) libcurl/8.7.1"; exit 0; }
 ca=""; prev=""; u=""

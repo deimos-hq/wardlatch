@@ -89,10 +89,12 @@ still does its work outside it. A test that needs a home builds one in its own t
 Routes the net is known not to watch, said plainly. The list is not complete: a route named in neither list may be
 unwatched too. A test must not reach a home by any of them; the net won't notice.
 
-- A program that isn't Node (git, curl, a shell), and a Node that such a program starts below the command (the command
-  builds its children's environments, and tests read them); a program a shell command runs (`execSync`, `exec`,
+- A program that isn't Node (git, curl, a shell, Python), and a Node that such a program starts below the command (the
+  command builds its children's environments, and tests read them); a program a shell command runs (`execSync`, `exec`,
   `shell: true`: of such a command the net checks only its working folder), wherever it is; a program started with
-  `process.execve`.
+  `process.execve`. A test that starts a real Python gives it `-B` (with `-I` unless the test needs Python's start-up
+  files), and `test/conventions.test.mjs` checks it: Apple's `/usr/bin/python3` otherwise writes its `.pyc` cache to
+  `~/Library/Caches/com.apple.python` in the home folder it runs with.
 - What Node itself reads or writes as a process starts or ends, outside any test code: command-line flags other than the
   five above that name a file or folder (`--snapshot-blob`, `--openssl-config`, `--redirect-warnings`,
   `--localstorage-file`, `--tls-keylog`, `--watch-path`, `--test-reporter-destination`, the report, profile and

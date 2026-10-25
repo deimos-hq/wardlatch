@@ -40,7 +40,7 @@ programs already on the machine:
 | `bin/wardlatch.mjs` | Checks the options against the known list, loads the incidents, runs each one's checks, prints a line per result (control characters in names escaped), sets the exit code: 1 if anything is EXPOSED, else 2 if anything is UNKNOWN, else 0. REVIEW lines never change it. A trust check that found nothing to test is one UNKNOWN line, and on Windows (not supported) so is each program check. | Reads `lib/incidents/` and `package.json`. |
 | `lib/incidents/*.json` | One incident each: `id`, `type`, `title`, `date`, `advisory` (the public source), and the type's data: test hosts and fix texts (trust), version rules (binaries), a date (workflows), plugin rules (WordPress). | Data only. Checked by `test/incidents.test.mjs`. |
 | `lib/incidents/emudhra-2026-10-root-aaa.pem`, `-root-emsign.pem` | The two public root certificates the compromised intermediates chain to, one per file: each root's positive control forces only its own (the incident's `canaryRoots`). `emudhra-2026-10-roots.pem` holds both, for a test host with no group. | Data only; fingerprints and names checked against the incident file. |
-| `lib/discover.mjs` | Finds what to probe: the first `node`, `curl` and `python3` on `PATH` (the ones the shell runs) and later copies that are compiled programs (`copiesToRun` in `lib/binaries.mjs`), `/usr/bin/curl` and `/usr/bin/python3`, macOS's `nscurl`, the Linux distribution's CA bundle, the bundle `REQUESTS_CA_BUNDLE` names, and Python virtual environments (a folder with `pyvenv.cfg` and `bin/python`) under the folders searched, noting each one's `certifi`. | Lists directories (5 levels; skips `node_modules`, `.git`, and macOS's own folders: its Library at `/`, in `/System` and in home folders, the Trash, the Photos and Photo Booth libraries; does not follow symlinked folders). Runs each program on `PATH` once for its version (`python3 -V` exits before Python's start-up code). Never runs a found environment's own `bin/python`. |
+| `lib/discover.mjs` | Finds what to probe: the first `node`, `curl` and `python3` on `PATH` (the ones the shell runs) and later copies that are compiled programs (`copiesToRun` in `lib/binaries.mjs`), `/usr/bin/curl` and `/usr/bin/python3`, macOS's `nscurl`, the Linux distribution's CA bundle, the bundle `REQUESTS_CA_BUNDLE` names, and Python virtual environments (a folder with `pyvenv.cfg` and `bin/python`) under the folders searched, noting each one's `certifi`. | Lists directories (5 levels; skips `node_modules`, `.git`, and macOS's own folders: its Library at `/`, in `/System` and in home folders, the Trash, the Photos and Photo Booth libraries; does not follow symlinked folders). Runs each program on `PATH` once for its version (`python3 -B -V` exits before Python's start-up code). Never runs a found environment's own `bin/python`. |
 | `lib/probe.mjs` | The trust check. `reachable()` does a TLS handshake with verification off and sends nothing, to learn whether a test host is up. `probe()` makes the runtime itself open a verified connection, with the user's trust settings (CA files and folders, proxies, `NODE_OPTIONS`' trust flags: an allowlist in `lib/run.mjs`). `check()` runs the controls, then the probes. | The only module that opens network connections. |
 | `lib/containers.mjs` | Lists running containers (`docker ps` / `podman ps`) and runs a small `sh` script inside each with `exec`: it uses whichever of `curl`, `python3` or `wget` the image has, and prints one line: which tool it used and the result (`ok`, `refused` or `error`), read from that line alone, never from `docker exec`'s exit code (which is 1 when the container has stopped). An engine that is installed but can't be asked (it hangs past 10 seconds, refuses, or fails for any reason other than "not running") is UNKNOWN, not "no containers"; `engineFailure()` is the one rule for that, for running containers and local images alike. | Runs the engine's `ps` and `exec`, each killed if it outlives its timeout. Writes nothing into a container. |
 | `lib/binaries.mjs` | Version rules: a bad range, a fixed version, or one fixed version per release line (and "end of life" when a line gets none). | Runs `<tool> --version` (or the rule's arguments) for programs found on `PATH` (and, for PHP, versioned `php`, `php-fpm` and `php-cgi` programs in its known install folders: `copiesMatching`), except a rule marked `noExec` (the OVHcloud CLI): that program is never run; its file is hashed and `$TMPDIR`, `/tmp`, `/var/tmp` and every macOS per-user temp folder (`/private/var/folders/*/*/T`) are listed for the malware's folder. |
@@ -71,14 +71,19 @@ asks each runtime to make the connection itself.
    completes, the host is up. Nothing is sent over it; it is closed at once. Hosts that don't answer are left out; if
    none answers, every line is UNKNOWN.
 2. **Positive control** (`check`, once per runtime, per distrusted root): the runtime connects to one answering host
-   of each root while trusting *only that root* (the incident's `canaryRoots`: `--cacert` for curl, `ca:` for Node,
-   `cafile=` for Python). If it can't connect even then, the probe can't see exposure on this runtime, and the line is
-   UNKNOWN. A root with no answering host makes the line UNKNOWN too, unless some host connected: a runtime that trusts
-   only that root would refuse every host that did answer.
+   of each root while trusting *only that root* (the incident's `canaryRoots`). Each runtime gets that root its own
+   way, and none through `SSL_CERT_FILE`: curl gets the file's path as an argument, `--cacert <file>`; Python gets
+   the path as an argument after the script, which hands it to `ssl.create_default_context(cafile=)`; Node gets the
+   file's text, read by Wardlatch, in the `WARDLATCH_CA` environment variable, which the script passes to `https.get`
+   as `ca:`, so the child never opens the roots file. A Python built on LibreSSL, as Apple's `/usr/bin/python3` is,
+   ignores `SSL_CERT_FILE` and `SSL_CERT_DIR` but reads `cafile=`. If it can't connect even then (it couldn't use the
+   file, or the chain), the probe can't see exposure on this runtime, and the line is UNKNOWN. A root with no
+   answering host makes the line UNKNOWN too, unless some host connected: a runtime that trusts only that root would
+   refuse every host that did answer.
    macOS's networking stack (`nscurl`) can't be pointed at a CA file, so it gets a normal-site control instead: it
    must open the advisory's own page, or the line is UNKNOWN.
 3. **The probe**: the runtime connects to each reachable host with its own defaults and the user's trust settings, the
-   way the user's code would, run from `/`. Python is the exception: it starts with `-I -S`, so its start-up files
+   way the user's code would, run from `/`. Python is the exception: it starts with `-I -S -B`, so its start-up files
    (`.pth`, `sitecustomize.py`) and anything they change about trust are left out. Any host it reaches makes the line EXPOSED, naming the hosts. Only a certificate-verification refusal counts as a refusal (curl exit 60, a Node certificate error code, Python's `SSLCertVerificationError`): when no host connected, every refusal of that kind makes it SAFE, and any other failure makes it UNKNOWN.
 
 Probes per runtime:
@@ -87,9 +92,9 @@ Probes per runtime:
 |---|---|
 | `curl` | `curl -s -o /dev/null --max-time N [--cacert roots] URL` (the Linux system store and a virtual environment's certifi add `--cacert <bundle>`; a bundle that can't be found is UNKNOWN) |
 | `node` | `node -e <script>`: `https.get` for the probe, and with `ca:` for the control (since 0.1.7; `fetch()` before, which Node 17 and older lack) |
-| `python` | `python3 -I -S -c <script>`: `ssl.create_default_context()` and `urllib`. A virtual environment's certifi is not run through Python: it is a `curl` row with `--cacert <bundle>`. `-S` skips the `site` module, so no `.pth` file or `sitecustomize.py` runs (since 0.1.7); `-I` leaves out the user's site-packages, the `PYTHON*` variables and the current folder |
+| `python` | `python3 -I -S -B -c <script>`: `ssl.create_default_context()` and `urllib`. A virtual environment's certifi is not run through Python: it is a `curl` row with `--cacert <bundle>`. `-S` skips the `site` module, so no `.pth` file or `sitecustomize.py` runs (since 0.1.7); `-I` leaves out the user's site-packages, the `PYTHON*` variables and the current folder; `-B` writes no `.pyc` cache (since the release after 0.1.9) |
 | macOS system | `nscurl URL`, read from its output, since it exits 0 even when the load fails; only NSURLErrorDomain -1202 and -1203 (an untrusted or unknown root) is a refusal; a date error (-1201, -1204) is an error |
-| a container | `sh -c <script>` inside it via `docker exec` / `podman exec`, using `curl`, else `python3 -I -S`, else `wget`; first a normal site must open, then `self-signed.badssl.com` must be refused, or the tool doesn't check certificates and the line is UNKNOWN |
+| a container | `sh -c <script>` inside it via `docker exec` / `podman exec`, using `curl`, else `python3 -I -S -B`, else `wget`; first a normal site must open, then `self-signed.badssl.com` must be refused, or the tool doesn't check certificates and the line is UNKNOWN |
 
 ## The Mac fix
 
@@ -118,8 +123,10 @@ when the file and its folder are writable by the user (as in the tests, which po
   changes only when an incident needs a new kind of check.
 - **Run the real thing.** The probes use the runtimes themselves, with the user's trust settings, so a result reflects
   what the user's code would do, including `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS` and a virtual environment's own
-  `certifi`. Except for what would mean running what is being checked: Python's start-up files are skipped (`-I -S`),
-  every program runs from `/` (`go version` with `GOTOOLCHAIN=local`), and `node_modules/.bin` folders are dropped from
+  `certifi` (where the runtime reads them: Apple's `/usr/bin/python3`, built on LibreSSL 2.8.3, ignores `SSL_CERT_FILE`
+  and `SSL_CERT_DIR`, in the probe as in the user's own programs, and trusts `/etc/ssl/cert.pem` and `/etc/ssl/certs`
+  whatever they say). Except for what would mean running what is being checked: Python's start-up files are skipped
+  (`-I -S`; `-B` so it writes no `.pyc` cache either), every program runs from `/` (`go version` with `GOTOOLCHAIN=local`), and `node_modules/.bin` folders are dropped from
   `PATH`.
 - **Controls before verdicts.** Every SAFE is preceded by evidence that the check could have said EXPOSED.
 - **Read-only command, separate fix.** Applying a fix is the person's decision. The one fix that ships is a separate

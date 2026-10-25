@@ -6,7 +6,7 @@ import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:https';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, symlinkSync, readdirSync, unlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,6 +31,29 @@ const withEnv = (vars, f) => {
   const set = (o) => { for (const [k, v] of Object.entries(o)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } };
   set(vars);
   try { return f(); } finally { set(saved); }
+};
+/** The real Pythons to test with, each as it names itself: the python3 on PATH and, on a Mac with the developer tools,
+ *  Apple's /usr/bin/python3 (without the tools it is a stub that offers to install them). Asked with -I -B, so neither
+ *  looks at a user site in the home folder or writes a .pyc cache (Apple's goes to ~/Library/Caches/com.apple.python). */
+const pythons = () => {
+  const exe = (py) => { try { return execFileSync(py, ['-I', '-B', '-c', 'import sys; print(sys.executable)'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return ''; } };
+  let apple = '';
+  if (process.platform === 'darwin' && existsSync('/usr/bin/python3')) { try { execFileSync('/usr/bin/xcode-select', ['-p'], { stdio: 'ignore' }); apple = exe('/usr/bin/python3'); } catch { /* no developer tools */ } }
+  return [...new Set([exe('python3'), apple].filter(Boolean))];
+};
+/** What this Python does at the canary with these settings, outside Wardlatch's code, with its own default context
+ *  (or one that trusts only `cafile`): 'connected', or 'refused' for any failure. With the probe's isolation (-I -S), so
+ *  a .pth file can't make the two differ (a documented limit), and -B. Asynchronous: the canary answers from this process. */
+const ownAnswer = (py, env, cafile) => new Promise((res) => execFile(py, ['-I', '-S', '-B', '-c', 'import sys,ssl,urllib.request\nctx=ssl.create_default_context(cafile=sys.argv[2]) if len(sys.argv)>2 else ssl.create_default_context()\ntry:\n    urllib.request.urlopen(sys.argv[1], timeout=3, context=ctx); print("connected")\nexcept Exception:\n    print("refused")', canary.url, ...(cafile ? [cafile] : [])],
+  { cwd: '/', timeout: 10000, env: { PATH: process.env.PATH, ...env } }, (_e, out) => res(String(out ?? '').trim())));
+/** A stand-in python3 in its own folder that logs the options it was started with (those before -c), one run a line,
+ *  and answers as a Python that trusts only a CA file it is given: connected (0) for the forced-roots control, refused
+ *  (1) for a test host. → { rt, runs() } */
+const pyRecorder = (name) => {
+  const bin = join(dir, name); mkdirSync(bin, { recursive: true });
+  const log = join(bin, 'runs.log'), py = join(bin, 'python3');
+  writeFileSync(py, `#!/bin/sh\nfor a in "$@"; do last="$a"; done\nflags=""; for a in "$@"; do [ "$a" = -c ] && break; flags="$flags $a"; done\necho "$flags" >> ${JSON.stringify(log)}\ncase "$last" in *.pem) exit 0;; esac\nexit 1\n`, { mode: 0o755 });
+  return { rt: { kind: 'python', bin: py, version: '' }, runs: () => (existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => l.trim().split(/\s+/)) : []) };
 };
 
 before(async () => {
@@ -104,11 +127,11 @@ test('a found environment\'s certifi bundle is tested with a trusted curl: a bun
 test('the Python probe never runs .pth files from site-packages: a marker .pth planted in a real environment stays silent', async (t) => {
   let venvPy;
   const venv = join(dir, 'pthvenv'), marker = join(dir, 'pth-ran');
-  try { execFileSync('python3', ['-m', 'venv', '--without-pip', venv], { stdio: 'ignore', timeout: 60000 }); venvPy = join(venv, 'bin', 'python3'); } catch { return t.skip('python3 -m venv is not available here'); }
+  try { execFileSync('python3', ['-I', '-B', '-m', 'venv', '--without-pip', venv], { stdio: 'ignore', timeout: 60000 }); venvPy = join(venv, 'bin', 'python3'); } catch { return t.skip('python3 -m venv is not available here'); }
   const sp = join(venv, 'lib', readdirSync(join(venv, 'lib')).find((n) => /^python3/.test(n)), 'site-packages');
   writeFileSync(join(sp, 'zz-marker.pth'), `import os; open(${JSON.stringify(marker)}, 'w').write('ran')\n`);
   // the test means something: an ordinary start of this Python does run the .pth (as LiteLLM 1.107.0's cook.pth ran)
-  execFileSync(venvPy, ['-I', '-c', 'pass'], { stdio: 'ignore' });
+  execFileSync(venvPy, ['-I', '-B', '-c', 'pass'], { stdio: 'ignore' });
   assert.ok(existsSync(marker), 'a normal start runs the .pth, even with -I'); unlinkSync(marker);
   await check({ kind: 'python', bin: venvPy, version: '' }, [canary], { controlUrl: canary.url, timeoutMs: 3000 });
   assert.equal(existsSync(marker), false, 'the probe ran a .pth from site-packages');
@@ -263,11 +286,11 @@ test('site-packages: a name nothing legitimate installs is EXPOSED by name alone
 test('the Python probe never runs .pth files from site-packages: a marker .pth planted in a real environment stays silent', async (t) => {
   let venvPy;
   const venv = join(dir, 'pthvenv'), marker = join(dir, 'pth-ran');
-  try { execFileSync('python3', ['-m', 'venv', '--without-pip', venv], { stdio: 'ignore', timeout: 60000 }); venvPy = join(venv, 'bin', 'python3'); } catch { return t.skip('python3 -m venv is not available here'); }
+  try { execFileSync('python3', ['-I', '-B', '-m', 'venv', '--without-pip', venv], { stdio: 'ignore', timeout: 60000 }); venvPy = join(venv, 'bin', 'python3'); } catch { return t.skip('python3 -m venv is not available here'); }
   const sp = join(venv, 'lib', readdirSync(join(venv, 'lib')).find((n) => /^python3/.test(n)), 'site-packages');
   writeFileSync(join(sp, 'zz-marker.pth'), `import os; open(${JSON.stringify(marker)}, 'w').write('ran')\n`);
   // the test means something: an ordinary start of this Python does run the .pth (as LiteLLM 1.107.0's cook.pth ran)
-  execFileSync(venvPy, ['-I', '-c', 'pass'], { stdio: 'ignore' });
+  execFileSync(venvPy, ['-I', '-B', '-c', 'pass'], { stdio: 'ignore' });
   assert.ok(existsSync(marker), 'a normal start runs the .pth, even with -I'); unlinkSync(marker);
   await check({ kind: 'python', bin: venvPy, version: '' }, [canary], { controlUrl: canary.url, timeoutMs: 3000 });
   assert.equal(existsSync(marker), false, 'the probe ran a .pth from site-packages');
@@ -500,19 +523,65 @@ test('only a certificate refusal counts as "does not trust": any other failure i
 });
 
 test('the Python probe tells a certificate refusal (SAFE) from a connection that trusts the root (EXPOSED)', async (t) => {
-  let py; try { py = execFileSync('python3', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).trim(); } catch { return t.skip('python3 is not available here'); }
+  let py; try { py = execFileSync('python3', ['-I', '-B', '-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).trim(); } catch { return t.skip('python3 is not available here'); }
   const rt = (env = {}) => ({ kind: 'python', bin: py, version: '', env: { SSL_CERT_FILE: otherCa, SSL_CERT_DIR: dir, ...env } });
   const exposed = await check(rt({ SSL_CERT_FILE: badCa }), [canary], { rootsPem: badCa, timeoutMs: 3000 });
   // LibreSSL's openssl x509 writes no Authority Key Identifier, which a strict Python refuses: then nothing can be shown
   if (exposed.status === 'UNKNOWN' && /positive control failed/.test(exposed.reason)) return t.skip('this Python refuses the test chain itself');
-  assert.equal(exposed.status, 'EXPOSED');
   assert.equal((await check(rt(), [canary], { rootsPem: badCa, timeoutMs: 3000 })).status, 'SAFE');
+  // SSL_CERT_FILE is how this test makes Python trust the root, and a Python built on LibreSSL (Apple's /usr/bin/python3)
+  // ignores it, and SSL_CERT_DIR: its own programs refuse here too, so SAFE is its true answer, not a false one, and the
+  // EXPOSED half can't be shown this way (up to 0.1.9 this test failed there: 'SAFE' !== 'EXPOSED'). The next test holds
+  // such a Python to what it does trust.
+  if (await ownAnswer(py, { SSL_CERT_FILE: badCa, SSL_CERT_DIR: dir }) !== 'connected') return t.skip(`${py} ignores SSL_CERT_FILE (LibreSSL, as Apple's /usr/bin/python3 is): the EXPOSED half is the next test's`);
+  assert.equal(exposed.status, 'EXPOSED');
+});
+
+test('a Python that ignores SSL_CERT_FILE (Apple\'s /usr/bin/python3, LibreSSL) is judged by what it does trust: the probe answers as that Python\'s own default context does, and the forced roots (cafile=) still load', async (t) => {
+  const pys = pythons();
+  if (!pys.length) return t.skip('python3 is not available here');
+  let shown = 0;
+  for (const py of pys) {
+    // a strict Python (3.13 and later) may refuse a chain LibreSSL's openssl made, even trusting its root: nothing to show
+    if (await ownAnswer(py, {}, badCa) !== 'connected') { t.diagnostic(`${py} refuses the test chain itself`); continue; }
+    for (const ca of [badCa, otherCa]) {
+      const env = { SSL_CERT_FILE: ca, SSL_CERT_DIR: dir };
+      const r = await check({ kind: 'python', bin: py, version: '', env }, [canary], { rootsPem: badCa, timeoutMs: 3000 });
+      // this Python completes the chain when it is given the root as a file, so the forced-roots control must pass
+      assert.ok(!(r.status === 'UNKNOWN' && /positive control failed/.test(r.reason)), `${py}: the forced roots did not load: ${r.reason}`);
+      const own = await ownAnswer(py, env);
+      assert.equal(r.status, own === 'connected' ? 'EXPOSED' : 'SAFE', `${py} with SSL_CERT_FILE=${ca}: its own default context ${own}, the probe said ${r.status}`);
+      shown++;
+    }
+  }
+  if (!shown) t.skip('no Python here accepts the test chain');
+});
+
+test('clean machine: the forced roots reach Python as a file it is given (cafile=), so a Python that ignores SSL_CERT_FILE is still tested, and one that can\'t use the forced file is UNKNOWN, never SAFE', async () => {
+  const bin = join(dir, 'py-trust'); mkdirSync(bin, { recursive: true });
+  const c1 = [{ id: 'x', host: 'canary.invalid', url: 'https://canary.invalid/', up: true }];
+  // stand-ins: connected (0) or refused (1); the last argument is the forced CA file for the control, the URL otherwise
+  const stand = (name, body) => { const py = join(bin, name); writeFileSync(py, `#!/bin/sh\nfor a in "$@"; do last="$a"; done\n${body}\n`, { mode: 0o755 }); return (env) => ({ kind: 'python', bin: py, version: '', env }); };
+  const run = async (rt) => check(rt, c1, { rootsPem: badCa, timeoutMs: STAND_IN_MS });
+  // as Apple's /usr/bin/python3 (LibreSSL): reads a CA file it is given, never SSL_CERT_FILE; its own store refuses
+  const libre = stand('libressl', 'case "$last" in *.pem) exit 0;; esac\nexit 1');
+  assert.equal((await run(libre({ SSL_CERT_FILE: badCa }))).status, 'SAFE', 'what it trusts refuses: its true answer');
+  // as an OpenSSL Python: reads SSL_CERT_FILE as well
+  const openssl = stand('openssl', `case "$last" in *.pem) exit 0;; esac\n[ "$SSL_CERT_FILE" = ${JSON.stringify(badCa)} ] && exit 0\nexit 1`);
+  assert.equal((await run(openssl({ SSL_CERT_FILE: badCa }))).status, 'EXPOSED');
+  assert.equal((await run(openssl({ SSL_CERT_FILE: otherCa }))).status, 'SAFE');
+  // a Python that can't use the forced file (ignores it, or can't open it) refuses the control too: it can't show
+  // exposure, so UNKNOWN, never SAFE; a control that fails for another reason (exit 3) is UNKNOWN as well
+  for (const [name, body] of [['deaf', 'exit 1'], ['broken', 'case "$last" in *.pem) exit 3;; esac\nexit 1']]) {
+    const r = await run(stand(name, body)({ SSL_CERT_FILE: badCa }));
+    assert.equal(r.status, 'UNKNOWN', name); assert.match(r.reason, /positive control failed/, name);
+  }
 });
 
 // ---- gaps found in the 0.1.7 audit (22 Oct 2026): branches the suite did not reach ----------------------------------
 
 test('Python: a refused TCP connection and a server\'s TLS alert are UNKNOWN or EXPOSED, never SAFE', async (t) => {
-  let py; try { py = execFileSync('python3', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).trim(); } catch { return t.skip('python3 is not available here'); }
+  let py; try { py = execFileSync('python3', ['-I', '-B', '-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).trim(); } catch { return t.skip('python3 is not available here'); }
   const rt = (env = {}) => ({ kind: 'python', bin: py, version: '', env: { SSL_CERT_FILE: otherCa, SSL_CERT_DIR: dir, ...env } });
   const dead = { id: 'dead', url: 'https://127.0.0.1:1/', up: true };
   const r = await check(rt(), [dead], { rootsPem: badCa, controlUrl: canary.url, timeoutMs: 3000 });
@@ -538,20 +607,45 @@ test('curl: a server\'s TLS alert (curl exit 35 or 56, not 60) is never SAFE', {
 test('the Python probe runs no sitecustomize.py from site-packages', async (t) => {
   let venvPy;
   const venv = join(dir, 'custvenv'), marker = join(dir, 'cust-ran');
-  try { execFileSync('python3', ['-m', 'venv', '--without-pip', venv], { stdio: 'ignore', timeout: 60000 }); venvPy = join(venv, 'bin', 'python3'); } catch { return t.skip('python3 -m venv is not available here'); }
+  try { execFileSync('python3', ['-I', '-B', '-m', 'venv', '--without-pip', venv], { stdio: 'ignore', timeout: 60000 }); venvPy = join(venv, 'bin', 'python3'); } catch { return t.skip('python3 -m venv is not available here'); }
   const sp = join(venv, 'lib', readdirSync(join(venv, 'lib')).find((n) => /^python3/.test(n)), 'site-packages');
   writeFileSync(join(sp, 'sitecustomize.py'), `open(${JSON.stringify(marker)}, 'a').write('sitecustomize\\n')\n`);
   // the test means something only where an ordinary start runs it: a distribution's own sitecustomize earlier on the
   // path (Debian and Ubuntu ship one) is imported instead, and then there is nothing to show
-  execFileSync(venvPy, ['-c', 'pass'], { stdio: 'ignore' });
+  execFileSync(venvPy, ['-B', '-c', 'pass'], { stdio: 'ignore', env: { ...process.env, HOME: dir } });
   if (!existsSync(marker)) return t.skip('this Python imports another sitecustomize first');
   unlinkSync(marker);
   await check({ kind: 'python', bin: venvPy, version: '' }, [canary], { controlUrl: canary.url, timeoutMs: 3000 });
   assert.equal(existsSync(marker), false, 'the probe ran sitecustomize.py');
 });
 
-test('the container probe starts python3 with -I -S, as the host probe does', () => {
-  assert.match(readFileSync(new URL('../lib/containers.mjs', import.meta.url), 'utf8'), /python3 -I -S -c /);
+test('the container probe starts python3 with -I -S -B, as the host probe does: nothing, not even a .pyc cache, is written into the container', () => {
+  assert.match(readFileSync(new URL('../lib/containers.mjs', import.meta.url), 'utf8'), /python3 -I -S -B -c /);
+});
+
+test('clean machine: every Python the probe starts runs with -I -S -B, so it writes no .pyc cache (0.1.9 had no -B)', async () => {
+  const { rt, runs } = pyRecorder('py-flags');
+  const r = await check(rt, [{ id: 'x', host: 'canary.invalid', url: 'https://canary.invalid/', up: true }], { rootsPem: badCa, timeoutMs: STAND_IN_MS });
+  assert.equal(r.status, 'SAFE', 'the stand-in passes the control and refuses the host');
+  assert.equal(runs().length, 2, 'the control and one test host');
+  for (const flags of runs()) for (const f of ['-I', '-S', '-B']) assert.ok(flags.includes(f), `started with ${flags.join(' ')}, without ${f}`);
+});
+
+test('a real python3 with the probe\'s options writes no .pyc cache, and a probe leaves the HOME it gets empty (Apple\'s /usr/bin/python3 caches into ~/Library/Caches/com.apple.python)', async (t) => {
+  const pys = pythons();
+  if (!pys.length) return t.skip('python3 is not available here');
+  // the options the probe really passes, read from a stand-in, then given to each real Python
+  const { rt, runs } = pyRecorder('py-flags-real');
+  await check(rt, [{ id: 'x', host: 'canary.invalid', url: 'https://canary.invalid/', up: true }], { rootsPem: badCa, timeoutMs: STAND_IN_MS });
+  const opts = runs()[0];
+  for (const py of pys) {
+    const home = mkdtempSync(join(dir, 'py-home-'));
+    // python.org, Homebrew, pyenv and uv Pythons say 0 here under -I alone, and write __pycache__ beside a standard-library
+    // module whose cache is missing or stale; Apple's says 1 under -I, and caches into ~/Library/Caches without it
+    assert.equal(execFileSync(py, [...opts, '-c', 'import sys; print(sys.flags.dont_write_bytecode)'], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home } }).trim(), '1', `${py} ${opts.join(' ')} may write a .pyc cache`);
+    await check({ kind: 'python', bin: py, version: '', env: { HOME: home, SSL_CERT_FILE: badCa, SSL_CERT_DIR: dir } }, [canary], { rootsPem: badCa, timeoutMs: 3000 });
+    assert.deepEqual(readdirSync(home), [], `${py} wrote into the HOME the probe gave it`);
+  }
 });
 
 test('a program whose version can\'t be read, and a never-run file that can\'t be read, are UNKNOWN with their reason', () => {

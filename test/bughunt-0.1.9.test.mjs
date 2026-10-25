@@ -119,9 +119,13 @@ const nodeRt = (d, normal = 'exit 1', forced = 'exit 0') => exe(join(d, 'node'),
 u="$3"
 if [ -n "$WARDLATCH_CA" ]; then ${forced}; fi
 ${normal}`);
-const pythonRt = (d, normal = 'exit 1', forced = 'exit 0') => exe(join(d, 'python3'), `[ "$1" = -V ] && { echo "Python 3.12.1"; exit 0; }
-u="$5"
-if [ -n "$6" ]; then ${forced}; fi
+// the URL and the forced CA file follow the script, wherever the options before -c put it (0.1.9 had -I -S, now -I -S -B);
+// the version is answered wherever -V is among those options (the version check runs python3 -B -V, up to d807932 -V).
+// `first`: shell lines run before anything else (a recording, below)
+const pythonRt = (d, normal = 'exit 1', forced = 'exit 0', first = '') => exe(join(d, 'python3'), `${first ? `${first}\n` : ''}for a in "$@"; do [ "$a" = -c ] && break; [ "$a" = -V ] && { echo "Python 3.12.1"; exit 0; }; done
+while [ $# -gt 0 ] && [ "$1" != -c ]; do shift; done; shift 2
+u="$1"
+if [ -n "$2" ]; then ${forced}; fi
 ${normal}`);
 const curlRt = (d, normal = 'exit 60', forced = 'exit 0') => exe(join(d, 'curl'), `[ "$1" = --version ] && { echo "curl 8.7.1 (x86_64-apple-darwin) libcurl/8.7.1"; exit 0; }
 ca=""; prev=""; u=""
@@ -130,9 +134,11 @@ case "$ca" in *${ROOTPEM}) ${forced};; esac
 ${normal}`);
 
 // a docker stand-in: ps lists one container; exec runs the probe script in a box whose curl answers per `curlBody`
-const engine = (name, { ps = "printf 'c0ffee\\tweb\\tdebian:13\\n'; exit 0", exec = '', curlBody, images = "echo 'python:3.12@sha256:0000'; exit 0" } = {}) => {
+// (`tools`: the box's programs instead of that curl, { name: shell lines })
+const engine = (name, { ps = "printf 'c0ffee\\tweb\\tdebian:13\\n'; exit 0", exec = '', curlBody, tools, images = "echo 'python:3.12@sha256:0000'; exit 0" } = {}) => {
   const box = fresh(`${name}-box`), eng = fresh(`${name}-engine`);
-  exe(join(box, 'curl'), `for a in "$@"; do case "$a" in http*://*) u="$a";; esac; done\n${curlBody ?? 'case "$u" in https://self-signed*) exit 60;; https://emudhra.we-have-a-problem.com*) exit 0;; *) exit 60;; esac'}`);
+  const curl = `for a in "$@"; do case "$a" in http*://*) u="$a";; esac; done\n${curlBody ?? 'case "$u" in https://self-signed*) exit 60;; https://emudhra.we-have-a-problem.com*) exit 0;; *) exit 60;; esac'}`;
+  for (const [tool, body] of Object.entries(tools ?? { curl })) exe(join(box, tool), body);
   exe(join(eng, 'docker'), `if [ "$1" = ps ]; then ${ps}; fi
 if [ "$1" = images ]; then ${images}; fi
 if [ "$1" = exec ]; then
@@ -416,6 +422,29 @@ test('trust: REQUESTS_CA_BUNDLE with no curl to test it is UNKNOWN; one naming a
   const d2 = fresh('t3b'); pythonRt(d2); nodeRt(d2); curlRt(d2);
   const r2 = trust({ PATH: d2, REQUESTS_CA_BUNDLE: join(dir, 'no-such.pem') }, preload('t3b', { online: true }));
   assert.ok(!r2.rows.some((x) => x.caVar), show(r2)); assert.equal(r2.code, 0);
+});
+
+test('trust: every python3 Wardlatch starts has -B (the version check, the probe, the container probe), read from what each run was given', () => {
+  // A recording python3 stands in first on PATH, for /usr/bin/python3 and inside a container, and logs the options each
+  // run was started with (the arguments before -c, -m or a script), one run a line, before answering. The command logs
+  // every program named python* it starts: one started from anywhere else (refused here: nothing outside this test's
+  // folder runs) leaves the recorded runs short of that count. Failed on d807932, whose version check ran python3 -V.
+  const log = join(dir, `py-runs-${++n}.log`);
+  const rec = (tag) => `o=""; for a in "$@"; do case "$a" in -c|-m) break;; -*) o="$o $a";; *) break;; esac; done; echo "${tag}$o" >> ${JSON.stringify(log)}`;
+  const d = fresh('pyB'), sys = pythonRt(fresh('pyB-usr-bin'), 'exit 1', 'exit 0', rec('usr-bin'));
+  pythonRt(d, 'exit 1', 'exit 0', rec('path'));
+  // inside the container python3 is the only tool: the control site opens; the self-signed site and the test hosts are refused
+  const eng = engine('pyB', { tools: { python3: `${rec('container')}\nwhile [ $# -gt 0 ] && [ "$1" != -c ]; do shift; done; shift 2\ncase "$1" in https://emudhra.we-have-a-problem.com*) exit 0;; *) exit 10;; esac` } });
+  const starts = `for (const k of ['execFile', 'execFileSync', 'spawn', 'spawnSync']) { const o = cp[k]; cp[k] = function (f, ...r) { if (/^python/.test(String(f).split('/').pop())) fs.appendFileSync(${JSON.stringify(log)}, 'started ' + f + '\\n'); return o.call(this, f, ...r); }; }`;
+  const r = trust({ PATH: `${eng}:${d}` }, preload('pyB', { online: true, redirects: { '/usr/bin/python3': sys }, extra: starts }), []);
+  const lines = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : [];
+  const runs = lines.filter((l) => !l.startsWith('started ')).map((l) => l.split(' '));
+  const of = (tag, version) => runs.filter(([t, ...o]) => t === tag && o.includes('-V') === version).length;
+  for (const [tag, version] of [['path', true], ['path', false], ['usr-bin', true], ['usr-bin', false], ['container', false]]) {
+    assert.ok(of(tag, version), `the fixture: no ${version ? 'version check' : 'probe'} of the ${tag} python3 was recorded: ${lines.join(' | ')} ${show(r)}`);
+  }
+  assert.equal(lines.filter((l) => l.startsWith('started ')).length, runs.filter(([t]) => t !== 'container').length, `a python the command started is not a recording stand-in: ${lines.join(' | ')}`);
+  for (const [tag, ...opts] of runs) assert.ok(opts.includes('-B'), `the ${tag} python3 was started with "${opts.join(' ')}", without -B`);
 });
 
 // =========================================================================================================================

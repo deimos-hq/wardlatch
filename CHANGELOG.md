@@ -11,7 +11,18 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
-### Development (no code in the package changes; package.json gains three npm scripts)
+### Fixed
+
+- Python is started with `-B` as well as `-I -S`, in the trust probe and inside containers, and with `-B` in
+  the version check (`python3 -B -V`), so it writes no `.pyc` cache. Under `-I -S` alone, python.org, Homebrew,
+  pyenv and uv Pythons may write `__pycache__` beside a standard-library module whose cache is missing or
+  stale, in a folder you own, or inside a running container whose image ships its standard library without
+  `.pyc` files. Apple's `/usr/bin/python3` was not affected: under `-I` it writes no cache (checked with its
+  Python 3.9.6 on macOS 26: a 0.1.9 run with a HOME of its own left that HOME empty). Its plain runs do cache
+  into `~/Library/Caches/com.apple.python`, which is what the test suite's own `python3` runs did (below).
+  `PYTHONDONTWRITEBYTECODE` would not have done it: `-I` ignores every `PYTHON*` variable.
+
+### Development (none of these changes code in the package; package.json gains three npm scripts)
 
 - The release gate: `npm run release-check` refuses a release unless its version is X.Y.Z, 0.1.10 or later (for 0.1.0
   to 0.1.9, which predate the gate, it checks nothing on the maintainer's machine and exits 0), CHANGELOG.md has a
@@ -100,6 +111,19 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   package.json), `import` on a Node older than 22.15, `module.register`'s hooks thread, a Worker made from
   `Worker.prototype.constructor`, and code written to get past it, such as an option whose getter changes when Node
   reads it (CONTRIBUTING.md, Testing policy, lists the routes known not to be watched; the list is not complete).
+- The tests' own `python3` runs (finding the interpreter, `python3 -m venv`, starting a test environment) get `-B`, and
+  `-I` unless the test needs Python's start-up files. With Apple's `/usr/bin/python3` first on `PATH`,
+  `test/wardlatch.test.mjs` wrote 63 `.pyc` files into `~/Library/Caches/com.apple.python` under the HOME it ran with (62
+  from one `python3 -m venv`), which the seal can't see, since Python isn't Node. `test/conventions.test.mjs` now fails
+  on a real Python started by a test, or by a probe, without `-B`.
+- `the Python probe tells a certificate refusal (SAFE) from a connection that trusts the root (EXPOSED)` failed wherever
+  `python3` is Apple's `/usr/bin/python3` (`'SAFE' !== 'EXPOSED'`), from 0.1.7, when it was added, to 0.1.9. The test,
+  not the probe, was wrong: it made Python trust the test root through `SSL_CERT_FILE`, which Apple's Python (LibreSSL
+  2.8.3) ignores, as it ignores `SSL_CERT_DIR`. That Python's own programs refuse there too, so SAFE was its true
+  answer, and the forced-roots control, which has given the roots as `cafile=` in every release (every Python reads
+  it), passed. The test now skips its EXPOSED half on such a Python; a new one runs the `python3` on `PATH` and Apple's own
+  and fails unless the forced roots load and the probe answers as that Python's own default context does; stand-ins
+  check the same on a machine without Python, and that a Python that can't use the forced file is UNKNOWN, never SAFE.
 - Rules for AI coding agents: [CLAUDE.md](CLAUDE.md).
 
 ## [0.1.9] - 2026-10-23

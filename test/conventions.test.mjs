@@ -124,3 +124,20 @@ test('no test asks where the real home folder is: no test file takes homedir or 
     assert.doesNotMatch(code, /\b(?:homedir|userInfo)\s*\(/, f);
   }
 });
+
+test('no test leaves a Python cache behind: every real Python a test file starts itself gets -B, and the probes do too', () => {
+  // Apple's /usr/bin/python3 writes its .pyc cache to ~/Library/Caches/com.apple.python unless started with -I or -B, and
+  // the suite's own `python3 -m venv` wrote 62 files there; the seal (test/support/no-real-home.cjs) can't see a program
+  // that isn't Node. A stand-in (a shell script in a test folder) is started by its path, never by these names.
+  const tests = FILES.filter((f) => /^test\/[^/]+\.test\.mjs$/.test(f));
+  let seen = 0;
+  for (const f of tests) {
+    for (const m of read(f).matchAll(/\bexecFile(?:Sync)?\(\s*('python3'|py|venvPy)\s*,\s*\[([^\]]*)\]/g)) {
+      seen++;
+      assert.match(m[2], /'-B'|^\.\.\.opts,/, `${f}: ${m[0]}`);
+    }
+  }
+  assert.ok(seen >= 8, `only ${seen} Python runs found: the pattern no longer matches how the tests start Python`);
+  assert.match(read('lib/probe.mjs'), /case 'python': argv = \['-I', '-S', '-B', '-c'/);
+  assert.match(read('lib/containers.mjs'), /python3 -I -S -B -c /);
+});
