@@ -47,10 +47,10 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     `PATH` that shows no sign of Node.js is a REVIEW line only for a version manager's known shim (volta-shim, mise,
     rtx, proto-shim), whose folder of runtimes is read, as volta's and mise's are (rtx's in `~/.local/share/rtx`,
     proto's in `~/.proto/tools`); any other (a packed node, a shim Wardlatch doesn't know) is "could not be tested".
-  - Fix lines follow the by-hand guide (https://www.deimoscore.com/wardlatch/brotli/): the fixed release for each Node.js
-    line, "move to 22, 24 or 26" for the end-of-life ones, the library's own update for a node that links one, Bun 1.4.4,
-    `Brotli>=1.2.1` and `brotlicffi>=1.2.1.0`, `brew upgrade brotli`, the conda and MacPorts updates, Debian's fixed
-    packages.
+  - Fix lines follow the by-hand guide (https://www.deimoscore.com/wardlatch/brotli/): the fixed release for each
+    Node.js line, "move to 22, 24 or 26" for the end-of-life ones, the library's own update for a node that links one
+    (but Node.js's fix when libnode's own decoder decides: libnode is Node.js's own library), Bun 1.4.4, `Brotli>=1.2.1`
+    and `brotlicffi>=1.2.1.0`, `brew upgrade brotli`, the conda and MacPorts updates, Debian's fixed packages.
   - `lib/files.mjs` gains `scanBytes` (fixed byte strings counted in a large file, or one range of it, read in 4 MB
     pieces), `readAt` (up to 64 KB from an offset, for an ELF file's dynamic segment and a universal file's header),
     `sizeOf`, and `programKind` (which tells a file that can't be read from one that isn't a program).

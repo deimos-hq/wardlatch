@@ -744,6 +744,29 @@ test('a distribution\'s node, a launcher for libnode: libnode decides, by the sa
   assert.ok(['libnode.so.108', '@rpath/libnode.147.dylib', '/usr/lib/x86_64-linux-gnu/libnode.so.115', 'libnode.dylib'].every(isNodeLibName));
 });
 
+test('libnode is Node.js\'s own library: a node it decides is told the Node.js fix, never to update libnode as a Brotli library', () => {
+  const lib = fresh('libnode-fix-lib'), path = fresh('libnode-fix-path'), root = fresh('libnode-fix-sp');
+  // Debian's node, a launcher for libnode, and a libnode whose own Brotli decoder lacks the fix (Node.js 22.1.0)
+  elf(join(path, 'node'), ['libnode.so.108', 'libc.so.6']);
+  elf(join(lib, 'libnode.so.108'), [CONTROL, NODE_CONTROL, 'nodejs.org/download/release/v22.1.0']);
+  // and a node a Python package carries that links the same libnode
+  const sp = join(root, 'site-packages');
+  elf(join(sp, 'examplepkg', 'driver', 'node'), ['libnode.so.108']);
+  mkdirSync(join(sp, 'examplepkg-1.0.dist-info'));
+  writeFileSync(join(sp, 'examplepkg-1.0.dist-info', 'RECORD'), 'examplepkg/driver/node,,\n');
+  const rows = () => run({}, { pathEnv: path, siteDirs: [sp], sonameDirs: [lib] }).rows;
+  const bad = rows(), node = bad.find((r) => r.file === join(path, 'node')), pkg = bad.find((r) => r.what === 'python');
+  assert.equal(node.status, 'EXPOSED'); assert.equal(node.via, join(lib, 'libnode.so.108'));
+  assert.match(node.fix, /^Install Node\.js 22\.23\.4 or later, the fixed release for the 22 line/);
+  assert.doesNotMatch(node.fix, /not Node\.js|Update whatever installed/);
+  assert.equal(pkg.status, 'EXPOSED');
+  assert.match(pkg.fix, /libnode\.so\.108, so it is fixed by updating that library, not the package: Install Node\.js 22\.23\.4 or later/);
+  // a libnode that uses a Brotli library still sends the fix to that library (the libnode test above): only libnode's
+  // own decoder is Node.js's. The clean twin: libnode fixed
+  elf(join(lib, 'libnode.so.108'), [CONTROL, MARKER, NODE_CONTROL, NODE_MARKER, 'nodejs.org/download/release/v22.23.4']);
+  assert.deepEqual(rows().map((r) => r.status), ['SAFE', 'SAFE']);
+});
+
 test('bun: 1.4.3\'s table is EXPOSED with the 1.4.4 fix, 1.4.4\'s is SAFE; Node\'s rules never apply; a bare bun is UNKNOWN', () => {
   const d = fresh('bun'), path = fresh('bun-path');
   const at = (parts) => { bin(join(path, 'bun'), parts); return run({}, { pathEnv: path }).rows.find((r) => r.file === join(path, 'bun')); };
