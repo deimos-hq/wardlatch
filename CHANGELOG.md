@@ -41,7 +41,11 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     at UTC+8, 1 Sep 09:00 UTC, and the advisory's own file names, `github_actions_security.yml` and
     `security-audit.yml`, on 31 Aug) are listed with the command run under `TZ=Pacific/Kiritimati` and
     `TZ=America/Los_Angeles`; one committed a second before it is SAFE; a bare-date start and a git that reads the
-    start as another instant are UNKNOWN. Each fails on 0.1.9's code, at any time of day.
+    start as another instant are UNKNOWN. A git that writes down its arguments must get `--since=@1788048000 +0000`,
+    as one argument, in the self-check and in every `git log`; under a git that reads git's raw `@` form exactly but
+    any other start as the bare date `2026-09-01`, the advisory's file names on 31 Aug are still listed and one a
+    second before the window is still SAFE. Each fails on 0.1.9's code, at any time of day; the last two also fail
+    when only the `git log` call goes back to 0.1.9's `--since=${since}`.
 
 ### Development (no code in the package changes)
 
