@@ -38,10 +38,10 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     static copy, `@rpath`, `@executable_path`, `$ORIGIN`, a program with its own `RUNPATH`, a soname when the loader's
     configuration or a library folder couldn't all be read, a library name in a string that isn't whole); Brotli 1.0's
     unprefixed error texts, alone or beside a fixed table; a file it can't read (a node or bun at mode 0111 included),
-    over 512 MB or bigger than what is left of the run's 4 GB reading budget; a zipped egg of a Brotli package; a
-    distribution library without the marker whose package version isn't in the table or can't be read, or that no
-    package installed as it is now. Node's `zlib.constants` names, which contain the marker as a substring, never
-    decide.
+    over 512 MB or bigger than what is left of the run's 4 GB reading budget; a universal file whose builds overlap
+    (read build by build, they would read the same bytes again); a zipped egg of a Brotli package; a distribution
+    library without the marker whose package version isn't in the table or can't be read, or that no package installed
+    as it is now. Node's `zlib.constants` names, which contain the marker as a substring, never decide.
   - A distribution's node (a launcher for `libnode`) is judged by its libnode, by the same rules. A compiled `node` on
     `PATH` that shows no sign of Node.js is a REVIEW line only for a version manager's known shim (volta-shim, mise);
     any other (a packed node, a shim Wardlatch doesn't know) is "could not be tested".

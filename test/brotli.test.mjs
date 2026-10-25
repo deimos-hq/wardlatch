@@ -442,6 +442,34 @@ test('the reading budget: a file is read only if it fits in what is left, so a r
   assert.deepEqual(order.map((r) => [r.what, r.status]), [['node', 'UNKNOWN'], ['python', 'EXPOSED']]);
 });
 
+test('the reading budget holds for a universal file: builds that overlap are UNKNOWN and not read, so no byte is read twice', () => {
+  const d = fresh('budget-fat');
+  // a universal header whose builds name the same bytes: read build by build, a 256 KB file was read once per build
+  const overlapping = (path, n, at) => {
+    const body = Buffer.concat([MACHO, Buffer.alloc(256 * 1024, 0x90), Buffer.from(`\0${CONTROL}\0\0${MARKER}\0`), Buffer.alloc(16)]);
+    const head = Buffer.alloc(8 + n * 20), start = Math.ceil(head.length / 16) * 16;
+    head.writeUInt32BE(0xcafebabe, 0); head.writeUInt32BE(n, 4);
+    for (let i = 0; i < n; i++) {
+      const o = 8 + i * 20;
+      head.writeUInt32BE(0x0100000c, o); head.writeUInt32BE(start + at(i), o + 8); head.writeUInt32BE(body.length - at(i), o + 12); head.writeUInt32BE(4, o + 16);
+    }
+    writeFileSync(path, Buffer.concat([head, Buffer.alloc(start - head.length), body]));
+    return path;
+  };
+  for (const [name, n, at] of [['same-bytes', 64, () => 0], ['two-same', 2, () => 0], ['second-inside-first', 2, (i) => i * 1024]]) {
+    const f = overlapping(join(d, name), n, at), size = readFileSync(f).length;
+    const budget = { left: size * 2 };
+    const r = judgeFile(f, { markers: M, budget });
+    assert.equal(r.status, 'UNKNOWN', name); assert.match(r.reason, /universal.*overlap.*could not be tested/, name);
+    assert.equal(budget.left, size * 2, `${name}: ${size * 2 - budget.left} bytes read of a ${size}-byte file`);
+  }
+  // the clean twin: the same builds side by side are each read once, and what is read is less than the file
+  const twin = fat(join(d, 'side-by-side'), [[CONTROL, MARKER], [CONTROL, MARKER]]), size = readFileSync(twin).length;
+  const budget = { left: size };
+  assert.equal(judgeFile(twin, { markers: M, budget }).status, 'SAFE');
+  assert.ok(budget.left > 0 && budget.left < size, `${size - budget.left} bytes read of a ${size}-byte file`);
+});
+
 test('RECORD: plain and quoted paths, a quote inside quotes, CRLF, and a line too long to be a path', () => {
   const text = 'PIL/__init__.py,sha256=x,1\r\n"odd,name/libbrotlidec.so.1",sha256=y,2\n"a""b.py",,\n' + 'z'.repeat(5000) + ',,\nlast.py,,';
   assert.deepEqual(recordPaths(text), ['PIL/__init__.py', 'odd,name/libbrotlidec.so.1', 'a"b.py', 'last.py']);
