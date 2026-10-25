@@ -19,6 +19,8 @@
     "~/.volta/tools/image/node/*/bin/node",
     "~/.asdf/installs/nodejs/*/bin/node",
     "~/.local/share/mise/installs/node/*/bin/node",
+    "~/.local/share/rtx/installs/node/*/bin/node",
+    "~/.proto/tools/node/*/bin/node",
     "~/.nodenv/versions/*/bin/node",
     "/usr/local/n/versions/node/*/bin/node",
     "/opt/homebrew/Cellar/node*/*/bin/node",

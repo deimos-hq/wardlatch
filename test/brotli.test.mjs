@@ -1016,3 +1016,26 @@ test('CLI: an exposed copy is exit 1 with its fix, a fixed-only machine exit 0 w
   assert.equal(row?.status, 'UNKNOWN'); assert.equal(row.kind, 'bundled');
   assert.match(cli(['--incident', 'brotli-2026-10', '--paths', join(dir, 'no-such-folder')], menv).out, /^UNKNOWN {2}folders given with --paths$/m);
 });
+
+test('a version manager\'s shim on PATH is a REVIEW line only when its runtimes are read: proto and rtx too, so an unfixed one is never exit 0', () => {
+  // each shim Wardlatch knows by name, and where its version manager keeps the nodes it starts
+  for (const [shim, folder] of [['volta-shim', '.volta/tools/image/node/20.11.0'], ['mise', '.local/share/mise/installs/node/20.11.0'],
+    ['rtx', '.local/share/rtx/installs/node/20.11.0'], ['proto-shim', '.proto/tools/node/20.11.0']]) {
+    const home = fresh(`shim-home-${shim}`), path = fresh(`shim-path-${shim}`);
+    bin(join(home, 'manager', shim), ['shim']);
+    symlinkSync(join(home, 'manager', shim), join(path, 'node'));
+    const node = join(home, folder, 'bin', 'node');
+    bin(node, [CONTROL, NODE_CONTROL, 'nodejs.org/download/release/v20.11.0']);
+    const go = () => cli(['--incident', 'brotli-2026-10', '--json', '--paths', fresh(`shim-empty-${shim}`)], { HOME: home, PATH: path });
+    const bad = go();
+    assert.equal(bad.code, 1, `${shim}: ${bad.out}`);
+    const rows = JSON.parse(bad.out).results;
+    assert.equal(rows.find((r) => r.file === join(path, 'node'))?.status, 'REVIEW', shim);
+    assert.equal(rows.find((r) => r.file?.endsWith(`/${folder}/bin/node`))?.status, 'EXPOSED', `${shim}: the node it starts is read`);
+    // the clean twin: that node fixed
+    bin(node, [CONTROL, MARKER, NODE_CONTROL, NODE_MARKER, 'nodejs.org/download/release/v26.12.1']);
+    const good = go();
+    assert.equal(good.code, 0, `${shim}: ${good.out}`);
+    assert.equal(JSON.parse(good.out).results.find((r) => r.file?.endsWith(`/${folder}/bin/node`))?.status, 'SAFE', shim);
+  }
+});
