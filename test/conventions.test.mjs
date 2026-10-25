@@ -3,6 +3,7 @@
 // The coding standard in CONTRIBUTING.md, checked by machine wherever a rule can be. Most rules are the README's
 // promises in code form: Wardlatch sends nothing but test connections, changes nothing, never turns certificate
 // checking off except to see whether a test host is up, starts no shell on the host, and has no dependencies.
+import './support/no-real-home.cjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -101,4 +102,10 @@ test('layout: UTF-8 text with LF line ends, no tabs, no trailing spaces, a final
       assert.ok(!/ +$/.test(line), `${f}:${i + 1}: trailing space`);
     });
   }
+});
+
+test('no test looks in the real home folder: every test file loads test/support/no-real-home.cjs before anything else', () => {
+  const tests = FILES.filter((f) => /^test\/[^/]+\.test\.mjs$/.test(f));
+  assert.ok(tests.length >= 15);
+  for (const f of tests) assert.match(read(f), /^(?:\/\/.*\n)*import '\.\/support\/no-real-home\.cjs';\n/, f);
 });

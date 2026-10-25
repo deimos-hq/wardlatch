@@ -5,6 +5,7 @@
 // and the reverts that made 0.1.9 smaller. Each test pairs a clean machine that must stay exit 0 with the case that must
 // still be caught, and failed on e0e1c35 or fails when its fix is reverted. Offline: no test reaches a network host, and stand-ins replace every program a
 // check would run.
+import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';

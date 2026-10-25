@@ -5,6 +5,7 @@
 // in the combinations real builds have. No real binary is in the repository and nothing is downloaded. Every case that
 // ends EXPOSED or UNKNOWN has a clean twin. Package names are the copies the incident covers (Pillow, opencv-python, the
 // Brotli bindings) or made up.
+import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';

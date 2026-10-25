@@ -60,6 +60,11 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     code without the decoder's fix would read SAFE, and so would an unfixed table beside one stray NUL-delimited copy of
     the marker. Brotli 1.0's error texts have no `_ERROR_FORMAT_` prefix, so a 1.0.x library (Debian 12's libbrotli1
     1.0.9, fixed or not) reads "could not be tested" until that form is judged.
+- The tests never look in the home folder of the person running them (where macOS keeps Desktop, Documents, Downloads,
+  Library, Photos and Mail): every test file loads `test/support/no-real-home.cjs` first, which refuses any look there,
+  in the test and in every Node process it starts, and drops the home's folders from the `PATH` the tests start with.
+  The sudo test and the two tests of macOS's own Library build a `/Users/<name>` home of their own
+  (`test/support/fake-home.cjs`); `test/cli.test.mjs` gives the command an empty HOME of its own.
 
 ## [0.1.9] - 2026-10-23
 

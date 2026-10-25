@@ -62,6 +62,11 @@ Tests run offline. A check that needs the network is tested against a local stan
 certificate authority and a canary server on 127.0.0.1, fake programs on a private `PATH`, and fake containers),
 never against the advisory's real hosts.
 
+Tests never look in the home folder of the person running them. Every test file loads `test/support/no-real-home.cjs`
+first (a test checks it): a read, listing, stat or open there fails the test, in the command a test runs too, and the
+`PATH` the tests start with loses its folders there. A test that needs a home builds one in its own temporary folder;
+`test/support/fake-home.cjs` makes one appear at `/Users/<name>` (or `/home/<name>`).
+
 | File | For |
 |---|---|
 | `test/wardlatch.test.mjs` | The checks: probes and their controls, discovery, version rules, workflows, keys, WordPress, containers |
