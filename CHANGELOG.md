@@ -75,7 +75,8 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     `$MISE_DATA_DIR`, `$XDG_DATA_HOME/mise` or `~/.local/share/mise`, and its system installs (`$MISE_SYSTEM_DATA_DIR`
     or `/usr/local/share/mise`), each with `installs/node` and `installs/nodejs` (the asdf plugin's name, which mise up
     to 2024.1 renamed to `node` when it started), and `$MISE_INSTALLS_DIR`, `$MISE_SYSTEM_INSTALLS_DIR` and the list
-    `$MISE_SHARED_INSTALL_DIRS`; rtx's `$RTX_DATA_DIR`, `$XDG_DATA_HOME/rtx` or `~/.local/share/rtx`, with
+    `$MISE_SHARED_INSTALL_DIRS` (the only variable split on `:`, as mise splits it; every other one is one path, a `:`
+    in it included, as each manager reads it); rtx's `$RTX_DATA_DIR`, `$XDG_DATA_HOME/rtx` or `~/.local/share/rtx`, with
     `installs/node` and `installs/nodejs` (before rtx renamed it); proto's `$PROTO_HOME`, `$XDG_DATA_HOME/proto` or
     `~/.proto`, with `tools/node`; and for each, the folder above the one its shim is in when that is its shims folder
     (volta's `bin`, the others' `shims`). The nodes in all of these are read whether or not a shim is on `PATH` (the

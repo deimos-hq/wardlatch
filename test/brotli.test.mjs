@@ -1565,8 +1565,36 @@ test('shimPlaces: a manager\'s folders from its variables, its usual folders and
   // a relative value (or one with a relative part) is unsure, and names no folder
   const rel = shimPlaces(mise, { MISE_DATA_DIR: 'md', MISE_SHARED_INSTALL_DIRS: '/s1:s2' });
   assert.deepEqual(rel.unsure, ['MISE_DATA_DIR', 'MISE_SHARED_INSTALL_DIRS']); assert.ok(!rel.folders.some((f) => f.includes('md') || f.includes('s2')));
+  // only the list variable is split on ':'; a single-path one is that path, ':' and all (mise reads MISE_DATA_DIR,
+  // MISE_INSTALLS_DIR and XDG_DATA_HOME as one path each)
+  const colon = shimPlaces(mise, { MISE_DATA_DIR: '/d:x', XDG_DATA_HOME: '/x:y', MISE_INSTALLS_DIR: '/i:/j', MISE_SYSTEM_DATA_DIR: '/s:t' });
+  assert.deepEqual(colon.unsure, []);
+  for (const f of ['/d:x/installs/node', '/x:y/mise/installs/node', '/i:/j/node', '/s:t/installs/node']) assert.ok(colon.folders.includes(f), f);
+  for (const f of ['/d/installs/node', '/i/node', '/j/node']) assert.ok(!colon.folders.includes(f), f);
+  assert.deepEqual(shimPlaces(mise, { MISE_DATA_DIR: 'd:/x' }).unsure, ['MISE_DATA_DIR'], 'one relative path, not a relative part and an absolute one');
+  assert.deepEqual(shimPlaces(shimsUnder('/R')['proto-shim'], { PROTO_HOME: '/p:q' }).folders.slice(0, 1), ['/p:q/tools/node']);
   // volta's two layouts share one folder of runtimes
   assert.deepEqual(shimPlaces(shimsUnder('/R')['volta-shim'], {}, '/v/bin/node').folders, ['/v/tools/image/node', '/R/.volta/tools/image/node']);
+});
+
+test('a mise variable that holds one path is read as that path, a \':\' in it included: the node there is read, never a REVIEW over other folders', () => {
+  const home = fresh('mise-colon'), path = join(home, 'bin'), shim = shimOnPath(path, 'mise');
+  // MISE_DATA_DIR names one folder whose path holds a ':'; split on ':', it read as <home>/a and <home>/b, and the fixed
+  // node in <home>/a made the shim a REVIEW line while the nodes mise starts went unread
+  const dataDir = `${join(home, 'a')}:${join(home, 'b')}`;
+  node26(join(home, 'a', 'installs', 'node', '26.12.1', 'bin', 'node'));
+  const node = node20(join(dataDir, 'installs', 'node', '20.11.0', 'bin', 'node'));
+  const go = () => cli(['--incident', 'brotli-2026-10', '--json', '--paths', fresh(`mise-colon-empty-${Math.random()}`)], { HOME: home, PATH: path, MISE_DATA_DIR: dataDir });
+  const bad = go();
+  assert.equal(bad.code, 1, bad.out);
+  const rows = JSON.parse(bad.out).results;
+  assert.equal(rows.find((r) => r.file === node)?.status, 'EXPOSED', 'the node in the folder MISE_DATA_DIR names is read');
+  assert.equal(rows.find((r) => r.file === shim)?.status, 'REVIEW');
+  // the clean twin: that node fixed, exit 0
+  node26(node);
+  const good = go();
+  assert.equal(good.code, 0, good.out);
+  assert.equal(JSON.parse(good.out).results.find((r) => r.file === node)?.status, 'SAFE');
 });
 
 test('the incident\'s version managers: each usual place is in nodeDirs, and the tests clear every variable they read', () => {
