@@ -10,14 +10,14 @@
 //   1. package.json's version has a dated section at the top of CHANGELOG.md, right under an empty "Unreleased";
 //   2. docs/reviews/<version>/CLASS-AUDIT.md and INDEPENDENT-REVIEW.md exist, each beginning with the block the gate
 //      reads, its first four lines exactly, in ASCII: ```, "Commit: <sha>" (a commit this one descends from, in
-//      lower-case hex), "Verdict: READY", ```. A fenced block at the top of a file is shown as it is written: nothing
-//      before it can hide it. The rest of the file is the reviewer's, and the gate doesn't read it for meaning; but read
-//      with Unicode's look-alike forms folded (NFKC) and invisible characters removed, it has no letter outside ASCII (so
-//      no look-alike spells what follows), no "verdict" or "ready" in any case, even inside another word, no "commit" or
-//      "commits" as a word, no word of 7 to 40 hex digits (a commit id, however it is labelled), and no HTML comment.
-//      And nothing that runs (bin/, lib/, fix/, test/, scripts/, .github/, and package.json apart from its version)
-//      changed after that commit, counting a rename as a deletion and an addition: the reviews are of the code being
-//      released;
+//      lower-case hex), "Verdict: READY", ```. The gate reads the verdict and the commit from that block only. The
+//      rest of the file is the reviewer's, and the gate doesn't read it for meaning or render it: it refuses a review
+//      that has, after the block, one of a listed set of known ways to hide or add a verdict or a commit id
+//      (afterTheBlock and namesACommit, below; docs/reviews/README.md lists each). It can't prove that the page GitHub
+//      shows says what the text says: the pull request into main, the maintainer's approval of the release job, and
+//      the reviewers' own reading are what stand behind that. And nothing that runs (bin/, lib/, fix/, test/,
+//      scripts/, .github/, and package.json apart from its version) changed after that commit, counting a rename as a
+//      deletion and an addition: the reviews are of the code being released;
 //   3. the class audit names every advisory in CHANGELOG.md, so each past advisory's kind of mistake was looked for again,
 //      and quotes the GATE PASSED line of the corpus gate run as root on this code: the line names the SHA-256 of the
 //      bin/ and lib/ it ran, which must be this commit's (and no GATE FAILED);
@@ -27,11 +27,12 @@
 //      corpus report (gh reads them: signed in, or GH_TOKEN). With --ci the commit is GITHUB_SHA, which must be HEAD,
 //      and the jobs of this workflow run itself (GITHUB_RUN_ID), still running, are left out.
 //   6. the lists of planted bugs no test catches (scripts/mutants-gaps.json, scripts/mutants-allowed.json) only shrank
-//      since the last release: the newest older vX.Y.Z tag in this history that the release workflow published a GitHub
-//      release for (gh reads them), so a tag pushed by hand, or one this gate refused, is never the baseline. Each entry
-//      added since carries "approved": "maintainer, YYYY-MM-DD", and each is named in the output for the maintainer to
-//      read. That is deliberately stricter than CLAUDE.md, which lets an entry onto the allow list with a reason a
-//      reviewer agreed to: for a release, only the maintainer adds to either list.
+//      since the last release: the newest older vX.Y.Z tag in this history with a GitHub release (gh reads them) that
+//      the gate trusts as the release workflow's (RELEASED, below), so a tag pushed by hand, one this gate refused, a
+//      prerelease or a release edited after it was published is never the baseline. Each entry added since carries
+//      "approved": "maintainer, YYYY-MM-DD", and each is named in the output for the maintainer to read. That is
+//      deliberately stricter than CLAUDE.md, which lets an entry onto the allow list with a reason a reviewer agreed
+//      to: for a release, only the maintainer adds to either list.
 // Releases 0.1.0 to 0.1.9 predate this gate: on the maintainer's machine it has nothing to check for them; with --ci (a
 // tag pushed for one now) it refuses, as it does any other version older than 0.1.10, none of which was released.
 import { readFileSync, existsSync } from 'node:fs';
@@ -49,22 +50,143 @@ const RUNS_CODE = /^(bin|lib|fix|test|scripts|\.github)\//;   // and package.jso
 const normal = (s) => s.normalize('NFKC').replace(/\p{Cf}/gu, '');
 // a line without the quote, list, heading, table and emphasis marks around it
 const bare = (l) => l.replace(/^[\s>*_`#+|-]*(?:\d+[.)]\s*)?/, '').replace(/[*_`|]/g, '').trim();
-// A review after its block: the first line that could say the block's verdict or commit again, or hides text, and why
-// (null if none). Each line is read once, by linear patterns: an HTML comment, a letter outside ASCII (or a combining
-// mark), the block's words, a word of 7 to 40 hex digits.
-const BLOCK_WORDS = /verdict|ready|(?<![a-z])commits?(?![a-z])/i;
-const saidAgain = (lines, from) => {
-  for (let i = from; i < lines.length; i++) {
-    const l = normal(lines[i]), at = `line ${i + 1}`;
-    if (l.includes('<!--')) return `${at} has an HTML comment (<!--): text a reader doesn't see; take it out`;
-    const odd = /(?![A-Za-z])[\p{L}\p{M}]/u.exec(l)?.[0];
-    if (odd) return `${at} has a letter outside ASCII ("${odd}", U+${odd.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}): a review is written in ASCII letters, so no look-alike spells a verdict or a commit`;
-    const word = BLOCK_WORDS.exec(l)?.[0];
-    if (word) return `${at} says "${word}" outside the block: the block says the verdict and the commit reviewed once (change it there; don't say it again)`;
-    const id = l.split(/[^0-9A-Za-z]+/).find((w) => w.length >= 7 && w.length <= 40 && /^[0-9a-f]+$/i.test(w));
-    if (id) return `${at} has "${id}", a commit id, outside the block: the block names the one commit reviewed (name a fix by what it changed)`;
+// A review after its block. The gate doesn't read it as Markdown, HTML or a browser would show it (CLAUDE.md, rule 2),
+// so it can't prove the page shows what the text says. It refuses a listed set of known ways to hide or add a verdict
+// or a commit id (docs/reviews/README.md lists them). Each line is read once, by linear patterns and loops, in this
+// order, and the first that matches is the reason given: the patterns below, anywhere in the line; a table row with
+// more cells than its header; the block's words, or "ship", again. Then git is asked about the commit ids it could see.
+const AFTER_THE_BLOCK = [
+  // after this one, the line is printable ASCII and tabs: no letter outside ASCII, as written or after NFKC folding (a
+  // full-width letter is one), no zero-width, format or control character, no look-alike symbol, no other space
+  [/[^\t\x20-\x7e]/u, (c) => `a character outside printable ASCII (${/[\p{L}\p{N}\p{P}\p{S}]/u.test(c) ? `"${c}", ` : ''}U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}), which can look like another or not show at all`],
+  [/<[A-Za-z/!?]/, () => 'HTML: "<" and then a letter, "/", "!" or "?" (a tag, a comment or an autolink, which can hide text or join words)'],
+  [/&[#A-Za-z]/, () => 'a character reference: "&" and then "#" or a letter (&#101; shows as e)'],
+  [/\\/, () => 'a backslash (an escape: it can hide the mark after it)'],
+  [/[A-Za-z0-9][*_~`]+[A-Za-z0-9]/, () => 'a mark inside a word: *, _, ~ or a backtick between letters or digits (RE*AD*Y shows as READY)'],
+  [/\][ \t]*[(:]/, () => 'a link: "]" and then "(" or ":" (a link, an image or a link reference definition, which can hide text or join words)'],
+  [/:[A-Za-z0-9_+-]+:/, () => 'an emoji code: letters, digits, _, + or - between two colons (GitHub shows some as letters)'],
+  [/\$/, () => 'a "$" (GitHub shows text between two as math, which joins letters)'],
+  [/(?:```|~~~)[ \t]*[^\s`~]/, () => 'a fence with an info string (GitHub shows some as math or a diagram)'],
+  // git resolves v0.1.9-3-g0657 to the commit 0657 begins, with only 4 hex digits; refused whatever it resolves to
+  [/-[0-9]+-g[0-9A-Fa-f]{4}/, () => 'a commit as git describe writes one: "-", a number, "-g" and 4 or more hex digits (v0.1.9-3-g0657 names the commit 0657 begins)'],
+  // at the start of a line, after any quote marks, bullets or one-digit markers: GitHub shows 0657. as 657., and
+  // numbers the items after a list's first itself, whatever is written
+  [/^(?:[ \t>*+-]|[0-9][.)])*[0-9]{2,}[.)](?:[ \t]|$)/, () => 'an ordered-list marker of 2 or more digits (GitHub shows 0657. as 657., and numbers the items after the first itself: write 1. for each item)'],
+];
+// A table: a delimiter row (only |, :, - and spaces or tabs, with a -, after any quote marks, spaces and tabs) starts
+// one, and a blank line ends it. GitHub doesn't show the cells of a row past its header's, and a header has as many as
+// its delimiter row, so a row with more cells than the delimiter row is refused. Its cells are its "|"s, plus one, less
+// one for a "|" at its start and one for a "|" at its end (a backslash, which could escape one, is refused above).
+const QUOTED = /^[ \t>]*/;
+const cells = (t) => {
+  let pipes = 0, end = t.length - 1;
+  for (let i = 0; i < t.length; i++) if (t[i] === '|') pipes++;
+  while (end > 0 && (t[end] === ' ' || t[end] === '\t')) end--;
+  return pipes + 1 - (t[0] === '|' ? 1 : 0) - (end > 0 && t[end] === '|' ? 1 : 0);
+};
+const delimiterRow = (t) => {
+  let dash = false;
+  for (const c of t) { if (c === '-') dash = true; else if (c !== '|' && c !== ':' && c !== ' ' && c !== '\t') return false; }
+  return dash;
+};
+// The block's words said again, in any case, after a fixed fold of ASCII look-alikes (l, I, 1 and | read as i; 0 as
+// o): "verdict" and "ready" anywhere, even inside another word; "commit", "commits", "ship" and "ships" as a word, its
+// edges read as written (so "1ship" is one, "ownership" and "committed" are not). The fold keeps every position.
+const fold = (s) => s.replace(/[lI1|]/g, 'i').replace(/0/g, 'o');
+const LETTER = /[A-Za-z]/;
+const blockWord = (l) => {
+  const f = fold(l), re = /verdict|ready|commit|ship/gi;
+  for (let m; (m = re.exec(f));) {
+    let end = m.index + m[0].length;
+    if (/^(?:commit|ship)$/i.test(m[0])) {
+      if (f[end] === 's' || f[end] === 'S') end++;
+      if (LETTER.test(l[m.index - 1] ?? '') || LETTER.test(l[end] ?? '')) continue;
+    }
+    return l.slice(m.index, end);
   }
-  return null;
+  return undefined;
+};
+// an advisory id, as a whole word: its four words aren't read for a commit id (the class audit must name each one, and
+// its groups can be hex). Nothing is taken out of the line: every other word, and the words around it, are read.
+const ADVISORY = /\bGHSA-[0-9A-Za-z]{4}-[0-9A-Za-z]{4}-[0-9A-Za-z]{4}\b/g;
+const HEX = '0123456789abcdefABCDEF';
+const isHex = (s) => { for (const c of s) if (!HEX.includes(c)) return false; return true; };
+// the hex digits in a word (letters and digits between any other characters) that git could take for a commit: the
+// whole word, of 4 digits or more (git's shortest abbreviation); else each run of 7 or more inside it (git's usual
+// abbreviation), as git describe writes one after a "g" (v0.1.9-3-g0657ddb). Not the 4 in "sha256".
+const hexIn = (w) => {
+  if (w.length >= 4 && isHex(w)) return [w];
+  const runs = [];
+  for (let i = 0, start = -1; i <= w.length; i++) {
+    const h = i < w.length && HEX.includes(w[i]);
+    if (h && start < 0) start = i;
+    else if (!h && start >= 0) { if (i - start >= 7) runs.push(w.slice(start, i)); start = -1; }
+  }
+  return runs;
+};
+// The first line after the block that the gate refuses, and why ({ why }); else, for git to say which name a commit,
+// the hex digits in it that git could take for a commit ({ hex: Map }) and its words between spaces and tabs, exactly
+// as written ({ tokens: Map }), each with the first line it is on, but the block's own commit in full (`full`).
+const afterTheBlock = (lines, from, full) => {
+  const hex = new Map(), tokens = new Map();
+  let columns = 0;   // in a table, its header's cells; else 0
+  for (let i = from; i < lines.length; i++) {
+    const l = lines[i], at = `line ${i + 1}`;
+    for (const [re, what] of AFTER_THE_BLOCK) {
+      const m = re.exec(l);
+      if (m) return { why: `${at} has ${what(m[0])}: write it plainly, in printable ASCII (docs/reviews/README.md)` };
+    }
+    const t = l.slice(QUOTED.exec(l)[0].length);
+    if (!t.trim()) columns = 0;
+    else if (columns) {
+      const n = cells(t);
+      if (n > columns) return { why: `${at} has a table row with ${n} cells, more than the ${columns} of its header (GitHub doesn't show the cells after the header's; a line of only |, :, - and spaces starts a table, and a blank line ends one) (docs/reviews/README.md)` };
+    } else if (delimiterRow(t)) columns = cells(t);
+    const word = blockWord(l);
+    if (word) {
+      const as = fold(word).toLowerCase() === word.toLowerCase() ? '' : ` (read as "${fold(word).toLowerCase()}")`;
+      return { why: `${at} says "${word}"${as} outside the block: the block says the verdict and the commit reviewed once (change it there; don't say it again)` };
+    }
+    // the words of letters and digits, but the four of each advisory id: both in order, so a pass over each
+    const advisories = [...l.matchAll(ADVISORY)].map((m) => [m.index, m.index + m[0].length]);
+    let a = 0;
+    for (const m of l.matchAll(/[0-9A-Za-z]+/g)) {
+      while (a < advisories.length && advisories[a][1] <= m.index) a++;
+      if (a < advisories.length && advisories[a][0] <= m.index) continue;
+      for (const h of hexIn(m[0])) if (h !== full && !hex.has(h)) hex.set(h, i + 1);
+    }
+    for (const w of l.split(/[ \t]+/)) {
+      // git takes the rest of such a word as a pattern to search the commit messages with, and one such pattern kept
+      // git busy for over 20 seconds before it was stopped: refused here, never asked
+      if (w.startsWith(':/') || w.includes('^{/')) return { why: `${at} has "${w.slice(0, 80)}", which git reads as a search of the commit messages (":/" at the start of a word, or "^{/" in it), to name the commit it finds: write it another way` };
+      if (w && w !== full && !tokens.has(w)) tokens.set(w, i + 1);
+    }
+  }
+  return { hex, tokens };
+};
+// Of these words, those git could resolve as a commit here: git cat-file, which reads a name as git rev-parse --verify
+// does, is asked about each word of hex digits, as written and in lower case (by an id it begins, or a ref it names),
+// and each word between spaces exactly as written (a branch, a tag, HEAD^^, @, <id>^, v0.1.9-3-g0657). A word passes
+// only if git finds nothing by it, or one blob or one tree. A commit, a tag, or more than one object ("ambiguous": git
+// doesn't choose, as core.disambiguate=none) is refused; when git stops on a word (@{u} with no upstream), the review
+// is refused. (Not asked as <word>^{commit}: git says "missing" there for a prefix two commits share.) Returns
+// [word, line] of each refused, by line.
+const namesACommit = (hex, tokens) => {
+  const names = [...new Set([...[...hex.keys()].flatMap((h) => [h, h.toLowerCase()]), ...tokens.keys()])];
+  if (!names.length) return [];
+  const input = names.map((h) => `${h}\n`).join('');
+  const out = execFileSync('git', ['-c', 'core.disambiguate=none', 'cat-file', '--batch-check'], { cwd: ROOT, encoding: 'utf8', input,
+    stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: input.length + 256 * names.length + 4096 }).split('\n');
+  if (out.length !== names.length + 1) throw new Error(`git cat-file answered ${out.length - 1} line(s) for ${names.length} word(s)`);
+  // "<word> missing", or "<id> <type> <size>" for the one object it found
+  const passes = (h, line) => {
+    if (line === `${h} missing`) return true;
+    const [id, type, size, more] = line.split(' ');
+    return more === undefined && id.length >= 40 && isHex(id) && /^\d/.test(size ?? '') && (type === 'blob' || type === 'tree');
+  };
+  const refused = new Set(names.filter((h, k) => !passes(h, out[k])));
+  return [...[...hex].filter(([h]) => refused.has(h) || refused.has(h.toLowerCase())), ...[...tokens].filter(([w]) => refused.has(w))]
+    .sort(([, a], [, b]) => a - b);
 };
 // bin/ and lib/ as one SHA-256: each file's path and the SHA-256 of its content, a line each, in path order, .DS_Store
 // left out. scripts/corpus/run.mjs prints the same of the code it ran, on its GATE PASSED line.
@@ -108,13 +230,15 @@ if (heads[1]?.name !== version) fail(`CHANGELOG.md: the first release section is
 else if (!/^- \d{4}-\d{2}-\d{2}$/.test(heads[1].rest)) fail(`CHANGELOG.md: [${version}] has no date ("## [${version}] - YYYY-MM-DD")`);
 else ok(`CHANGELOG.md has a dated [${version}] section under an empty Unreleased`);
 
-// 2. the two reviews, of this code. The gate reads one thing in each: the block its first four lines make, exactly, in
-// ASCII (a fenced block at the top of a file is shown as written; nothing before it can hide it):
+// 2. the two reviews, of this code. The gate reads the verdict and the commit in each from one place: the block its
+// first four lines make, exactly, in ASCII (a fenced block at the very top of the file):
 //   ```
 //   Commit: <sha>
 //   Verdict: READY
 //   ```
-// The rest of the file is the reviewer's, not read for meaning; it may not say the block's words again (saidAgain).
+// The rest of the file is the reviewer's, not read for meaning. The gate refuses it if it has one of the known ways
+// to hide or add a verdict or a commit id that afterTheBlock and namesACommit look for; what else the page shows is
+// for the people who read it.
 const FENCE = '```';
 const head = git('rev-parse', 'HEAD');
 for (const name of ['CLASS-AUDIT.md', 'INDEPENDENT-REVIEW.md']) {
@@ -128,10 +252,17 @@ for (const name of ['CLASS-AUDIT.md', 'INDEPENDENT-REVIEW.md']) {
   if (verdict !== 'READY') { fail(`${p}: the block's verdict is "${verdict.slice(0, 80)}", not READY`); continue; }
   const sha = /^Commit: ([0-9a-f]{7,40})$/.exec(cline)?.[1];
   if (!sha) { fail(`${p}: the block's commit must read "Commit: <sha>", in lower-case hex as git prints it (it reads "${cline.slice(0, 80)}")`); continue; }
-  const again = saidAgain(lines, 4);
-  if (again) { fail(`${p}, ${again}`); continue; }
   let full;
   try { full = git('rev-parse', '--verify', `${sha}^{commit}`); } catch { fail(`${p}: commit ${sha} is not in this repository`); continue; }
+  const after = afterTheBlock(lines, 4, full);
+  if (after.why) { fail(`${p}, ${after.why}`); continue; }
+  let named;
+  try { named = namesACommit(after.hex, after.tokens); } catch (e) { fail(`${p}: couldn't ask git which words in it name a commit: ${String(e.message).split('\n')[0]}`); continue; }
+  if (named.length) {
+    const [[first, line]] = named;
+    fail(`${p}, line ${line} has "${first}", which git resolves as a commit here, or finds ambiguous${named.length > 1 ? ` (and ${named.length - 1} more)` : ''}: after the block a review names no commit but the block's, written in full (name a fix by what it changed; write a number, word, branch or tag name that git resolves another way, 0.1.9 for v0.1.9)`);
+    continue;
+  }
   try { git('merge-base', '--is-ancestor', full, head); } catch { fail(`${p}: reviewed commit ${sha} is not an ancestor of HEAD`); continue; }
   // --no-renames: a file moved out of lib/ counts as lib/ changing; -z: names exactly as they are, never quoted
   const changed = execFileSync('git', ['diff', '--name-only', '--no-renames', '-z', `${full}..${head}`], { cwd: ROOT, encoding: 'utf8' })
@@ -218,20 +349,29 @@ else {
 // 6. the lists of planted bugs no test catches only shrink between releases: an entry the last release's list didn't
 // have (the CI check compares one push with the one before, so an addition that failed CI once would pass after it)
 // carries the maintainer's approval. Compared by file, operator, line text and occurrence, as scripts/mutate.mjs does.
-// The last release is one that was released: its tag has a GitHub release, not a draft, that the release workflow
-// published (github-actions[bot]; it publishes only after this gate passed on the tag). A tag with none, pushed by hand
-// or refused here, would otherwise become the baseline and let the entries added before it through unapproved.
+// The last release is one that was released: its tag has a GitHub release the gate trusts as the release workflow's
+// (RELEASED): published by github-actions[bot] (the workflow publishes only after this gate passed on the tag), for a
+// tag vX.Y.Z, neither a draft nor a prerelease, and either immutable (GitHub keeps an immutable release's tag and files,
+// whatever is edited later) or never edited after it was published (its updated_at no later than its published_at). A field missing or of another kind is not trusted. A tag with no such release (pushed by hand,
+// refused here, a prerelease, or a release edited while it could still be changed) would otherwise become the baseline
+// and let the entries added before it through unapproved. For a release that isn't immutable (0.1.3 to 0.1.9, cut
+// before GitHub's immutable releases were turned on), the gate takes the tag in this clone as the one released: the
+// tag ruleset that lets only admins create, move or delete v* tags is what it relies on there.
+const RELEASED = (r) => !!r && r.author?.login === 'github-actions[bot]' && typeof r.tag_name === 'string' && /^v\d+\.\d+\.\d+$/.test(r.tag_name)
+  && r.draft === false && r.prerelease === false
+  && (r.immutable === true || (typeof r.published_at === 'string' && typeof r.updated_at === 'string' && Date.parse(r.updated_at) <= Date.parse(r.published_at)));
 const LISTS = ['scripts/mutants-gaps.json', 'scripts/mutants-allowed.json'];
 const APPROVED = /^maintainer, \d{4}-\d{2}-\d{2}$/;
 const entries = (k) => `${k} entr${k === 1 ? 'y' : 'ies'}`;
 let released;
 try {
   const pages = JSON.parse(execFileSync('gh', ['api', '--paginate', '--slurp', `repos/${slug}/releases?per_page=100`], { cwd: ROOT, encoding: 'utf8' }));
-  released = new Set(pages.flat().filter((r) => r && r.draft === false && r.author?.login === 'github-actions[bot]').map((r) => r.tag_name));
+  released = new Set(pages.flat().filter(RELEASED).map((r) => r.tag_name));
 } catch (e) { fail(`couldn't read GitHub's releases, to find the last release (gh installed and signed in, or GH_TOKEN set?): ${String(e.message).split('\n')[0]}`); }
+// only a tag RELEASED trusts can be the last release, so only a vX.Y.Z tag
 const last = released && git('tag', '--merged', head, '--list', 'v*').split('\n')
-  .filter((t) => /^v\d+\.\d+\.\d+$/.test(t) && older(t.slice(1), version) && released.has(t)).sort((a, b) => (older(a.slice(1), b.slice(1)) ? 1 : -1))[0];
-if (released && !last) fail(`no earlier release (a tag older than v${version} in this history, with a GitHub release the release workflow published) to compare ${LISTS.join(' and ')} with (git fetch --tags)`);
+  .filter((t) => released.has(t) && older(t.slice(1), version)).sort((a, b) => (older(a.slice(1), b.slice(1)) ? 1 : -1))[0];
+if (released && !last) fail(`no earlier release (a tag older than v${version} in this history, with a GitHub release the gate trusts as the release workflow's: by github-actions[bot], for a tag vX.Y.Z, neither a draft nor a prerelease, and immutable or never edited after it was published) to compare ${LISTS.join(' and ')} with (git fetch --tags)`);
 else if (last) {
   const listKey = (x) => JSON.stringify([x?.file, x?.op, x?.before, x?.nth ?? 1]);
   const named = (x) => `${x?.file} [${x?.op}${(x?.nth ?? 1) > 1 ? ` #${x.nth}` : ''}] ${String(x?.before).slice(0, 70)}`;
