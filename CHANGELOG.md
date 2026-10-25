@@ -11,6 +11,38 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
+### Fixed
+
+- **The workflow review read SAFE for a workflow committed on 31 Aug, or on 1 Sep before the hour it ran (0.1.0 to
+  0.1.9).** The `github-actions-2026-10` incident gave the window's start as the bare date `2026-09-01`, passed to git
+  as it was, and git reads a bare date as that day at the current time of day, in the machine's time zone (0.1.9 gives
+  git no `TZ`; up to 0.1.8 git got the caller's, which moved the start too). So the window began on 1 Sep at the hour
+  the check ran, not at the start of the day: a workflow committed on 31 Aug, or on 1 Sep before that hour, was not
+  read, and with nothing else found the review said "no workflow files added since 2026-09-01", SAFE, exit code 0.
+  0.1.9's known limits said it read commits dated on or after the incident's date; it read them from the run's time
+  of day on that date. The sources say to check from 31 Aug (The Hacker News and StepSecurity, with no time zone), and
+  GitGuardian reports a commit through the same compromised account at 00:30 UTC on 30 Aug. No test had a commit near
+  the start of the window.
+  - The window now starts at 30 Aug 2026 00:00 UTC (`"since": "2026-08-30T00:00:00Z"`, with its sources in
+    `sinceSource`).
+  - The review takes only an explicit UTC instant (`YYYY-MM-DDTHH:MM:SSZ`); anything else is UNKNOWN, never SAFE. git
+    gets it in its raw form, `--since="@1788048000 +0000"`, which it reads as the same instant whatever the zone or the
+    clock, and once per run `git rev-parse --since` checks that this git reads it as exactly that instant: one that
+    doesn't (an old or unusual git) makes each repository UNKNOWN.
+  - The SAFE line names the instant and the date it filters on: "no workflow files added in commits dated on or after
+    30 Aug 2026 00:00 UTC (committer date) in N local repositories". A review line shows the commit's committer date,
+    the one filtered on; up to 0.1.9 it showed the author date.
+  - The WordPress check's `addedSince` was already an explicit UTC instant; a test now holds the start of every
+    incident's window to one.
+  - **What to do:** if 0.1.0 to 0.1.9 said SAFE for `github-actions-2026-10`, run a release with this fix again, or
+    check each repository by hand (add `--all` to read every branch, as Wardlatch does):
+    `git log --since="2026-08-30T00:00:00Z" --diff-filter=A --name-only -- .github/workflows`
+  - Tests (`test/workflows.test.mjs`): workflows committed just inside the window (30 Aug 00:00:01 UTC, 31 Aug 05:00
+    at UTC+8, 1 Sep 09:00 UTC, and the advisory's own file names, `github_actions_security.yml` and
+    `security-audit.yml`, on 31 Aug) are listed with the command run under `TZ=Pacific/Kiritimati` and
+    `TZ=America/Los_Angeles`; one committed a second before it is SAFE; a bare-date start and a git that reads the
+    start as another instant are UNKNOWN. Each fails on 0.1.9's code, at any time of day.
+
 ### Development (no code in the package changes)
 
 - The tests never look in the home folder of the person running them (where macOS keeps Desktop, Documents, Downloads,

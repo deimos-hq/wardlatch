@@ -27,7 +27,8 @@ mkdirSync(OUT, { recursive: true });
 
 const mk = (p) => { mkdirSync(p, { recursive: true }); return p; };
 const write = (p, text) => { mk(dirname(p)); writeFileSync(p, text); return p; };
-// before the corpus date (2026-09-01) of the workflows incident and the 18 Oct plugin date of the WordPress one
+// before the start of the workflows incident's window (30 Aug 2026 00:00 UTC) and the 18 Oct plugin date of the
+// WordPress one
 const OLD = '2026-03-02T10:00:00+00:00';
 const NEW = '2026-09-15T12:00:00+00:00';
 const OLD_TIME = new Date('2026-01-15T09:00:00Z');
@@ -416,7 +417,7 @@ layout('bad-key-in-large-file', {
 
 layout('bad-new-workflow', {
   group: 'bad', cls: 'bad', catchBy: ['github-actions-2026-10'], paths: (L) => [join(L.home, 'Development')],
-  notes: '.github/workflows/new.yml added in a commit dated 2026-09-15, after the incident\'s 2026-09-01',
+  notes: '.github/workflows/new.yml added in a commit dated 2026-09-15, after the start of the incident\'s window (2026-08-30T00:00:00Z)',
 }, (L) => {
   laptopHome(L);
   repo(join(L.home, 'Development', 'library'), {}, {

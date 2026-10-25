@@ -5,6 +5,7 @@
   "date": "2026-10-07",
   "summary": "Since 7 October, hijacked GitHub accounts have committed credential-stealing workflow files to tens of thousands of repositories. A workflow you didn't write can send your CI secrets (registry tokens, cloud keys) to an attacker.",
   "advisory": "https://thehackernews.com/2026/10/credential-stealing-github-actions.html",
-  "since": "2026-09-01",
+  "since": "2026-08-30T00:00:00Z",
+  "sinceSource": "The earliest instant any source names, rounded down to the hour: GitGuardian reports a commit through the same compromised account on 30 Aug 2026 at 00:30 UTC (it added a miner, not a workflow, and GitGuardian doesn't attribute it to this campaign for certain), and dates the new wave from around 14:00 GMT on 31 Aug. The Hacker News and StepSecurity say to check repositories since 31 Aug 2026, with no time zone; in the earliest zone (UTC+14) 31 Aug begins at 10:00 UTC on 30 Aug. Up to 0.1.9 this was the bare date 2026-09-01.",
   "fix": "Open each workflow listed and confirm someone on your team added it. If one is unknown: delete it, rotate every secret the repository's Actions could read, and review that account's recent commits."
 }

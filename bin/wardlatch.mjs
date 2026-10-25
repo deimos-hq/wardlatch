@@ -15,7 +15,7 @@ import { droppedNodeOptions } from '../lib/run.mjs';
 import { checkBinaryAll, findOnPath, tmpTraces, tempDirs } from '../lib/binaries.mjs';
 import { checkVersionFiles, sitePackagesDirs, checkSitePackages, localImageDigests, checkImages } from '../lib/installs.mjs';
 import { listContainers, checkContainer, engineHost } from '../lib/containers.mjs';
-import { reposUnder, workflowsAddedSince } from '../lib/workflows.mjs';
+import { reposUnder, workflowsAddedSince, windowStart } from '../lib/workflows.mjs';
 import { scanRepo } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
 import { scanHeaders } from '../lib/headers.mjs';
@@ -417,11 +417,17 @@ for (const inc of chosen) {
     if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean));
   }
 
-  if (inc.type === 'workflows') {
+  // the window's start: an explicit UTC instant, or the review is UNKNOWN (up to 0.1.9 a bare date read SAFE: see
+  // lib/workflows.mjs windowStart)
+  const start = inc.type === 'workflows' ? windowStart(inc.since) : {};
+  if (start.error) { results.push({ incident: inc.id, kind: 'workflow', status: 'UNKNOWN', reason: start.error }); print('UNKNOWN', 'workflow review'); note('33', start.error); }
+  if (inc.type === 'workflows' && !start.error) {
     let repos = 0;
     const denied = [...lockedRoots];
     for (const repo of reposUnder(searchable, 4, denied)) {
       const added = workflowsAddedSince(repo, inc.since);
+      // this git reads the start as another instant: the repository is UNKNOWN, with that reason, not git's
+      if (added.badStart) { results.push({ incident: inc.id, kind: 'workflow', status: 'UNKNOWN', repo, reason: added.error }); print('UNKNOWN', short(repo)); note('33', added.error); continue; }
       if (added.error) { unread('workflow', repo, added.error); continue; }
       repos++;
       for (const w of added) {
@@ -430,8 +436,10 @@ for (const inc of chosen) {
       }
     }
     gaps(results, inc, 'workflow', denied);
+    // the all-clear names the instant and the date git filters on: up to 0.1.9 it said "since 2026-09-01", a day git
+    // read as 1 Sep at the run's time of day
     if (counted(results).some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.fix}`);
-    else if (!counted(results).length) allClear(results, inc, 'workflow', `no workflow files added since ${inc.since} in ${repoCount(repos)}`, searchable);
+    else if (!counted(results).length) allClear(results, inc, 'workflow', `no workflow files added in commits dated on or after ${start.label} (committer date) in ${repoCount(repos)}`, searchable);
   }
   if (inc.type === 'secrets') {
     let repos = 0;
