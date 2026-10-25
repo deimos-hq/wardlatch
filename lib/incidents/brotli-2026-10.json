@@ -3,7 +3,7 @@
   "type": "bundled",
   "title": "Brotli decoder flaw (CVE-2026-111497), in Node.js, Bun, Python packages and Brotli libraries",
   "date": "2026-10-21",
-  "summary": "A buffer overflow in Google's Brotli decoder (CVE-2026-111497), in Brotli 1.0.3 to 1.2.0 apart from 1.0.10 and 1.1.1, fixed in 1.0.10, 1.1.1 and 1.2.1 on 21 October 2026. Node.js fixed it in 22.23.4, 24.22.1 and 26.12.1 by cherry-picking the fix, so those still report Brotli 1.2.0; Bun fixed it in 1.4.4; the Brotli and brotlicffi packages in 1.2.1 and 1.2.1.0; Pillow and opencv-python carry their own copies. Version strings can't tell fixed from unfixed here, so Wardlatch reads the decoder itself: the fix added an error code, and its name (_ERROR_FORMAT_BLOCK_SWITCH) is in every fixed decoder's error table. Others used the error name as the sign of the fix before this check: OrchestratorInc/agent-orchestrator pull request #7107 looked for the string in a library file, and baealex/BLEX pull request #580 asked the decoder for it at run time. Wardlatch's is the same idea, built into the check (exact NUL-delimited match plus a control string, reading bytes only). Trail of Bits' brotli-checker (github.com/trailofbits/brotli-checker) is another tool that finds bundled copies, and checks source trees and ELF builds.",
+  "summary": "A buffer overflow in Google's Brotli decoder (CVE-2026-111497), in Brotli 1.0.3 to 1.2.0 apart from 1.0.10 and 1.1.1, fixed in 1.0.10, 1.1.1 and 1.2.1 on 21 October 2026. Node.js fixed it in 22.23.4, 24.22.1 and 26.12.1 by cherry-picking the fix, so they still report the Brotli they shipped with (1.1.0 on the 22 line, 1.2.0 on 24 and 26); Bun fixed it in 1.4.4; the Brotli and brotlicffi packages in 1.2.1 and 1.2.1.0; Pillow and opencv-python carry their own copies. Version strings can't tell fixed from unfixed here, so Wardlatch reads the decoder itself: the fix added an error code, and its name (_ERROR_FORMAT_BLOCK_SWITCH) is in every fixed decoder's error table. Others used the error name as the sign of the fix before this check: OrchestratorInc/agent-orchestrator pull request #7107 looked for the string in a library file, and baealex/BLEX pull request #580 asked the decoder for it at run time. Wardlatch's is the same idea, built into the check (exact NUL-delimited match plus a control string, reading bytes only). Trail of Bits' brotli-checker (github.com/trailofbits/brotli-checker) is another tool that finds bundled copies, and checks source trees and ELF builds.",
   "advisory": "https://github.com/google/brotli/releases/tag/v1.2.1",
   "guide": "https://www.deimoscore.com/wardlatch/brotli/",
   "markers": {
@@ -63,30 +63,30 @@
   "dists": {
     "brotli": { "fix": "Update it with the Python of the environment it is in: '/path/to/env/bin/python3' -m pip install --upgrade 'Brotli>=1.2.1' (uv: uv pip install --python '/path/to/env/bin/python3' --upgrade 'brotli>=1.2.1'; conda: conda install -n ENV 'brotli-python>=1.2.1')." },
     "brotlicffi": { "fix": "Update it with the Python of the environment it is in: '/path/to/env/bin/python3' -m pip install --upgrade 'brotlicffi>=1.2.1.0' (uv: uv pip install --python '/path/to/env/bin/python3' --upgrade 'brotlicffi>=1.2.1.0'; conda: conda install -n ENV 'brotlicffi>=1.2.1.0')." },
-    "pillow": { "fix": "Pillow had no release with a fixed Brotli on 24 October 2026 (12.3.0 and 13.0.0 carry Brotli 1.2.0): update Pillow when one ships. Until then, don't open WOFF2 fonts you didn't make with ImageFont: Pillow's FreeType uses this copy to read them." },
-    "opencv-python": { "fix": "opencv-python 5.0.0.93 (the latest 5.x) carries Brotli 1.1.0 through its bundled FFmpeg; we found no way in today; update when a fixed wheel ships." },
-    "opencv-contrib-python": { "fix": "opencv-contrib-python 5.0.0.93 (the latest 5.x) carries Brotli 1.1.0 through its bundled FFmpeg; we found no way in today; update when a fixed wheel ships." }
+    "pillow": { "fix": "No Pillow release had a fixed Brotli on 24 October 2026: update Pillow when one ships, since this copy is fixed by a Pillow release with a fixed Brotli." },
+    "opencv-python": { "fix": "No opencv-python release had a fixed Brotli on 24 October 2026: update opencv-python when one ships, since this copy is fixed by an opencv-python release with a fixed Brotli." },
+    "opencv-contrib-python": { "fix": "No opencv-contrib-python release had a fixed Brotli on 24 October 2026: update opencv-contrib-python when one ships, since this copy is fixed by an opencv-contrib-python release with a fixed Brotli." }
   },
   "fixes": {
     "node-line": "Install Node.js {fixed} or later, the fixed release for the {major} line, from nodejs.org, your version manager or your package manager; if a version manager installed this copy, remove it once the new one is in place.",
-    "node": "Install the fixed release for its line (Node.js 22.23.4, 24.22.1 or 26.12.1 or later) from nodejs.org, your version manager or your package manager; if a version manager installed this copy, remove it once the new one is in place.",
-    "node-eol": "Node.js {major} is end-of-life and gets no fix from the Node.js project: move to Node.js 22, 24 or 26 (22.23.4, 24.22.1 or 26.12.1 or later), then remove this copy.",
+    "node": "Install the fixed release for its line (Node.js 22.23.4 or later on the 22 line, 24.22.1 or later on 24, 26.12.1 or later on 26; Node.js 20 and older and the odd-numbered lines get no fix) from nodejs.org, your version manager or your package manager; if a version manager installed this copy, remove it once the new one is in place.",
+    "node-eol": "Node.js {major} is end-of-life and gets no fix from the Node.js project: move to Node.js 22, 24 or 26 (22.23.4 or later on 22, 24.22.1 or later on 24, 26.12.1 or later on 26), then remove this copy.",
     "linked": "It uses {lib}, so it is fixed by updating that library, not {what}: {libfix}",
     "bun": "Update Bun to 1.4.4 or later the way you installed it: bun upgrade for Bun's own installer, brew upgrade bun for Homebrew.",
     "homebrew": "brew upgrade brotli (to 1.2.1 or later), then restart the programs that use it.",
     "macports": "sudo port selfupdate && sudo port upgrade brotli (to 1.2.1 or later), then restart the programs that use it.",
     "conda": "conda install -n {env} 'libbrotlidec>=1.2.1' (add -c conda-forge if your channel has no fixed build), then restart the programs that use it.",
-    "library-other": "Update whatever installed {lib} to a release with Brotli 1.0.10, 1.1.1, 1.2.1 or later, then restart the programs that use it.",
+    "library-other": "Update whatever installed {lib} to a release with Brotli 1.0.10 on the 1.0 line, 1.1.1 on 1.1, or 1.2.1 or later, then restart the programs that use it.",
     "system-other": "Install your distribution's update for its Brotli package when it ships (its security page for CVE-2026-111497 says when), then restart the programs that use it.",
-    "pip-bundled": "Update {names} to a release whose own copy of Brotli has the fix (Brotli 1.0.10, 1.1.1, 1.2.1 or later).",
+    "pip-bundled": "Update {names} to a release whose own copy of Brotli has the fix (Brotli 1.0.10 on the 1.0 line, 1.1.1 on 1.1, or 1.2.1 or later).",
     "pip-unowned": "No package's install record lists this copy: find what put it there, and update or remove it.",
-    "pip-node": "This is a Node.js runtime that {names} carries: update {names} when it ships one with the fix (Node.js 22.23.4, 24.22.1, 26.12.1 or later)."
+    "pip-node": "This is a Node.js runtime that {names} carries: update {names} when it ships one with the fix (Node.js 22.23.4 or later on the 22 line, 24.22.1 or later on 24, 26.12.1 or later on 26)."
   },
   "hints": {
-    "node": "Check this one by hand, by its version: Node.js 22.23.4, 24.22.1, 26.12.1 and later are fixed, and 20 and older get no fix (https://www.deimoscore.com/wardlatch/brotli/)",
+    "node": "Check this one by hand, by its version: Node.js 22.23.4 or later on the 22 line, 24.22.1 or later on 24, 26.12.1 or later on 26 are fixed, and Node.js 20 and older and the odd-numbered lines (21, 23, 25) get no fix (https://www.deimoscore.com/wardlatch/brotli/)",
     "bun": "Check this one by hand: bun --version must print 1.4.4 or later (Bun's advisory: 1.0.21 to 1.4.3 are affected)",
     "binding": "Brotli may be built into it without its error texts: check the version of {names} by hand (Brotli 1.2.1 and brotlicffi 1.2.1.0 and later are fixed)",
-    "file": "Ask the makers of {names} whether the Brotli it carries is 1.0.10, 1.1.1, 1.2.1 or later"
+    "file": "Ask the makers of {names} whether the Brotli it carries is 1.0.10 on the 1.0 line, 1.1.1 on 1.1, or 1.2.1 or later"
   },
   "distro": {
     "dpkgName": "libbrotli1",

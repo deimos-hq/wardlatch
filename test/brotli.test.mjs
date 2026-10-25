@@ -242,7 +242,7 @@ test('a stripped or absent table is "could not be tested": node, bun, a Brotli b
   writeFileSync(join(sp, 'examplepkg-1.0.dist-info', 'RECORD'), 'examplepkg/driver/node,,\n');
   const { rows } = run({}, { pathEnv: path, siteDirs: [sp] });
   const by = (f) => rows.find((r) => r.file === f);
-  for (const [f, hint] of [[join(path, 'node'), /22\.23\.4, 24\.22\.1, 26\.12\.1 and later are fixed/], [join(path, 'bun'), /1\.4\.4 or later.*1\.0\.21 to 1\.4\.3/], [join(sp, '_brotli.cpython-314-darwin.so'), /check the version of Brotli by hand/], [join(sp, 'examplepkg', 'driver', 'node'), /Node\.js 22\.23\.4/]]) {
+  for (const [f, hint] of [[join(path, 'node'), /22\.23\.4 or later on the 22 line, 24\.22\.1 or later on 24, 26\.12\.1 or later on 26 are fixed, and Node\.js 20 and older and the odd-numbered lines \(21, 23, 25\) get no fix/], [join(path, 'bun'), /1\.4\.4 or later.*1\.0\.21 to 1\.4\.3/], [join(sp, '_brotli.cpython-314-darwin.so'), /check the version of Brotli by hand/], [join(sp, 'examplepkg', 'driver', 'node'), /Node\.js 22\.23\.4/]]) {
     assert.equal(by(f).status, 'UNKNOWN', f); assert.match(by(f).reason, /could not be tested/); assert.match(by(f).reason, hint);
     assert.equal(by(f).fix, undefined, 'an UNKNOWN row gives its reason, not a fix');
   }
@@ -496,9 +496,9 @@ test('site-packages: every copy found, owned through RECORD (both owners of a sh
   });
   const row = (rel) => rows.find((r) => r.file === join(sp, rel));
   // a bundled copy with no fixed release yet: EXPOSED, and the fix says what to do until one ships
-  assert.match(row('PIL/.dylibs/libbrotlidec.1.2.0.dylib').fix, /Pillow had no release with a fixed Brotli on 24 October 2026.*Until then, don't open WOFF2 fonts/);
+  assert.equal(row('PIL/.dylibs/libbrotlidec.1.2.0.dylib').fix, 'No Pillow release had a fixed Brotli on 24 October 2026: update Pillow when one ships, since this copy is fixed by a Pillow release with a fixed Brotli.');
   const cv = row('cv2/.dylibs/libbrotlidec.1.1.0.dylib');
-  assert.match(cv.fix, /^opencv-(contrib-)?python 5\.0\.0\.93 \(the latest 5\.x\) carries Brotli 1\.1\.0 through its bundled FFmpeg; we found no way in today; update when a fixed wheel ships\.$/);
+  assert.match(cv.fix, /^No (opencv-python|opencv-contrib-python) release had a fixed Brotli on 24 October 2026: update \1 when one ships, since this copy is fixed by an \1 release with a fixed Brotli\.$/);
   assert.match(cv.owner, /opencv-python 5\.0\.0\.93/); assert.match(cv.owner, /opencv-contrib-python 5\.0\.0\.93/);
   assert.match(row('_brotli.cpython-314-darwin.so').fix, /'Brotli>=1\.2\.1'/);
   assert.match(row('examplepkg/driver/node').fix, /Node\.js runtime that examplepkg carries/);
@@ -887,6 +887,21 @@ test('words: every UNKNOWN says "could not be tested", every EXPOSED has a fix, 
   }
 });
 
+test('words that agree with the by-hand guide: each line\'s fixed release, the lines with no fix, and no claim beyond it', () => {
+  // Node.js 22.23.4 bundles and reports Brotli 1.1.0; 24.22.1 and 26.12.1 report 1.2.0
+  assert.match(INC.summary, /still report the Brotli they shipped with \(1\.1\.0 on the 22 line, 1\.2\.0 on 24 and 26\)/);
+  // the odd-numbered lines get no fix, and no "and later" can be read as covering one
+  for (const t of [INC.hints.node, INC.fixes.node]) assert.match(t, /odd-numbered lines/);
+  for (const t of [INC.hints.node, INC.fixes.node, INC.fixes['pip-node']]) assert.match(t, /22\.23\.4 or later on the 22 line, 24\.22\.1 or later on 24, 26\.12\.1 or later on 26/);
+  // a Brotli release per line, never "1.0.10, 1.1.1, 1.2.1 or later" (which reads as any version from 1.0.10 on)
+  for (const t of [INC.fixes['library-other'], INC.fixes['pip-bundled'], INC.hints.file]) assert.match(t, /1\.0\.10 on the 1\.0 line, 1\.1\.1 on 1\.1, or 1\.2\.1 or later/);
+  // the bundled copies' lines say only what the guide says: no fixed release yet, update when one ships
+  for (const k of ['pillow', 'opencv-python', 'opencv-contrib-python']) {
+    assert.match(INC.dists[k].fix, /^No [A-Za-z-]+ release had a fixed Brotli on 24 October 2026: update [A-Za-z-]+ when one ships/);
+    assert.doesNotMatch(INC.dists[k].fix, /WOFF2|FreeType|FFmpeg|way in|5\.0\.0\.93|1\.1\.0|1\.2\.0/);
+  }
+});
+
 test('bounded: a file full of "libbrotlidec" and printable bytes is read in time and keeps at most a few links', () => {
   const f = join(fresh('bounded'), 'x');
   writeFileSync(f, Buffer.concat([MACHO, Buffer.from('A/libbrotlidec.1.dylib'.repeat(200000))]));
@@ -937,7 +952,7 @@ test('CLI: an exposed copy is exit 1 with its fix, a fixed-only machine exit 0 w
   assert.equal(nvm.status, 'SAFE'); assert.ok(nvm.searched.length);
   const text = cli(['--incident', 'brotli-2026-10', '--paths', join(home, 'Development')], env);
   assert.match(text.out, /EXPOSED {2}Pillow 12\.3\.0 {2}~\/Development\/app\/\.venv\/lib\/python3\.14\/site-packages\/PIL\/\.dylibs\/libbrotlidec\.1\.2\.0\.dylib/);
-  assert.match(text.out, /fix: Pillow had no release with a fixed Brotli on 24 October 2026/);
+  assert.match(text.out, /fix: No Pillow release had a fixed Brotli on 24 October 2026/);
   assert.match(text.out, /SAFE {5}node 26\.12\.1 {2}~\/\.nvm\/versions\/node\/v26\.12\.1\/bin\/node/);
   assert.match(text.out, /runs nothing/);
   assert.match(text.out, /not covered: .*Envoy and Istio.*https:\/\/www\.deimoscore\.com\/wardlatch\/brotli\//);

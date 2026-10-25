@@ -31,7 +31,8 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   - What is EXPOSED: the control without the marker (or fewer markers than controls), in the file or its library; a
     Debian package built from a source version its table lists as without the fix (every rebuild, such as 1.1.0-2+b7,
     keeps its source's version), again for the file that package installed. A bundled copy with no fixed release yet (Pillow,
-    opencv-python) is EXPOSED, and its fix line says what to do until one ships.
+    opencv-python) is EXPOSED, and its fix line says no release had a fixed Brotli on 24 October and to update when one
+    ships.
   - What is "could not be tested": the marker without the control; no table and no library it can follow (a stripped
     static copy, `@rpath`, `@executable_path`, `$ORIGIN`, a program with its own `RUNPATH`, a soname when the loader's
     configuration or a library folder couldn't all be read); a file it can't read, over
