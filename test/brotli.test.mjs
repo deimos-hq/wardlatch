@@ -435,6 +435,37 @@ test('node: PATH copies, version managers and the running node are read, never r
   for (const r of r3) assert.match(r.reason, /not a regular file.*could not be tested/);
 });
 
+test('a node or bun that can\'t be read is "could not be tested", on PATH, in a version manager\'s folder and in a package, never dropped', { skip: process.getuid?.() === 0 && 'root reads everything' }, () => {
+  const d = fresh('unreadable'), path = fresh('unreadable-path');
+  const nvm = bin(join(d, 'nvm', 'v20.19.5', 'bin', 'node'), [CONTROL, 'nodejs.org/download/release/v20.19.5']);
+  const onPath = bin(join(path, 'node'), [CONTROL]), bun = bin(join(path, 'bun'), [CONTROL]);
+  const sp = fresh('unreadable-sp');
+  const bundled = bin(join(sp, 'examplepkg', 'driver', 'node'), [CONTROL]);
+  mkdirSync(join(sp, 'examplepkg-1.0.dist-info'));
+  writeFileSync(join(sp, 'examplepkg-1.0.dist-info', 'RECORD'), 'examplepkg/driver/node,,\n');
+  // a FIFO where a version manager keeps a runtime: not read, and said so
+  mkdirSync(join(d, 'nvm', 'v22.0.0', 'bin'), { recursive: true }); execFileSync('mkfifo', [join(d, 'nvm', 'v22.0.0', 'bin', 'node')]);
+  const go = () => run({ nodeDirs: [join(d, 'nvm', '*', 'bin', 'node')] }, { pathEnv: path, siteDirs: [sp] }).rows;
+  const files = [nvm, onPath, bun, bundled];
+  // the clean twin first: readable, each one is read (and EXPOSED: the control without the marker)
+  const ok = go();
+  for (const f of files) assert.equal(ok.find((r) => r.file === f)?.status, 'EXPOSED', f);
+  // execute-only (mode 0111, as a hardened install can leave it): opened for reading, refused
+  for (const f of files) execFileSync('chmod', ['111', f]);
+  try {
+    const rows = go();
+    for (const f of files) {
+      const r = rows.find((x) => x.file === f);
+      assert.equal(r?.status, 'UNKNOWN', `${f}: a row, UNKNOWN`); assert.match(r.reason, /could not be read.*could not be tested/);
+    }
+    assert.ok(!rows.some((r) => r.status === 'REVIEW'), 'not a "script" or a shim');
+    const fifo = rows.find((r) => r.file === join(d, 'nvm', 'v22.0.0', 'bin', 'node'));
+    assert.equal(fifo?.status, 'UNKNOWN'); assert.match(fifo.reason, /^it is not a regular file.*could not be tested/);
+  } finally {
+    for (const f of files) execFileSync('chmod', ['755', f]);
+  }
+});
+
 test('bun: 1.4.3\'s table is EXPOSED with the 1.4.4 fix, 1.4.4\'s is SAFE; Node\'s rules never apply; a bare bun is UNKNOWN', () => {
   const d = fresh('bun'), path = fresh('bun-path');
   const at = (parts) => { bin(join(path, 'bun'), parts); return run({}, { pathEnv: path }).rows.find((r) => r.file === join(path, 'bun')); };
