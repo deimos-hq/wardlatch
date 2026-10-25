@@ -63,9 +63,21 @@ certificate authority and a canary server on 127.0.0.1, fake programs on a priva
 never against the advisory's real hosts.
 
 Tests never look in the home folder of the person running them. Every test file loads `test/support/no-real-home.cjs`
-first (a test checks it): a read, listing, stat or open there fails the test, in the command a test runs too, and the
-`PATH` the tests start with loses its folders there. A test that needs a home builds one in its own temporary folder;
-`test/support/fake-home.cjs` makes one appear at `/Users/<name>` (or `/home/<name>`).
+first (a test checks it), and it goes with every Node process the test starts, at any depth (by `--require`, or by
+`NODE_OPTIONS`, which the process gets back as it was). A look there by Node fails the test: a read, listing, stat, open
+or write in any form, a glob, a stream, a `require()` or (from Node 22.15) an `import`, a change of folder, or a
+program, working folder or `PATH` folder there. In the test it throws; in a process the test started it stops that
+process (exit 70) and leaves a note that fails the test even when nothing reads that exit code. A path is compared as
+the system reads it (links and `..` followed, and on macOS in any case and under `/System/Volumes/Data` or
+`/Volumes/<x>`), and under sudo SUDO_USER's home is off limits too. The `PATH` the tests start with loses its folders
+there. `test/no-real-home.test.mjs` tries every way past the net that a review found. A test that needs a home builds
+one in its own temporary folder; `test/support/fake-home.cjs` makes one appear at `/Users/<name>` (or `/home/<name>`).
+
+What the net can't stop, said plainly: it works inside Node, so a program that isn't Node (git, curl, a shell) is not
+watched, nor is a Node that such a program starts below the command (the command builds its children's environments,
+and tests read them); and on macOS every process, Node included, has the system's CoreFoundation library read
+`~/.CFUserTextEncoding` from the home folder as it starts, before any code of the test runs, which no net inside Node
+can stop.
 
 | File | For |
 |---|---|
@@ -78,6 +90,7 @@ first (a test checks it): a read, listing, stat or open there fails the test, in
 | `test/mutate.test.mjs` | The mutation gate, `scripts/mutate.mjs --critical`, on a tiny throwaway repository, driven by tests that fail on a fixed schedule and at random; and `scripts/gaps-only-shrink.mjs` |
 | `test/corpus.test.mjs` | The corpus runner, `scripts/corpus/run.mjs`, on tiny made-up corpora |
 | `test/guardrails.test.mjs` | The workflows' tokens and concurrency, and what the documents say about the gates, read as text |
+| `test/no-real-home.test.mjs` | The tests' safety net, `test/support/no-real-home.cjs`, against every way past it a review found, on a made-up home |
 | `test/fix-macos.check.sh` | `fix/fix-macos.sh` on copies of a Mac's `/etc/ssl/cert.pem` (CI, macOS) |
 
 `npm run coverage` (Node 22.8 or later) reports line, branch and function coverage of `bin/` and `lib/` with Node's
