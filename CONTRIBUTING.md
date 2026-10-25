@@ -64,14 +64,20 @@ never against the advisory's real hosts.
 
 Tests never look in the home folder of the person running them. Every test file loads `test/support/no-real-home.cjs`
 first (a test checks it), and it goes with every Node process the test starts, at any depth (by `--require`, or by
-`NODE_OPTIONS`, which the process gets back as it was). A look there by Node fails the test: a read, listing, stat, open
-or write in any form, a glob, a stream, a `require()` or (from Node 22.15) an `import`, a change of folder, or a
-program, working folder or `PATH` folder there. In the test it throws; in a process the test started it stops that
-process (exit 70) and leaves a note that fails the test even when nothing reads that exit code. A path is compared as
-the system reads it (links and `..` followed, and on macOS in any case and under `/System/Volumes/Data` or
-`/Volumes/<x>`), and under sudo SUDO_USER's home is off limits too. The `PATH` the tests start with loses its folders
-there. `test/no-real-home.test.mjs` tries every way past the net that a review found. A test that needs a home builds
-one in its own temporary folder; `test/support/fake-home.cjs` makes one appear at `/Users/<name>` (or `/home/<name>`).
+`NODE_OPTIONS`, which the process gets back as it was), and with every Worker thread. A look there by Node fails the
+test: a read, listing, stat, open or write in any form, a glob, a stream, a `require()` or (from Node 22.15) an
+`import`, a change of folder, a program, working folder or `PATH` folder there, a `.env` file `process.loadEnvFile`
+reads, or a `node:sqlite` database, backup or extension there (and, on a Node with `setAuthorizer`, a file SQL
+attaches); and a walk that can reach it: a recursive listing, copy, watch or `rm` of a folder that holds it, or a
+recursive listing, copy, watch or glob below which a link leads into it. A package in the checkout's own
+`node_modules` loads by name; Node's search going on into the home's `node_modules` above the checkout is refused. In
+the test it throws; in a process or Worker the test started it stops that process or thread (exit 70) and leaves a note
+that fails the test even when nothing reads that exit code. A path is compared as the system reads it (links and `..`
+followed, and on macOS in any case and under `/System/Volumes/Data` or `/Volumes/<x>`), and under sudo SUDO_USER's home
+is off limits too. The `PATH` the tests start with loses its folders there. `test/no-real-home.test.mjs` tries every
+way past the net that a review found, and checks that each wrapped fs function still does its work outside the home. A
+test that needs a home builds one in its own temporary folder; `test/support/fake-home.cjs` makes one appear at
+`/Users/<name>` (or `/home/<name>`).
 
 What the net can't stop, said plainly: it works inside Node, so a program that isn't Node (git, curl, a shell) is not
 watched, nor is a Node that such a program starts below the command (the command builds its children's environments,
