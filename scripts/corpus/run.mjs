@@ -16,7 +16,9 @@
 // code: README, "exit code"), or a run that timed out. Differences from A are listed for review but don't fail. A gate
 // needs something to check: it stops (exit 2) unless the corpus has at least one clean layout and one bad layout, and
 // every bad layout names an incident this script runs. Without --gate, any difference exits 1, as before.
-// Either way an --only name that is not in the corpus, or no layout to run at all, stops it (exit 2).
+// Either way an --only name that is not in the corpus, no layout to run at all, or a --jobs or --timeout that isn't a
+// whole number of at least 1 (or has no value) stops it (exit 2); and the gate stops (exit 2) rather than pass unless
+// every layout × incident ran.
 // Prints a markdown report (differences, then clean layouts that did not exit 0 and bad layouts that were not caught,
 // then time per version) and writes every run to <corpusdir>/results.json, or --out.
 // The emudhra incident is not run: it connects to its public test hosts, and this corpus contacts no network host.
@@ -30,13 +32,24 @@ const INCIDENTS = ['committed-keys-2026-10', 'github-actions-2026-10', 'wordpres
 const STATUSES = ['SAFE', 'EXPOSED', 'UNKNOWN', 'REVIEW'];
 
 const argv = process.argv.slice(2);
-const opt = (name, dflt) => { const i = argv.indexOf(name); if (i < 0) return dflt; const v = argv[i + 1]; argv.splice(i, 2); return v; };
-const timeout = Number(opt('--timeout', '120000'));
-const jobs = Math.max(1, Number(opt('--jobs', '1')));
+const usage = (msg) => { console.error(msg); process.exit(2); };
+// an option's value: the next argument, which must be there and not be another option
+const opt = (name, dflt) => {
+  const i = argv.indexOf(name);
+  if (i < 0) return dflt;
+  const v = argv[i + 1];
+  if (v === undefined || v.startsWith('--')) usage(`${name} needs a value`);
+  argv.splice(i, 2);
+  return v;
+};
+// a whole number of at least 1: a --jobs that isn't one would start no worker, and the gate would pass having run nothing
+const whole = (name, dflt) => { const v = opt(name, dflt); if (!/^\d+$/.test(v) || Number(v) < 1) usage(`${name} needs a whole number of at least 1 (not "${v}")`); return Number(v); };
+const timeout = whole('--timeout', '120000');
+const jobs = whole('--jobs', '1');
 const only = opt('--only', '');
 const outArg = opt('--out', '');
 const gi = argv.indexOf('--gate'); const GATE = gi >= 0; if (GATE) argv.splice(gi, 1);
-if (argv.length !== 3 || !Number.isFinite(timeout)) {
+if (argv.length !== 3) {
   console.error('usage: node run.mjs <corpusdir> <wardlatchA/bin/wardlatch.mjs> <wardlatchB/bin/wardlatch.mjs> [--timeout ms] [--jobs n] [--out file] [--only a,b] [--gate]');
   process.exit(2);
 }
@@ -199,6 +212,12 @@ writeFileSync(outFile, `${JSON.stringify({
   differences: diffs.length, results,
 }, null, 1)}\n`);
 if (GATE) {
+  // never a pass on less than every layout × incident: each one run, with both versions
+  const want = layouts.length * INCIDENTS.length;
+  if (results.length !== want || new Set(results.map((r) => r.layout)).size !== layouts.length) {
+    console.log(`\nGATE STOPPED: ${results.length} of the ${want} layout × incident pairs ran; a gate that didn't run them all checked nothing.`);
+    process.exit(2);
+  }
   const { notZero, missed, wrongExit } = expectations.B;
   const failed = notZero.length + missed.length + wrongExit.length + timeouts('B');
   const ran = (c) => new Set(results.filter((r) => r.class === c).map((r) => r.layout)).size;

@@ -79,6 +79,17 @@ test('--gate never passes having checked nothing: no clean layout, no bad layout
   assert.equal(r.code, 2, r.out);
 });
 
+test('a --jobs or --timeout that is not a whole number of at least 1, or has no value, stops the run (exit 2): the gate never passes having run nothing', () => {
+  const dir = corpus([CLEAN, BAD_EXPOSED]);
+  for (const extra of [['--gate', '--jobs', 'x'], ['--gate', '--jobs'], ['--gate', '--jobs', '0'], ['--gate', '--jobs', '2.5'],
+    ['--jobs', '--gate'], ['--gate', '--timeout', '-5'], ['--gate', '--timeout']]) {
+    const r = spawnSync(process.execPath, [RUN, dir, bin(), bin(), '--out', join(dir, 'results.json'), ...extra], { encoding: 'utf8', timeout: 120000 });
+    const out = `${r.stdout}${r.stderr}`;
+    assert.equal(r.status, 2, `${extra.join(' ')}\n${out}`); assert.doesNotMatch(out, /GATE PASSED|0 pairs/, extra.join(' '));
+    assert.match(out, /--(jobs|timeout) needs/, extra.join(' '));
+  }
+});
+
 test('an --only name that is not in the corpus, or no layouts at all, stops the run (exit 2), with --gate or without', () => {
   for (const extra of [[], ['--gate']]) {
     let r = run(corpus([CLEAN, BAD_EXPOSED]), '--only', 'laptop,lapotp', ...extra);
