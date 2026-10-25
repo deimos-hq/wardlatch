@@ -300,15 +300,19 @@ incident's start, an explicit UTC instant (for `github-actions-2026-10`, 30 Aug 
 names that instant. A commit can claim any date: one dated before the start is not read, and git stops reading a branch
 at a commit dated before it, so a correctly dated workflow behind a later commit made on a machine with a wrong clock
 can be missed too. A start that isn't an explicit UTC instant is UNKNOWN, and so is each repository when
-`git rev-parse --since` shows that this git reads the start as another instant. **Found 25 October 2026:** 0.1.0 to
-0.1.9 gave git the bare date `2026-09-01`, which git reads as 1 Sep at the current time of day in the machine's zone,
-so a workflow committed on 31 Aug, or on 1 Sep before the hour the check ran, was not read, and the review could read
-SAFE with exit code 0; the sources say to check from 31 Aug. *Evidence:* `test/workflows.test.mjs` plants workflows a
-second inside the window, at 05:00 on 31 Aug at UTC+8, at 09:00 UTC on 1 Sep, and under the advisory's own file names
-on 31 Aug, and expects each listed, with the command run in two time zones; a workflow a second before the window must
-read SAFE; a bare-date start and a git that reads the start as another instant must read UNKNOWN.
-`test/incidents.test.mjs` holds the start of every incident's window (`since`, `addedSince`) to an explicit UTC
-instant.
+`git rev-parse --since` shows that this git reads the start as another instant; `git log` gets exactly the start that
+check verified. **Found 25 October 2026:** 0.1.0 to 0.1.9 gave git the bare date `2026-09-01`, which git reads as 1 Sep
+at the current time of day in the zone it runs in (0.1.0 to 0.1.8 passed the caller's `TZ` to git; 0.1.9 dropped it,
+so git used the machine's zone). A workflow committed on 31 Aug, or on 1 Sep before the hour the check ran, was not
+read, and the review could read SAFE with exit code 0; the sources say to check from 31 Aug. *Evidence:*
+`test/workflows.test.mjs` plants workflows a second inside the window, at 05:00 on 31 Aug at UTC+8, at 09:00 UTC on
+1 Sep, and under the advisory's own file names on 31 Aug, and expects each listed, with the command run in two time
+zones; a workflow a second before the window must read SAFE; a bare-date start and a git that reads the start as
+another instant must read UNKNOWN. A git that writes down its arguments must get `--since=@1788048000 +0000`, as one
+argument, in the self-check and in every `git log`; and under a git that reads git's raw `@` form exactly but any other
+start as the bare date `2026-09-01`, the advisory's own file names on 31 Aug must still be listed, and a workflow a
+second before the window must still read SAFE. `test/incidents.test.mjs` holds the start of every incident's window
+(`since`, `addedSince`) to an explicit UTC instant.
 
 **The Mac fix finds the two roots by the header lines macOS writes above each certificate** (`=== …/CN=…`). If Apple
 changed that format, the script would find no root to remove; it then re-tests online, and reports EXPOSED if the file

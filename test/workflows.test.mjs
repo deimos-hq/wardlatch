@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Deimos AI LLC
 // The workflow review's window, end to end. 0.1.0 to 0.1.9 gave git the bare date "2026-09-01", which git reads as
-// 1 Sep at the current time of day in the machine's zone: a workflow committed on 31 Aug, or on 1 Sep before the hour
-// the check ran, read SAFE. The window now starts at an explicit instant, 30 Aug 2026 00:00 UTC, so these tests give
-// the same result at any time of day: workflows planted just inside it (in two zones), the advisory's own file names,
-// a clean twin one second before it, a start that isn't an explicit instant, and a git that reads the start otherwise.
+// 1 Sep at the current time of day in the zone it runs in (the caller's TZ, which 0.1.0 to 0.1.8 passed to git; the
+// machine's zone in 0.1.9, which dropped it): a workflow committed on 31 Aug, or on 1 Sep before the hour the check
+// ran, read SAFE. The window now starts at an explicit instant, 30 Aug 2026 00:00 UTC, so these tests give the same
+// result at any time of day: workflows planted just inside it (in two zones), the advisory's own file names, a clean
+// twin one second before it, a start that isn't an explicit instant, a git that reads the start otherwise, git log
+// given exactly the start the self-check verified, and a git that misreads any start but git's raw "@" form.
 import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -53,6 +55,12 @@ const repo = (path, commits) => {
   return path;
 };
 const later = { files: { 'later.txt': 'x\n' }, date: '2026-10-10T12:00:00Z' };
+/** A git of the tests' own: a folder (in the tests' temp folder) holding a `git` that runs `body` (sh), then the real
+ *  git with "$@". First on PATH, it is the git the command runs (lib/git.mjs finds git on PATH). */
+const wrap = (name, body) => {
+  const real = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8', env: { PATH: '/usr/bin:/bin' } }).trim();
+  const d = join(dir, name); mkdirSync(d); writeFileSync(join(d, 'git'), `#!/bin/sh\n${body}exec "${real}" "$@"\n`, { mode: 0o755 }); return d;
+};
 
 test('workflows: one committed just inside the window is listed, in any zone and at any time of day', () => {
   const root = join(dir, 'inside');
@@ -131,8 +139,6 @@ test('workflows: a start that is not an explicit UTC instant is UNKNOWN, never S
 test('workflows: a git that reads the start as another instant (an old or unusual one) makes the repository UNKNOWN', () => {
   const root = join(dir, 'oddgit');
   repo(join(root, 'app'), [{ files: { [WF]: 'on: push\n' }, date: '2026-09-15T12:00:00Z' }]);
-  const real = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8', env: { PATH: '/usr/bin:/bin' } }).trim();
-  const wrap = (name, body) => { const d = join(dir, name); mkdirSync(d); writeFileSync(join(d, 'git'), `#!/bin/sh\n${body}exec "${real}" "$@"\n`, { mode: 0o755 }); return d; };
   // one day late, as git reads a bare date at this hour: rev-parse prints the --max-age git log would filter with
   const late = wrap('git-late', `case " $* " in *" rev-parse "*) echo "--max-age=${START + 86400}"; exit 0;; esac\n`);
   const r = run(root, { PATH: `${late}:/usr/bin:/bin` });
@@ -141,6 +147,61 @@ test('workflows: a git that reads the start as another instant (an old or unusua
   assert.equal(r.code, 2);
   // control: the same kind of wrapper, passing rev-parse through to git, lists the workflow
   assert.deepEqual(run(root, { PATH: `${wrap('git-same', '')}:/usr/bin:/bin` }).rows.map((x) => [x.status, x.file]), [['REVIEW', WF]]);
+});
+
+test('workflows: git log gets exactly the start the self-check verified, --since=@1788048000 +0000, as one argument', () => {
+  // The self-check vouches only for the string git rev-parse was given. With 0.1.9's --since=${since} put back in the
+  // git log call, the check passed on "@1788048000 +0000" while log read "2026-08-30T00:00:00Z", which a git can read
+  // as another instant (the next test). This git writes down each argument list it gets, in this test's own folder: the
+  // count, then each argument, NUL-separated. Two repositories: a workflow on 31 Aug, listed, and a clean twin, one
+  // committed a second before the window, not listed.
+  const root = join(dir, 'argv'), calls = join(dir, 'argv-calls');
+  repo(join(root, 'in'), [{ files: { [WF]: 'on: push\n' }, date: '2026-08-31T00:30:00Z' }, later]);
+  repo(join(root, 'before'), [{ files: { [WF]: 'on: push\n' }, date: '2026-08-29T23:59:59Z' }, later]);
+  const r = run(root, { PATH: `${wrap('git-argv', `printf '%s\\0' "$#" "$@" >> "${calls}"\n`)}:/usr/bin:/bin` });
+  assert.deepEqual(r.rows.map((x) => [x.status, x.repo && basename(x.repo), x.file]), [['REVIEW', 'in', WF]], r.out);
+  assert.equal(r.code, 0);
+  const argvs = [];
+  for (let f = readFileSync(calls, 'utf8').split('\0'), i = 0; i < f.length - 1; i += 1 + Number(f[i])) argvs.push(f.slice(i + 1, i + 1 + Number(f[i])));
+  // each call's git command (the argument after -C <repository>): the check, once and first, then a log per repository
+  assert.deepEqual(argvs.map((a) => a[a.indexOf('-C') + 2]), ['rev-parse', 'log', 'log'], JSON.stringify(argvs));
+  const checked = argvs[0].slice(argvs[0].indexOf('rev-parse') + 1);
+  assert.deepEqual(checked, ['--since=@1788048000 +0000'], 'the start the self-check verified');
+  // every argument that limits by date, in each git log: the one the check verified, and nothing else
+  for (const a of argvs.slice(1)) assert.deepEqual(a.filter((x) => /^--(?:since|after|until|before|max-age|min-age)/.test(x)), checked, JSON.stringify(a));
+});
+
+test('workflows: a git that misreads any start but git\'s raw "@" form still lists the advisory\'s files; clean twin, SAFE', () => {
+  // A git that reads "@<seconds> +0000" exactly, and any other --since (an instant ending in Z, a date) as the bare date
+  // 2026-09-01: the self-check covers what git log reads only when log gets the form the check was given. With 0.1.9's
+  // --since=${since} put back in the git log call, the check passed, log read from 1 Sep, and the advisory's files on
+  // 31 Aug read SAFE, exit code 0.
+  const odd = wrap('git-misreads', [
+    'prev=',
+    'for a in "$@"; do',
+    '  case "$prev" in --since|--after) case "$a" in @*) ;; *) a=2026-09-01;; esac;; esac',
+    '  case "$a" in --since=@*|--after=@*) ;; --since=*|--after=*) a="${a%%=*}=2026-09-01";; esac',
+    '  prev=$a; set -- "$@" "$a"; shift',
+    'done',
+    '',
+  ].join('\n'));
+  const PATH = `${odd}:/usr/bin:/bin`;
+  const root = join(dir, 'misread'), app = repo(join(root, 'app'), [
+    { files: { '.github/workflows/github_actions_security.yml': 'on: push\n' }, date: '2026-08-31T00:30:00Z' },
+    { files: { '.github/workflows/security-audit.yml': 'on: push\n' }, date: '2026-08-31T09:00:00Z' }, later]);
+  // the wrapper misreads as meant: the raw form as exactly the start, an instant ending in Z as one after both commits
+  const maxAge = (since) => Number(execFileSync(join(odd, 'git'), ['-C', app, 'rev-parse', since], { encoding: 'utf8' }).trim().replace(/^--max-age=/, ''));
+  assert.equal(maxAge('--since=@1788048000 +0000'), START);
+  assert.ok(maxAge('--since=2026-08-30T00:00:00Z') > Date.parse('2026-08-31T09:00:00Z') / 1000, 'this git misreads an instant ending in Z');
+  const r = run(root, { PATH });
+  assert.deepEqual(r.rows.map((x) => [x.status, x.file]).sort(), [['REVIEW', '.github/workflows/github_actions_security.yml'], ['REVIEW', '.github/workflows/security-audit.yml']], r.out);
+  assert.equal(r.code, 0);
+  // clean twin: the same git, and a workflow committed a second before the window
+  const twin = join(dir, 'misread-twin');
+  repo(join(twin, 'app'), [{ files: { [WF]: 'on: push\n' }, date: '2026-08-29T23:59:59Z' }, later]);
+  const t = run(twin, { PATH });
+  assert.deepEqual(t.rows.map((x) => [x.status, x.reason]), [['SAFE', SAFE_TEXT]], t.out);
+  assert.equal(t.code, 0);
 });
 
 test('workflows: git reads the start it is given as the same instant in every zone; the line names it in UTC', () => {
