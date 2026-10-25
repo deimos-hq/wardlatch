@@ -1974,11 +1974,11 @@ test('asdf: a plugin named node (installs/node) is read like nodejs, and a shim 
   assert.equal(wrong.code, 2, wrong.out); assert.equal(wrong.at(shim)?.status, 'UNKNOWN'); assert.match(wrong.at(shim).reason, /installs\/nodejs\).*could not be tested/);
   // a plugin Wardlatch reads no folder for, and a shim that names none: UNKNOWN, with both folders there and fixed
   node26(join(home, '.asdf', 'installs', 'nodejs', '26.12.1', 'bin', 'node'));
-  for (const plugins of [['nodejs-lts'], []]) {
+  for (const [plugins, says] of [[['nodejs-lts'], /belongs to the plugin nodejs-lts, and Wardlatch reads no folder of runtimes for that/],
+    [['nodejs-lts', 'iojs'], /belongs to the plugins nodejs-lts, iojs, and Wardlatch reads no folder/], [[], /belongs to no plugin it names/]]) {
     asdfShim(shim, ...plugins);
     const u = cliRows({ HOME: home, PATH: path });
-    assert.equal(u.code, 2, u.out); assert.equal(u.at(shim)?.status, 'UNKNOWN', plugins.join());
-    assert.match(u.at(shim).reason, plugins.length ? /belongs to the plugin nodejs-lts, and Wardlatch reads no folder of runtimes for that/ : /belongs to no plugin it names/);
+    assert.equal(u.code, 2, u.out); assert.equal(u.at(shim)?.status, 'UNKNOWN', plugins.join()); assert.match(u.at(shim).reason, says);
   }
   // the clean twins: the nodejs plugin's shim with its folder there, and a shim of both plugins, REVIEW, exit 0
   for (const plugins of [['nodejs'], ['node', 'nodejs']]) {
