@@ -1838,8 +1838,9 @@ const cliRows = (env) => {
   return { code: r.code, out: r.out, at: (f) => rows.find((x) => x.file === f) };
 };
 /** proto-shim as proto writes it into its shims folder (crates/shim/src/unix.rs: its bytes, renamed node): a compiled
- *  program with Rust's strings packed together, no NUL between them; `marker`: with PROTO_SHIM_NAME, which it sets. */
-const protoShim = (f, marker = true) => bin(f, [Buffer.from(`\0proto-shim: Invalid shim name detected. Unable to execute the appropriate proto tool.${marker ? 'PROTO_SHIM_NAMEPROTO_SHIM_PATH' : ''}registry.json\0`)]);
+ *  program with Rust's strings packed together, no NUL between them, PROTO_SHIM_NAME among them (which proto's CLI
+ *  holds too); `marker`: with the message only proto-shim holds (crates/cli/src/main_shim.rs, proto-shim's own source). */
+const protoShim = (f, marker = true) => bin(f, [Buffer.from(`\0${marker ? 'proto-shim: Invalid shim name detected. Unable to execute the appropriate proto tool.\nPlease refer to the documentation or ask for support on Discord.' : ''}PROTO_SHIM_NAMEPROTO_SHIM_PATHregistry.json\0`)]);
 
 test('proto\'s shims are copies of proto-shim named node: one in proto\'s shims folder, or one carrying proto-shim\'s marker, is a REVIEW line only when proto\'s nodes are read', () => {
   // by its place: proto's home's shims folder, under ~/.proto, $PROTO_HOME or $XDG_DATA_HOME/proto (no marker needed)
@@ -1874,6 +1875,16 @@ test('proto\'s shims are copies of proto-shim named node: one in proto\'s shims 
     const r = cliRows({ HOME: h, PATH: p });
     assert.equal(r.code, 2, `${at}: ${r.out}`); assert.equal(r.at(s)?.status, 'UNKNOWN', at); assert.match(r.at(s).reason, /could not be tested.*Check this one by hand/, at);
   }
+  // a program holding only PROTO_SHIM_NAME (proto's CLI reads it back, crates/cli/src/main.rs, so it holds the name too)
+  // is no proto shim: UNKNOWN, exit 2 (it was proto's REVIEW, exit 0, while PROTO_SHIM_NAME was the marker); the clean
+  // twin, the same place holding proto-shim's own message, REVIEW, exit 0
+  const h = fresh('proto-name-only'), p = join(h, 'bin'), s = bin(join(p, 'node'), ['PROTO_SHIM_NAME']);
+  node26(join(h, '.proto', 'tools', 'node', '26.12.1', 'bin', 'node'));
+  const nameOnly = cliRows({ HOME: h, PATH: p });
+  assert.equal(nameOnly.code, 2, nameOnly.out); assert.equal(nameOnly.at(s)?.status, 'UNKNOWN');
+  bin(s, ['Invalid shim name detected. Unable to execute the appropriate proto tool.']);
+  const twin = cliRows({ HOME: h, PATH: p });
+  assert.equal(twin.code, 0, twin.out); assert.equal(twin.at(s)?.status, 'REVIEW');
 });
 
 test('a script named node on PATH: asdf\'s or nodenv\'s shim is a REVIEW line only when its nodes are read (ASDF_DATA_DIR and NODENV_ROOT too); any other script is UNKNOWN', () => {

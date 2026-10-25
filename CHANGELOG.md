@@ -76,26 +76,28 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     reads "could not be tested" though the Brotli library it links has the fix. A compiled `node` on `PATH` that shows
     no sign of Node.js is a REVIEW line only for a version manager's known shim (a link to volta-shim, mise, rtx or
     proto-shim; or a copy of proto-shim, which is how proto writes its shims today, in proto's shims folder or carrying
-    proto-shim's own `PROTO_SHIM_NAME`) whose nodes were read, and a script named `node` on `PATH` is one only for
-    asdf's or nodenv's shim, in its shims folder: at least one of its folders of runtimes is there and was listed, every
-    one that is there could be listed, and no variable names one by a path that doesn't start at `/`; otherwise it is
-    "could not be tested" (exit 2), so a node it starts that Wardlatch didn't read never ends the run in exit 0. Any
-    other script named `node` or `bun` on `PATH` (npm's node wrapper, one of your own) is "could not be tested" too.
-    Those folders are each manager's layouts as its own source has them: volta's `$VOLTA_HOME` or `~/.volta`,
-    `tools/image/node/<version>/bin/node` and its older layouts' `tools/image/node/<node>/<npm>/bin/node`; mise's
-    `$MISE_DATA_DIR`, `$XDG_DATA_HOME/mise` or `~/.local/share/mise`, and its system installs (`$MISE_SYSTEM_DATA_DIR`
-    or `/usr/local/share/mise`), each with `installs/node` and `installs/nodejs` (the asdf plugin's name, which mise up
-    to 2024.1 renamed to `node` when it started), and `$MISE_INSTALLS_DIR`, `$MISE_SYSTEM_INSTALLS_DIR` and the list
-    `$MISE_SHARED_INSTALL_DIRS` (the only variable split on `:`, as mise splits it; every other one is one path, a `:`
-    in it included, as each manager reads it); rtx's `$RTX_DATA_DIR`, `$XDG_DATA_HOME/rtx` or `~/.local/share/rtx`, with
-    `installs/node` and `installs/nodejs` (before rtx renamed it); proto's `$PROTO_HOME`, `$XDG_DATA_HOME/proto` or
-    `~/.proto`, with `tools/node`; asdf's `$ASDF_DATA_DIR` or `~/.asdf`, with `installs/nodejs` and `installs/node` (a
-    plugin named `node`), where asdf's shim counts only the folder of the plugins its `# asdf-plugin:` lines name, as
-    asdf writes and reads them (a shim of another plugin, or of none, is "could not be tested"); nodenv's `$NODENV_ROOT`
-    or `~/.nodenv`, with `versions`; and for each, the folder above the one its shim is in when that is its shims folder
-    (volta's `bin`, the others' `shims`). The nodes in all of these are read whether or not a shim is on `PATH` (the
-    folder above a shim's, when there is one). Any other compiled `node` with no sign of Node.js (a packed node, a shim
-    Wardlatch doesn't know) is "could not be tested".
+    the message only proto-shim holds, `Invalid shim name detected. Unable to execute the appropriate proto tool.`, from
+    its own source, `crates/cli/src/main_shim.rs`, and not `PROTO_SHIM_NAME`, which proto's CLI holds too) whose nodes
+    were read, and a script named `node` on `PATH` is one only for asdf's or nodenv's shim, in its shims folder: at
+    least one of its folders of runtimes is there and was listed, every one that is there could be listed, and no
+    variable names one by a path that doesn't start at `/`; otherwise it is "could not be tested" (exit 2), so a node it
+    starts that Wardlatch didn't read never ends the run in exit 0. Any other script named `node` or `bun` on `PATH`
+    (npm's node wrapper, one of your own) is "could not be tested" too. Those folders are each manager's layouts as its
+    own source has them: volta's `$VOLTA_HOME` or `~/.volta`, `tools/image/node/<version>/bin/node` and its older
+    layouts' `tools/image/node/<node>/<npm>/bin/node`; mise's `$MISE_DATA_DIR`, `$XDG_DATA_HOME/mise` or
+    `~/.local/share/mise`, and its system installs (`$MISE_SYSTEM_DATA_DIR` or `/usr/local/share/mise`), each with
+    `installs/node` and `installs/nodejs` (the asdf plugin's name, which mise up to 2024.1 renamed to `node` when it
+    started), and `$MISE_INSTALLS_DIR`, `$MISE_SYSTEM_INSTALLS_DIR` and the list `$MISE_SHARED_INSTALL_DIRS` (the only
+    variable split on `:`, as mise splits it; every other one is one path, a `:` in it included, as each manager reads
+    it); rtx's `$RTX_DATA_DIR`, `$XDG_DATA_HOME/rtx` or `~/.local/share/rtx`, with `installs/node` and `installs/nodejs`
+    (before rtx renamed it); proto's `$PROTO_HOME`, `$XDG_DATA_HOME/proto` or `~/.proto`, with `tools/node`; asdf's
+    `$ASDF_DATA_DIR` or `~/.asdf`, with `installs/nodejs` and `installs/node` (a plugin named `node`), where asdf's shim
+    counts only the folder of the plugins its `# asdf-plugin:` lines name, as asdf writes and reads them (a shim of
+    another plugin, or of none, is "could not be tested"); nodenv's `$NODENV_ROOT` or `~/.nodenv`, with `versions`; and
+    for each, the folder above the one its shim is in when that is its shims folder (volta's `bin`, the others'
+    `shims`). The nodes in all of these are read whether or not a shim is on `PATH` (the folder above a shim's, when
+    there is one). Any other compiled `node` with no sign of Node.js (a packed node, a shim Wardlatch doesn't know) is
+    "could not be tested".
   - Fix lines follow the by-hand guide (https://www.deimoscore.com/wardlatch/brotli/): the fixed release for each
     Node.js line, "move to 22, 24 or 26" for the end-of-life ones, the library's own update for a node that links one
     (but Node.js's fix when libnode's own decoder decides: libnode is Node.js's own library), Bun 1.4.4, `Brotli>=1.2.1`
