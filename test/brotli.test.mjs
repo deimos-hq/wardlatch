@@ -480,6 +480,40 @@ test('a library\'s name in a load path with a byte the walk back stops at (a tab
   assert.equal(judge(bin(join(d, 'text-twin'), [CONTROL, MARKER, Buffer.from('\0\x01libbrotlidec mention\0'), 'uses\tlibbrotlidec to decode', 'cannot load libbrotlidec.so.1'])).status, 'SAFE');
 });
 
+test('a whole relative load path (lib/..., ../lib/...) is UNKNOWN naming it: the loader looks for it from the folder the program starts in', () => {
+  const d = fresh('relative'), libDir = fresh('relative-lib');
+  // the real attack: from the folder the program is started in, the path leads to a library without the fix
+  oldLib(join(d, 'lib', 'libbrotlidec.1.dylib')); oldLib(join(dirname(d), 'lib', 'libbrotlidec.so.1'));
+  const fixed = fixedLib(join(d, 'fixed', 'libbrotlidec.1.dylib'));
+  elf(join(libDir, 'libnode.so.108'), [CONTROL, MARKER]);
+  for (const ref of ['lib/libbrotlidec.1.dylib', '../lib/libbrotlidec.so.1', './libbrotlidec.so.1', 'José/lib/libbrotlidec.1.2.0.dylib']) {
+    const tag = ref.replace(/[^a-z0-9]/gi, '_');
+    for (const [what, f] of [['Mach-O, with a table', bin(join(d, `macho-${tag}`), [CONTROL, MARKER, ref])],
+      ['ELF DT_NEEDED, with a table', elf(join(d, `elf-${tag}`), [CONTROL, MARKER, ref])],
+      ['beside a whole absolute link', bin(join(d, `both-${tag}`), [fixed, ref])],
+      ['a 1.0 table', bin(join(d, `form10-${tag}`), [packed(V1010), ref])],
+      ['no table', bin(join(d, `bare-${tag}`), [ref])]]) {
+      const r = judge(f);
+      assert.equal(r.status, 'UNKNOWN', `${ref}: ${what}`);
+      assert.ok(r.reason.includes(`it links ${ref}, a relative path`), `${ref}: ${what}: ${r.reason}`); assert.match(r.reason, /could not be tested/);
+    }
+  }
+  // a distribution's node with a relative libnode path beside a whole one
+  const node = judge(elf(join(d, 'node-rel'), ['libnode.so.108', '../lib/libnode.so.109']), [libDir]);
+  assert.equal(node.status, 'UNKNOWN'); assert.ok(node.reason.includes('it links ../lib/libnode.so.109, the library that holds Node.js\'s code, a relative path'), node.reason);
+  // $ORIGIN (and ${ORIGIN}) in a whole path: where it leads is decided when the program starts, UNKNOWN beside a table too
+  for (const ref of ['$ORIGIN/../lib/libbrotlidec.so.1', '${ORIGIN}/libbrotlidec.so.1']) {
+    const r = judge(elf(join(d, `origin-${ref.length}`), [CONTROL, MARKER, ref]));
+    assert.equal(r.status, 'UNKNOWN', ref); assert.match(r.reason, /can't follow.*could not be tested/, ref);
+  }
+  const origin = judge(elf(join(d, 'node-origin'), ['libnode.so.108', '$ORIGIN/../lib/libnode.so.109']), [libDir]);
+  assert.equal(origin.status, 'UNKNOWN'); assert.match(origin.reason, /libnode.*can't follow/);
+  // the clean twins: an absolute path to a fixed library, a soname, and text that names no file of it
+  assert.equal(judge(bin(join(d, 'macho-twin'), [CONTROL, MARKER, fixed])).status, 'SAFE');
+  assert.equal(judge(elf(join(d, 'node-twin'), ['libnode.so.108']), [libDir]).status, 'SAFE');
+  assert.equal(judge(bin(join(d, 'text-twin'), [CONTROL, MARKER, 'built with libbrotlidec 1.2.1', 'lib/libbrotlidec.a', 'libbrotlidec.so.1/'])).status, 'SAFE');
+});
+
 test('ELF sonames: found in the library folders only when the program sets no search path of its own; every candidate must be SAFE', () => {
   const d = fresh('elf'), libs = fresh('elf-lib'), libs2 = fresh('elf-lib2');
   fixedLib(join(libs, 'libbrotlidec.so.1'));
