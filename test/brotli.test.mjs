@@ -1922,3 +1922,20 @@ test('a script named node on PATH: asdf\'s or nodenv\'s shim is a REVIEW line on
   const c = cliRows({ HOME: home, PATH: dirname(compiled) });
   assert.equal(c.code, 2, c.out); assert.equal(c.at(compiled)?.status, 'UNKNOWN'); assert.match(c.at(compiled).reason, /Check this one by hand/);
 });
+
+test('a script named node in proto\'s shims folder is no proto shim (proto\'s are copies of a compiled program): UNKNOWN, never REVIEW', () => {
+  // the attack: a script there starts a runtime Wardlatch never reads; read as proto's shim, it was a REVIEW line and the
+  // run ended in exit 0 beside proto's fixed nodes (mutant m19: a script matched every manager's shims folder)
+  const home = fresh('proto-script'), path = join(home, '.proto', 'shims');
+  node26(join(home, '.proto', 'tools', 'node', '26.12.1', 'bin', 'node'));
+  mkdirSync(path, { recursive: true });
+  const shim = join(path, 'node');
+  writeFileSync(shim, '#!/bin/sh\nexec "$HOME/elsewhere/bin/node" "$@"\n', { mode: 0o755 });
+  const bad = cliRows({ HOME: home, PATH: path });
+  assert.equal(bad.code, 2, bad.out);
+  assert.equal(bad.at(shim)?.status, 'UNKNOWN'); assert.match(bad.at(shim).reason, /^a script named node on PATH, not a program, and not a version manager's shim Wardlatch knows.*could not be tested/);
+  // the clean twin: proto-shim's copy in the same place is proto's shim, a REVIEW line with proto's nodes read, exit 0
+  protoShim(shim);
+  const good = cliRows({ HOME: home, PATH: path });
+  assert.equal(good.code, 0, good.out); assert.equal(good.at(shim)?.status, 'REVIEW');
+});
