@@ -6,7 +6,7 @@ import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:https';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, symlinkSync, readdirSync, unlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -40,6 +40,11 @@ const pythons = () => {
   if (process.platform === 'darwin' && existsSync('/usr/bin/python3')) { try { execFileSync('/usr/bin/xcode-select', ['-p'], { stdio: 'ignore' }); apple = exe('/usr/bin/python3'); } catch { /* no developer tools */ } }
   return [...new Set([exe('python3'), apple].filter(Boolean))];
 };
+/** What this Python does at the canary with these settings, outside Wardlatch's code, with its own default context
+ *  (or one that trusts only `cafile`): 'connected', or 'refused' for any failure. With the probe's isolation (-I -S), so
+ *  a .pth file can't make the two differ (a documented limit), and -B. Asynchronous: the canary answers from this process. */
+const ownAnswer = (py, env, cafile) => new Promise((res) => execFile(py, ['-I', '-S', '-B', '-c', 'import sys,ssl,urllib.request\nctx=ssl.create_default_context(cafile=sys.argv[2]) if len(sys.argv)>2 else ssl.create_default_context()\ntry:\n    urllib.request.urlopen(sys.argv[1], timeout=3, context=ctx); print("connected")\nexcept Exception:\n    print("refused")', canary.url, ...(cafile ? [cafile] : [])],
+  { cwd: '/', timeout: 10000, env: { PATH: process.env.PATH, ...env } }, (_e, out) => res(String(out ?? '').trim())));
 /** A stand-in python3 in its own folder that logs the options it was started with (those before -c), one run a line,
  *  and answers as a Python that trusts only a CA file it is given: connected (0) for the forced-roots control, refused
  *  (1) for a test host. → { rt, runs() } */
@@ -522,8 +527,54 @@ test('the Python probe tells a certificate refusal (SAFE) from a connection that
   const exposed = await check(rt({ SSL_CERT_FILE: badCa }), [canary], { rootsPem: badCa, timeoutMs: 3000 });
   // LibreSSL's openssl x509 writes no Authority Key Identifier, which a strict Python refuses: then nothing can be shown
   if (exposed.status === 'UNKNOWN' && /positive control failed/.test(exposed.reason)) return t.skip('this Python refuses the test chain itself');
-  assert.equal(exposed.status, 'EXPOSED');
   assert.equal((await check(rt(), [canary], { rootsPem: badCa, timeoutMs: 3000 })).status, 'SAFE');
+  // SSL_CERT_FILE is how this test makes Python trust the root, and a Python built on LibreSSL (Apple's /usr/bin/python3)
+  // ignores it, and SSL_CERT_DIR: its own programs refuse here too, so SAFE is its true answer, not a false one, and the
+  // EXPOSED half can't be shown this way (up to 0.1.9 this test failed there: 'SAFE' !== 'EXPOSED'). The next test holds
+  // such a Python to what it does trust.
+  if (await ownAnswer(py, { SSL_CERT_FILE: badCa, SSL_CERT_DIR: dir }) !== 'connected') return t.skip(`${py} ignores SSL_CERT_FILE (LibreSSL, as Apple's /usr/bin/python3 is): the EXPOSED half is the next test's`);
+  assert.equal(exposed.status, 'EXPOSED');
+});
+
+test('a Python that ignores SSL_CERT_FILE (Apple\'s /usr/bin/python3, LibreSSL) is judged by what it does trust: the probe answers as that Python\'s own default context does, and the forced roots (cafile=) still load', async (t) => {
+  const pys = pythons();
+  if (!pys.length) return t.skip('python3 is not available here');
+  let shown = 0;
+  for (const py of pys) {
+    // a strict Python (3.13 and later) may refuse a chain LibreSSL's openssl made, even trusting its root: nothing to show
+    if (await ownAnswer(py, {}, badCa) !== 'connected') { t.diagnostic(`${py} refuses the test chain itself`); continue; }
+    for (const ca of [badCa, otherCa]) {
+      const env = { SSL_CERT_FILE: ca, SSL_CERT_DIR: dir };
+      const r = await check({ kind: 'python', bin: py, version: '', env }, [canary], { rootsPem: badCa, timeoutMs: 3000 });
+      // this Python completes the chain when it is given the root as a file, so the forced-roots control must pass
+      assert.ok(!(r.status === 'UNKNOWN' && /positive control failed/.test(r.reason)), `${py}: the forced roots did not load: ${r.reason}`);
+      const own = await ownAnswer(py, env);
+      assert.equal(r.status, own === 'connected' ? 'EXPOSED' : 'SAFE', `${py} with SSL_CERT_FILE=${ca}: its own default context ${own}, the probe said ${r.status}`);
+      shown++;
+    }
+  }
+  if (!shown) t.skip('no Python here accepts the test chain');
+});
+
+test('clean machine: the forced roots reach Python as a file it is given (cafile=), so a Python that ignores SSL_CERT_FILE is still tested, and one that can\'t use the forced file is UNKNOWN, never SAFE', async () => {
+  const bin = join(dir, 'py-trust'); mkdirSync(bin, { recursive: true });
+  const c1 = [{ id: 'x', host: 'canary.invalid', url: 'https://canary.invalid/', up: true }];
+  // stand-ins: connected (0) or refused (1); the last argument is the forced CA file for the control, the URL otherwise
+  const stand = (name, body) => { const py = join(bin, name); writeFileSync(py, `#!/bin/sh\nfor a in "$@"; do last="$a"; done\n${body}\n`, { mode: 0o755 }); return (env) => ({ kind: 'python', bin: py, version: '', env }); };
+  const run = async (rt) => check(rt, c1, { rootsPem: badCa, timeoutMs: 2000 });
+  // as Apple's /usr/bin/python3 (LibreSSL): reads a CA file it is given, never SSL_CERT_FILE; its own store refuses
+  const libre = stand('libressl', 'case "$last" in *.pem) exit 0;; esac\nexit 1');
+  assert.equal((await run(libre({ SSL_CERT_FILE: badCa }))).status, 'SAFE', 'what it trusts refuses: its true answer');
+  // as an OpenSSL Python: reads SSL_CERT_FILE as well
+  const openssl = stand('openssl', `case "$last" in *.pem) exit 0;; esac\n[ "$SSL_CERT_FILE" = ${JSON.stringify(badCa)} ] && exit 0\nexit 1`);
+  assert.equal((await run(openssl({ SSL_CERT_FILE: badCa }))).status, 'EXPOSED');
+  assert.equal((await run(openssl({ SSL_CERT_FILE: otherCa }))).status, 'SAFE');
+  // a Python that can't use the forced file (ignores it, or can't open it) refuses the control too: it can't show
+  // exposure, so UNKNOWN, never SAFE; a control that fails for another reason (exit 3) is UNKNOWN as well
+  for (const [name, body] of [['deaf', 'exit 1'], ['broken', 'case "$last" in *.pem) exit 3;; esac\nexit 1']]) {
+    const r = await run(stand(name, body)({ SSL_CERT_FILE: badCa }));
+    assert.equal(r.status, 'UNKNOWN', name); assert.match(r.reason, /positive control failed/, name);
+  }
 });
 
 // ---- gaps found in the 0.1.7 audit (22 Oct 2026): branches the suite did not reach ----------------------------------

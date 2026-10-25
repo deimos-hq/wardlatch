@@ -72,7 +72,9 @@ asks each runtime to make the connection itself.
    none answers, every line is UNKNOWN.
 2. **Positive control** (`check`, once per runtime, per distrusted root): the runtime connects to one answering host
    of each root while trusting *only that root* (the incident's `canaryRoots`: `--cacert` for curl, `ca:` for Node,
-   `cafile=` for Python). If it can't connect even then, the probe can't see exposure on this runtime, and the line is
+   `cafile=` for Python). These are arguments, never `SSL_CERT_FILE`: a Python built on LibreSSL, as Apple's
+   `/usr/bin/python3` is, ignores `SSL_CERT_FILE` and `SSL_CERT_DIR` but reads `cafile=`. If it can't connect even
+   then (it couldn't use the file, or the chain), the probe can't see exposure on this runtime, and the line is
    UNKNOWN. A root with no answering host makes the line UNKNOWN too, unless some host connected: a runtime that trusts
    only that root would refuse every host that did answer.
    macOS's networking stack (`nscurl`) can't be pointed at a CA file, so it gets a normal-site control instead: it
@@ -118,8 +120,10 @@ when the file and its folder are writable by the user (as in the tests, which po
   changes only when an incident needs a new kind of check.
 - **Run the real thing.** The probes use the runtimes themselves, with the user's trust settings, so a result reflects
   what the user's code would do, including `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS` and a virtual environment's own
-  `certifi`. Except for what would mean running what is being checked: Python's start-up files are skipped (`-I -S`; `-B` so it writes no `.pyc` cache either),
-  every program runs from `/` (`go version` with `GOTOOLCHAIN=local`), and `node_modules/.bin` folders are dropped from
+  `certifi` (where the runtime reads them: Apple's `/usr/bin/python3`, built on LibreSSL 2.8.3, ignores `SSL_CERT_FILE`
+  and `SSL_CERT_DIR`, in the probe as in the user's own programs, and trusts `/etc/ssl/cert.pem` and `/etc/ssl/certs`
+  whatever they say). Except for what would mean running what is being checked: Python's start-up files are skipped
+  (`-I -S`; `-B` so it writes no `.pyc` cache either), every program runs from `/` (`go version` with `GOTOOLCHAIN=local`), and `node_modules/.bin` folders are dropped from
   `PATH`.
 - **Controls before verdicts.** Every SAFE is preceded by evidence that the check could have said EXPOSED.
 - **Read-only command, separate fix.** Applying a fix is the person's decision. The one fix that ships is a separate

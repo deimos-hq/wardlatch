@@ -40,6 +40,14 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   `test/wardlatch.test.mjs` wrote 63 `.pyc` files into `~/Library/Caches/com.apple.python` under the HOME it ran with (62
   from one `python3 -m venv`), which the seal can't see, since Python isn't Node. `test/conventions.test.mjs` now fails
   on a real Python started by a test, or by a probe, without `-B`.
+- `the Python probe tells a certificate refusal (SAFE) from a connection that trusts the root (EXPOSED)` failed wherever
+  `python3` is Apple's `/usr/bin/python3` (`'SAFE' !== 'EXPOSED'`), from 0.1.7, when it was added, to 0.1.9. The test,
+  not the probe, was wrong: it made Python trust the test root through `SSL_CERT_FILE`, which Apple's Python (LibreSSL
+  2.8.3) ignores, as it ignores `SSL_CERT_DIR`. That Python's own programs refuse there too, so SAFE was its true
+  answer, and the forced-roots control, which has given the roots as `cafile=` in every release (every Python reads
+  it), passed. The test now skips its EXPOSED half on such a Python; a new one runs the `python3` on `PATH` and Apple's own
+  and fails unless the forced roots load and the probe answers as that Python's own default context does; stand-ins
+  check the same on a machine without Python, and that a Python that can't use the forced file is UNKNOWN, never SAFE.
 
 ## [0.1.9] - 2026-10-23
 
