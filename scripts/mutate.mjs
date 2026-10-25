@@ -55,9 +55,9 @@
 // The suite runs with the one static test that rejects any SAFE literal outside lib/report.mjs's safe() skipped (G3
 // below): it fails on every planted SAFE whatever the code does, so it would make every bug look caught. The script
 // stops unless test/contract-0.1.9.test.mjs declares that test, by its exact name, exactly once, and checks that the
-// skip pattern matches it and that it never runs in the copies. The tests of these scripts (TOOL_TESTS) don't run in
-// the copies either: they exercise scripts/, never bin/ or lib/, so they can't catch a planted bug, and
-// test/mutate.test.mjs would start nested mutation runs inside every copy.
+// skip pattern matches it and that it never runs in the copies. The tests of these scripts and of the workflows
+// (TOOL_TESTS) don't run in the copies either: they exercise scripts/ and .github/, never bin/ or lib/, so they can't
+// catch a planted bug, and test/mutate.test.mjs would start nested mutation runs inside every copy.
 // results.json and summary.md (in --out) list every planted bug, its result and the test that caught it.
 // Stopping the script (SIGINT, SIGTERM, SIGHUP) kills every running suite's whole process group.
 // Needs rsync and Node 22.1 or later (--test-skip-pattern). Runs N copies at a time (default 1: one suite at a time, as
@@ -72,7 +72,7 @@ const REPO = resolve(join(dirname(fileURLToPath(import.meta.url)), '..'));
 const REPORTER = pathToFileURL(join(REPO, 'scripts', 'mutate-reporter.mjs')).href;
 const STATIC_FILE = 'test/contract-0.1.9.test.mjs';
 const STATIC_NAME = 'G3 a SAFE status is made in exactly one place: export function safe( in lib/report.mjs';
-const TOOL_TESTS = ['test/mutate.test.mjs', 'test/release-check.test.mjs', 'test/corpus.test.mjs'];
+const TOOL_TESTS = ['test/mutate.test.mjs', 'test/release-check.test.mjs', 'test/corpus.test.mjs', 'test/guardrails.test.mjs'];
 const TRIES = 5;   // failing tests examined alone, in turn, for one planted bug
 const reEscape = (s) => s.replace(/[\\^$.*+?()[\]{}|/]/g, '\\$&');
 const STATIC = `^${reEscape(STATIC_NAME)}$`;

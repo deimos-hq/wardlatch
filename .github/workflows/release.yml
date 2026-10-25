@@ -17,16 +17,17 @@ permissions:
   contents: read
 
 jobs:
-  release:
+  # The tests and the release gate run first, in a job whose token can only read: they run the repository's own code
+  # (and the gate gets GH_TOKEN), so they never hold the token that writes the release or the OIDC token that signs.
+  gate:
+    name: release gate
     runs-on: ubuntu-latest
     permissions:
-      contents: write        # create the release
-      id-token: write        # what lets Sigstore issue a keyless certificate
-      attestations: write    # record the provenance
+      contents: read         # the checkout
       checks: read           # the release gate reads every check GitHub ran on the tagged commit
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with: { fetch-depth: 0, persist-credentials: false }
+        with: { fetch-depth: 0, persist-credentials: false }   # every tag and origin/main, which the gate reads
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with: { node-version: '22' }
 
@@ -36,6 +37,30 @@ jobs:
         env:
           NODE_OPTIONS: --throw-deprecation --pending-deprecation
 
+      # docs/RELEASING.md, "Before you cut a release": both reviews on file for the code being released, nothing that runs
+      # changed after them, every past advisory's kind of mistake looked for again, the corpus gate's GATE PASSED quoted,
+      # the tagged commit on main, every check GitHub ran on it passed (this run's own jobs aside), the critical-mutant
+      # gate and the corpus report among them, and the survivor lists only shrunk since the last release. A tag for a
+      # version older than 0.1.10 is refused: 0.1.0 to 0.1.9 were released before the gate, and no older one ever was. A
+      # tag pushed before CI finished on its commit fails here: re-run this workflow once it has.
+      - name: The release gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-check.mjs --ci
+
+  release:
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the release
+      id-token: write        # what lets Sigstore issue a keyless certificate
+      attestations: write    # record the provenance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with: { node-version: '22' }
+
       # A release labelled v0.2.0 that contains 0.1.0 is a lie that is very hard to notice later.
       - name: Tag matches package.json, and the changelog has an entry for it
         run: |
@@ -44,16 +69,6 @@ jobs:
           if [ "$tag" != "$pkg" ]; then echo "::error::tag $GITHUB_REF_NAME does not match package.json version $pkg"; exit 1; fi
           grep -q "^## \[$pkg\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no '## [$pkg]' section"; exit 1; }
           echo "VERSION=$pkg" >> "$GITHUB_ENV"
-
-      # docs/RELEASING.md, "Before you cut a release": both reviews on file for the code being released, nothing that runs
-      # changed after them, every past advisory's kind of mistake looked for again, and every check GitHub ran on this
-      # commit passed (this run's own jobs aside), the critical-mutant gate and the corpus report among them. A tag for a
-      # version older than 0.1.10 is refused: 0.1.0 to 0.1.9 were released before the gate, and no older one ever was. A
-      # tag pushed before CI finished on its commit fails here: re-run this workflow once it has.
-      - name: The release gate
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node scripts/release-check.mjs --ci
 
       - name: Build the source archive and the npm package
         run: |
