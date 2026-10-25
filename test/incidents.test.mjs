@@ -59,7 +59,7 @@ test('every incident has the fields its check reads, named after its file', () =
       for (const k of ['node', 'bun', 'binding', 'file']) assert.ok(i.hints?.[k], `${i.id}: hints.${k}`);
       assert.ok(https(i.guide), `${i.id}: the by-hand guide is an https link`);
       for (const [name, d] of Object.entries(i.dists ?? {})) { assert.equal(name, name.toLowerCase().replace(/[-_.]+/g, '-'), `${i.id}: ${name} is a normalized name`); assert.ok(d.fix); }
-      for (const [k, r] of Object.entries(i.distro?.releases ?? {})) { assert.match(k, /^[a-z]+:[a-z0-9.]+$/); assert.ok(Array.isArray(r.fixed) && Array.isArray(r.vulnerable) && r.source && r.name && r.fix, `${i.id}: ${k}`); }
+      for (const [k, r] of Object.entries(i.distro?.releases ?? {})) { assert.match(k, /^[a-z]+:[a-z0-9.]+$/); assert.ok(Array.isArray(r.fixed) && Array.isArray(r.vulnerableSources) && r.source && r.name && r.fix, `${i.id}: ${k}`); for (const v of r.vulnerableSources) assert.doesNotMatch(v, /\+b\d+$/, `${i.id}: ${k}: ${v} is a source version, not a binNMU`); }
     }
     if (i.type === 'wordpress') { assert.ok(!Number.isNaN(Date.parse(i.addedSince)) && i.reviewFix); for (const r of i.rules) assert.ok(r.plugin && r.mainFile && r.fix); }
   }

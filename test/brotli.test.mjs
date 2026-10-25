@@ -500,37 +500,49 @@ test('conda: the Brotli library of every conda home whose Python packages are re
   }
 });
 
+/** dpkg's status file as dpkg writes it: zlib1g first, then the given libbrotli1 stanzas. A rebuild (binNMU, such as
+ *  1.1.0-2+b7) names its source version on the Source line; a security build (1.1.0-2+deb13u1) doesn't. */
+const stanza = (version, source = '', arch = 'amd64') => `Package: libbrotli1\nStatus: install ok installed\nPriority: optional\nSection: libs\nInstalled-Size: 785\nMaintainer: Debian Brotli Maintainers <brotli@example.org>\nArchitecture: ${arch}\nMulti-Arch: same\nSource: brotli${source ? ` (${source})` : ''}\nVersion: ${version}\nDepends: libc6 (>= 2.29)\nDescription: library implementing brotli encoder and decoder (shared libraries)\n Brotli is a generic-purpose lossless compression algorithm.\n`;
+const dpkgStatus = (file, ...stanzas) => writeFileSync(file, `Package: zlib1g\nStatus: install ok installed\nArchitecture: amd64\nVersion: 1:1.3.dfsg+really1.3.1-1+b1\n\n${stanzas.join('\n')}\n`);
+
 test('a distribution\'s library without the marker: its own package version decides, by exact string; anything else is UNKNOWN', () => {
   const d = fresh('distro'), path = fresh('distro-path');
   const sys = oldLib(join(d, 'sys', 'libbrotlidec.so.1'));
   const status = join(d, 'status'), osr = join(d, 'os-release'), apk = join(d, 'installed');
-  writeFileSync(osr, 'ID=debian\nVERSION_ID="12"\nVERSION_CODENAME=bookworm\n');
-  const dpkg = (v) => writeFileSync(status, `Package: zlib1g\nStatus: install ok installed\nVersion: 1\n\nPackage: libbrotli1\nStatus: install ok installed\nArchitecture: amd64\nVersion: ${v}\n\n`);
+  writeFileSync(osr, 'ID=debian\nVERSION_ID="13"\nVERSION_CODENAME=trixie\n');
+  const dpkg = (...st) => dpkgStatus(status, ...st);
   const libPlaces = [{ pattern: sys, label: 'the system\'s libbrotlidec', system: true }];
   // a node that links the system library (Debian's own nodejs does), by its path
   bin(join(path, 'node'), [NODE_CONTROL, NODE_MARKER, 'nodejs.org/download/release/v18.19.0', sys]);
   const realSys = realpathSync(sys);
   const go = (places = { osRelease: osr, dpkgStatus: status }) => { const { rows } = run({ libPlaces }, { pathEnv: path, places }); return { lib: rows.find((r) => r.file === realSys), node: rows.find((r) => r.file === join(path, 'node')) }; };
-  dpkg('1.0.9-2+deb12u1');
+  // Debian 13's security build
+  dpkg(stanza('1.1.0-2+deb13u1'));
   let { lib, node } = go();
-  assert.equal(lib.status, 'SAFE'); assert.match(lib.reason, /Debian's fixed package libbrotli1 1\.0\.9-2\+deb12u1 \(DLA-4855-1/); assert.equal(lib.label, 'libbrotli1 1.0.9-2+deb12u1');
-  assert.deepEqual(lib.searched, [realSys, `${status}: libbrotli1 1.0.9-2+deb12u1`]);
-  assert.equal(node.status, 'SAFE', 'a program linking it is judged the same way'); assert.ok(node.searched.includes(`${status}: libbrotli1 1.0.9-2+deb12u1`));
-  dpkg('1.0.9-2');
+  assert.equal(lib.status, 'SAFE'); assert.match(lib.reason, /Debian's fixed package libbrotli1 1\.1\.0-2\+deb13u1 \(DSA-6582-1/); assert.equal(lib.label, 'libbrotli1 1.1.0-2+deb13u1');
+  assert.deepEqual(lib.searched, [realSys, `${status}: libbrotli1 1.1.0-2+deb13u1`]);
+  assert.equal(node.status, 'SAFE', 'a program linking it is judged the same way'); assert.ok(node.searched.includes(`${status}: libbrotli1 1.1.0-2+deb13u1`));
+  // stock trixie, as dpkg records it: the binNMU 1.1.0-2+b7, built from the unfixed source 1.1.0-2
+  dpkg(stanza('1.1.0-2+b7', '1.1.0-2'));
   ({ lib, node } = go());
-  assert.equal(lib.status, 'EXPOSED'); assert.match(lib.fix, /apt install --only-upgrade libbrotli1 \(Debian 12's fixed package is 1\.0\.9-2\+deb12u1\)/);
+  assert.equal(lib.status, 'EXPOSED'); assert.match(lib.reason, /libbrotli1 1\.1\.0-2\+b7 is Debian's package without it \(built from brotli 1\.1\.0-2/);
+  assert.match(lib.fix, /apt install --only-upgrade libbrotli1 \(Debian 13's fixed package is 1\.1\.0-2\+deb13u1\)/);
   assert.equal(node.status, 'EXPOSED'); assert.match(node.fix, /not Node\.js: sudo apt update/);
-  dpkg('1.0.9-3ubuntu0.1');
+  // the unfixed source built without a rebuild suffix: the same source, EXPOSED
+  dpkg(stanza('1.1.0-2'));
+  assert.equal(go().lib.status, 'EXPOSED');
+  // another distribution's version of it: not in the table
+  dpkg(stanza('1.1.0-2ubuntu0.1'));
   ({ lib, node } = go());
   assert.equal(lib.status, 'UNKNOWN'); assert.match(lib.reason, /may have fixed it another way.*could not be tested/);
   assert.equal(node.status, 'UNKNOWN');
   // no package record names it (an rpm system, or a copy by hand): the distribution may still have fixed it, so UNKNOWN
-  writeFileSync(status, 'Package: zlib1g\nStatus: install ok installed\nVersion: 1\n\n');
+  dpkg();
   assert.equal(go().lib.status, 'UNKNOWN');
   assert.equal(go({ osRelease: osr }).lib.status, 'UNKNOWN');
-  // Debian testing, no fix yet: EXPOSED, and the fix says so
+  // Debian testing, no fix yet: the binNMU 1.2.0-4+b1 of the unfixed source is EXPOSED, and the fix says so
   writeFileSync(osr, 'ID=debian\nVERSION_CODENAME=forky\n');
-  dpkg('1.2.0-4');
+  dpkg(stanza('1.2.0-4+b1', '1.2.0-4'));
   assert.equal(go().lib.status, 'EXPOSED'); assert.match(go().lib.fix, /Debian had no fixed package for this release on 24 October 2026/);
   // Alpine's record is read, but nothing for Alpine is in the table yet: UNKNOWN
   writeFileSync(osr, 'ID=alpine\nVERSION_ID=3.22.2\n');
@@ -540,9 +552,21 @@ test('a distribution\'s library without the marker: its own package version deci
   // a fixed system library needs no package record at all
   fixedLib(sys);
   assert.equal(go({}).lib.status, 'SAFE');
-  // the table is exact strings: a version close to a listed one is never compared by order
-  writeFileSync(osr, 'ID=debian\nVERSION_ID="12"\n'); dpkg('1.0.9-2+deb12u2');
-  assert.equal(distroVerdict(sys, INC.distro, { osRelease: osr, dpkgStatus: status }).status, 'UNKNOWN');
+  // the table is exact strings: a version close to a listed one is never compared by order, and the fixed list is binary
+  // versions only (a rebuild of the security build is not in it)
+  oldLib(sys);
+  writeFileSync(osr, 'ID=debian\nVERSION_ID="13"\n');
+  for (const st of [stanza('1.1.0-2+deb13u2'), stanza('1.1.0-2+deb13u1+b1', '1.1.0-2+deb13u1'), stanza('1.1.0-2+b7', '1.1.0-2.1')]) {
+    dpkg(st);
+    assert.equal(distroVerdict(sys, INC.distro, { osRelease: osr, dpkgStatus: status }).status, 'UNKNOWN', st.split('\n').filter((l) => /^(Source|Version)/.test(l)).join(' '));
+  }
+  // Debian 12 as it really is: Brotli 1.0's error texts have no _ERROR_FORMAT_ prefix (BrotliDecoderErrorString returns
+  // the bare name before 1.1.0), so no table is seen and the package record is not reached: UNKNOWN, never SAFE
+  const old10 = bin(join(d, 'sys12', 'libbrotlidec.so.1'), ['SUCCESS', 'BLOCK_LENGTH_1', 'UNREACHABLE']);
+  writeFileSync(osr, 'ID=debian\nVERSION_ID="12"\nVERSION_CODENAME=bookworm\n');
+  dpkg(stanza('1.0.9-2+deb12u1'));
+  const r12 = run({ libPlaces: [{ pattern: old10, label: 'the system\'s libbrotlidec', system: true }] }, { places: { osRelease: osr, dpkgStatus: status } }).rows[0];
+  assert.equal(r12.status, 'UNKNOWN'); assert.match(r12.reason, /could not be tested/);
 });
 
 test('words: every UNKNOWN says "could not be tested", every EXPOSED has a fix, every SAFE names what it read', () => {
