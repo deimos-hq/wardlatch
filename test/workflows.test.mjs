@@ -323,6 +323,70 @@ const cutText = (cut) => `its history is cut (a shallow repository${cut ? `; the
 /** The one row and exit code of the command on `root` → [[status, reason]], code */
 const rows = (root) => { const r = run(root); return [r.rows.map((x) => [x.status, x.reason ?? x.file]), r.code]; };
 
+// A repository's own config can name another working folder (core.worktree). Set to a folder above the repository,
+// git took the repository's folder as a subfolder of that one and read `-- .github/workflows` from there: nothing
+// matched, and 0.1.0 to 0.1.9, and this fix up to ffacde4, read SAFE, exit code 0 (owner decision #31, found by an
+// independent check with core.worktree=/tmp). lib/git.mjs gives git the working folder (--work-tree=<repository>).
+// Each way to set it: in .git/config, absolute or relative to .git, and in .git/config.worktree (with
+// extensions.worktreeConfig); with diff.relative and log.follow on top; and core.bare=true, which never hid one.
+const WORKTREE_TRICKS = {
+  absolute: (root) => [['config', 'core.worktree', root]],
+  relative: () => [['config', 'core.worktree', '../..']],   // from <root>/app/.git, the root
+  'config-worktree': (root) => [['config', 'core.repositoryformatversion', '1'], ['config', 'extensions.worktreeConfig', 'true'], ['config', '--worktree', 'core.worktree', root]],
+  'relative-follow': (root) => [['config', 'core.worktree', root], ['config', 'diff.relative', 'true'], ['config', 'log.follow', 'true']],
+  bare: () => [['config', 'core.bare', 'true']],
+};
+test('workflows: core.worktree naming a folder above the repository (absolute, relative, in config.worktree, with diff.relative and log.follow) hides nothing, nor does core.bare; clean twins, SAFE', () => {
+  for (const [name, trick] of Object.entries(WORKTREE_TRICKS)) {
+    const build = (root, date) => {
+      const app = repo(join(root, 'app'), [{ files: { [WF]: 'on: push\n' }, date }, later]);
+      for (const args of trick(root)) gitIn(app)(args);
+      return app;
+    };
+    const root = join(dir, `worktree-${name}`), app = build(root, '2026-09-05T00:00:00Z');
+    if (name !== 'bare') assert.deepEqual(plainAdds(app), [], `${name}: the test means something: git as it runs by default lists nothing`);
+    const r = run(root);
+    assert.deepEqual(r.rows.map((x) => [x.status, x.file, x.commit?.split(' ')[1]]), [['REVIEW', WF, '2026-09-05']], `${name}: ${r.out}`);
+    assert.equal(r.code, 0);
+    // clean twin: the same setting, the workflow a second before the window: SAFE, not UNKNOWN
+    const twin = join(dir, `worktree-${name}-twin`); build(twin, '2026-08-29T23:59:59Z');
+    assert.deepEqual(safe(twin), [[['SAFE', SAFE_TEXT]], 0], name);
+  }
+});
+
+test('workflows: clean twins of core.worktree: a linked worktree and a submodule\'s own folder (where git sets core.worktree itself) are read as before', () => {
+  const root = join(dir, 'linked'), main = repo(join(root, 'main'), [{ files: { [WF]: 'on: push\n' }, date: '2026-09-05T00:00:00Z' }]);
+  gitIn(main)(['worktree', 'add', '-q', '-b', 'lb', join(root, 'wt')]);
+  const r = run(root);
+  assert.deepEqual(r.rows.map((x) => [x.status, basename(x.repo ?? ''), x.file]).sort(), [['REVIEW', 'main', WF], ['REVIEW', 'wt', WF]], r.out);
+  const src = repo(join(dir, 'sub-src'), [{ files: { [WF]: 'on: push\n' }, date: '2026-09-06T00:00:00Z' }]);
+  const sup = repo(join(dir, 'sub-super'), []);
+  gitIn(sup)(['submodule', 'add', '-q', src, 'vendor/sub'], { date: '2026-09-07T00:00:00Z' });
+  assert.ok(gitIn(join(sup, 'vendor', 'sub'))(['config', 'core.worktree']), 'the fixture: the submodule\'s config names its working folder');
+  const s = run(join(sup, 'vendor', 'sub'));
+  assert.deepEqual(s.rows.map((x) => [x.status, x.file]), [['REVIEW', WF]], s.out);
+});
+
+test('workflows: a .git folder whose commondir file names another repository is UNKNOWN, and so is one git doesn\'t take as the repository; clean twins, listed', () => {
+  // git reads refs and commits from the folder a commondir file names (git writes one only in a linked worktree's
+  // folder under .git/worktrees, whose .git is a file): 0.1.0 to 0.1.9 and ffacde4 read the empty one, SAFE
+  const empty = join(dir, 'commondir-empty'); mkdirSync(empty); gitIn(empty)(['init', '-q']);
+  const root = join(dir, 'commondir'), app = repo(join(root, 'app'), [{ files: { [WF]: 'on: push\n' }, date: '2026-09-05T00:00:00Z' }]);
+  writeFileSync(join(app, '.git', 'commondir'), `${join(empty, '.git')}\n`);
+  assert.deepEqual(plainAdds(app), [], 'the test means something: git as it runs by default reads the other repository');
+  const r = run(root);
+  assert.deepEqual(r.rows.map((x) => x.status), ['UNKNOWN'], r.out);
+  assert.match(r.rows[0].reason, /commondir-empty\/\.git, which a commondir file in its \.git folder names/);
+  assert.equal(r.code, 2);
+  // a .git folder git doesn't take as a repository (empty), inside another repository: git reads the outer one
+  const outer = repo(join(dir, 'outer'), []), inner = join(outer, 'inner'); mkdirSync(join(inner, '.git'), { recursive: true });
+  assert.match(run(inner).rows[0]?.reason ?? '', /as this repository, not its own \.git folder/);
+  // clean twins: the same repository without the file, and the outer one
+  rmSync(join(app, '.git', 'commondir'));
+  assert.deepEqual(run(root).rows.map((x) => [x.status, x.file]), [['REVIEW', WF]]);
+  assert.deepEqual(safe(outer), [[['SAFE', SAFE_TEXT]], 0]);
+});
+
 test('workflows: a shallow clone is UNKNOWN wherever its history is cut, naming the newest cut; the same history cloned whole is read', () => {
   // git has no history below a shallow clone's cut, and the cut commit's date says nothing about what is below it.
   // 3dbf26b read a clone cut before the start as the whole window: SAFE for one, a listed workflow for the other.
@@ -518,10 +582,15 @@ test('workflows: git gets no date: no --since, --after, --until, --before, --max
   assert.equal(r.code, 0);
   const argvs = [];
   for (let f = readFileSync(calls, 'utf8').split('\0'), i = 0; i < f.length - 1; i += 1 + Number(f[i])) argvs.push(f.slice(i + 1, i + 1 + Number(f[i])));
-  // each repository: whether it is shallow and where its shallow file is, every commit with its time, then the files
-  // the kept commits added
-  assert.deepEqual(argvs.map((a) => a[a.indexOf('-C') + 2]), ['rev-parse', 'log', 'log', 'rev-parse', 'log', 'log'], JSON.stringify(argvs));
-  for (const a of argvs.filter((x) => x[x.indexOf('-C') + 2] === 'rev-parse')) assert.deepEqual(a.slice(a.indexOf('-C') + 2), ['rev-parse', '--is-shallow-repository', '--git-path', 'shallow']);
+  // every call: -C <repository> --work-tree=<the same folder>, so the repository's own core.worktree can't move where
+  // paths are read from (the core.worktree tests above)
+  for (const a of argvs) assert.equal(a[a.indexOf('-C') + 2], `--work-tree=${a[a.indexOf('-C') + 1]}`, JSON.stringify(a));
+  // each repository: where its git dir and common dir are, whether it is shallow and where its shallow file is, every
+  // commit with its time, then the files the kept commits added
+  const sub = (a) => a.slice(a.indexOf('-C') + 3);
+  assert.deepEqual(argvs.map((a) => sub(a)[0]), ['rev-parse', 'rev-parse', 'log', 'log', 'rev-parse', 'rev-parse', 'log', 'log'], JSON.stringify(argvs));
+  const asks = [['rev-parse', '--absolute-git-dir', '--git-common-dir'], ['rev-parse', '--is-shallow-repository', '--git-path', 'shallow']];
+  assert.deepEqual(argvs.filter((a) => sub(a)[0] === 'rev-parse').map(sub), [...asks, ...asks]);
   for (const a of argvs) assert.deepEqual(a.filter((x) => /^--(?:since|after|until|before|max-age|min-age)/i.test(x)), [], JSON.stringify(a));
   assert.equal(argvs.filter((a) => a.includes('--all') && a.includes('--format=%H %ct')).length, 2, 'every commit, with its committer time in seconds');
   assert.equal(argvs.filter((a) => a.includes('--no-walk=unsorted') && a.includes('--stdin') && !a.includes('--all')).length, 2, 'the files of exactly the commits kept');
@@ -670,6 +739,15 @@ test('workflows: the CHANGELOG\'s hand check, run as written, lists every workfl
     return join(root, name);
   };
   built[partial('partial-blobless', 'blob:none')] = [`${W}/pc.yml`];
+  // core.worktree naming a folder above the repository (in .git/config, and in config.worktree), and with
+  // diff.relative and log.follow on top: git as it runs by default lists nothing (the line up to ffacde4 too)
+  assert.match(bullet, /core\.worktree/, 'the item says what --work-tree=. is for');
+  for (const name of ['absolute', 'config-worktree', 'relative-follow']) {
+    const wr = join(root, `wt-${name}`), app = repo(join(wr, `app-${name}`), [{ files: { [`${W}/wt.yml`]: 'on: push\n' }, date: '2026-09-05T00:00:00Z' }]);
+    for (const args of WORKTREE_TRICKS[name](wr)) gitIn(app)(args);
+    assert.deepEqual(plainAdds(app), [], `${name}: the test means something: git as it runs by default lists nothing`);
+    built[app] = [`${W}/wt.yml`];
+  }
   const treeless = partial('partial-treeless', 'tree:0');
   renameSync(srv, `${srv}-gone`);
   for (const [path, files] of Object.entries(built)) {

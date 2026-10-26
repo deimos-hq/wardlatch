@@ -237,7 +237,8 @@ installed with `pip install --user` was not run, because `-I` leaves out the use
 `git log` (workflow review) in every repository it finds, and a repository's own `.git/config` can name programs for
 git to run. A cloned repository starts with git's default config, but one unpacked from an archive or copied from
 elsewhere can carry any config it likes. Since 0.1.7 both run through `lib/git.mjs`, by git's full path and from `/`,
-as `git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c log.showRoot=true -C <repo>`, with
+as `git --no-pager -c core.fsmonitor=false -c log.showSignature=false -c log.showRoot=true -C <repo>` (since 0.1.10
+also `--work-tree=<repo>`: see below), with
 `GIT_NO_REPLACE_OBJECTS=1` (`log.showRoot=false` would hide the files of a root commit; up to 0.1.6 a workflow added
 in a repository's first commit could read SAFE that way), and `log` adds `--no-show-signature --no-ext-diff
 --no-textconv --no-renames`. A `-c` setting wins over every config file. So `ls-files` runs no `core.fsmonitor` program, and `log`
@@ -265,6 +266,25 @@ a repository (a treeless partial clone missing what it would have to fetch, a re
 timeout), that repository is an UNKNOWN line with git's reason, and the SAFE line counts only the repositories git
 could read; up to 0.1.6 it was left out without a word and still counted. Git itself and any `git-remote-*` helper are programs on
 `PATH`, trusted as above.
+
+**Git reads the repository Wardlatch found, from its top.** A repository's own config can also change where git
+reads paths from, or which history it reads. **Found 26 October 2026** (an independent check of 0.1.10): with
+`core.worktree` in `.git/config` (or `.git/config.worktree`) naming a folder above the repository, such as `/tmp`, git
+took the repository's folder as a subfolder of that one, `git log` found nothing under `.github/workflows` and `git
+ls-files` listed nothing, so the workflow review (0.1.0 to 0.1.9) and the committed-keys check (0.1.1 to 0.1.9) read
+SAFE, exit code 0, for a repository holding a workflow or a key. Since 0.1.10 every git call gets
+`--work-tree=<repo>`, which wins over `core.worktree`, `core.bare` and `GIT_WORK_TREE`. A `commondir` file written
+into a `.git` folder makes git read the refs and commits of the repository it names (git writes one only in a linked
+worktree's folder under `.git/worktrees`, whose `.git` is a file): the workflow review now reads such a repository,
+and one whose `.git` folder git doesn't take as the repository, UNKNOWN. Checked on git 2.54 and not a miss:
+`core.worktree` set through `include.path`, `includeIf`, `-c` or the person's global config (git doesn't use it from
+there), `core.bare=true`, `diff.relative`, `log.follow`, `core.ignoreCase`, and the caller's `GIT_*` location and
+pathspec variables, which git doesn't get. **Known limit:** a workflow under a folder whose name differs only in case
+(`.GitHub/Workflows`) isn't listed; whether GitHub runs one there hasn't been checked. *Evidence:*
+`test/workflows.test.mjs` sets `core.worktree` above the repository (absolute, relative, in `config.worktree`, with
+`diff.relative` and `log.follow`) and `core.bare=true`, each with a clean twin that must read SAFE, plants a
+`commondir` file and an empty `.git` folder inside another repository (UNKNOWN), and reads a linked worktree and a
+submodule's own folder as before; `test/cli.test.mjs` does the same for a committed key.
 
 **An on-path attacker can produce a false SAFE for a host.** After the controls pass, a certificate refusal counts as
 a refusal. An attacker on the network path who lets the reachability handshake and the positive control through,

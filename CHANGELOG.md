@@ -82,10 +82,10 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     listed; the check lists added files, as the campaign added them: a commit that only changes a workflow committed
     before the window reads SAFE.
   - **What to do:** if 0.1.0 to 0.1.9 said SAFE for `github-actions-2026-10`, run a release with this fix again, or
-    paste this line at the top folder of each repository (in a subfolder it lists nothing), in a POSIX shell such as
-    bash or zsh (it doesn't run as pasted in PowerShell or cmd). It has no date in it (given one, git stops reading a
-    branch at the first commit dated before it) and reads what the review reads, in one command:
-    `TZ=UTC GIT_NO_LAZY_FETCH=1 GIT_ALLOW_PROTOCOL=none git --no-pager --no-replace-objects -c core.commitGraph=false -c advice.graftFileDeprecated=true log --all --full-history --root --no-renames --diff-merges=combined --diff-filter=A --name-only --no-show-signature --date=iso-strict-local --format='%h %ct %cd %an' -- .github/workflows`
+    paste this line at the top folder of each repository, in a POSIX shell such as bash or zsh (it doesn't run as
+    pasted in PowerShell or cmd). It has no date in it (given one, git stops reading a branch at the first commit
+    dated before it) and reads what the review reads, in one command:
+    `TZ=UTC GIT_NO_LAZY_FETCH=1 GIT_ALLOW_PROTOCOL=none git --no-pager --work-tree=. --no-replace-objects -c core.commitGraph=false -c advice.graftFileDeprecated=true log --all --full-history --root --no-renames --diff-merges=combined --diff-filter=A --name-only --no-show-signature --date=iso-strict-local --format='%h %ct %cd %an' -- .github/workflows`
     It lists every workflow file that any commit of any branch, tag or other ref added, each under its commit's hash,
     committer time in seconds since 1970 (`%ct`), committer date in UTC (for convenience only) and author, whatever
     the date; a file added, deleted and added again is listed under each commit that added it, as the review lists
@@ -94,7 +94,10 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     committer times too far in the future for git to turn into a date, git prints 1970-01-01T00:00:00Z or even a
     negative year, and those commits are in the window too. A line with no number and no date (three spaces after
     its hash) has a committer date git can't read: count it as in the window as well (the review reads the second
-    kind UNKNOWN). As in the review, a replace ref doesn't put another commit in a commit's place, a commit-graph
+    kind UNKNOWN). As in the review, paths are read from the top of the folder the line runs in (`--work-tree=.`),
+    whatever the repository's own `core.worktree` says (set to a folder above the repository, it made git read
+    `.github/workflows` from the repository's place inside that folder, and the line up to ffacde4 listed nothing),
+    a replace ref doesn't put another commit in a commit's place, a commit-graph
     file isn't used, a side branch a merge brings in is read, a root commit's files are listed whatever
     `log.showRoot` says, a workflow that only a merge commit adds is listed, one renamed into or within
     `.github/workflows` is listed as added, and nothing a repository's own config names is run: no signature is
@@ -102,10 +105,13 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     nothing is fetched (in a partial clone, a fetch runs what the config names for the remote:
     `GIT_NO_LAZY_FETCH=1` stops it, and `GIT_ALLOW_PROTOCOL=none` refuses every transport for a git too old to know
     that; a partial clone without a tree the line needs stops with an error, where the review reads
-    UNKNOWN). Two things the line can't get past: a `.git/info/grafts` file makes it unreliable (git follows the
+    UNKNOWN). Four things the line can't get past: a `.git/info/grafts` file makes it unreliable (git follows the
     file, and no git option turns that off; the review doesn't read it; git's "hint: Support for
-    <GIT_DIR>/info/grafts is deprecated" is the sign that one is there, and the line asks git to always show it), and
-    in a shallow clone what is below the cut isn't there to list (run `git fetch --unshallow` first).
+    <GIT_DIR>/info/grafts is deprecated" is the sign that one is there, and the line asks git to always show it); a
+    `commondir` file in a `.git` folder makes git read the history of the repository it names instead (git puts one
+    only in a linked worktree's folder under `.git/worktrees`; `ls .git/commondir` shows one, and the review reads
+    that repository UNKNOWN); a `GIT_DIR` set in the shell points git at that repository instead (`unset GIT_DIR`
+    first); and in a shallow clone what is below the cut isn't there to list (run `git fetch --unshallow` first).
   - Tests (`test/workflows.test.mjs`), each with a clean twin a second before the window or without the trick:
     workflows committed just inside the window (00:00:01 UTC on 30 Aug, 05:00 on 31 Aug at UTC+8, 09:00 UTC on 1 Sep,
     and the advisory's own file names, `github_actions_security.yml` and `security-audit.yml`, on 31 Aug) are listed
@@ -157,6 +163,52 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     are of the 24 tests before the fix for a file added more than once; at 3cff5c5, with this CHANGELOG, the
     re-added file's test and the hand check's test fail (the review listed one commit), and so does the test of the
     documented limit without its sentence, while the two clean twins pass.
+- **A repository's own config could make the workflow review (0.1.0 to 0.1.9) and the committed-keys check (0.1.1 to
+  0.1.9) read SAFE without having read it.** A repository's `.git/config`, or its `.git/config.worktree` with
+  `extensions.worktreeConfig`, can name another working folder: `core.worktree`. Set to a folder above the repository
+  (`/tmp` for one under `/tmp`, or `../..`), git took the repository's folder as a subfolder of that one and read
+  every path from there: `git log` found nothing under `.github/workflows` and `git ls-files` listed nothing. A full
+  repository with a workflow committed on 5 Sep 2026 read "SAFE … in 1 local repository", exit code 0, and so did one
+  with a committed key; the hand line above, as this entry gave it up to ffacde4, printed nothing. Setting it takes
+  write access to the repository's `.git` folder; a clone can't carry it. Found by an independent check of this
+  release with `core.worktree=/tmp`. Wardlatch now gives git the working folder on the command line,
+  `--work-tree=<the folder it found>`, which wins over `core.worktree`, `core.bare` and `GIT_WORK_TREE`, so paths are
+  read from that folder's top; the hand line gets `--work-tree=.`.
+  - The same class, each checked with git 2.54 on 0.1.9's code and on ffacde4, with a workflow committed on 5 Sep: a
+    `commondir` file written into a `.git` folder makes git read the refs and commits of the repository it names, and
+    one naming an empty repository read SAFE. git writes a `commondir` file only in a linked worktree's own folder
+    under `.git/worktrees`, and a linked worktree's `.git` is a file, so a `.git` folder whose history git reads from
+    anywhere else is now UNKNOWN ("git reads its history from …, which a commondir file in its .git folder names …"),
+    and so is a `.git` folder git doesn't take as the repository at all (an empty one inside another repository,
+    where git reads the outer one). A `.git` file (a linked worktree, a submodule) is followed as git follows it.
+  - Not a miss before, on either: `core.worktree` naming a folder that isn't above the repository, or set through
+    `include.path`, `includeIf` or `-c` (git takes it only from `.git/config` and `config.worktree`); `core.bare=true`;
+    `diff.relative`, `log.follow`, `diff.noprefix`, `log.diffMerges`, `diff.renames`, `core.ignoreCase` and
+    `core.precomposeUnicode`, each on its own (`diff.relative` and `log.follow` hid a workflow only together with a
+    `core.worktree` above the repository, which hid it anyway); and, from the caller's environment, `GIT_DIR`,
+    `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_SHALLOW_FILE`, `GIT_OBJECT_DIRECTORY`,
+    `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS`,
+    `GIT_ICASE_PATHSPECS`, `GIT_CONFIG_PARAMETERS` and `GIT_CONFIG_COUNT`, none of which git gets (`lib/run.mjs`'s
+    allowlist). `GIT_CONFIG_GLOBAL`, which git does get, names the person's own config, and `core.worktree` there is
+    not used either.
+  - Not covered, before or now: a workflow under a folder whose name differs only in case, such as
+    `.GitHub/Workflows`, isn't listed, whatever `core.ignoreCase` says (git compares each commit's paths exactly).
+    Whether GitHub runs a workflow from such a folder hasn't been checked.
+  - Tests. `test/workflows.test.mjs`: a workflow committed on 5 Sep in a repository whose `core.worktree` names the
+    folder above it (absolute, as `../..`, in `config.worktree`, and with `diff.relative` and `log.follow` on top) is
+    listed, and so with `core.bare=true`; each but `core.bare` first shows that git as it runs by default lists
+    nothing, and each has a clean twin, the same setting with the workflow a second before the window, which reads
+    SAFE, not UNKNOWN. A linked worktree and a submodule's own folder (where git sets `core.worktree` itself) are
+    listed as before. A `commondir` file naming an empty repository is UNKNOWN, and so is an empty `.git` folder
+    inside another repository; without the file the repository is listed, and the outer one reads SAFE. Every git
+    call gets `--work-tree=` the folder it gets as `-C`. The hand line must list the workflow in three
+    `core.worktree` repositories too (above the repository, in `config.worktree`, and with `diff.relative` and
+    `log.follow`). `test/cli.test.mjs`: a committed key under `core.worktree` (in `.git/config` and in
+    `config.worktree`) is found; clean twin, the same without the key, SAFE. On ffacde4's code with this CHANGELOG,
+    5 of these tests fail (both `core.worktree` tests, the `commondir` test, the git-arguments test and the hand
+    check's, which compares with the review) and the linked-worktree and submodule twins pass; with `--work-tree`
+    left out of `lib/git.mjs`, 4 fail; with the `commondir` check left out, its test fails; and with `--work-tree=.`
+    left out of the hand line, the hand check's test fails.
 
 ### Changed
 
