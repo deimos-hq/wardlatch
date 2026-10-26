@@ -83,7 +83,7 @@ can stop.
 |---|---|
 | `test/wardlatch.test.mjs` | The checks: probes and their controls, discovery, version rules, workflows, keys, WordPress, containers |
 | `test/cli.test.mjs` | The command end to end: options, output, `--json`, exit codes |
-| `test/workflows.test.mjs` | The workflow review's window: workflows just inside it and a second before it, in two time zones; back-dated commits on top, in between and on a merged side branch; a workflow added and removed on a side branch; replace refs and grafts; shallow and partial clones; committer times that aren't whole numbers; a start that isn't an explicit UTC instant; a git that must get no date |
+| `test/workflows.test.mjs` | The workflow review's window: workflows just inside it and a second before it, in two time zones; the date a review line shows, in UTC; back-dated commits on top, in between and on a merged side branch; a workflow added and removed on a side branch; replace refs and grafts; shallow repositories, UNKNOWN wherever cut, and partial clones; committer times that aren't whole numbers; a start that isn't an explicit UTC instant; a git that must get no date; the CHANGELOG's hand check, run as written, against the review |
 | `test/incidents.test.mjs` | The incident data: shape, https sources, the bundled roots' fingerprints, the copyable fix commands, every window's start an explicit UTC instant |
 | `test/conventions.test.mjs` | The coding standard below, where a machine can check it |
 | `test/no-real-home.test.mjs` | The tests' safety net, `test/support/no-real-home.cjs`, against every way past it a review found, on a made-up home |

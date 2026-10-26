@@ -299,35 +299,58 @@ is missed.
 lists every commit that any ref or `HEAD` leads to, with its committer time in seconds since 1970, and Wardlatch keeps
 those on or after the incident's start, an explicit UTC instant (for `github-actions-2026-10`, 30 Aug 2026 00:00 UTC),
 by comparing whole numbers in its own code; `git log --no-walk=unsorted --stdin` then lists the workflow files that
-exactly those commits added. The SAFE line names the instant. git reads the real history: no replace refs
-(`GIT_NO_REPLACE_OBJECTS=1`), no grafts file (`GIT_GRAFT_FILE=/dev/null`), no commit-graph file, nothing fetched.
+exactly those commits added. The SAFE line names the instant, and a review line shows the date, in UTC, of the
+committer time compared. git reads each commit with its own parents: replace refs don't substitute one commit for
+another (`GIT_NO_REPLACE_OBJECTS=1`; a ref under `refs/replace/` is still read as an ordinary tip, so the commit it
+points to is read as one more commit, which can add a workflow to the list but never hide one), no grafts file is read
+(`GIT_GRAFT_FILE=/dev/null`), no commit-graph file is used (`core.commitGraph=false`), and nothing is fetched.
 **Known limit: a workflow whose own commit is dated before 30 Aug 2026 isn't listed, because whoever makes a commit
-sets its date.** A shallow clone has no history below its cut: a cut on or after the start is UNKNOWN ("the history is
-cut at …"), and a cut dated before it is read as the whole window, so what a back-dated commit at the cut stands on
-isn't read either (it isn't on the machine). A committer time git prints that isn't a plain whole number (git prints
-none for a date it can't read), a shallow file that can't be read, a start that isn't an explicit UTC instant, a git
-call that takes over 20 seconds, and a list of commits over 256 MB (about 5 million commits) are UNKNOWN, never SAFE.
+sets its date.** For the same reason a shallow repository is UNKNOWN wherever its history is cut ("its history is cut
+(a shallow repository; the newest cut is commit …, dated …), so workflows added below the cut can't be seen: run git
+fetch --unshallow, then run again"), whether `git rev-parse --is-shallow-repository` says `true` or the shallow file
+git reads is there and not empty: the cut commit's date is no sign that the window is all there, since a `--depth 1`
+clone of a back-dated tip is cut below every workflow beneath it, and a shallow file can be written into a full
+repository. A CI checkout with `fetch-depth: 1` is therefore UNKNOWN (exit code 2); with `fetch-depth: 0` it is read.
+A committer time git prints that isn't a plain whole number (git prints none for a date it can't read), a shallow file
+that can't be read, a start that isn't an explicit UTC instant, a git call that takes over 20 seconds (every run reads
+the whole history: about 7 seconds for 1.56 million commits on an Apple M5 Pro), and a list of commits over 256 MB
+(about 5 million commits) are UNKNOWN, never SAFE.
 **Found 25 October 2026:** 0.1.0 to 0.1.9 gave git the bare date `2026-09-01`, which git reads as 1 Sep at the current
-time of day in the zone it runs in (0.1.0 to 0.1.8 passed the caller's `TZ` to git; 0.1.9 dropped it, so git used the
-machine's zone). A workflow committed on 31 Aug, or on 1 Sep before the hour the check ran, was not read, and the
+time of day in the zone it runs in: up to 0.1.8 the zone of the `TZ` Wardlatch was started with, which git got with
+the rest of the caller's environment (the machine's when `TZ` was unset), and in 0.1.9, which gives git no `TZ`, the
+machine's. A workflow committed on 31 Aug, or on 1 Sep before the hour the check ran, was not read, and the
 review could read SAFE with exit code 0; the sources say to check from 31 Aug. And git, given a start with `--since`,
 stops following a line of history at the first commit dated before it, so one back-dated commit on top of a branch
 hid every workflow beneath it, however they were dated (0.1.9's known limits named this only for a commit made on a
 machine with a wrong clock). Checked on 0.1.9's code with git 2.54: a commit whose committer date git can't read did
 the same as a back-dated one; a workflow added and removed again on a merged side branch was passed by (given a path,
 `git log` follows only the parent a merge matches); and in a shallow clone cut inside the window, a workflow added and
-removed below the cut wasn't seen. Each read SAFE. *Evidence:* `test/workflows.test.mjs` plants workflows a second
-inside the window, at its first second, at 05:00 on 31 Aug at UTC+8, at 09:00 UTC on 1 Sep, and under the advisory's
-own file names on 31 Aug, and expects each listed, with the command run in two time zones; a workflow a second before
-the window must read SAFE. A back-dated commit on top, between two workflows, and on a merged and deleted side branch
-must hide nothing; a workflow added and removed on a side branch must be listed; a replace ref and a grafts file
-(cutting the history, or re-parenting the commit) must hide nothing; a shallow clone cut inside the window, or with a
-shallow file that can't be read, must read UNKNOWN, and one cut before it is read; partial clones whose remote is gone
-must be read with nothing fetched (a treeless one with commits in the window is UNKNOWN); a commit whose date git can't
-read, a git that prints a committer time that isn't a plain whole number, and a bare-date start must read UNKNOWN; and
-a git that writes down its arguments must get no `--since`, `--after`, `--until`, `--before`, `--max-age`, `--min-age`
-or `--since-as-filter`. Each has a clean twin. `test/incidents.test.mjs` holds the start of every incident's window
-(`since`, `addedSince`) to an explicit UTC instant.
+removed below the cut wasn't seen. Each read SAFE. An independent check of this fix found two more the same day: an
+earlier cut took a shallow clone cut before the start as the whole window, so a `--depth 1` clone of a tip dated
+2025, over a workflow committed on 5 Sep 2026, read SAFE with the workflow file in its tree; and the CHANGELOG's hand
+check listed nothing for a workflow only a merge commit adds or for a root commit under `log.showRoot=false`, missed
+one renamed within `.github/workflows`, and followed a replace ref and a grafts file. *Evidence:*
+`test/workflows.test.mjs` plants workflows a second inside the window, at 05:00 on 31 Aug at UTC+8, at 09:00 UTC on
+1 Sep, and under the advisory's own file names on 31 Aug, and expects each listed, with the command run in two time
+zones; it plants one at the window's first second, made at UTC-7, and expects it listed with the date 2026-08-30, in
+one run with no `TZ` set; a workflow a second before the window must read SAFE. A back-dated commit on top, between two
+workflows, and on a merged and deleted side branch must hide nothing; a workflow added and removed on a side branch
+must be listed; a replace ref and a grafts file (cutting the history, or re-parenting the commit) must hide nothing; a
+shallow repository must read UNKNOWN wherever it is cut (inside the window or before it, at a back-dated tip, or by a
+shallow file written into a full repository, empty or not, even under a git that says the repository isn't shallow),
+and so must one whose shallow file can't be read, while the same history cloned whole is read; partial clones whose
+remote is gone must be read with nothing fetched (a treeless one with commits in the window is UNKNOWN); a commit
+whose date git can't read, a git that prints a committer time that isn't a plain whole number, and a bare-date start
+must read UNKNOWN; a git that writes down its arguments must get no `--since`, `--after`, `--until`, `--before`,
+`--max-age`, `--min-age` or `--since-as-filter`; and the CHANGELOG's hand check, read from the file and run as written,
+must list every workflow the review lists, at the same commit and UTC date, in repositories with a replace ref, a
+crafted commit-graph file, a merge-only workflow, a root commit under `log.showRoot=false`, renames, a commit at the
+start's own second from UTC-7, a workflow only on a branch not checked out, a side branch that added and removed one,
+and a signed commit whose repository names a `gpg.program` (which must not run), and with a grafts file must list
+them only before the window, as its warning says. Each has a clean twin (for the hand check, a workflow committed a
+second before the window from UTC-7, which the review doesn't list and the line shows dated 2026-08-29T23:59:59Z).
+`test/incidents.test.mjs` holds the start of every incident's window (`since`, `addedSince`) to an explicit UTC
+instant.
 
 **The Mac fix finds the two roots by the header lines macOS writes above each certificate** (`=== …/CN=…`). If Apple
 changed that format, the script would find no root to remove; it then re-tests online, and reports EXPOSED if the file
