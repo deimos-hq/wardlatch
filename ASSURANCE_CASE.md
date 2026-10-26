@@ -346,10 +346,14 @@ must get no `--since`, `--after`, `--until`, `--before`, `--max-age`, `--min-age
 CHANGELOG's hand check, found in the file wherever a release puts it (exactly one) and run as written, must list every
 workflow the review lists, at the same commit and UTC date, in repositories with a replace ref, a crafted commit-graph
 file, a merge-only workflow, a root commit under `log.showRoot=false`, renames, a commit at the start's own second
-from UTC-7, a workflow only on a branch not checked out, a side branch that added and removed one, and a signed commit
-whose repository names a `gpg.program` (which must not run), and with a grafts file must list them only before the
-window, as its warning says. Each has a clean twin (for the hand check, a workflow committed a second before the
-window from UTC-7, which the review doesn't list and the line shows dated 2026-08-29T23:59:59Z).
+from UTC-7, one authored before the window and committed inside it, a workflow only on a branch not checked out, a
+side branch that added and removed one, a signed commit whose repository names a `gpg.program` (which must not run),
+and a blobless partial clone whose remote is gone; it must stop with an error in a treeless one, with nothing fetched;
+with a grafts file it must list them only before the window, as its warning says; for a commit whose date git can't
+read it must show no date; and git must get `--no-pager`, `GIT_NO_LAZY_FETCH=1` and `GIT_ALLOW_PROTOCOL=none` from it.
+Each has a clean twin (for the hand check, a workflow committed a second before the window from UTC-7, and one
+authored inside the window but committed a second before it, which the review doesn't list and the line shows dated
+2026-08-29T23:59:59Z).
 `test/incidents.test.mjs` holds the start of every incident's window (`since`, `addedSince`) to an explicit UTC
 instant.
 

@@ -492,10 +492,10 @@ const handCheck = (text = CHANGELOG) => {
 };
 
 /** The hand check run as a person runs it: pasted into a shell (/bin/sh), in the repository, with their own
- *  environment, here in a zone west of UTC (UTC-7), so a line that shows dates in the reader's zone or the commit's
- *  can't pass → [{ commit, date, file }] */
-const runHand = (line, path) => {
-  const out = execFileSync('/bin/sh', ['-c', line], { cwd: path, encoding: 'utf8', env: { ...process.env, TZ: 'America/Los_Angeles' }, stdio: ['ignore', 'pipe', 'pipe'] });
+ *  environment (and `env`), here in a zone west of UTC (UTC-7), so a line that shows dates in the reader's zone or the
+ *  commit's can't pass → [{ commit, date, file }] */
+const runHand = (line, path, env = {}) => {
+  const out = execFileSync('/bin/sh', ['-c', line], { cwd: path, encoding: 'utf8', env: { ...process.env, TZ: 'America/Los_Angeles', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
   const found = []; let commit = '', date = '';
   for (const l of out.split('\n')) {
     if (l.startsWith('.github/workflows/')) found.push({ commit, date, file: l });
@@ -538,7 +538,8 @@ test('workflows: the CHANGELOG\'s hand check is found wherever a release puts it
 test('workflows: the CHANGELOG\'s hand check, run as written, lists every workflow the review lists, at the same commit and UTC date', () => {
   // So the documented command can't drift from what lib/workflows.mjs runs. The line 3dbf26b gave listed nothing for a
   // workflow that only a merge commit adds, missed one renamed within .github/workflows, listed nothing for a root
-  // commit under log.showRoot=false, and followed a replace ref and a grafts file.
+  // commit under log.showRoot=false, and followed a replace ref and a grafts file. The one baa9955 gave started, on a
+  // terminal, the pager a repository's config names, and in a partial clone fetched through the program it names.
   const { line, bullet } = handCheck();
   assert.doesNotMatch(line, /--(?:since|after|until|before|max-age|min-age)/, 'no date: given one, git stops reading a branch at the first commit dated before it');
   assert.match(bullet, /2026-08-30/, 'the item says which dates are in the window');
@@ -598,6 +599,23 @@ test('workflows: the CHANGELOG\'s hand check, run as written, lists every workfl
     try { g(['log', '-1']); } catch { /* the marker is what counts */ }
     assert.ok(existsSync(marker), 'the test means something: git log runs the gpg.program the config names'); rmSync(marker);
     built[s] = [`${W}/signed.yml`]; }
+  // authored before the window, committed inside it: the line must show the committer date, the one the review
+  // compares (with the author date, %ad, it would show 2026-08-01, and a reader would pass it by)
+  built[repo(join(root, 'author-before'), [{ files: { [`${W}/ab.yml`]: 'on: push\n' }, date: '2026-09-15T12:00:00Z', author: '2026-08-01T12:00:00Z' }])] = [`${W}/ab.yml`];
+  // partial clones whose remote is gone, with a workflow in the window: a fetch would run the uploadpack program the
+  // clone's config names, which leaves a marker. Blobless (no file contents) is read without one, by the review and
+  // the line; treeless is below.
+  const fetched = join(dir, 'hand-fetched'), pack = join(dir, 'hand-uploadpack');
+  writeFileSync(pack, `#!/bin/sh\ntouch "${fetched}"\nexit 1\n`, { mode: 0o755 });
+  const srv = repo(join(dir, 'hand-srv'), [{ files: { [`${W}/pc.yml`]: 'on: push\n' }, date: '2026-09-10T00:00:00Z' }, later]);
+  gitIn(srv)(['config', 'uploadpack.allowFilter', 'true']);
+  const partial = (name, filter) => {
+    gitIn(root)(['clone', '-q', '--no-local', `--filter=${filter}`, `file://${srv}`, name]); gitIn(join(root, name))(['config', 'remote.origin.uploadpack', pack]);
+    return join(root, name);
+  };
+  built[partial('partial-blobless', 'blob:none')] = [`${W}/pc.yml`];
+  const treeless = partial('partial-treeless', 'tree:0');
+  renameSync(srv, `${srv}-gone`);
   for (const [path, files] of Object.entries(built)) {
     const review = workflows.workflowsAddedSince(path, '2026-08-30T00:00:00Z'), hand = runHand(line, path);
     assert.deepEqual(review.map((x) => x.file).sort(), files, `${basename(path)}: the review lists ${files}`);
@@ -608,11 +626,48 @@ test('workflows: the CHANGELOG\'s hand check, run as written, lists every workfl
     }
   }
   assert.equal(existsSync(marker), false, 'the line ran the gpg.program a repository\'s config names');
-  // clean twin: a second before the window, from UTC-7, the review lists nothing, and the line shows a date the reader
-  // can tell is before it (2026-08-29T23:59:59Z, though 16:59:59 on 29 Aug where it was made)
+  assert.equal(existsSync(fetched), false, 'the line made git fetch in a blobless clone');
+  // treeless: the trees of the commits in the window aren't here, so the review is UNKNOWN, and the line stops with an
+  // error instead of fetching them
+  assert.ok(workflows.workflowsAddedSince(treeless, '2026-08-30T00:00:00Z').error, 'the review can\'t read a treeless clone');
+  const shell = (l, cwd) => spawnSync('/bin/sh', ['-c', l], { cwd, encoding: 'utf8', env: { ...process.env, TZ: 'America/Los_Angeles' } });
+  const stopped = shell(line, treeless);
+  assert.ok(stopped.status !== 0 && /fatal: /.test(stopped.stderr), `the line stops with an error in a treeless clone: ${stopped.stdout}${stopped.stderr}`);
+  assert.equal(existsSync(fetched), false, 'the line made git fetch in a treeless clone');
+  // the test means something: without the line's two settings that stop a fetch, git fetches through the program
+  const fetching = line.replace(/\bGIT_NO_LAZY_FETCH=1 /, '').replace(/\bGIT_ALLOW_PROTOCOL=none /, '');
+  assert.equal(fetching.length, line.length - 'GIT_NO_LAZY_FETCH=1 GIT_ALLOW_PROTOCOL=none '.length, 'the line sets both');
+  shell(fetching, treeless);
+  assert.ok(existsSync(fetched), 'git as the line runs it, without those two settings, fetches through the program the config names');
+  // What no run above can tell: git gets --no-pager (writing to a pipe, as here, git starts no pager; on a terminal it
+  // starts the one the repository's config names, core.pager or pager.log) and both settings that stop a fetch (on
+  // this git either one alone stops it: GIT_NO_LAZY_FETCH=1 for newer git, GIT_ALLOW_PROTOCOL=none, which refuses
+  // every transport, for older). This git writes down those settings and its arguments, then runs the real one.
+  const seen = join(dir, 'hand-argv'), rec = wrap('git-hand-argv', `printf '%s\\0' "$TZ" "$GIT_NO_LAZY_FETCH" "$GIT_ALLOW_PROTOCOL" "$@" > "${seen}"\n`);
+  const edge = Object.keys(built).find((p) => basename(p) === 'edge');
+  assert.deepEqual(runHand(line, edge, { PATH: `${rec}:${process.env.PATH}` }).map((x) => x.file), [`${W}/at.yml`]);
+  const [tz, lazy, proto, ...args] = readFileSync(seen, 'utf8').split('\0').slice(0, -1);
+  assert.deepEqual([tz, lazy, proto], ['UTC', '1', 'none'], 'git gets TZ=UTC, GIT_NO_LAZY_FETCH=1 and GIT_ALLOW_PROTOCOL=none');
+  assert.ok(args.indexOf('--no-pager') >= 0 && args.indexOf('--no-pager') < args.indexOf('log'), `git gets --no-pager before log: ${JSON.stringify(args)}`);
+  // a workflow added by a commit whose committer line has no date git can read: the review is UNKNOWN for the
+  // repository, and the line lists the file with no date (two spaces after the hash), which the item says to count as
+  // in the window
+  assert.match(bullet, /no date \(two spaces after its hash\)/, 'the item says what a blank date means');
+  { const n = repo(join(root, 'no-date'), []), g = gitIn(n);
+    mkdirSync(join(n, W), { recursive: true }); writeFileSync(join(n, W, 'nodate.yml'), 'on: push\n'); g(['add', '-A']);
+    const body = `tree ${g(['write-tree'])}\nparent ${g(['rev-parse', 'HEAD'])}\nauthor t <t@x> 1790000000 +0000\ncommitter t <t@x>\n\nc\n`;
+    g(['update-ref', 'HEAD', g(['hash-object', '-t', 'commit', '-w', '--literally', '--stdin'], { input: body })]);
+    assert.match(workflows.workflowsAddedSince(n, '2026-08-30T00:00:00Z').error, /has no committer time Wardlatch can read/);
+    assert.deepEqual(runHand(line, n).map((x) => [x.file, x.date]), [[`${W}/nodate.yml`, '']]); }
+  // clean twins: a second before the window, from UTC-7, the review lists nothing, and the line shows a date the reader
+  // can tell is before it (2026-08-29T23:59:59Z, though 16:59:59 on 29 Aug where it was made); and the same for one
+  // authored inside the window but committed a second before it (the line's date is the committer's)
   const twin = repo(join(root, 'edge-before'), [{ files: { [`${W}/before.yml`]: 'on: push\n' }, date: '2026-08-29T16:59:59-0700', at: '2026-08-29T23:59:59Z' }]);
-  assert.deepEqual(workflows.workflowsAddedSince(twin, '2026-08-30T00:00:00Z'), []);
-  assert.deepEqual(runHand(line, twin).map((x) => [x.file, x.date.slice(0, 19)]), [[`${W}/before.yml`, '2026-08-29T23:59:59']]);
+  const authorAfter = repo(join(root, 'author-after'), [{ files: { [`${W}/before.yml`]: 'on: push\n' }, date: '2026-08-29T23:59:59Z', author: '2026-09-15T12:00:00Z' }]);
+  for (const t of [twin, authorAfter]) {
+    assert.deepEqual(workflows.workflowsAddedSince(t, '2026-08-30T00:00:00Z'), []);
+    assert.deepEqual(runHand(line, t).map((x) => [x.file, x.date.slice(0, 19)]), [[`${W}/before.yml`, '2026-08-29T23:59:59']], basename(t));
+  }
   // a grafts file: git follows it, and no git option turns that off, so the item says the line can't be trusted where
   // there is one. Here it re-dates what the review lists: (a) the back-dated commit on top made a root; (b) the
   // workflow's commit grafted onto a 2025 commit with the same tree.
