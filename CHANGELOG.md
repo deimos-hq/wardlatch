@@ -159,14 +159,19 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 - The tests never look in the home folder of the person running them (where macOS keeps Desktop, Documents, Downloads,
   Library, Photos and Mail): every test file loads `test/support/no-real-home.cjs` first, which refuses any look there
-  by Node (fs in every form, globs, streams, `require()` and, from Node 22.15, `import`, a change of folder, a program,
-  working folder or `PATH` folder there), in the test and in every Node process it starts at any depth; a refusal in a
-  process the test started fails the test even when nothing reads that process's exit code. Paths are compared as the
-  system reads them (links and `..` followed, and on macOS in any case and under the start-up disk's other names), and
-  under sudo SUDO_USER's home is off limits too. It drops the home's folders from the `PATH` the tests start with. The
-  sudo test and the two tests of macOS's own Library build a `/Users/<name>` home of their own
-  (`test/support/fake-home.cjs`); `test/cli.test.mjs` gives the command an empty HOME of its own, and the version test
-  gives the go check one. `test/no-real-home.test.mjs` tries every way past the net that a review found. What it can't
+  by Node (fs in every form, globs, streams, `require()` and, from Node 22.15, `import` (of a file, a package name or a
+  `#` name), a change of folder, a program, working folder or `PATH` folder there, a `.env` file `process.loadEnvFile`
+  reads, a `node:sqlite` database there, a Node started with `--env-file` or a config-file flag naming a file there, and
+  a walk that can reach it), in the test, in every Node process it starts at any depth and in each Worker thread they
+  start; a refusal in a process the test started fails the test even when nothing reads that process's exit code. It is
+  not a sandbox: code written to get past it can. Paths are compared as the system reads them (links and `..` followed,
+  but the link a path names last for `lstat`, `readlink`, `unlink`, `rmdir`, `rm`, `lchown` and `lutimes`, and on macOS
+  in any case and under the start-up disk's other names, by their text too), and under sudo SUDO_USER's home is off
+  limits too. It drops the home's folders from the `PATH` the tests start with. The sudo test and the two tests of
+  macOS's own Library build a `/Users/<name>` home of their own (`test/support/fake-home.cjs`); `test/cli.test.mjs`
+  gives the command an empty HOME of its own and none of the runner's `XDG_*`, `GOENV` or `GOTOOLCHAIN` (on a CI runner
+  `XDG_CONFIG_HOME` sent the go check into the runner's home), and the version test gives the go check one.
+  `test/no-real-home.test.mjs` tries each route the net watches on a made-up home. What it can't
   stop: a program that isn't Node (and a Node one starts below the command), and macOS's own read of
   `~/.CFUserTextEncoding` as any process starts (CONTRIBUTING.md, Testing policy).
 

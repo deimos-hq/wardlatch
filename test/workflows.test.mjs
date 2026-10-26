@@ -132,7 +132,7 @@ test('workflows: clean twin, one committed a second before the window is SAFE, a
     assert.deepEqual(r.rows.map((x) => [x.status, x.reason, x.searched]), [['SAFE', SAFE_TEXT, [root]]], `TZ=${TZ}: ${r.out}`);
     assert.equal(r.code, 0);
   }
-  assert.match(run(root, {}, { text: true }).out, new RegExp(`\\nSAFE {5}${SAFE_TEXT.replace(/[()]/g, '\\$&')}\\n`));
+  assert.match(run(root, {}, { text: true }).out, new RegExp(`\\nSAFE {5}${SAFE_TEXT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\n`));
 });
 
 test('workflows: committer time 1788048000, the start\'s own second, is in the window, and its line shows the date in UTC; 1788047999 is not', () => {
