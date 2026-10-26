@@ -295,23 +295,38 @@ not searched, and running with sudo includes them; a person's locked folder is U
 that person's projects. The committed-key scan looks for high-confidence shapes only; a key in an unusual format
 is missed.
 
-**The workflow review reads commits by the date they claim.** It reads commits whose committer date is on or after the
-incident's start, an explicit UTC instant (for `github-actions-2026-10`, 30 Aug 2026 00:00 UTC), and the SAFE line
-names that instant. A commit can claim any date: one dated before the start is not read, and git stops reading a branch
-at a commit dated before it, so a correctly dated workflow behind a later commit made on a machine with a wrong clock
-can be missed too. A start that isn't an explicit UTC instant is UNKNOWN, and so is each repository when
-`git rev-parse --since` shows that this git reads the start as another instant; `git log` gets exactly the start that
-check verified. **Found 25 October 2026:** 0.1.0 to 0.1.9 gave git the bare date `2026-09-01`, which git reads as 1 Sep
-at the current time of day in the zone it runs in (0.1.0 to 0.1.8 passed the caller's `TZ` to git; 0.1.9 dropped it,
-so git used the machine's zone). A workflow committed on 31 Aug, or on 1 Sep before the hour the check ran, was not
-read, and the review could read SAFE with exit code 0; the sources say to check from 31 Aug. *Evidence:*
-`test/workflows.test.mjs` plants workflows a second inside the window, at 05:00 on 31 Aug at UTC+8, at 09:00 UTC on
-1 Sep, and under the advisory's own file names on 31 Aug, and expects each listed, with the command run in two time
-zones; a workflow a second before the window must read SAFE; a bare-date start and a git that reads the start as
-another instant must read UNKNOWN. A git that writes down its arguments must get `--since=@1788048000 +0000`, as one
-argument, in the self-check and in every `git log`; and under a git that reads git's raw `@` form exactly but any other
-start as the bare date `2026-09-01`, the advisory's own file names on 31 Aug must still be listed, and a workflow a
-second before the window must still read SAFE. `test/incidents.test.mjs` holds the start of every incident's window
+**The workflow review reads commits by the date they claim.** git gets no date. `git log --all --format='%H %ct'`
+lists every commit that any ref or `HEAD` leads to, with its committer time in seconds since 1970, and Wardlatch keeps
+those on or after the incident's start, an explicit UTC instant (for `github-actions-2026-10`, 30 Aug 2026 00:00 UTC),
+by comparing whole numbers in its own code; `git log --no-walk=unsorted --stdin` then lists the workflow files that
+exactly those commits added. The SAFE line names the instant. git reads the real history: no replace refs
+(`GIT_NO_REPLACE_OBJECTS=1`), no grafts file (`GIT_GRAFT_FILE=/dev/null`), no commit-graph file, nothing fetched.
+**Known limit: a workflow whose own commit is dated before 30 Aug 2026 isn't listed, because whoever makes a commit
+sets its date.** A shallow clone has no history below its cut: a cut on or after the start is UNKNOWN ("the history is
+cut at …"), and a cut dated before it is read as the whole window, so what a back-dated commit at the cut stands on
+isn't read either (it isn't on the machine). A committer time git prints that isn't a plain whole number (git prints
+none for a date it can't read), a shallow file that can't be read, a start that isn't an explicit UTC instant, a git
+call that takes over 20 seconds, and a list of commits over 256 MB (about 5 million commits) are UNKNOWN, never SAFE.
+**Found 25 October 2026:** 0.1.0 to 0.1.9 gave git the bare date `2026-09-01`, which git reads as 1 Sep at the current
+time of day in the zone it runs in (0.1.0 to 0.1.8 passed the caller's `TZ` to git; 0.1.9 dropped it, so git used the
+machine's zone). A workflow committed on 31 Aug, or on 1 Sep before the hour the check ran, was not read, and the
+review could read SAFE with exit code 0; the sources say to check from 31 Aug. And git, given a start with `--since`,
+stops following a line of history at the first commit dated before it, so one back-dated commit on top of a branch
+hid every workflow beneath it, however they were dated (0.1.9's known limits named this only for a commit made on a
+machine with a wrong clock). Checked on 0.1.9's code with git 2.54: a commit whose committer date git can't read did
+the same as a back-dated one; a workflow added and removed again on a merged side branch was passed by (given a path,
+`git log` follows only the parent a merge matches); and in a shallow clone cut inside the window, a workflow added and
+removed below the cut wasn't seen. Each read SAFE. *Evidence:* `test/workflows.test.mjs` plants workflows a second
+inside the window, at its first second, at 05:00 on 31 Aug at UTC+8, at 09:00 UTC on 1 Sep, and under the advisory's
+own file names on 31 Aug, and expects each listed, with the command run in two time zones; a workflow a second before
+the window must read SAFE. A back-dated commit on top, between two workflows, and on a merged and deleted side branch
+must hide nothing; a workflow added and removed on a side branch must be listed; a replace ref and a grafts file
+(cutting the history, or re-parenting the commit) must hide nothing; a shallow clone cut inside the window, or with a
+shallow file that can't be read, must read UNKNOWN, and one cut before it is read; partial clones whose remote is gone
+must be read with nothing fetched (a treeless one with commits in the window is UNKNOWN); a commit whose date git can't
+read, a git that prints a committer time that isn't a plain whole number, and a bare-date start must read UNKNOWN; and
+a git that writes down its arguments must get no `--since`, `--after`, `--until`, `--before`, `--max-age`, `--min-age`
+or `--since-as-filter`. Each has a clean twin. `test/incidents.test.mjs` holds the start of every incident's window
 (`since`, `addedSince`) to an explicit UTC instant.
 
 **The Mac fix finds the two roots by the header lines macOS writes above each certificate** (`=== …/CN=…`). If Apple
