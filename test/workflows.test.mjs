@@ -19,7 +19,7 @@ import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, cpSync, renameSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, cpSync, renameSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -380,11 +380,34 @@ test('workflows: a .git folder whose commondir file names another repository is 
   assert.equal(r.code, 2);
   // a .git folder git doesn't take as a repository (empty), inside another repository: git reads the outer one
   const outer = repo(join(dir, 'outer'), []), inner = join(outer, 'inner'); mkdirSync(join(inner, '.git'), { recursive: true });
-  assert.match(run(inner).rows[0]?.reason ?? '', /as this repository, not its own \.git folder/);
+  assert.match(run(inner).rows[0]?.reason ?? '', /as this repository, not the \.git folder in .*inner, so which workflow files it holds is not known/);
   // clean twins: the same repository without the file, and the outer one
   rmSync(join(app, '.git', 'commondir'));
   assert.deepEqual(run(root).rows.map((x) => [x.status, x.file]), [['REVIEW', WF]]);
   assert.deepEqual(safe(outer), [[['SAFE', SAFE_TEXT]], 0]);
+});
+
+/** `real` and `given`, two spellings of one folder name, made under `parent` as `real` → whether this file system
+ *  takes `given` as the same folder (macOS: another case; NFC for a name stored as NFD). Elsewhere they are two names. */
+const sameFolder = (parent, real, given) => {
+  mkdirSync(join(parent, real), { recursive: true });
+  return existsSync(join(parent, given)) && statSync(join(parent, real)).ino === statSync(join(parent, given)).ino;
+};
+const SPELLINGS = [['case', 'CaseDir', 'casedir'], ['nfc-for-nfd', 'café', 'café']];
+test('workflows: --paths spelled otherwise than the name on disk (another case, NFC for NFD) reads the repository as before; clean twins, SAFE', (t) => {
+  // 7bdca07 compared the .git folder's path as given with git's, which is the name on disk: a clean repository read
+  // UNKNOWN ("git takes …/CaseDir/repo/.git as this repository"). Folders are now compared by device and inode.
+  for (const [name, real, given] of SPELLINGS) {
+    const root = join(dir, `spelled-${name}`), twin = join(dir, `spelled-${name}-twin`);
+    if (!sameFolder(root, real, given) || !sameFolder(twin, real, given)) { t.diagnostic(`${name}: this file system keeps the two spellings apart`); continue; }
+    repo(join(root, real, 'app'), [{ files: { [WF]: 'on: push\n' }, date: '2026-09-05T00:00:00Z' }]);
+    for (const p of [join(root, given), join(root, given, 'app')]) {
+      const r = run(p);
+      assert.deepEqual(r.rows.map((x) => [x.status, x.file]), [['REVIEW', WF]], `${name} ${p}: ${r.out}`);
+    }
+    repo(join(twin, real, 'app'), [{ files: { [WF]: 'on: push\n' }, date: '2026-08-29T23:59:59Z' }]);
+    assert.deepEqual(safe(join(twin, given, 'app')), [[['SAFE', SAFE_TEXT]], 0], `${name} twin`);
+  }
 });
 
 test('workflows: a shallow clone is UNKNOWN wherever its history is cut, naming the newest cut; the same history cloned whole is read', () => {

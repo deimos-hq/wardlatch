@@ -551,6 +551,46 @@ test('keys: core.worktree naming a folder above the repository (in .git/config o
   }
 });
 
+test('keys: a .git folder git reads another repository through (a commondir file, or an empty .git inside another repository) is UNKNOWN; clean twins', () => {
+  // 7bdca07 listed the outer repository's config.js as <outer>/inner/config.js, a file that isn't there, and read all
+  // of the outer one's index; with a commondir file naming an empty repository, ffacde4 and 7bdca07 read SAFE
+  const key = 'AKIA' + 'Q7RZ' + 'M2LP' + 'X9TB' + 'K4WD', text = `module.exports = {\n  id: "${key}",\n};\n`;
+  const keys = (p) => run(['--incident', 'committed-keys-2026-10', '--json', '--paths', p]);
+  const rows = (r) => JSON.parse(r.out).results.map((x) => [x.status, x.file ?? null]);
+  const outer = join(dir, 'keys-outer'), o = gitRepo(outer); writeFileSync(join(outer, 'config.js'), text); o.commit();
+  mkdirSync(join(outer, 'inner', '.git'), { recursive: true });
+  const r = keys(join(outer, 'inner'));
+  assert.deepEqual(rows(r), [['UNKNOWN', null]], r.out);
+  assert.match(JSON.parse(r.out).results[0].reason, /as this repository, not the \.git folder in .*inner, so its files were not scanned/);
+  assert.deepEqual(rows(keys(outer)), [['REVIEW', 'config.js']], 'clean twin: the outer repository is read');
+  const empty = join(dir, 'keys-cd-empty'); gitRepo(empty);
+  const cd = join(dir, 'keys-cd'), repo = gitRepo(cd); writeFileSync(join(cd, 'config.js'), text); repo.commit();
+  writeFileSync(join(cd, '.git', 'commondir'), `${join(empty, '.git')}\n`);
+  const c = keys(cd);
+  assert.deepEqual(rows(c), [['UNKNOWN', null]], c.out);
+  assert.match(JSON.parse(c.out).results[0].reason, /which a commondir file in its \.git folder names/);
+  rmSync(join(cd, '.git', 'commondir'));
+  assert.deepEqual(rows(keys(cd)), [['REVIEW', 'config.js']], 'clean twin: without the file, read');
+});
+
+test('keys: --paths spelled otherwise than the name on disk (another case, NFC for NFD) reads the repository as before; clean twins, SAFE', (t) => {
+  // 7bdca07's own-.git check, had it compared path strings here, would read a clean repository UNKNOWN on macOS
+  const key = 'AKIA' + 'Q7RZ' + 'M2LP' + 'X9TB' + 'K4WD';
+  for (const [name, real, given] of [['case', 'CaseDir', 'casedir'], ['nfc-for-nfd', 'café', 'café']]) {
+    const build = (root, text) => {
+      const path = join(root, real, 'svc'), repo = gitRepo(path); writeFileSync(join(path, 'config.js'), text); repo.commit();
+      return existsSync(join(root, given)) && realpathSync(join(root, given)) !== realpathSync(join(root, real));
+    };
+    const root = join(dir, `keys-spelled-${name}`), twin = join(dir, `keys-spelled-${name}-twin`);
+    if (!build(root, `module.exports = {\n  id: "${key}",\n};\n`)) { t.diagnostic(`${name}: this file system keeps the two spellings apart, or names them alike`); continue; }
+    const r = run(['--incident', 'committed-keys-2026-10', '--paths', join(root, given, 'svc')]);
+    assert.match(r.out, /REVIEW {2}.*svc\/config\.js:2 {2}AWS access key AKIA…\(20 chars\)/, `${name}: ${r.out}`);
+    build(twin, 'module.exports = {};\n');
+    const s = run(['--incident', 'committed-keys-2026-10', '--paths', join(twin, given, 'svc')]);
+    assert.match(s.out, /SAFE {5}no committed keys found in the files of 1 local repository/, `${name} twin: ${s.out}`);
+  }
+});
+
 // ---- from the 0.1.8 red-team audit (22 Oct 2026) ---------------------------------------------------------------------
 
 test('a planted FIFO as a venv\'s certifi METADATA can\'t hang the run', () => {

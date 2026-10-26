@@ -275,16 +275,27 @@ ls-files` listed nothing, so the workflow review (0.1.0 to 0.1.9) and the commit
 SAFE, exit code 0, for a repository holding a workflow or a key. Since 0.1.10 every git call gets
 `--work-tree=<repo>`, which wins over `core.worktree`, `core.bare` and `GIT_WORK_TREE`. A `commondir` file written
 into a `.git` folder makes git read the refs and commits of the repository it names (git writes one only in a linked
-worktree's folder under `.git/worktrees`, whose `.git` is a file): the workflow review now reads such a repository,
-and one whose `.git` folder git doesn't take as the repository, UNKNOWN. Checked on git 2.54 and not a miss:
-`core.worktree` set through `include.path`, `includeIf`, `-c` or the person's global config (git doesn't use it from
-there), `core.bare=true`, `diff.relative`, `log.follow`, `core.ignoreCase`, and the caller's `GIT_*` location and
-pathspec variables, which git doesn't get. **Known limit:** a workflow under a folder whose name differs only in case
-(`.GitHub/Workflows`) isn't listed; whether GitHub runs one there hasn't been checked. *Evidence:*
-`test/workflows.test.mjs` sets `core.worktree` above the repository (absolute, relative, in `config.worktree`, with
-`diff.relative` and `log.follow`) and `core.bare=true`, each with a clean twin that must read SAFE, plants a
-`commondir` file and an empty `.git` folder inside another repository (UNKNOWN), and reads a linked worktree and a
-submodule's own folder as before; `test/cli.test.mjs` does the same for a committed key.
+worktree's folder under `.git/worktrees`, whose `.git` is a file): the workflow review and the committed-keys check
+now read such a repository, and one whose `.git` folder git doesn't take as the repository (an empty one inside
+another repository), UNKNOWN. The folders are compared by device and inode, not by path text: on macOS a `--paths`
+in another case, or in NFC for a name stored as NFD, is the same folder (comparing the text read such a clean
+repository UNKNOWN in an earlier cut, 7bdca07). Checked on git 2.54 and not a miss: `core.worktree` set through
+`include.path`, `includeIf`, `-c` or the person's global config (git doesn't use it from there), `core.bare=true` in
+the `.git` folder of a repository with its files beside it, `diff.relative`, `log.follow`, `core.ignoreCase`, and the
+caller's `GIT_*` location and pathspec variables, which git doesn't get. **Known limits:** a workflow under a folder
+whose name differs only in case (`.GitHub/Workflows`) isn't listed; whether GitHub runs one there hasn't been
+checked. A `.git` file is followed as git follows it, whatever repository it names, so one naming an empty
+repository (or a folder whose `commondir` file names one) reads SAFE: `git clone --separate-git-dir` makes the same
+shape with no pointer back, and a linked worktree's pointer back can be written by whoever writes the `.git` file, so
+no rule tells them apart. In the bare-repository-with-worktrees layout (`.bare`, a `.git` file `gitdir: ./.bare`,
+worktrees in subfolders) the search stops at the outer folder, and the committed-keys check scans no worktree's
+files (SAFE); pass the worktree's folder to scan it. *Evidence:* `test/workflows.test.mjs` sets `core.worktree`
+above the repository (absolute, relative, in `config.worktree`, with `diff.relative` and `log.follow`) and
+`core.bare=true`, each with a clean twin that must read SAFE, plants a `commondir` file and an empty `.git` folder
+inside another repository (UNKNOWN), reads a linked worktree and a submodule's own folder as before, and on macOS
+reads a repository given in another case and in NFC for NFD; `test/cli.test.mjs` sets `core.worktree` above the
+repository for a committed key (twin SAFE), plants a `commondir` file and an empty inner `.git` (UNKNOWN; twins read),
+and finds a key given in another case and in NFC for NFD (twins SAFE).
 
 **An on-path attacker can produce a false SAFE for a host.** After the controls pass, a certificate refusal counts as
 a refusal. An attacker on the network path who lets the reachability handshake and the positive control through,
