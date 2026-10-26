@@ -12,11 +12,11 @@ import { spawnSync, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, openSync, ftruncateSync, closeSync, realpathSync, symlinkSync, statSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname, basename } from 'node:path';
+import { join, dirname, basename, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scanBytes, readAt } from '../lib/files.mjs';
 import { judgeFile, evidence, isDecoderLibName, isNodeLibName, recordPaths, sitePackagesCandidates, distroVerdict, checkBundled, linkTable, loadableAt, ldSoConfDirs, shimPlaces } from '../lib/brotli.mjs';
-import { SITE_PATTERNS } from '../lib/installs.mjs';
+import { SITE_PATTERNS, expand } from '../lib/installs.mjs';
 // round 10's new exports, by name, so this file still loads (and their tests fail) at a tree without them
 import * as brotli from '../lib/brotli.mjs';
 import { hiddenPlaces } from './support/machine-places.cjs';
@@ -154,12 +154,41 @@ function elf(path, parts = [], { needed = [], soname, rpath, runpath, flags1, bi
 const libFile = (p, parts, o = {}) => (isSoName(p) ? elf(p, parts, o) : bin(p, parts, { type: 6, ...o }));
 const fixedLib = (p, o) => libFile(p, ['_SUCCESS', CONTROL, MARKER, '_ERROR_UNREACHABLE'], o);
 const oldLib = (p, o) => libFile(p, ['_SUCCESS', CONTROL, '_ERROR_UNREACHABLE'], o);
-const judge = (f, sonameDirs = [], o = {}) => judgeFile(f, { markers: M, sonameDirs, ...o });
+/**
+ * The guard on this file's fixtures (CI run 40241781535: a musl path file naming the real /lib made Ubuntu's own
+ * libbrotlidec a candidate, and a clean twin UNKNOWN on every Linux runner): every folder a test gives the check to
+ * search, as a library folder or through a loader list (`loaders`: ld.so.conf, its conf.d, musl's path files and
+ * ld.so.preload, each file in the test's folder, and the folders and paths each names, read by the check's own
+ * parsers), is in this test's folder. A machine's own folder there makes its libraries candidates, and the verdict the
+ * machine's. Throws, naming the first that isn't. Names only: where a link a test makes leads is not looked at.
+ */
+const ownFolders = ({ loaders = {}, sonameDirs = [], preload } = {}) => {
+  const outside = (p) => { const at = resolve(p); return at !== dir && !at.startsWith(`${dir}/`); };
+  const refuse = (p, what) => { throw new Error(`a Brotli test gave the check ${p} (${what}), outside its own folder: give it folders of its own, or the machine's own libraries are candidates`); };
+  const lists = ['ldSoConf', 'ldSoConfDir', 'ldMuslPath', 'ldSoPreload'].filter((k) => loaders[k] != null);
+  for (const k of lists) if (outside(loaders[k])) refuse(loaders[k], k);
+  for (const p of sonameDirs) if (outside(p)) refuse(p, 'a library folder');
+  const musl = loaders.ldMuslPath ? expand(loaders.ldMuslPath, []) : [];
+  for (const p of ldSoConfDirs({ ...loaders, musl }).dirs) if (outside(p)) refuse(p, 'a folder a loader list names');
+  const pre = [...(preload?.names ?? []), ...(loaders.ldSoPreload ? brotli.ldSoPreload?.(loaders.ldSoPreload)?.names ?? [] : [])];
+  for (const p of pre) if (p.startsWith('/') && outside(p)) refuse(p, 'a library ld.so.preload names');
+};
+const judge = (f, sonameDirs = [], o = {}) => {
+  const opts = { markers: M, sonameDirs, ...o };
+  ownFolders({ sonameDirs: opts.sonameDirs ?? [], preload: opts.preload });
+  return judgeFile(f, opts);
+};
 /** The incident's version managers with their own folders moved under `root` (`~/x` and `/x` both become root/x). */
 const shimsUnder = (root) => Object.fromEntries(Object.entries(INC.shims).map(([k, v]) => [k, { ...v, homes: v.homes.map((h) => (h.startsWith('~/') ? join(root, h.slice(2)) : h.startsWith('/') ? join(root, h) : h)) }]));
 /** checkBundled on this test's places only: no version managers' folders (theirs are moved into the test's folder, and
- *  no variable moves them), library places or library folders unless given. */
-const run = (incOver = {}, opts = {}) => checkBundled({ ...INC, nodeDirs: [], bunDirs: [], libPlaces: [], shims: shimsUnder(join(dir, 'vm-home')), ...incOver }, { pathEnv: fresh(`empty-path-${Math.random()}`), sonameDirs: [], env: {}, ...opts });
+ *  no variable moves them), library places or library folders unless given, each in the test's folder (ownFolders). */
+const run = (incOver = {}, opts = {}) => {
+  const o = { pathEnv: fresh(`empty-path-${Math.random()}`), sonameDirs: [], env: {}, ...opts };
+  // (none given: the check would search the incident's own, the machine's)
+  if (!Array.isArray(o.sonameDirs)) throw new Error('a Brotli test gave the check no library folders: it would search the machine\'s own');
+  ownFolders({ loaders: o.places ?? {}, sonameDirs: o.sonameDirs });
+  return checkBundled({ ...INC, nodeDirs: [], bunDirs: [], libPlaces: [], shims: shimsUnder(join(dir, 'vm-home')), ...incOver }, o);
+};
 
 test('scanBytes: a needle across a piece boundary is counted once, and a hit keeps the bytes around it', () => {
   const needle = Buffer.from('NEEDLE');
@@ -1766,11 +1795,12 @@ test('rule 6: every library /etc/ld.so.preload names joins the closure, looked f
   const d = fresh('r10-preload'), pf = join(d, 'ld.so.preload');
   const pre = () => brotli.ldSoPreload?.(pf) ?? { names: [], gap: null };
   // every word, split on spaces, tabs, line feeds and ':', as glibc's elf/rtld.c splits it, once; no comment is taken
-  // out (round 11: the words a '#' starts are kept, and judged in the next test)
-  writeFileSync(pf, '/opt/a/libx.so:/opt/b/liby.so libz.so\t\n\nlibz.so\n');
-  assert.deepEqual(brotli.ldSoPreload?.(pf), { names: ['/opt/a/libx.so', '/opt/b/liby.so', 'libz.so'], gap: null });
-  writeFileSync(pf, '# preloaded\n/opt/a/libx.so # a comment: not a name\n');
-  assert.deepEqual(brotli.ldSoPreload(pf), { names: ['#', 'preloaded', '/opt/a/libx.so', 'a', 'comment', 'not', 'name'], gap: null });
+  // out (round 11: the words a '#' starts are kept, and judged in the next test). Paths in the test's folder (ownFolders)
+  const x = join(d, 'a', 'libx.so'), y = join(d, 'b', 'liby.so');
+  writeFileSync(pf, `${x}:${y} libz.so\t\n\nlibz.so\n`);
+  assert.deepEqual(brotli.ldSoPreload?.(pf), { names: [x, y, 'libz.so'], gap: null });
+  writeFileSync(pf, `# preloaded\n${x} # a comment: not a name\n`);
+  assert.deepEqual(brotli.ldSoPreload(pf), { names: ['#', 'preloaded', x, 'a', 'comment', 'not', 'name'], gap: null });
   assert.deepEqual(brotli.ldSoPreload(join(d, 'none')), { names: [], gap: null }, 'no file names nothing');
   assert.deepEqual(brotli.ldSoPreload(d), { names: [], gap: d }, 'a folder can\'t be read as one');
   // the program's own copy fixed; /etc/ld.so.preload names an unfixed one by its path (a candidate: rule 2), or a
@@ -2464,14 +2494,16 @@ test('bounded: hits past the 65,536 a build is looked at for are UNKNOWN, and a 
 
 test('ld.so.conf: the folders it names are searched too, so a library only the loader\'s configuration points at still decides', () => {
   const d = fresh('ldso'), extra = fresh('ldso-extra'), extra2 = fresh('ldso-extra2'), std = fresh('ldso-std');
+  // (every folder named is the test's own, there or not: ownFolders)
+  const also = join(d, 'also', 'this'), not = join(d, 'not', 'this');
   mkdirSync(join(d, 'ld.so.conf.d'));
   // the include line as Fedora writes it (relative to the file); Debian's names /etc/ld.so.conf.d/*.conf, the same folder
   writeFileSync(join(d, 'ld.so.conf'), 'include ld.so.conf.d/*.conf\n# a comment\n');
   writeFileSync(join(d, 'ld.so.conf.d', 'a.conf'), `# extra\n${extra} # trailing comment\n\n`);
-  writeFileSync(join(d, 'ld.so.conf.d', 'b.conf'), `${extra2}:/also/this\n`);
-  writeFileSync(join(d, 'ld.so.conf.d', 'notes.txt'), '/not/this\n');
+  writeFileSync(join(d, 'ld.so.conf.d', 'b.conf'), `${extra2}:${also}\n`);
+  writeFileSync(join(d, 'ld.so.conf.d', 'notes.txt'), `${not}\n`);
   const places = { ldSoConf: join(d, 'ld.so.conf'), ldSoConfDir: join(d, 'ld.so.conf.d') };
-  assert.deepEqual(ldSoConfDirs(places).dirs.sort(), [extra, extra2, '/also/this'].sort());
+  assert.deepEqual(ldSoConfDirs(places).dirs.sort(), [extra, extra2, also].sort());
   assert.deepEqual(ldSoConfDirs(places).gaps, []);
   writeFileSync(join(d, 'ld.so.conf'), `include ${join(d, 'ld.so.conf.d')}/*.conf\n`);
   assert.deepEqual(ldSoConfDirs(places).gaps, [], 'the same folder by its absolute path');
@@ -2497,13 +2529,14 @@ test('the loader\'s configuration: anything not read (an include elsewhere, a fi
   const at = (p = places, sonameDirs = [std]) => run({}, { pathEnv: path, sonameDirs, places: p }).rows.find((r) => r.file === join(path, 'node'));
   writeFileSync(join(d, 'ld.so.conf'), 'include ld.so.conf.d/*.conf\n');
   assert.equal(at().status, 'SAFE', 'the clean twin: everything read');
-  // an include naming another folder is not followed: the loader may take its copy from there
-  writeFileSync(join(d, 'ld.so.conf'), 'include ld.so.conf.d/*.conf\ninclude /opt/vendor/ld.conf.d/*.conf\n');
+  // an include naming another folder is not followed: the loader may take its copy from there (a vendor's, in the
+  // test's folder: ownFolders)
+  writeFileSync(join(d, 'ld.so.conf'), `include ld.so.conf.d/*.conf\ninclude ${join(d, 'vendor', 'ld.conf.d')}/*.conf\n`);
   const inc = at();
-  assert.equal(inc.status, 'UNKNOWN'); assert.match(inc.reason, /what the dynamic loader is told to search could not all be read \(.*include \/opt\/vendor.*could not be tested/);
+  assert.equal(inc.status, 'UNKNOWN'); assert.match(inc.reason, /what the dynamic loader is told to search could not all be read \(.*include .*\/vendor\/ld\.conf\.d\/\*\.conf.*could not be tested/);
   writeFileSync(join(d, 'ld.so.conf'), 'include ld.so.conf.d/*.conf\n');
   // a configuration file, or the conf.d folder, that can't be read
-  writeFileSync(join(d, 'ld.so.conf.d', 'vendor.conf'), '/opt/vendor/lib\n');
+  writeFileSync(join(d, 'ld.so.conf.d', 'vendor.conf'), `${join(d, 'vendor', 'lib')}\n`);
   for (const f of [join(d, 'ld.so.conf.d', 'vendor.conf'), join(d, 'ld.so.conf'), join(d, 'ld.so.conf.d')]) {
     execFileSync('chmod', ['000', f]);
     try { assert.equal(at().status, 'UNKNOWN', f); } finally { execFileSync('chmod', [f.endsWith('.d') ? '755' : '644', f]); }
@@ -2528,21 +2561,75 @@ test('the loader\'s configuration: anything not read (an include elsewhere, a fi
   try { assert.equal(at({}, [std, join(locked, '*')]).status, 'UNKNOWN'); } finally { execFileSync('chmod', ['755', locked]); }
 });
 
-test('musl\'s loader path file: its folders are searched too', () => {
-  const d = fresh('musl'), std = fresh('musl-std'), extra = fresh('musl-extra'), path = fresh('musl-path');
-  fixedLib(join(std, 'libbrotlidec.so.1')); oldLib(join(extra, 'libbrotlidec.so.1'));
-  writeFileSync(join(d, 'ld-musl-x86_64.path'), `/lib:/usr/local/lib\n${extra}\n`);
+test('musl\'s loader path file: its folders are searched too, one after a \':\' or on a line of its own, and the folders below them', () => {
+  // the test's own folders only (ownFolders). Until CI run 40241781535 the file named the real /lib and /usr/local/lib:
+  // on Ubuntu 24.04, /lib (a link to /usr/lib) put the runner's own libbrotlidec among the candidates, unfixed, and the
+  // clean twin read UNKNOWN; and the ':' and the folders below were tested only by the machine's own folders
+  const d = fresh('musl'), std = fresh('musl-std'), a = fresh('musl-a'), b = fresh('musl-b'), extra = fresh('musl-extra'), path = fresh('musl-path');
+  // musl's syntax: folders split by ':' and by line feeds; b's copy two levels below b (as glibc's tls/haswell is)
+  const deep = join(b, 'x86_64', 'tls'), file = join(d, 'ld-musl-x86_64.path');
+  writeFileSync(file, `${a}:${b}\n${extra}\n`);
+  assert.deepEqual(ldSoConfDirs({ musl: [file] }), { dirs: [a, b, extra], gaps: [] });
+  fixedLib(join(std, 'libbrotlidec.so.1')); oldLib(join(extra, 'libbrotlidec.so.1')); fixedLib(join(deep, 'libbrotlidec.so.1'));
   elf(join(path, 'node'), [NODE_CONTROL], { needed: ['libbrotlidec.so.1'] });
   const at = (places) => run({}, { pathEnv: path, sonameDirs: [std], places }).rows.find((r) => r.file === join(path, 'node'));
-  // the file's folder's unfixed copy beside the standard folder's fixed one: UNKNOWN (round 8: EXPOSED); both unfixed,
-  // EXPOSED
-  assert.equal(at({ ldMuslPath: join(d, 'ld-musl-*.path') }).status, 'UNKNOWN');
-  oldLib(join(std, 'libbrotlidec.so.1'));
-  assert.equal(at({ ldMuslPath: join(d, 'ld-musl-*.path') }).status, 'EXPOSED');
+  const musl = { ldMuslPath: join(d, 'ld-musl-*.path') };
+  // the second line's folder: its unfixed copy beside the standard folder's fixed one, UNKNOWN (round 8: EXPOSED)
+  assert.equal(at(musl).status, 'UNKNOWN');
+  // a folder after a ':', two levels down: its unfixed copy beside fixed ones, UNKNOWN
+  fixedLib(join(extra, 'libbrotlidec.so.1')); oldLib(join(deep, 'libbrotlidec.so.1'));
+  assert.equal(at(musl).status, 'UNKNOWN', 'a folder below one named after a \':\'');
+  // every copy unfixed, EXPOSED
+  oldLib(join(std, 'libbrotlidec.so.1')); oldLib(join(extra, 'libbrotlidec.so.1'));
+  assert.equal(at(musl).status, 'EXPOSED');
   fixedLib(join(std, 'libbrotlidec.so.1'));
   assert.equal(at({}).status, 'SAFE', 'without it, only the standard folder');
-  fixedLib(join(extra, 'libbrotlidec.so.1'));
-  assert.equal(at({ ldMuslPath: join(d, 'ld-musl-*.path') }).status, 'SAFE', 'the clean twin');
+  // the clean twin: every copy fixed, SAFE, with the copies the file leads to in its receipt
+  fixedLib(join(extra, 'libbrotlidec.so.1')); fixedLib(join(deep, 'libbrotlidec.so.1'));
+  const twin = at(musl);
+  assert.equal(twin.status, 'SAFE', 'the clean twin');
+  for (const f of [join(extra, 'libbrotlidec.so.1'), join(deep, 'libbrotlidec.so.1')]) assert.ok(twin.searched.includes(f), `${f}: ${twin.searched.join()}`);
+});
+
+test('the guard on these fixtures (ownFolders): a library folder, loader list, or folder or library a loader list names, outside the test\'s own folder, is refused before the check runs; the test\'s own pass', () => {
+  const d = fresh('own'), mine = fresh('own-lib'), path = fresh('own-path');
+  mkdirSync(join(d, 'ld.so.conf.d'));
+  const musl = join(d, 'ld-musl-x86_64.path'), conf = join(d, 'ld.so.conf'), vendor = join(d, 'ld.so.conf.d', 'vendor.conf'), pf = join(d, 'ld.so.preload');
+  const loaders = { ldSoConf: conf, ldSoConfDir: join(d, 'ld.so.conf.d'), ldMuslPath: join(d, 'ld-musl-*.path'), ldSoPreload: pf };
+  fixedLib(join(mine, 'libbrotlidec.so.1'));
+  const node = elf(join(path, 'node'), [NODE_CONTROL], { needed: ['libbrotlidec.so.1'] });
+  const go = (o) => run({}, { pathEnv: path, sonameDirs: [mine], places: loaders, ...o });
+  // → the place the guard refused, or null when nothing was
+  const refused = (f) => {
+    try { f(); } catch (e) { const m = /^a Brotli test gave the check (.+) \([^()]*\), outside its own folder/.exec(e.message); if (m) return m[1]; throw e; }
+    return null;
+  };
+  // every list naming the test's own folder and library only
+  const own = () => { writeFileSync(musl, `${mine}\n`); writeFileSync(conf, `${mine}\n`); writeFileSync(vendor, `${mine}\n`); writeFileSync(pf, `${join(mine, 'libbrotlidec.so.1')}\n`); };
+  // #68's musl file as it was until CI run 40241781535, and the machine's folders by each other way in
+  own(); writeFileSync(musl, `/lib:/usr/local/lib\n${mine}\n`);
+  assert.equal(refused(() => go()), '/lib');
+  own(); writeFileSync(conf, `${mine}:/usr/local/lib\n`);
+  assert.equal(refused(() => go()), '/usr/local/lib');
+  own(); writeFileSync(vendor, '/opt/vendor/lib\n');
+  assert.equal(refused(() => go()), '/opt/vendor/lib');
+  own(); writeFileSync(pf, '/usr/lib/libbrotlidec.so.1\n');
+  assert.equal(refused(() => go()), '/usr/lib/libbrotlidec.so.1');
+  own();
+  assert.equal(refused(() => go({ sonameDirs: [mine, '/usr/lib'] })), '/usr/lib');
+  assert.equal(refused(() => go({ sonameDirs: [`${dir}/../lib`] })), `${dir}/../lib`, 'a \'..\' out of the test\'s folder');
+  assert.equal(refused(() => go({ places: { ...loaders, ldSoConf: '/etc/ld.so.conf' } })), '/etc/ld.so.conf');
+  assert.equal(refused(() => go({ places: { ...loaders, ldMuslPath: '/etc/ld-musl-*.path' } })), '/etc/ld-musl-*.path');
+  assert.throws(() => go({ sonameDirs: undefined }), /gave the check no library folders: it would search the machine's own/);
+  assert.equal(refused(() => judge(node, ['/usr/lib'])), '/usr/lib');
+  assert.equal(refused(() => judge(node, [mine], { preload: { names: ['/usr/lib/libbrotlidec.so.1'], gap: null } })), '/usr/lib/libbrotlidec.so.1');
+  // the clean twin: the same lists, naming the test's own folder and library, are read through, SAFE
+  const r = go().rows.find((x) => x.file === node);
+  assert.equal(r.status, 'SAFE', r.reason);
+  assert.equal(judge(node, [mine], { preload: brotli.ldSoPreload(pf) }).status, 'SAFE');
+  // and this file reaches the check only through run() (one call), so no test goes round the guard
+  const src = readFileSync(fileURLToPath(import.meta.url), 'utf8');
+  assert.equal(src.match(new RegExp(`\\b${'check'}Bundled\\(`, 'g'))?.length, 1);
 });
 
 test('no table and no link is UNKNOWN; a file that can\'t be read (a FIFO, a folder, too large) is UNKNOWN, never SAFE', () => {
@@ -3044,14 +3131,14 @@ test('a distribution\'s node whose libnode is found but can\'t be shown SAFE, or
   elf(join(lib, 'libnode.so.108'), [CONTROL, MARKER, NODE_CONTROL, NODE_MARKER]);
   assert.equal(row().status, 'SAFE');
   // with that fixed libnode, the loader's configuration names a folder it doesn't read (an include elsewhere), or a file
-  // it can't read: the loader may take libnode from there, so UNKNOWN
+  // it can't read: the loader may take libnode from there, so UNKNOWN (a vendor's folders, in the test's: ownFolders)
   mkdirSync(join(conf, 'ld.so.conf.d'), { recursive: true });
   const places = { ldSoConf: join(conf, 'ld.so.conf'), ldSoConfDir: join(conf, 'ld.so.conf.d') };
-  writeFileSync(places.ldSoConf, 'include ld.so.conf.d/*.conf\ninclude /opt/vendor/ld.conf.d/*.conf\n');
+  writeFileSync(places.ldSoConf, `include ld.so.conf.d/*.conf\ninclude ${join(conf, 'vendor', 'ld.conf.d')}/*.conf\n`);
   const gap = row(places);
   assert.equal(gap.status, 'UNKNOWN'); assert.equal(gap.via, 'libnode.so.108');
-  assert.match(gap.reason, /^it links libnode\.so\.108, the library that holds Node\.js's code, and what the dynamic loader is told to search could not all be read \(.*include \/opt\/vendor.*could not be tested/);
-  writeFileSync(places.ldSoConf, 'include ld.so.conf.d/*.conf\n'); writeFileSync(join(conf, 'ld.so.conf.d', 'vendor.conf'), '/opt/vendor/lib\n');
+  assert.match(gap.reason, /^it links libnode\.so\.108, the library that holds Node\.js's code, and what the dynamic loader is told to search could not all be read \(.*include .*\/vendor\/ld\.conf\.d\/\*\.conf.*could not be tested/);
+  writeFileSync(places.ldSoConf, 'include ld.so.conf.d/*.conf\n'); writeFileSync(join(conf, 'ld.so.conf.d', 'vendor.conf'), `${join(conf, 'vendor', 'lib')}\n`);
   execFileSync('chmod', ['000', join(conf, 'ld.so.conf.d', 'vendor.conf')]);
   try { assert.equal(row(places).status, 'UNKNOWN'); } finally { execFileSync('chmod', ['644', join(conf, 'ld.so.conf.d', 'vendor.conf')]); }
   // the clean twin: everything the configuration names read
