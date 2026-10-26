@@ -203,10 +203,14 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     Whether GitHub runs a workflow from such a folder hasn't been checked. A `.git` file is followed as git follows
     it, whatever repository it names: one naming an empty repository reads SAFE for both checks (0.1.9, ffacde4 and
     now), and so does, for the workflow review, one naming a folder whose `commondir` file names an empty
-    repository. No rule tells those apart from clean layouts: `git clone --separate-git-dir` writes a `.git` file
-    naming a repository that has no pointer back to it, and the pointer back a linked worktree's folder holds is a
-    file anyone who can write the `.git` file can write too (and a worktree moved by hand has a stale one). `cat .git`
-    shows which repository a `.git` file names. And in the bare-repository-with-worktrees layout (a `.bare` folder,
+    repository. No rule based on the layout tells those apart from clean ones: `git clone --separate-git-dir`
+    writes a `.git` file naming a repository that has no pointer back to it, and the pointer back a linked worktree's
+    folder holds is a file anyone who can write the `.git` file can write too (and a worktree moved by hand has a stale
+    one). A check that compares the workflow files on disk with the tree of the commit checked out could, and is
+    planned for a later release. `cat .git` shows which repository a `.git` file names. This case is out of scope
+    because whoever can write to a repository's `.git` can hide a workflow without any trick of layout, for example
+    by deleting the branch ref that leads to it, and every version reads SAFE then. And in the
+    bare-repository-with-worktrees layout (a `.bare` folder,
     a `.git` file saying `gitdir: ./.bare`, and each worktree in a subfolder), the search stops at the outer folder,
     as for any repository: the workflow review reads its history, but the committed-keys check scans no worktree's
     files and reads SAFE (as in 0.1.9). Pass a worktree's own folder with `--paths` to scan it.
