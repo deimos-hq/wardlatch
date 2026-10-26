@@ -57,9 +57,10 @@ test('every incident has the fields its check reads, named after its file', () =
 });
 
 test('every date window starts at an explicit UTC instant that exists, never a bare date', () => {
-  // 0.1.0 to 0.1.9 gave the workflow review "2026-09-01", which git read as 1 Sep at the run's time of day in the
-  // machine's zone, and a workflow committed on 31 Aug read SAFE. Any field naming a window's start (since, addedSince,
-  // at any depth) is a full instant in UTC.
+  // 0.1.0 to 0.1.9 gave the workflow review "2026-09-01", which git read as 1 Sep at the run's time of day in the zone
+  // git ran in (up to 0.1.8 that of the TZ Wardlatch was started with, which git got too, the machine's when it was
+  // unset; in 0.1.9, which gave git no TZ, the machine's), and a workflow committed on 31 Aug read SAFE. Any field
+  // naming a window's start (since, addedSince, at any depth) is a full instant in UTC.
   const starts = (o, at) => (o && typeof o === 'object' ? Object.entries(o).flatMap(([k, v]) => (/since$/i.test(k) ? [[`${at}.${k}`, v]] : starts(v, `${at}.${k}`))) : []);
   const found = incidents.flatMap((i) => starts(i, i.id));
   assert.ok(found.some(([k]) => k === 'github-actions-2026-10.since') && found.some(([k]) => k === 'wordpress-plugins-2026-10.addedSince'), JSON.stringify(found));
