@@ -723,7 +723,10 @@ const run = (code, o = {}) => new Promise((res) => {
 });
 
 test('a package in the checkout\'s own node_modules loads by name, by require() and import, from a checkout in the home; going on into the home\'s node_modules above it is refused, for a package name or a \'#\' name of package.json\'s imports', () => {
-  const m = machine('packages');
+  // the made-up machine reached through a link, as a temporary folder is on macOS (/var/folders is /private/var/folders
+  // there, as CI's runners name it), on every system: require.resolve gives a file's real path (CI run 40241781535)
+  mkdirSync(join(dir, 'packages-real')); symlinkSync(join(dir, 'packages-real'), join(dir, 'packages-link'));
+  const m = machine(join('packages-link', 'packages'));
   writeFileSync(join(m.checkout, 'package.json'), J({ name: 'wardlatch-probe-checkout', private: true }));
   const pkg = (dir, name, value, main = 'main.js') => {
     const d = join(dir, 'node_modules', name); mkdirSync(d, { recursive: true });
@@ -802,7 +805,7 @@ test('a package in the checkout\'s own node_modules loads by name, by require() 
 (async () => report({
   require: require(fileURLToPath(${local.cjs})),
   import: (await import(${local.mjs})).default,
-  resolvePaths: path.relative(m.checkout, require.resolve('wl-local', { paths: [m.checkout] })),
+  resolvePaths: path.relative(fs.realpathSync(m.checkout), fs.realpathSync(require.resolve('wl-local', { paths: [m.checkout] }))),
   requireHash: require(fileURLToPath(${hashCjs})),
   importHash: (await import(${hashMjs})).default,
   ...(await ${junkLoads}),
