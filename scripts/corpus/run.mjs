@@ -5,31 +5,56 @@
 // one incident at a time, and lists every layout × incident where they differ in exit code or in row counts by status.
 //
 //   node scripts/corpus/run.mjs <corpusdir> <wardlatchA> <wardlatchB> [--timeout <ms>] [--jobs <n>] [--out <file>]
-//                                [--only <layout>[,<layout>…]]
+//                                [--only <layout>[,<layout>…]] [--gate]
 //
 // <wardlatchA>, <wardlatchB>: a checkout's bin/wardlatch.mjs each (A is the baseline, e.g. 0.1.8; B the candidate).
 // Each run gets --json --no-containers --incident <id>, the layout's --paths, and an environment of only the layout's
 // HOME, PATH=/usr/bin:/bin and the layout's own variables; it starts in the layout's HOME.
+// --gate: exit 1 only when B, the candidate, misses its layouts' own expectations: a clean layout × incident that doesn't
+// exit 0 with its JSON, a bad layout its incident (catchBy) doesn't catch (no EXPOSED or REVIEW row), a bad layout that
+// must read EXPOSED ("expect" in its manifest) reading REVIEW only, a bad layout with the wrong exit code for what it
+// found (1 with an EXPOSED row; 0 or 2 with REVIEW rows only, which don't change the exit code: README, "exit code"), or
+// a run that timed out. Its last line when it passes, GATE PASSED, names the SHA-256 of B's bin/ and lib/: the class
+// audit quotes it, and the release gate checks that it is the code being released. Differences from A are listed for
+// review but don't fail. A gate needs something to check: it
+// stops (exit 2) unless the corpus has at least one clean layout and one bad layout, every bad layout names an incident
+// this script runs, and says what it must find ("expect": EXPOSED or REVIEW). Without --gate, any difference exits 1.
+// Either way an --only name that is not in the corpus, no layout to run at all, or a --jobs or --timeout that isn't a
+// whole number of at least 1 (or has no value) stops it (exit 2); and the gate stops (exit 2) rather than pass unless
+// every layout × incident ran.
 // Prints a markdown report (differences, then clean layouts that did not exit 0 and bad layouts that were not caught,
 // then time per version) and writes every run to <corpusdir>/results.json, or --out.
 // The emudhra incident is not run: it connects to its public test hosts, and this corpus contacts no network host.
 // The checks run here read files and run local programs (git, and the programs on PATH for their versions) only.
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, lstatSync, readdirSync, readlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 const INCIDENTS = ['committed-keys-2026-10', 'github-actions-2026-10', 'wordpress-plugins-2026-10', 'identity-headers-2026-10',
   'litellm-2026-10', 'php-2026-10', 'ovhcloud-cli-2026-10', 'plex-2026-10', 'gitlab-2026-10'];
 const STATUSES = ['SAFE', 'EXPOSED', 'UNKNOWN', 'REVIEW'];
 
 const argv = process.argv.slice(2);
-const opt = (name, dflt) => { const i = argv.indexOf(name); if (i < 0) return dflt; const v = argv[i + 1]; argv.splice(i, 2); return v; };
-const timeout = Number(opt('--timeout', '120000'));
-const jobs = Math.max(1, Number(opt('--jobs', '1')));
+const usage = (msg) => { console.error(msg); process.exit(2); };
+// an option's value: the next argument, which must be there and not be another option
+const opt = (name, dflt) => {
+  const i = argv.indexOf(name);
+  if (i < 0) return dflt;
+  const v = argv[i + 1];
+  if (v === undefined || v.startsWith('--')) usage(`${name} needs a value`);
+  argv.splice(i, 2);
+  return v;
+};
+// a whole number of at least 1: a --jobs that isn't one would start no worker, and the gate would pass having run nothing
+const whole = (name, dflt) => { const v = opt(name, dflt); if (!/^\d+$/.test(v) || Number(v) < 1) usage(`${name} needs a whole number of at least 1 (not "${v}")`); return Number(v); };
+const timeout = whole('--timeout', '120000');
+const jobs = whole('--jobs', '1');
 const only = opt('--only', '');
 const outArg = opt('--out', '');
-if (argv.length !== 3 || !Number.isFinite(timeout)) {
-  console.error('usage: node run.mjs <corpusdir> <wardlatchA/bin/wardlatch.mjs> <wardlatchB/bin/wardlatch.mjs> [--timeout ms] [--jobs n] [--out file] [--only a,b]');
+const gi = argv.indexOf('--gate'); const GATE = gi >= 0; if (GATE) argv.splice(gi, 1);
+if (argv.length !== 3) {
+  console.error('usage: node run.mjs <corpusdir> <wardlatchA/bin/wardlatch.mjs> <wardlatchB/bin/wardlatch.mjs> [--timeout ms] [--jobs n] [--out file] [--only a,b] [--gate]');
   process.exit(2);
 }
 const [corpus, binA, binB] = argv.map((a) => resolve(a));
@@ -37,10 +62,39 @@ for (const b of [binA, binB]) if (!existsSync(b)) { console.error(`not found: ${
 const outFile = outArg ? resolve(outArg) : join(corpus, 'results.json');
 const versionOf = (bin) => { try { return JSON.parse(readFileSync(join(bin, '..', '..', 'package.json'), 'utf8')).version; } catch { return '?'; } };
 const VERSIONS = { A: { bin: binA, version: versionOf(binA) }, B: { bin: binB, version: versionOf(binB) } };
+// The code a checkout runs, as one SHA-256 (scripts/release-check.mjs computes the same of the commit being released, and
+// looks for it on the GATE PASSED line the class audit quotes): each file under bin/ and lib/ by path, with the SHA-256 of
+// its content (of a link, where it points), a line each, in path order, .DS_Store left out.
+const sha256 = (x) => createHash('sha256').update(x).digest('hex');
+const filesUnder = (root, rel, out = []) => {
+  const s = lstatSync(join(root, rel), { throwIfNoEntry: false });
+  if (s?.isDirectory()) for (const e of readdirSync(join(root, rel))) filesUnder(root, `${rel}/${e}`, out);
+  else if (s) out.push([rel, s.isSymbolicLink() ? readlinkSync(join(root, rel)) : s.isFile() ? readFileSync(join(root, rel)) : 'not a file']);
+  return out;
+};
+const codeHash = (root) => sha256([...filesUnder(root, 'bin'), ...filesUnder(root, 'lib')].filter(([f]) => f.split('/').at(-1) !== '.DS_Store')
+  .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([f, body]) => `${f}\0${sha256(body)}\n`).join(''));
 
+const stop = (msg) => { console.error(msg); process.exit(2); };
 let names = JSON.parse(readFileSync(join(corpus, 'corpus.json'), 'utf8')).layouts;
-if (only) { const want = only.split(','); names = names.filter((n) => want.includes(n)); }
+if (!Array.isArray(names)) stop(`${join(corpus, 'corpus.json')}: no "layouts" list`);
+if (only) {
+  const want = only.split(','), unknown = want.filter((n) => !names.includes(n));
+  if (unknown.length) stop(`--only: no layout named ${unknown.join(', ')} in ${corpus} (it has ${names.length})`);
+  names = names.filter((n) => want.includes(n));
+}
+if (!names.length) stop(`no layouts to run in ${corpus}`);
 const layouts = names.map((n) => JSON.parse(readFileSync(join(corpus, n, 'manifest.json'), 'utf8')));
+if (GATE) {
+  const clean = layouts.filter((L) => L.class === 'clean'), bad = layouts.filter((L) => L.class === 'bad');
+  const odd = layouts.filter((L) => L.class !== 'clean' && L.class !== 'bad').map((L) => L.name);
+  const unchecked = bad.filter((L) => !(L.catchBy ?? []).some((i) => INCIDENTS.includes(i))).map((L) => L.name);
+  if (odd.length) stop(`--gate: every layout's class is clean or bad (not: ${odd.join(', ')})`);
+  if (!clean.length || !bad.length) stop(`--gate needs at least one clean layout and one bad layout (here ${clean.length} clean, ${bad.length} bad): it would check nothing`);
+  if (unchecked.length) stop(`--gate: a bad layout must name in catchBy an incident run here (${INCIDENTS.join(', ')}), or nothing checks it: ${unchecked.join(', ')}`);
+  const unstated = bad.filter((L) => !['EXPOSED', 'REVIEW'].includes(L.expect)).map((L) => L.name);
+  if (unstated.length) stop(`--gate: every bad layout says what its incident must find ("expect": "EXPOSED" or "REVIEW"), or a weaker finding would pass: ${unstated.join(', ')}`);
+}
 
 /** One run of one version on one layout for one incident. */
 function runOne(bin, L, incident) {
@@ -87,7 +141,7 @@ async function worker() {
     const { L, inc } = tasks[next++];
     const A = await runOne(binA, L, inc);
     const B = await runOne(binB, L, inc);
-    results.push({ layout: L.name, group: L.group, class: L.class, catchBy: L.catchBy, incident: inc, A, B });
+    results.push({ layout: L.name, group: L.group, class: L.class, catchBy: L.catchBy, expect: L.expect, incident: inc, A, B });
     doneCount++;
     if (process.stderr.isTTY) process.stderr.write(`\r${doneCount}/${tasks.length} pairs`);
   }
@@ -142,12 +196,22 @@ md.push('');
 // the release criterion, per version: clean layouts exit 0; each bad layout's incident finds something (EXPOSED or REVIEW)
 md.push('## Against the layouts\' own expectations');
 md.push('');
-md.push('| version | clean layout × incident not exiting 0 | bad layouts not caught by their incident |');
-md.push('|---|---|---|');
+md.push('| version | clean layout × incident not exiting 0 | bad layouts not caught by their incident | bad layouts finding less than they should | bad layouts with the wrong exit code |');
+md.push('|---|---|---|---|---|');
+const expectations = {};
 for (const v of ['A', 'B']) {
-  const notZero = results.filter((r) => r.class === 'clean' && r[v].exit !== 0).map((r) => `${r.layout}/${r.incident} (${r[v].exit})`);
-  const missed = results.filter((r) => r.class === 'bad' && r.catchBy.includes(r.incident) && !((r[v].counts.EXPOSED ?? 0) + (r[v].counts.REVIEW ?? 0))).map((r) => `${r.layout}/${r.incident}`);
-  md.push(`| ${v} ${VERSIONS[v].version} | ${notZero.length ? esc(notZero.join(', ')) : 'none'} | ${missed.length ? esc(missed.join(', ')) : 'none'} |`);
+  const notZero = results.filter((r) => r.class === 'clean' && (r[v].exit !== 0 || r[v].parseError)).map((r) => `${r.layout}/${r.incident} (${r[v].parseError ? 'no JSON' : r[v].exit})`);
+  const caughtBy = results.filter((r) => r.class === 'bad' && (r.catchBy ?? []).includes(r.incident));
+  const found = (r) => (r[v].counts.EXPOSED ?? 0) + (r[v].counts.REVIEW ?? 0);
+  const missed = caughtBy.filter((r) => !found(r)).map((r) => `${r.layout}/${r.incident}`);
+  // a layout that must read EXPOSED reading REVIEW only: a weaker finding, and an exit code that no longer fails
+  const weaker = caughtBy.filter((r) => found(r) && r.expect === 'EXPOSED' && !(r[v].counts.EXPOSED ?? 0)).map((r) => `${r.layout}/${r.incident} (REVIEW only, expected EXPOSED)`);
+  // exit 1 when anything is EXPOSED; REVIEW rows don't change the exit code, so a REVIEW-only catch exits 0 or 2
+  const wrongExit = caughtBy.filter((r) => found(r) && !((r[v].counts.EXPOSED ?? 0) ? [1] : [0, 2]).includes(r[v].exit))
+    .map((r) => `${r.layout}/${r.incident} (${r[v].exit}${r[v].counts.EXPOSED ? ', EXPOSED' : ', REVIEW only'})`);
+  expectations[v] = { notZero, missed, weaker, wrongExit };
+  const list = (l) => (l.length ? esc(l.join(', ')) : 'none');
+  md.push(`| ${v} ${VERSIONS[v].version} | ${list(notZero)} | ${list(missed)} | ${list(weaker)} | ${list(wrongExit)} |`);
 }
 md.push('');
 md.push('## Time');
@@ -167,4 +231,19 @@ writeFileSync(outFile, `${JSON.stringify({
   totals: { A: { ms: total('A'), timeouts: timeouts('A') }, B: { ms: total('B'), timeouts: timeouts('B') } },
   differences: diffs.length, results,
 }, null, 1)}\n`);
-process.exitCode = diffs.length ? 1 : 0;
+if (GATE) {
+  // never a pass on less than every layout × incident: each one run, with both versions
+  const want = layouts.length * INCIDENTS.length;
+  if (results.length !== want || new Set(results.map((r) => r.layout)).size !== layouts.length) {
+    console.log(`\nGATE STOPPED: ${results.length} of the ${want} layout × incident pairs ran; a gate that didn't run them all checked nothing.`);
+    process.exit(2);
+  }
+  const { notZero, missed, weaker, wrongExit } = expectations.B;
+  const failed = notZero.length + missed.length + weaker.length + wrongExit.length + timeouts('B');
+  const ran = (c) => new Set(results.filter((r) => r.class === c).map((r) => r.layout)).size;
+  console.log(failed ? `\nGATE FAILED for B ${VERSIONS.B.version}: ${notZero.length} clean not exiting 0, ${missed.length} bad not caught, ${weaker.length} bad finding less than it should, ${wrongExit.length} bad with the wrong exit code, ${timeouts('B')} timed out.`
+    : `\nGATE PASSED for B ${VERSIONS.B.version} (bin/ and lib/ sha256 ${codeHash(resolve(binB, '..', '..'))}): every clean layout exits 0 (${ran('clean')}) and every bad layout is caught as it should be (EXPOSED where it must be), with the exit code it should have (${ran('bad')}); ${diffs.length} difference(s) from A listed above for review.`);
+  process.exitCode = failed ? 1 : 0;
+} else {
+  process.exitCode = diffs.length ? 1 : 0;
+}

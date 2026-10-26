@@ -18,6 +18,9 @@
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
+    "release-check": "node scripts/release-check.mjs",
+    "mutate": "node scripts/mutate.mjs",
+    "mutate:critical": "node scripts/mutate.mjs --critical",
     "coverage": "node --test --experimental-test-coverage --test-coverage-include=bin/** --test-coverage-include=lib/** --test-coverage-lines=80 --test-coverage-functions=80 test/*.test.mjs"
   },
   "keywords": [

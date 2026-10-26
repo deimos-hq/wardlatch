@@ -4,24 +4,31 @@
 // folder (fake programs on a private PATH, throwaway git repositories, a fake WordPress site). The eMudhra trust
 // check runs here only with an offline stand-in (no test host answers), for what it says when it can't test; its
 // probes need the advisory's public test hosts, so they are covered in wardlatch.test.mjs against a local one.
+import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, realpathSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { outputChecks } from './support/output-checks.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
 // the PHP check also searches folders off PATH: these tests hide them, so PHP installed on the machine can't change them
 const HIDE_PHP = ['--require', join(ROOT, 'test', 'support', 'hide-php-places.cjs')];
 const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
-let dir;
+let dir, home;
 
-/** Run the CLI → { code, out, err }. Output is piped, as in CI, so stdout is not a TTY and carries no colour. */
+/** Run the CLI → { code, out, err }. Output is piped, as in CI, so stdout is not a TTY and carries no colour. HOME is
+ *  an empty folder of the tests' own, never the one they run with. */
+// the CLI gets the tests' own home and none of the runner's per-user config folders: on a CI runner XDG_CONFIG_HOME (and
+// GOENV) point into the runner's real home, where the go check would read its env file
+const ownEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(XDG_[A-Z_]+|GOENV|GOTOOLCHAIN)$/.test(k)));
 const run = (args, env = {}, nodeArgs = [], cwd = undefined) => {
-  const r = spawnSync(process.execPath, [...nodeArgs, BIN, ...args], { encoding: 'utf8', env: { ...process.env, ...env }, maxBuffer: 64 * 1024 * 1024, cwd });
+  const r = spawnSync(process.execPath, [...nodeArgs, BIN, ...args], { encoding: 'utf8', env: { ...ownEnv(), HOME: home, ...env }, maxBuffer: 64 * 1024 * 1024, cwd });
+  outputChecks(args, r.stdout, r.stderr);   // T0 and T1 (test/support/output-checks.mjs)
   return { code: r.status, out: r.stdout, err: r.stderr };
 };
 const gitRepo = (path) => {
@@ -31,8 +38,8 @@ const gitRepo = (path) => {
   return { commit: () => { g('add', '-A'); g('-c', 'commit.gpgsign=false', 'commit', '-qm', 'add'); } };
 };
 
-before(() => { dir = mkdtempSync(join(tmpdir(), 'wardlatch-cli-')); });
-after(() => rmSync(dir, { recursive: true, force: true }));
+before(() => { dir = mkdtempSync(join(tmpdir(), 'wardlatch-cli-')); home = mkdtempSync(join(tmpdir(), 'wardlatch-cli-home-')); });
+after(() => { rmSync(dir, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); });
 
 test('--help and --list answer without checking anything', () => {
   const help = run(['--help']);
@@ -487,6 +494,23 @@ test('SSL_CERT_DIR is a list: each relative folder in it is made absolute, an ab
   assert.match(readFileSync(log, 'utf8'), new RegExp(`^SSL_CERT_DIR=${join(real, 'rel', 'a').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:/abs/b$`, 'm'));
 });
 
+test('a relative CA setting with a \'..\' is made absolute as written, so the OS takes the \'..\' after the link before it (round 8, rule 5)', () => {
+  // lnk is a link to elsewhere/deep: lnk/../mine.pem is elsewhere/mine.pem to the person's own programs, which open it
+  // as written; path.resolve made it <work>/mine.pem, another file
+  const { online } = preloads();
+  const work = join(dir, 'dotdot-ca-work'), elsewhere = join(dir, 'dotdot-ca-elsewhere');
+  mkdirSync(work, { recursive: true }); mkdirSync(join(elsewhere, 'deep'), { recursive: true }); symlinkSync(join(elsewhere, 'deep'), join(work, 'lnk'));
+  const bin = join(dir, 'dotdot-ca-bin'), log = join(dir, 'dotdot-ca-env'); mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'node'), `#!/bin/sh\ncase "$1" in -v) echo v26.12.1;; *) echo "SSL_CERT_FILE=$SSL_CERT_FILE SSL_CERT_DIR=$SSL_CERT_DIR" >> "${log}"; exit 3;; esac\n`, { mode: 0o755 });
+  const real = realpathSync(work), esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  run(['--incident', 'emudhra-2026-10', '--json', '--no-containers', '--paths', join(dir, 'nothing-here')], { PATH: bin, SSL_CERT_FILE: 'lnk/../mine.pem', SSL_CERT_DIR: 'lnk/../certs:/abs/b' }, ['--require', online], work);
+  assert.match(readFileSync(log, 'utf8'), new RegExp(`^SSL_CERT_FILE=${esc(`${real}/lnk/../mine.pem`)} SSL_CERT_DIR=${esc(`${real}/lnk/../certs`)}:/abs/b$`, 'm'));
+  // the clean twin: no '..', made absolute as before
+  rmSync(log, { force: true });
+  run(['--incident', 'emudhra-2026-10', '--json', '--no-containers', '--paths', join(dir, 'nothing-here')], { PATH: bin, SSL_CERT_FILE: 'certs/mine.pem', SSL_CERT_DIR: 'rel/a' }, ['--require', online], work);
+  assert.match(readFileSync(log, 'utf8'), new RegExp(`^SSL_CERT_FILE=${esc(join(real, 'certs', 'mine.pem'))} SSL_CERT_DIR=${esc(join(real, 'rel', 'a'))}$`, 'm'));
+});
+
 test('PATH holding "." or an empty entry never runs a program from the current folder', () => {
   const cwd = join(dir, 'dot-cwd'), marker = join(dir, 'dot-ran'); mkdirSync(cwd, { recursive: true });
   for (const b of ['git', 'python3', 'node', 'curl']) writeFileSync(join(cwd, b), `#!/bin/sh\ntouch "${marker}-${b}"\nexit 1\n`, { mode: 0o755 });
@@ -532,7 +556,7 @@ test('a planted FIFO as a venv\'s certifi METADATA can\'t hang the run', () => {
   mkdirSync(join(v, 'bin'), { recursive: true }); mkdirSync(join(sp, 'certifi'), { recursive: true }); mkdirSync(join(sp, 'certifi-9.9.9.dist-info'), { recursive: true });
   writeFileSync(join(v, 'pyvenv.cfg'), 'home = /x\n'); writeFileSync(join(sp, 'certifi', 'cacert.pem'), '-----BEGIN CERTIFICATE-----\n'); writeFileSync(join(v, 'bin', 'python'), '');
   execFileSync('mkfifo', [join(sp, 'certifi-9.9.9.dist-info', 'METADATA')]);
-  const r = spawnSync(process.execPath, ['--require', offline, BIN, '--incident', 'emudhra-2026-10', '--json', '--no-containers', '--paths', proj], { encoding: 'utf8', timeout: 60000, env: { ...process.env, PATH: join(dir, 'empty-path') } });
+  const r = spawnSync(process.execPath, ['--require', offline, BIN, '--incident', 'emudhra-2026-10', '--json', '--no-containers', '--paths', proj], { encoding: 'utf8', timeout: 60000, env: { ...ownEnv(), HOME: home, PATH: join(dir, 'empty-path') } });
   assert.notEqual(r.signal, 'SIGTERM', 'the run hung on the FIFO');
   assert.ok(JSON.parse(r.stdout).results.length >= 0);
 });

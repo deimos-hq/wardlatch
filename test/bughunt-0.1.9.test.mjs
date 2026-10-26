@@ -4,13 +4,15 @@
 // bad-case test failed on b03e7be for the reason its name gives, and sits beside a clean-machine test that must keep
 // passing. Offline: no test reaches a network host (the TLS handshake is faked in a --require preload, net.connect
 // throws, and every program a check runs is a stand-in in the test folder, except real git in the git-based tests).
+import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, chmodSync, existsSync, symlinkSync } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checked } from './support/output-checks.mjs';
 
 const WL = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(WL, 'bin', 'wardlatch.mjs');
@@ -26,6 +28,11 @@ after(() => {
 });
 
 // ---- helpers ------------------------------------------------------------------------------------------------------------
+// a value as JavaScript, for code a preload runs: JSON.stringify's text with <, > and the two line separators (JSON
+// leaves them as they are) written as \u escapes, the same value wherever the code is put
+// (CodeQL's js/bad-code-sanitization)
+const SPELLED = { '<': '\\u003c', '>': '\\u003e', '\u2028': '\\u2028', '\u2029': '\\u2029' };
+const js = (v) => JSON.stringify(v).replace(/[<>\u2028\u2029]/g, (c) => SPELLED[c]);
 const put = (p, text, mode) => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, text, mode ? { mode } : undefined); return p; };
 const exe = (p, body) => put(p, `#!/bin/sh\n${body}\n`, 0o755);
 let n = 0;
@@ -84,13 +91,15 @@ require('node:module').syncBuiltinESMExports();
   return ['--require', p];
 };
 
-const spawnCli = (args, env = {}, nodeArgs = [], { cwd = dir, json = true } = {}) => spawnSync(process.execPath, [...nodeArgs, BIN, ...args, ...(json ? ['--json'] : [])],
-  { encoding: 'utf8', env: { HOME: home, PATH: fresh('empty-path'), LANG: 'C', ...env }, cwd, timeout: 180000, killSignal: 'SIGKILL', maxBuffer: 64 * 1024 * 1024 });
+const spawnCli = (args, env = {}, nodeArgs = [], { cwd = dir, json = true } = {}) => checked([...args, ...(json ? ['--json'] : [])], spawnSync(process.execPath, [...nodeArgs, BIN, ...args, ...(json ? ['--json'] : [])],
+  { encoding: 'utf8', env: { HOME: home, PATH: fresh('empty-path'), LANG: 'C', ...env }, cwd, timeout: 180000, killSignal: 'SIGKILL', maxBuffer: 64 * 1024 * 1024 }));
 const run = (args, env = {}, nodeArgs = [], opts = {}) => {
   const r = spawnCli(args, env, nodeArgs, opts);
   let j; try { j = JSON.parse(r.stdout); } catch { assert.fail(`not JSON (exit ${r.status}, signal ${r.signal}): ${String(r.stderr).slice(0, 600)}`); }
   return { code: r.status, rows: j.results, json: j };
 };
+// what the command prints on screen (no --json); spawnCli checks T0 and T1 on it
+const text = (args, env = {}, nodeArgs = [], opts = {}) => spawnCli(args, env, nodeArgs, { ...opts, json: false }).stdout;
 // real git, no preload (only git runs in these incidents)
 const sys = (args, env = {}) => run(args, { PATH: '/usr/bin:/bin', ...env });
 const unknowns = (r) => r.rows.filter((x) => x.status === 'UNKNOWN');
@@ -115,9 +124,13 @@ const nodeRt = (d, normal = 'exit 1', forced = 'exit 0') => exe(join(d, 'node'),
 u="$3"
 if [ -n "$WARDLATCH_CA" ]; then ${forced}; fi
 ${normal}`);
-const pythonRt = (d, normal = 'exit 1', forced = 'exit 0') => exe(join(d, 'python3'), `[ "$1" = -V ] && { echo "Python 3.12.1"; exit 0; }
-u="$5"
-if [ -n "$6" ]; then ${forced}; fi
+// the URL and the forced CA file follow the script, wherever the options before -c put it (0.1.9 had -I -S, now -I -S -B);
+// the version is answered wherever -V is among those options (the version check runs python3 -B -V, up to d807932 -V).
+// `first`: shell lines run before anything else (a recording, below)
+const pythonRt = (d, normal = 'exit 1', forced = 'exit 0', first = '') => exe(join(d, 'python3'), `${first ? `${first}\n` : ''}for a in "$@"; do [ "$a" = -c ] && break; [ "$a" = -V ] && { echo "Python 3.12.1"; exit 0; }; done
+while [ $# -gt 0 ] && [ "$1" != -c ]; do shift; done; shift 2
+u="$1"
+if [ -n "$2" ]; then ${forced}; fi
 ${normal}`);
 const curlRt = (d, normal = 'exit 60', forced = 'exit 0') => exe(join(d, 'curl'), `[ "$1" = --version ] && { echo "curl 8.7.1 (x86_64-apple-darwin) libcurl/8.7.1"; exit 0; }
 ca=""; prev=""; u=""
@@ -126,9 +139,11 @@ case "$ca" in *${ROOTPEM}) ${forced};; esac
 ${normal}`);
 
 // a docker stand-in: ps lists one container; exec runs the probe script in a box whose curl answers per `curlBody`
-const engine = (name, { ps = "printf 'c0ffee\\tweb\\tdebian:13\\n'; exit 0", exec = '', curlBody, images = "echo 'python:3.12@sha256:0000'; exit 0" } = {}) => {
+// (`tools`: the box's programs instead of that curl, { name: shell lines })
+const engine = (name, { ps = "printf 'c0ffee\\tweb\\tdebian:13\\n'; exit 0", exec = '', curlBody, tools, images = "echo 'python:3.12@sha256:0000'; exit 0" } = {}) => {
   const box = fresh(`${name}-box`), eng = fresh(`${name}-engine`);
-  exe(join(box, 'curl'), `for a in "$@"; do case "$a" in http*://*) u="$a";; esac; done\n${curlBody ?? 'case "$u" in https://self-signed*) exit 60;; https://emudhra.we-have-a-problem.com*) exit 0;; *) exit 60;; esac'}`);
+  const curl = `for a in "$@"; do case "$a" in http*://*) u="$a";; esac; done\n${curlBody ?? 'case "$u" in https://self-signed*) exit 60;; https://emudhra.we-have-a-problem.com*) exit 0;; *) exit 60;; esac'}`;
+  for (const [tool, body] of Object.entries(tools ?? { curl })) exe(join(box, tool), body);
   exe(join(eng, 'docker'), `if [ "$1" = ps ]; then ${ps}; fi
 if [ "$1" = images ]; then ${images}; fi
 if [ "$1" = exec ]; then
@@ -414,6 +429,29 @@ test('trust: REQUESTS_CA_BUNDLE with no curl to test it is UNKNOWN; one naming a
   assert.ok(!r2.rows.some((x) => x.caVar), show(r2)); assert.equal(r2.code, 0);
 });
 
+test('trust: every python3 Wardlatch starts has -B (the version check, the probe, the container probe), read from what each run was given', () => {
+  // A recording python3 stands in first on PATH, for /usr/bin/python3 and inside a container, and logs the options each
+  // run was started with (the arguments before -c, -m or a script), one run a line, before answering. The command logs
+  // every program named python* it starts: one started from anywhere else (refused here: nothing outside this test's
+  // folder runs) leaves the recorded runs short of that count. Failed on d807932, whose version check ran python3 -V.
+  const log = join(dir, `py-runs-${++n}.log`);
+  const rec = (tag) => `o=""; for a in "$@"; do case "$a" in -c|-m) break;; -*) o="$o $a";; *) break;; esac; done; echo "${tag}$o" >> ${JSON.stringify(log)}`;
+  const d = fresh('pyB'), sys = pythonRt(fresh('pyB-usr-bin'), 'exit 1', 'exit 0', rec('usr-bin'));
+  pythonRt(d, 'exit 1', 'exit 0', rec('path'));
+  // inside the container python3 is the only tool: the control site opens; the self-signed site and the test hosts are refused
+  const eng = engine('pyB', { tools: { python3: `${rec('container')}\nwhile [ $# -gt 0 ] && [ "$1" != -c ]; do shift; done; shift 2\ncase "$1" in https://emudhra.we-have-a-problem.com*) exit 0;; *) exit 10;; esac` } });
+  const starts = `for (const k of ['execFile', 'execFileSync', 'spawn', 'spawnSync']) { const o = cp[k]; cp[k] = function (f, ...r) { if (/^python/.test(String(f).split('/').pop())) fs.appendFileSync(${js(log)}, 'started ' + f + '\\n'); return o.call(this, f, ...r); }; }`;
+  const r = trust({ PATH: `${eng}:${d}` }, preload('pyB', { online: true, redirects: { '/usr/bin/python3': sys }, extra: starts }), []);
+  const lines = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : [];
+  const runs = lines.filter((l) => !l.startsWith('started ')).map((l) => l.split(' '));
+  const of = (tag, version) => runs.filter(([t, ...o]) => t === tag && o.includes('-V') === version).length;
+  for (const [tag, version] of [['path', true], ['path', false], ['usr-bin', true], ['usr-bin', false], ['container', false]]) {
+    assert.ok(of(tag, version), `the fixture: no ${version ? 'version check' : 'probe'} of the ${tag} python3 was recorded: ${lines.join(' | ')} ${show(r)}`);
+  }
+  assert.equal(lines.filter((l) => l.startsWith('started ')).length, runs.filter(([t]) => t !== 'container').length, `a python the command started is not a recording stand-in: ${lines.join(' | ')}`);
+  for (const [tag, ...opts] of runs) assert.ok(opts.includes('-B'), `the ${tag} python3 was started with "${opts.join(' ')}", without -B`);
+});
+
 // =========================================================================================================================
 // WORDPRESS
 // =========================================================================================================================
@@ -451,6 +489,9 @@ test('wordpress: core found with no content folder anywhere it is looked for is 
   put(join(root, 'custom', 'core', 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";');
   const r = wp(root);
   assert.ok(unknowns(r).some((x) => /plugins/.test(x.reason)), show(r)); assert.equal(r.code, 2);
+  // and on screen: the line for it is UNKNOWN too (bin/wardlatch.mjs:487, a separate line from the row)
+  const t = text(['--incident', 'wordpress-plugins-2026-10', '--paths', root]);
+  assert.ok(t.split('\n').some((l) => /^UNKNOWN {2}\S.* · plugins folder$/.test(l)), t);
 });
 
 test('wordpress: a site that is found and has none of the listed plugins says so, not "no WordPress installs found"', () => {
@@ -544,6 +585,9 @@ test('keys: a deleted tracked file whose copy git no longer has is UNKNOWN, neve
   rmSync(join(app, 'gone.txt')); rmSync(join(app, '.git', 'objects', blob.slice(0, 2), blob.slice(2)));
   const r = keys(root);
   assert.ok(unknowns(r).some((x) => x.file === 'gone.txt'), show(r)); assert.equal(r.code, 2);
+  // and on screen: the line for it is UNKNOWN too (bin/wardlatch.mjs:471, a separate line from the row)
+  const t = text(['--incident', 'committed-keys-2026-10', '--paths', root], { PATH: '/usr/bin:/bin', HOME: fresh('k-home') });
+  assert.ok(t.split('\n').includes(`UNKNOWN  ${join(app, 'gone.txt')}`), t);
 });
 
 test('keys: 3,000 deleted tracked files are read in one batch, in seconds', () => {
@@ -810,6 +854,9 @@ test('trust (Linux): the distribution\'s CA bundle with neither curl nor python3
   const d = fresh('o2'); nodeRt(d);
   const r = trust({ PATH: d }, linux('o2'));
   assert.ok(unknowns(r).some((x) => x.system && /neither curl nor python3/.test(x.reason)), show(r)); assert.equal(r.code, 2);
+  // and on screen: the line for it is UNKNOWN too (bin/wardlatch.mjs:301, a separate line from the row)
+  const t = text(['--incident', 'emudhra-2026-10', '--no-containers', '--paths', fresh('trust-root')], { PATH: d }, linux('o2'));
+  assert.ok(t.split('\n').includes('UNKNOWN  Linux system trust store (/etc/ssl/certs/ca-certificates.crt)'), t);
   const d2 = fresh('o2b'); nodeRt(d2); pythonRt(d2);
   const r2 = trust({ PATH: d2 }, linux('o2b'));
   assert.ok(!r2.rows.some((x) => x.system && x.status === 'UNKNOWN'), show(r2));

@@ -3,6 +3,7 @@
 // The fourth strict review of 0.1.9 (47d4638) reproduced these, or found a fix no test held; each test here failed on
 // 47d4638 for the reason its name gives (or fails when its fix is reverted), and holds the fix in place. Offline: no test reaches a network host, and stand-ins replace every program a
 // check would run.
+import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -14,6 +15,7 @@ import { envFor } from '../lib/run.mjs';
 import { probe, check } from '../lib/probe.mjs';
 import { readCapped } from '../lib/files.mjs';
 import { discover } from '../lib/discover.mjs';
+import { checked } from './support/output-checks.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
@@ -51,7 +53,7 @@ require('node:module').syncBuiltinESMExports();
 `);
   return p;
 };
-const spawnCli = (args, env = {}, nodeArgs = []) => spawnSync(process.execPath, [...nodeArgs, BIN, ...args, '--json'], { encoding: 'utf8', env: { HOME: home, PATH: fresh('empty-path'), LANG: 'C', ...env }, cwd: dir, timeout: 120000, killSignal: 'SIGKILL' });
+const spawnCli = (args, env = {}, nodeArgs = []) => checked([...args, '--json'], spawnSync(process.execPath, [...nodeArgs, BIN, ...args, '--json'], { encoding: 'utf8', env: { HOME: home, PATH: fresh('empty-path'), LANG: 'C', ...env }, cwd: dir, timeout: 120000, killSignal: 'SIGKILL' }));
 const run = (args, env = {}, nodeArgs = []) => {
   const r = spawnCli(args, env, nodeArgs);
   let rows; try { rows = JSON.parse(r.stdout).results; } catch { assert.fail(`not JSON (exit ${r.status}): ${r.stderr.slice(0, 500)}`); }

@@ -64,6 +64,7 @@
 // ... no site found is SAFE" (SAFE for a --paths that doesn't exist: R5); wardlatch.test.mjs "a runtime that refuses
 // the compromised keys even with their roots forced in ... is SAFE" uses a curl stand-in, which R1 rules out for curl.
 // ======================================================================================================================
+import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
@@ -73,6 +74,8 @@ import { createServer as createNetServer, connect as netConnect } from 'node:net
 import { tmpdir } from 'node:os';
 import { join, dirname, delimiter, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { STAND_IN_MS } from './support/timeouts.mjs';
+import { checked, outputChecks } from './support/output-checks.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
@@ -112,6 +115,7 @@ const envOf = (extra = {}) => {
 };
 const run = (args, extra = {}, nodeArgs = [], timeout = 120000) => {
   const r = spawnSync(process.execPath, [...nodeArgs, BIN, ...args], { encoding: 'utf8', env: envOf(extra), cwd: dir, maxBuffer: 256 * 1024 * 1024, timeout, killSignal: 'SIGKILL' });
+  checked(args, r);   // T0 and T1 (test/support/output-checks.mjs)
   return { code: r.status, signal: r.signal, out: r.stdout ?? '', err: r.stderr ?? '' };
 };
 const runJson = (args, extra = {}, nodeArgs = [], timeout) => {
@@ -130,7 +134,7 @@ const runAsync = (args, extra = {}, nodeArgs = [], timeoutMs = 30000) => new Pro
   const finish = (code, signal) => { if (done) return; done = true; clearTimeout(timer); res({ code, signal, out, err, ms: Date.now() - t0 }); };
   // stdout is complete at 'close'; a grandchild left holding a pipe can't keep the test waiting more than 2 s after 'exit'
   c.on('exit', (code, signal) => { c.on('close', () => finish(code, signal)); setTimeout(() => finish(code, signal), 2000).unref(); });
-});
+}).then((r) => { outputChecks(args, r.out, r.err); return r; });   // T0 and T1 (test/support/output-checks.mjs)
 const lines = (out, status) => out.split('\n').filter((l) => new RegExp(`^${status} {2,}`).test(l));
 const mentions = (row, p) => JSON.stringify(row).includes(JSON.stringify(p).slice(1, -1));
 const exe = (p, body) => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, `#!/bin/sh\n${body}\n`, { mode: 0o755 }); return p; };
@@ -727,7 +731,7 @@ test('R12 probe environment: a runtime row whose `env` is a virtual environment\
   const { check } = await import(libUrl('probe.mjs'));
   const log = join(dir, 'r12-env.log'), ca = put(join(dir, 'r12-ca.pem'), 'x\n');
   const curl = exe(join(dir, 'r12-bin', 'curl'), `/usr/bin/env >> ${JSON.stringify(log)}\nexit 0`);
-  await check({ kind: 'curl', bin: curl, version: '', env: '/Users/someone/project/.venv' }, [{ id: 'c', url: 'https://canary.invalid/', up: true }], { rootsPem: ca, controlUrl: 'https://control.invalid/', timeoutMs: 2000 });
+  await check({ kind: 'curl', bin: curl, version: '', env: '/Users/someone/project/.venv' }, [{ id: 'c', url: 'https://canary.invalid/', up: true }], { rootsPem: ca, controlUrl: 'https://control.invalid/', timeoutMs: STAND_IN_MS });
   assert.ok(existsSync(log), 'the fixture: the stand-in curl ran');
   assert.deepEqual(readFileSync(log, 'utf8').split('\n').filter((l) => /^\d+=/.test(l)), [], 'the env string was spread into the environment');
 });

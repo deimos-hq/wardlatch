@@ -3,11 +3,12 @@
 // The sixth strict review of 0.1.9 (ca530b7) reproduced these, or found a fix no test held; each test here failed on
 // ca530b7 for the reason its name gives (or fails when its fix is reverted), and holds the fix in place. Offline: no test reaches a network host, and stand-ins replace every program a
 // check would run.
+import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, chmodSync, existsSync, readFileSync } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { envFor } from '../lib/run.mjs';
@@ -16,6 +17,8 @@ import { readCapped, eachPiece } from '../lib/files.mjs';
 import { scanText } from '../lib/secrets.mjs';
 import { execFileSync } from 'node:child_process';
 import { discover } from '../lib/discover.mjs';
+import { fakeHome } from './support/fake-home.cjs';
+import { checked } from './support/output-checks.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
@@ -53,7 +56,7 @@ require('node:module').syncBuiltinESMExports();
 `);
   return p;
 };
-const spawnCli = (args, env = {}, nodeArgs = []) => spawnSync(process.execPath, [...nodeArgs, BIN, ...args, '--json'], { encoding: 'utf8', env: { HOME: home, PATH: fresh('empty-path'), LANG: 'C', ...env }, cwd: dir, timeout: 120000, killSignal: 'SIGKILL' });
+const spawnCli = (args, env = {}, nodeArgs = []) => checked([...args, '--json'], spawnSync(process.execPath, [...nodeArgs, BIN, ...args, '--json'], { encoding: 'utf8', env: { HOME: home, PATH: fresh('empty-path'), LANG: 'C', ...env }, cwd: dir, timeout: 120000, killSignal: 'SIGKILL' }));
 const run = (args, env = {}, nodeArgs = []) => {
   const r = spawnCli(args, env, nodeArgs);
   let rows; try { rows = JSON.parse(r.stdout).results; } catch { assert.fail(`not JSON (exit ${r.status}): ${r.stderr.slice(0, 500)}`); }
@@ -123,7 +126,10 @@ test('4 a project folder named Library is searched, even with a Caches folder in
   assert.equal(isSystemFolder('Library', join(dir, 'k4-home')), false);
   assert.equal(isSystemFolder('.Trash', join(dir, 'k4-home')), true);
   if (process.platform === 'darwin') {
-    assert.equal(isSystemFolder('Library', homedir()), true, 'this Mac\'s ~/Library');
+    // a home folder of the test's own where macOS keeps one (/Users/<name>), never the real one
+    mkdirSync(join(fresh('k4-user'), 'Library', 'Preferences'), { recursive: true });
+    const restore = fakeHome('Wardlatch-K4', join(dir, 'k4-user'));
+    try { assert.equal(isSystemFolder('Library', '/Users/Wardlatch-K4'), true, 'a Mac home folder\'s own ~/Library'); } finally { restore(); }
     assert.equal(isSystemFolder('Library', '/'), true, '/Library');
   }
 });
@@ -222,8 +228,11 @@ test('16 a service-account file inside a giant one-line file is reported once', 
 
 test('17 macOS\'s own Library is recognised under every spelling of the home folder (case, /System/Volumes/Data)', { skip: process.platform !== 'darwin' && 'macOS' }, async () => {
   const { isSystemFolder } = await import('../lib/files.mjs');
-  const h = homedir();
-  for (const p of [h, `${h}/`, h.toLowerCase(), `/System/Volumes/Data${h}`, '/', '/System']) assert.equal(isSystemFolder('Library', p), true, p);
+  // a home folder of the test's own where macOS keeps one (/Users/<name>), never the real one
+  const h = '/Users/Wardlatch-K17';
+  mkdirSync(join(fresh('k17-user'), 'Library', 'Caches'), { recursive: true });
+  const restore = fakeHome('Wardlatch-K17', join(dir, 'k17-user'));
+  try { for (const p of [h, `${h}/`, h.toLowerCase(), `/System/Volumes/Data${h}`, '/', '/System']) assert.equal(isSystemFolder('Library', p), true, p); } finally { restore(); }
 });
 
 test('19 a line that runs on across pieces counts a reviewed-line marker only near the key, as on any long line', () => {

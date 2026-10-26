@@ -5,11 +5,12 @@
 // and the reverts that made 0.1.9 smaller. Each test pairs a clean machine that must stay exit 0 with the case that must
 // still be caught, and failed on e0e1c35 or fails when its fix is reverted. Offline: no test reaches a network host, and stand-ins replace every program a
 // check would run.
+import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, chmodSync, existsSync, readFileSync, statSync, symlinkSync, readdirSync } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { envFor } from '../lib/run.mjs';
@@ -18,6 +19,7 @@ import { readCapped, eachPiece } from '../lib/files.mjs';
 import { scanText } from '../lib/secrets.mjs';
 import { execFileSync } from 'node:child_process';
 import { discover } from '../lib/discover.mjs';
+import { checked } from './support/output-checks.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
@@ -57,7 +59,7 @@ require('node:module').syncBuiltinESMExports();
 `);
   return p;
 };
-const spawnCli = (args, env = {}, nodeArgs = []) => spawnSync(process.execPath, [...nodeArgs, BIN, ...args, '--json'], { encoding: 'utf8', env: { HOME: home, PATH: fresh('empty-path'), LANG: 'C', ...env }, cwd: dir, timeout: 120000, killSignal: 'SIGKILL' });
+const spawnCli = (args, env = {}, nodeArgs = []) => checked([...args, '--json'], spawnSync(process.execPath, [...nodeArgs, BIN, ...args, '--json'], { encoding: 'utf8', env: { HOME: home, PATH: fresh('empty-path'), LANG: 'C', ...env }, cwd: dir, timeout: 120000, killSignal: 'SIGKILL' }));
 const run = (args, env = {}, nodeArgs = []) => {
   const r = spawnCli(args, env, nodeArgs);
   let rows; try { rows = JSON.parse(r.stdout).results; } catch { assert.fail(`not JSON (exit ${r.status}): ${r.stderr.slice(0, 500)}`); }

@@ -3,15 +3,17 @@
 // The strict final review of 0.1.9's first cut (eb82857) reproduced these; each test here failed on eb82857 for the
 // reason its name gives, and holds the fix in place. Offline: no test reaches a network host, and stand-ins replace
 // every program a check would run.
+import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, chmodSync } from 'node:fs';
-import { tmpdir, userInfo, homedir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { envFor } from '../lib/run.mjs';
 import { safe } from '../lib/report.mjs';
+import { checked } from './support/output-checks.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
@@ -55,6 +57,7 @@ require('node:module').syncBuiltinESMExports();
 };
 const run = (args, env = {}, nodeArgs = []) => {
   const r = spawnSync(process.execPath, [...nodeArgs, BIN, ...args, '--json'], { encoding: 'utf8', env: { HOME: home, PATH: fresh('empty-path'), LANG: 'C', ...env }, cwd: dir, timeout: 120000, killSignal: 'SIGKILL' });
+  checked([...args, '--json'], r);   // T0 (test/support/output-checks.mjs)
   let rows; try { rows = JSON.parse(r.stdout).results; } catch { assert.fail(`not JSON (exit ${r.status}): ${r.stderr.slice(0, 500)}`); }
   return { code: r.status, rows };
 };
@@ -86,14 +89,18 @@ test('one --paths entry that isn\'t there, beside one that is, is its own UNKNOW
 });
 
 test('under sudo, every check searches the sudo user\'s home, not root\'s: the LiteLLM check\'s own folders too', { skip: AS_ROOT && 'already root' }, () => {
-  // the stand-in makes the command believe it runs as root under sudo; HOME is root's (here: an empty folder). The
-  // LiteLLM check finds ~/... site-packages through os.homedir(): in eb82857 that stayed root's home.
-  const me = userInfo().username, realHome = homedir(), rootsHome = fresh('roots-home');
-  put(join(rootsHome, '.local', 'lib', 'python3.12', 'site-packages', 'x'), '');
-  const sudo = preload('offline', `process.getuid = () => 0;`, 'sudo');
-  const r = run(['--incident', 'litellm-2026-10', '--no-containers', '--paths', fresh('sudo-root')], { HOME: rootsHome, SUDO_USER: me }, ['--require', sudo]);
+  // the stand-in makes the command believe it runs as root under sudo, for a user whose home (/Users/<name>) is a
+  // folder here, never a real user's; HOME is root's (here: an empty folder). The LiteLLM check finds ~/...
+  // site-packages through os.homedir(): in eb82857 that stayed root's home.
+  const user = 'wardlatch-sudo-user', userHome = fresh('sudo-user-home'), rootsHome = fresh('roots-home');
+  for (const h of [rootsHome, userHome]) put(join(h, '.local', 'lib', 'python3.12', 'site-packages', 'x'), '');
+  const sudo = preload('offline', `process.getuid = () => 0;
+require(${JSON.stringify(join(ROOT, 'test', 'support', 'fake-home.cjs'))}).fakeHome(${JSON.stringify(user)}, ${JSON.stringify(userHome)});`, 'sudo');
+  const r = run(['--incident', 'litellm-2026-10', '--no-containers', '--paths', fresh('sudo-root')], { HOME: rootsHome, SUDO_USER: user }, ['--require', sudo]);
   const searched = r.rows.flatMap((x) => x.searched ?? []).concat(r.rows.map((x) => x.dir ?? x.path ?? ''));
   assert.ok(!searched.some((p) => p.startsWith(rootsHome)), `root's home was searched: ${JSON.stringify(searched.filter((p) => p.startsWith(rootsHome)))}`);
+  const theirs = join(process.platform === 'darwin' ? '/Users' : '/home', user, '.local', 'lib', 'python3.12', 'site-packages');
+  assert.ok(searched.includes(theirs), `the sudo user's home was not searched: ${JSON.stringify(searched)}`);
 });
 
 test('a locked folder under --paths in the trust check is an UNKNOWN row, never dropped', { skip: AS_ROOT && 'root opens every folder' }, () => {

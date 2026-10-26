@@ -3,6 +3,7 @@
 // The coding standard in CONTRIBUTING.md, checked by machine wherever a rule can be. Most rules are the README's
 // promises in code form: Wardlatch sends nothing but test connections, changes nothing, never turns certificate
 // checking off except to see whether a test host is up, starts no shell on the host, and has no dependencies.
+import './support/no-real-home.cjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -89,6 +90,11 @@ test('certificate checking is never switched off, except the one reachability ha
   }
 });
 
+test('no unfilled placeholder: no white square bracket (U+27E6, U+27E7) in any text file, so no number still to be measured ships', () => {
+  const found = TEXT.filter((f) => /[\u27E6\u27E7]/.test(read(f)));
+  assert.deepEqual(found, [], 'fill these in from a measured run');
+});
+
 test('layout: UTF-8 text with LF line ends, no tabs, no trailing spaces, a final newline', () => {
   assert.ok(TEXT.length >= 20);
   for (const f of TEXT) {
@@ -101,4 +107,37 @@ test('layout: UTF-8 text with LF line ends, no tabs, no trailing spaces, a final
       assert.ok(!/ +$/.test(line), `${f}:${i + 1}: trailing space`);
     });
   }
+});
+
+test('no test looks in the real home folder: every test file loads test/support/no-real-home.cjs before anything else', () => {
+  const tests = FILES.filter((f) => /^test\/[^/]+\.test\.mjs$/.test(f));
+  assert.ok(tests.length >= 23);
+  for (const f of tests) assert.match(read(f), /^(?:\/\/.*\n)*import '\.\/support\/no-real-home\.cjs';\n/, f);
+});
+
+test('no test asks where the real home folder is: no test file takes homedir or userInfo from node:os', () => {
+  const tests = FILES.filter((f) => /^test\/[^/]+\.test\.mjs$/.test(f));
+  assert.ok(tests.length >= 23);
+  for (const f of tests) {
+    const src = read(f), code = src.replace(/(^|\s)\/\/.*$/gm, '$1');
+    assert.deepEqual(named(src, 'node:os').filter((x) => ['homedir', 'userInfo'].includes(x)), [], f);
+    assert.doesNotMatch(code, /\b(?:homedir|userInfo)\s*\(/, f);
+  }
+});
+
+test('no test leaves a Python cache behind: every real Python a test file starts itself gets -B, and the probes do too', () => {
+  // Apple's /usr/bin/python3 writes its .pyc cache to ~/Library/Caches/com.apple.python unless started with -I or -B, and
+  // the suite's own `python3 -m venv` wrote 62 files there; the seal (test/support/no-real-home.cjs) can't see a program
+  // that isn't Node. A stand-in (a shell script in a test folder) is started by its path, never by these names.
+  const tests = FILES.filter((f) => /^test\/[^/]+\.test\.mjs$/.test(f));
+  let seen = 0;
+  for (const f of tests) {
+    for (const m of read(f).matchAll(/\bexecFile(?:Sync)?\(\s*('python3'|py|venvPy)\s*,\s*\[([^\]]*)\]/g)) {
+      seen++;
+      assert.match(m[2], /'-B'|^\.\.\.opts,/, `${f}: ${m[0]}`);
+    }
+  }
+  assert.ok(seen >= 8, `only ${seen} Python runs found: the pattern no longer matches how the tests start Python`);
+  assert.match(read('lib/probe.mjs'), /case 'python': argv = \['-I', '-S', '-B', '-c'/);
+  assert.match(read('lib/containers.mjs'), /python3 -I -S -B -c /);
 });
