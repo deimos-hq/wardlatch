@@ -511,6 +511,83 @@ const p = require('node:util').promisify;
   assert.equal(readFileSync(join(m.home, 'secret'), 'utf8'), 'secret\n', 'rm followed the link into the home');
 });
 
+test('a call that never follows the link its path names last (lstat, readlink, unlink, rmdir, rm, lchown, lutimes) takes a link into the home as a link, as Node\'s own rm does each name below its start; through a link on the way, with a \'/\', \'.\' or \'..\' after it, or by a call that follows it, a look in the home is refused', () => {
+  const m = machine('leaf');
+  // tmp/<x>: links to the home's folder (one for each call that takes one away); tmp/fl: a link to a file there;
+  // tmp/g<n>: a folder that holds a link to the home; tmp/via/link: one gone through; in the home, inner (a link) and sub
+  for (const x of ['l', 'u1', 'u2', 'u3', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'slash']) symlinkSync(m.home, join(m.tmp, x));
+  symlinkSync(join(m.home, 'secret'), join(m.tmp, 'fl'));
+  for (const x of ['g1', 'g2', 'g3']) { mkdirSync(join(m.tmp, x)); symlinkSync(m.home, join(m.tmp, x, 'link')); writeFileSync(join(m.tmp, x, 'f'), 'f\n'); }
+  mkdirSync(join(m.tmp, 'via')); symlinkSync(m.home, join(m.tmp, 'via', 'link'));
+  mkdirSync(join(m.home, 'sub')); symlinkSync(join(m.home, 'secret'), join(m.home, 'inner'));
+  const head = `const t = (x) => path.join(m.tmp, x), uid = process.getuid(), gid = process.getgid();
+const cb = (f, ...a) => new Promise((res, rej) => f(...a, (e, v) => (e ? rej(e) : res(v))));
+const did = async (f) => { try { return (await f()) === true ? 'works' : 'wrong result'; } catch (e) { return e.code === 'EREALHOME' ? 'refused' : 'failed: ' + e.code; } };
+const gone = (...x) => { const left = fs.readdirSync(m.tmp); return x.every((y) => !left.includes(y)); };\n`;
+  // the regression (CI run 40241781535: the net read lstat's and unlink's link to its end, and refused Node's own rm of
+  // a folder with a link into the home in it, on Node 20 and 22, where rmSync calls the wrapped functions; fs.rm and
+  // fs.promises.rm do on every Node): each such call in every form, on a link into the home, does its work
+  const c = probe(m, `${head}(async () => {
+  const out = {
+    lstat: await did(async () => fs.lstatSync(t('l')).isSymbolicLink() && (await cb(fs.lstat, t('l'))).isSymbolicLink() && (await fs.promises.lstat(t('l'))).isSymbolicLink()
+      && fs.lstatSync(t('fl')).isSymbolicLink()),
+    readlink: await did(async () => fs.readlinkSync(t('l')) === m.home && await cb(fs.readlink, t('l')) === m.home && await fs.promises.readlink(t('l')) === m.home),
+    lutimes: await did(async () => { fs.lutimesSync(t('l'), 1000, 2000); await cb(fs.lutimes, t('l'), 1000, 3000); await fs.promises.lutimes(t('l'), 1000, 4000); return fs.lstatSync(t('l')).mtimeMs === 4000000; }),
+    lchown: await did(async () => { fs.lchownSync(t('l'), uid, gid); await cb(fs.lchown, t('l'), uid, gid); await fs.promises.lchown(t('l'), uid, gid); return fs.lstatSync(t('l')).uid === uid; }),
+    // with '..' after the link, the system follows it and goes up out of the home: the folder above it
+    upOut: await did(() => fs.lstatSync(t('via/link') + '/..').isDirectory() && fs.lstatSync(t('via/link') + '/..').ino === fs.lstatSync(path.dirname(m.home)).ino),
+    // (macOS) the link by the start-up disk's other name, read by its text too
+    ...(${MAC} ? { volume: await did(() => fs.lstatSync('/System/Volumes/Data' + fs.realpathSync(m.tmp) + '/l').isSymbolicLink()) } : {}),
+    // (rmdir takes no link away: the system says so, not the net)
+    rmdir: await did(() => { try { fs.rmdirSync(t('l')); } catch (e) { if (e.code === 'ENOTDIR') return true; throw e; } return false; }),
+    unlink: await did(async () => { fs.unlinkSync(t('u1')); await cb(fs.unlink, t('u2')); await fs.promises.unlink(t('u3')); return gone('u1', 'u2', 'u3'); }),
+    rm: await did(async () => { fs.rmSync(t('r1')); await cb(fs.rm, t('r2')); await fs.promises.rm(t('r3')); return gone('r1', 'r2', 'r3'); }),
+    rmFolder: await did(async () => { fs.rmSync(t('g1'), { recursive: true }); await cb(fs.rm, t('g2'), { recursive: true }); await fs.promises.rm(t('g3'), { recursive: true }); return gone('g1', 'g2', 'g3'); }),
+    rmLink: await did(async () => { fs.rmSync(t('r4'), { recursive: true }); await cb(fs.rm, t('r5'), { recursive: true, force: true }); await fs.promises.rm(t('r6'), { recursive: true }); return gone('r4', 'r5', 'r6'); }),
+  };
+  report(out);
+})();`);
+  assert.ok(c.out, `the probe reported nothing: ${c.err.slice(-4000)}`);
+  assert.deepEqual(c.out, Object.fromEntries(['lstat', 'readlink', 'lutimes', 'lchown', 'upOut', ...(MAC ? ['volume'] : []), 'rmdir', 'unlink', 'rm', 'rmFolder', 'rmLink'].map((k) => [k, 'works'])), c.err);
+  assert.equal(c.code, 0, c.err);
+  assert.deepEqual(readdirSync(m.home).sort(), ['dev', 'inner', 'secret', 'sub'], 'a call took something in the home away');
+  // the biting twin: the same calls where the system does go into the home (a link on the way, a '/', '.' or '..' after
+  // the last link, a path in the home itself), and a call that follows the last link; a 1 MB path read in one pass. A
+  // net with a hole would take the made-up home's files away: rm with a '/' after the link empties it
+  const r = probe(m, `${head}(async () => {
+  const out = {
+    lstatThrough: await did(() => fs.lstatSync(t('via/link/secret'))),
+    lstatThroughPromise: await did(() => fs.promises.lstat(t('via/link/secret'))),
+    readlinkThrough: await did(() => fs.readlinkSync(t('via/link/inner'))),
+    lutimesThrough: await did(() => fs.lutimesSync(t('via/link/inner'), 1000, 2000)),
+    lchownThrough: await did(() => fs.lchownSync(t('via/link/inner'), uid, gid)),
+    unlinkThrough: await did(() => fs.unlinkSync(t('via/link/inner'))),
+    rmdirThrough: await did(() => fs.rmdirSync(t('via/link/sub'))),
+    rmThrough: await did(() => fs.promises.rm(t('via/link/sub'), { recursive: true })),
+    lstatSlash: await did(() => fs.lstatSync(t('l') + '/')),
+    lstatDot: await did(() => fs.lstatSync(t('l') + '/.')),
+    lstatDotDot: await did(() => fs.lstatSync(t('via/link/sub') + '/..')),
+    lstatHome: await did(() => fs.lstatSync(m.home)),
+    unlinkInHome: await did(() => fs.unlinkSync(path.join(m.home, 'inner'))),
+    statFollows: await did(() => fs.statSync(t('l'))),
+    readdirFollows: await did(() => fs.readdirSync(t('l'))),
+    readFileFollows: await did(() => fs.readFileSync(t('fl'))),
+    ${MAC ? "lstatVolume: await did(() => fs.lstatSync('/System/Volumes/Data' + t('via/link/secret')))," : ''}
+    rmSlash: await did(() => fs.rmSync(t('slash') + '/', { recursive: true, force: true })),
+    rmPromiseSlash: await did(() => fs.promises.rm(t('slash') + '/', { recursive: true, force: true })),
+  };
+  const t0 = Date.now();
+  out.longDots = await did(() => fs.lstatSync('/.'.repeat(500000) + path.join(m.home, 'secret')));
+  out.fast = Date.now() - t0 < 2000 ? 'refused' : (Date.now() - t0) + ' ms';
+  report(out);
+})();`);
+  allRefused(r, ['lstatThrough', 'lstatThroughPromise', 'readlinkThrough', 'lutimesThrough', 'lchownThrough', 'unlinkThrough', 'rmdirThrough', 'rmThrough',
+    'lstatSlash', 'lstatDot', 'lstatDotDot', 'lstatHome', 'unlinkInHome', 'statFollows', 'readdirFollows', 'readFileFollows',
+    ...(MAC ? ['lstatVolume'] : []), 'rmSlash', 'rmPromiseSlash', 'longDots', 'fast']);
+  assert.equal(readFileSync(join(m.home, 'secret'), 'utf8'), 'secret\n');
+  assert.deepEqual(readdirSync(m.home).sort(), ['dev', 'inner', 'secret', 'sub'], 'a call took something in the home away');
+});
+
 test('the routes that open files without fs are refused: a Worker thread (its own fs, at any depth, its environment shared or not), process.loadEnvFile, and node:sqlite (a database, a backup, an extension, a file SQL attaches) however it is loaded or its class reached', () => {
   const m = machine('threads');
   writeFileSync(join(m.home, 'mod.cjs'), 'module.exports = 1;\n'); writeFileSync(join(m.home, '.env'), 'WL_FROM_ENV=home\n'); writeFileSync(join(m.tmp, '.env'), 'WL_FROM_ENV=tmp\n');

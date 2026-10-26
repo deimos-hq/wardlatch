@@ -9,10 +9,11 @@
 // and /Users/<name> on macOS or /home/<name> elsewhere) and, under sudo, SUDO_USER's (/Users/<name> or /home/<name>,
 // and its line in /etc/passwd). Inside them, this checkout and the folder of the Node running the tests (nvm and the
 // like keep it there) stay readable.
-// A path is compared as the system reads it: '.', '..' and links followed in order, and on macOS in any case and with
-// the start-up disk's folders also spelt under /System/Volumes/Data or /Volumes/<x>, however many times (read by its
-// text too, where the system would find nothing). Following a link never looks inside a home: a folder off limits is
-// never looked at, but for those on the way to this checkout.
+// A path is compared as the system reads it: '.', '..' and links followed in order (the link it names last too, but
+// for the calls that never follow that one: lstat, readlink, unlink, rmdir, rm, lchown and lutimes), and on macOS in
+// any case and with the start-up disk's folders also spelt under /System/Volumes/Data or /Volumes/<x>, however many
+// times (read by its text too, where the system would find nothing). Following a link never looks inside a home: a
+// folder off limits is never looked at, but for those on the way to this checkout.
 // A look under them by these routes is refused before it is made: a path given to an fs function or stream class, a
 // glob, a require() or an import (of a file, a package name or a '#' name of package.json's imports), a change of
 // folder, a program started in a working folder there, or there, or found through a PATH folder there (not one a shell
@@ -93,6 +94,16 @@ function physical(abs, stop) {
   }
   return out || '/';
 }
+/** Whether the system follows a path to its very end: one whose last part is '', '.' or '..' (a '/' after a link
+ *  follows it). */
+const toEnd = (abs) => { const last = abs.slice(abs.lastIndexOf('/') + 1); return last === '' || last === '.' || last === '..'; };
+/** An absolute path as a call that never follows the link it names last reads it (lstat, unlink, rm...): its folder as
+ *  physical() reads it, then the last name as written; to the end, as physical(), when the system follows it there. */
+function leaf(abs, stop) {
+  if (toEnd(abs)) return physical(abs, stop);
+  const i = abs.lastIndexOf('/'), dir = physical(abs.slice(0, i) || '/', stop);
+  return `${dir === '/' ? '' : dir}/${abs.slice(i + 1)}`;
+}
 
 let me = {};
 try { me = os.userInfo(); } catch { /* no entry in the user database */ }
@@ -124,12 +135,14 @@ const where = (p) => {
 };
 // on macOS a path is also read by its text with the start-up disk's other names taken off before any link is followed
 // ('.', '..' and doubled slashes read as written): a spelling of the home under them is refused even where the system
-// would find nothing (/System/Volumes/Data has no /tmp or /var: those links are the system volume's alone)
-const offLimits = (abs) => {
-  if (shut(key(physical(abs, stop)))) return true;
+// would find nothing (/System/Volumes/Data has no /tmp or /var: those links are the system volume's alone). follow
+// false: a call that never follows the link the path names last (LEAF, below), both readings by leaf()
+const offLimits = (abs, follow = true) => {
+  const read = follow || toEnd(abs) ? physical : leaf;
+  if (shut(key(read(abs, stop)))) return true;
   if (!MAC) return false;
   const n = path.posix.normalize(abs), t = strip(n);
-  return t !== n && shut(key(physical(t, stop)));
+  return t !== n && shut(key(read(t, stop)));
 };
 
 // where a process a test started leaves its note: the test file's own folder, made when it first starts a process (a
@@ -155,7 +168,7 @@ const refuse = (s, what = 'looked in the real home folder', fix = 'give it a hom
   looked = true;
   throw Object.assign(new Error(msg), { code: 'EREALHOME' });
 };
-const check = (p) => { const abs = where(p); if (abs !== null && offLimits(abs)) refuse(abs); };
+const check = (p, follow = true) => { const abs = where(p); if (abs !== null && offLimits(abs, follow)) refuse(abs); };
 
 if (!child) {
   if (process.env.PATH) process.env.PATH = process.env.PATH.split(path.delimiter).filter((d) => !offLimits(where(d || '.'))).join(path.delimiter);
@@ -172,8 +185,9 @@ if (!child) {
 // start-up disk under another name: /System/Volumes/Data, /Volumes), or (following links) a link below it leads into
 // one or to a folder that holds one. Every recursive readdir follows links to folders (Node 20.1 to 26 at least), as a
 // glob does through a fixed part after a wildcard; a recursive opendir, cp, recursive watch and glob are read as
-// following them too (when in doubt, refuse). rm and rmdir never follow a link: only a home below their start counts.
-// The walk reads each folder with fs as it was, never one in a home, and follows each link once.
+// following them too (when in doubt, refuse). rm and rmdir never follow a link, their start included (read by leaf()):
+// only a home below their start counts. The walk reads each folder with fs as it was, never one in a home, and follows
+// each link once.
 const ROOTS = MAC ? ['/system/volumes/data', '/volumes'] : [];
 const holds = (k) => HOMES.some((h) => under(h, k)) || ROOTS.some((r) => under(r, k));
 const reach = (start, follow, what) => {
@@ -207,7 +221,7 @@ const walk = (k, a) => {
   const o = a[k === 'cp' ? 2 : 1];
   if (k !== 'cp' && !(o && typeof o === 'object' && o.recursive)) return;
   const abs = where(a[0]);
-  if (abs !== null) reach(physical(abs, stop), WALKS.get(k), abs);
+  if (abs !== null) reach((LEAF.has(k) ? leaf : physical)(abs, stop), WALKS.get(k), abs);
 };
 
 // a glob looks at its fixed start and walks below it (from '/', with a '..' after a wildcard)
@@ -231,6 +245,12 @@ const NAMES = ['access', 'appendFile', 'chmod', 'chown', 'copyFile', 'cp', 'exis
   'realpath', 'rename', 'rm', 'rmdir', 'stat', 'statfs', 'symlink', 'truncate', 'unlink', 'utimes', 'watch', 'watchFile',
   'writeFile'];
 const TWO = ['copyFile', 'cp', 'link', 'rename'];
+// these never follow a link their path names last (lstat(2), readlink(2), unlink(2), rmdir(2), lchown(2), lutimes(3);
+// rm takes a link away, never what it leads to, and Node's rm, in JavaScript on some Nodes and forms, calls lstat and
+// unlink on each name below its start): their path is read by leaf(). Every other path is read to its end, the
+// calls that don't follow a last link either among them (lchmod, which Node runs by fs.open; rename, link, mkdir, the
+// path a symlink makes): a stricter reading, on the safe side
+const LEAF = new Set(['lchown', 'lstat', 'lutimes', 'readlink', 'rm', 'rmdir', 'unlink']);
 const pointsTo = (to, link) => {
   const s = typeof to === 'string' ? to : to instanceof Uint8Array ? Buffer.from(to.buffer, to.byteOffset, to.byteLength).toString() : where(to);
   const at = where(link);
@@ -240,7 +260,7 @@ const paths = (k, a) => (k === 'symlink' ? [pointsTo(a[0], a[1]), a[1]] : TWO.in
 const wrap = (o, k) => Object.assign(function (...a) {
   if (k === 'glob') checkGlob(a[0], a[1]);
   else {
-    for (const p of paths(k, a)) check(p);
+    for (const p of paths(k, a)) check(p, !LEAF.has(k));
     if (WALKS.has(k)) walk(k, a);
   }
   return o.apply(this, a);

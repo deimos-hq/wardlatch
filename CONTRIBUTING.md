@@ -79,12 +79,13 @@ whole), a Node started with `--env-file`, `--env-file-if-exists`,
 that can reach one: a recursive listing, copy, watch or `rm` of a folder that holds it, or a recursive listing, copy,
 watch or glob below which a link leads into it. In the test it throws; in a process or Worker the test started it stops
 that process or thread (exit 70) and leaves a note that fails the test file even when nothing reads that exit code. A
-path is compared as the system reads it (links and `..` followed; on macOS in any case, and also by its text with any
-`/System/Volumes/Data` or `/Volumes/<x>` at its start taken off, so such a spelling is refused even where it names
-nothing), and under sudo SUDO_USER's home is off limits too. The `PATH` the tests start with loses its folders there.
-`test/no-real-home.test.mjs` tries each of these routes on a made-up home, and checks that each wrapped fs function
-still does its work outside it. A test that needs a home builds one in its own temporary folder;
-`test/support/fake-home.cjs` makes one appear at `/Users/<name>` (or `/home/<name>`).
+path is compared as the system reads it (links and `..` followed, the link a path names last too but for `lstat`,
+`readlink`, `unlink`, `rmdir`, `rm`, `lchown` and `lutimes`, which never follow that one; on macOS in any case, and
+also by its text with any `/System/Volumes/Data` or `/Volumes/<x>` at its start taken off, so such a spelling is
+refused even where it names nothing), and under sudo SUDO_USER's home is off limits too. The `PATH` the tests start
+with loses its folders there. `test/no-real-home.test.mjs` tries each of these routes on a made-up home, and checks
+that each wrapped fs function still does its work outside it. A test that needs a home builds one in its own temporary
+folder; `test/support/fake-home.cjs` makes one appear at `/Users/<name>` (or `/home/<name>`).
 
 Routes the net is known not to watch, said plainly. The list is not complete: a route named in neither list may be
 unwatched too. A test must not reach a home by any of them; the net won't notice.

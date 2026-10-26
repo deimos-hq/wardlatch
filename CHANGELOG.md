@@ -349,10 +349,11 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   into it). It goes with every Node process a test starts through `child_process`, and those they start in turn, and
   with each Worker thread they start with `worker_threads.Worker`; a refusal in a process the test started fails the
   test file even when nothing reads that process's exit code. A package in the checkout's own `node_modules` loads by
-  name. Paths are compared as the system reads them (links and `..` followed, and on macOS in any case and under the
-  start-up disk's other names, by their text too), and under sudo SUDO_USER's home is off limits too. It drops the
-  home's folders from the `PATH` the tests start with. The sudo test and the two tests of macOS's own Library build a
-  `/Users/<name>` home of their own (`test/support/fake-home.cjs`); `test/cli.test.mjs` gives the command an empty
+  name. Paths are compared as the system reads them (links and `..` followed, but the link a path names last for
+  `lstat`, `readlink`, `unlink`, `rmdir`, `rm`, `lchown` and `lutimes`, which never follow it, and on macOS in any case
+  and under the start-up disk's other names, by their text too), and under sudo SUDO_USER's home is off limits too. It
+  drops the home's folders from the `PATH` the tests start with. The sudo test and the two tests of macOS's own Library
+  build a `/Users/<name>` home of their own (`test/support/fake-home.cjs`); `test/cli.test.mjs` gives the command an empty
   HOME of its own, and the version test gives the go check one. `test/no-real-home.test.mjs` tries each route the net
   watches on a made-up home; as another Node binary it runs a hard link, or a copy, of the one running the tests, with
   the other folders of that one's install linked beside it unless they are in a home (Homebrew's Node loads its
