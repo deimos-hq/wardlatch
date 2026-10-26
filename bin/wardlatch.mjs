@@ -426,8 +426,8 @@ for (const inc of chosen) {
     const denied = [...lockedRoots];
     for (const repo of reposUnder(searchable, 4, denied)) {
       const added = workflowsAddedSince(repo, inc.since);
-      // read, but the window isn't all here or a commit's time can't be read (a shallow clone cut inside the window, a
-      // committer time that isn't a whole number): UNKNOWN with that reason, not as a repository git couldn't read
+      // read, but the window isn't all here or a commit's time can't be read (a shallow repository, wherever it is cut;
+      // a committer time that isn't a whole number): UNKNOWN with that reason, not as a repository git couldn't read
       if (added.own) { results.push({ incident: inc.id, kind: 'workflow', status: 'UNKNOWN', repo, reason: added.error }); print('UNKNOWN', short(repo)); note('33', added.error); continue; }
       if (added.error) { unread('workflow', repo, added.error); continue; }
       repos++;
