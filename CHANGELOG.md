@@ -70,18 +70,24 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   - Still not covered: a workflow whose own commit is dated before 30 Aug 2026 isn't listed, because whoever makes a
     commit sets its date (ASSURANCE_CASE.md, section 4).
   - **What to do:** if 0.1.0 to 0.1.9 said SAFE for `github-actions-2026-10`, run a release with this fix again, or
-    paste this line in each repository. It has no date in it (given one, git stops reading a branch at the first
-    commit dated before it) and reads what the review reads, in one command:
-    `TZ=UTC git --no-replace-objects -c core.commitGraph=false log --all --full-history --root --no-renames --diff-merges=combined --diff-filter=A --name-only --no-show-signature --date=iso-strict-local --format='%h %cd %an' -- .github/workflows`
+    paste this line in each repository, in a POSIX shell such as bash or zsh (it doesn't run as pasted in PowerShell
+    or cmd). It has no date in it (given one, git stops reading a branch at the first commit dated before it) and
+    reads what the review reads, in one command:
+    `TZ=UTC GIT_NO_LAZY_FETCH=1 GIT_ALLOW_PROTOCOL=none git --no-pager --no-replace-objects -c core.commitGraph=false log --all --full-history --root --no-renames --diff-merges=combined --diff-filter=A --name-only --no-show-signature --date=iso-strict-local --format='%h %cd %an' -- .github/workflows`
     It lists every workflow file that any commit of any branch, tag or other ref added, each under its commit's hash,
     committer date in UTC and author, whatever the date: check the dates yourself, and anything dated 2026-08-30 or
-    later (UTC) is in the window. As in the review, a replace ref doesn't put another commit in a commit's place, a
-    commit-graph file isn't used, a side branch a merge brings in is read, a root commit's files are listed whatever
-    `log.showRoot` says, a workflow that only a merge commit adds is listed, one renamed into or within
-    `.github/workflows` is listed as added, and no signature is checked (a repository's own config can name the
-    program that checks one). Two things the line can't get past: a `.git/info/grafts` file makes it unreliable (git
-    follows the file, and no git option turns that off; the review doesn't read it), and in a shallow clone what is
-    below the cut isn't there to list (run `git fetch --unshallow` first).
+    later (UTC) is in the window. A commit shown with no date (two spaces after its hash) has a committer date git
+    can't read: the review reads that repository UNKNOWN, so count it as in the window. As in the review, a replace
+    ref doesn't put another commit in a commit's place, a commit-graph file isn't used, a side branch a merge brings
+    in is read, a root commit's files are listed whatever `log.showRoot` says, a workflow that only a merge commit
+    adds is listed, one renamed into or within `.github/workflows` is listed as added, and nothing a repository's own
+    config names is run: no signature is checked (the config can name the program that checks one), no pager is
+    started (`core.pager`, `pager.log`), and nothing is fetched (in a partial clone, a fetch runs what the config
+    names for the remote: `GIT_NO_LAZY_FETCH=1` stops it, and `GIT_ALLOW_PROTOCOL=none` refuses every transport for a
+    git too old to know that; a partial clone without a tree the line needs stops with an error, where the review
+    reads UNKNOWN). Two things the line can't get past: a `.git/info/grafts` file makes it unreliable (git follows the
+    file, and no git option turns that off; the review doesn't read it), and in a shallow clone what is below the cut
+    isn't there to list (run `git fetch --unshallow` first).
   - Tests (`test/workflows.test.mjs`), each with a clean twin a second before the window or without the trick:
     workflows committed just inside the window (00:00:01 UTC on 30 Aug, 05:00 on 31 Aug at UTC+8, 09:00 UTC on 1 Sep,
     and the advisory's own file names, `github_actions_security.yml` and `security-audit.yml`, on 31 Aug) are listed
@@ -102,13 +108,18 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     do" line above, found in this file wherever it is (a release moves it under its version's heading, and none or
     two fails) and run as written, must list every workflow the review lists, at the same commit and UTC date, in
     repositories with a replace ref, a crafted commit-graph file, a workflow only a merge commit adds, a root commit
-    under `log.showRoot=false`, renames, a commit at the start's own second from UTC-7, a workflow only on a branch
-    that isn't checked out, a side branch that added and removed one, and a signed commit under a config that names
-    a `gpg.program` (which must not run); with a grafts file it must list them only before the window, as the line's
-    own warning says. Its clean twin: a workflow committed a second before the window from UTC-7 isn't in the review,
-    and the line shows it dated 2026-08-29T23:59:59Z, which a reader can tell is outside it. The line an earlier cut
-    of this entry gave fails that test, and so does this one with any one of its options left out but
-    `--diff-filter=A` (without which it lists more).
+    under `log.showRoot=false`, renames, a commit at the start's own second from UTC-7, one authored before the window
+    and committed inside it, a workflow only on a branch that isn't checked out, a side branch that added and removed
+    one, a signed commit under a config that names a `gpg.program` (which must not run), and a blobless partial clone
+    whose remote is gone (nothing fetched); in a treeless one it must stop with an error, with nothing fetched; with a
+    grafts file it must list them only before the window, as the line's own warning says; and for a commit whose
+    committer date git can't read it must show no date. A git that writes down what it gets must get `--no-pager`,
+    `GIT_NO_LAZY_FETCH=1` and `GIT_ALLOW_PROTOCOL=none` from it (no run through a pipe can see the pager, and on git
+    2.54 either setting alone stops the fetch). Its clean twins: a workflow committed a second before the window from
+    UTC-7, and one authored inside the window but committed a second before it, aren't in the review, and the line
+    shows each dated 2026-08-29T23:59:59Z, which a reader can tell is outside it. The line an earlier cut of this
+    entry gave fails that test, and so does this one with any one of its options left out but `--diff-filter=A`
+    (without which it lists more).
   - Run on older code with this CHANGELOG, 23 of the 24 tests in `test/workflows.test.mjs` fail on 0.1.9's code (the
     24th reads only this file), 17 on this fix's first cut, which still gave git the start (44bb10f), and 10 on its
     second (865d0d1, the code at 3dbf26b: shallow repositories, the UTC date a line shows, the git calls made, and the
@@ -116,7 +127,7 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     the start's own second left out; the start's form not checked; no shallow check; a cut dated before the start
     taken as the window all there; git's answer or the shallow file alone taken as the sign; any committer time
     accepted; replace refs, grafts or a commit-graph file followed; one walk instead of two calls; the date in the
-    commit's own zone; the hand check looked for only under `[Unreleased]`.
+    commit's own zone; the hand check looked for only under `[Unreleased]`, or showing the author date.
 
 ### Changed
 
