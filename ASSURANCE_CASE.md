@@ -337,18 +337,19 @@ one run with no `TZ` set; a workflow a second before the window must read SAFE. 
 workflows, and on a merged and deleted side branch must hide nothing; a workflow added and removed on a side branch
 must be listed; a replace ref and a grafts file (cutting the history, or re-parenting the commit) must hide nothing; a
 shallow repository must read UNKNOWN wherever it is cut (inside the window or before it, at a back-dated tip, or by a
-shallow file written into a full repository, empty or not, even under a git that says the repository isn't shallow),
-and so must one whose shallow file can't be read, while the same history cloned whole is read; partial clones whose
-remote is gone must be read with nothing fetched (a treeless one with commits in the window is UNKNOWN); a commit
-whose date git can't read, a git that prints a committer time that isn't a plain whole number, and a bare-date start
-must read UNKNOWN; a git that writes down its arguments must get no `--since`, `--after`, `--until`, `--before`,
-`--max-age`, `--min-age` or `--since-as-filter`; and the CHANGELOG's hand check, read from the file and run as written,
-must list every workflow the review lists, at the same commit and UTC date, in repositories with a replace ref, a
-crafted commit-graph file, a merge-only workflow, a root commit under `log.showRoot=false`, renames, a commit at the
-start's own second from UTC-7, a workflow only on a branch not checked out, a side branch that added and removed one,
-and a signed commit whose repository names a `gpg.program` (which must not run), and with a grafts file must list
-them only before the window, as its warning says. Each has a clean twin (for the hand check, a workflow committed a
-second before the window from UTC-7, which the review doesn't list and the line shows dated 2026-08-29T23:59:59Z).
+shallow file written into a full repository, empty or not, even under a git that says the repository isn't shallow,
+or says it is with no shallow file), and so must one whose shallow file can't be read, while the same history cloned
+whole is read; partial clones whose remote is gone must be read with nothing fetched (a treeless one with commits in
+the window is UNKNOWN); a commit whose date git can't read, a git that prints a committer time that isn't a plain
+whole number, and a start that isn't an explicit UTC instant must read UNKNOWN; a git that writes down its arguments
+must get no `--since`, `--after`, `--until`, `--before`, `--max-age`, `--min-age` or `--since-as-filter`; and the
+CHANGELOG's hand check, found in the file wherever a release puts it (exactly one) and run as written, must list every
+workflow the review lists, at the same commit and UTC date, in repositories with a replace ref, a crafted commit-graph
+file, a merge-only workflow, a root commit under `log.showRoot=false`, renames, a commit at the start's own second
+from UTC-7, a workflow only on a branch not checked out, a side branch that added and removed one, and a signed commit
+whose repository names a `gpg.program` (which must not run), and with a grafts file must list them only before the
+window, as its warning says. Each has a clean twin (for the hand check, a workflow committed a second before the
+window from UTC-7, which the review doesn't list and the line shows dated 2026-08-29T23:59:59Z).
 `test/incidents.test.mjs` holds the start of every incident's window (`since`, `addedSince`) to an explicit UTC
 instant.
 

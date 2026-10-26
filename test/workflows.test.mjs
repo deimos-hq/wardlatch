@@ -1,19 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Deimos AI LLC
 // The workflow review's window, end to end. 0.1.0 to 0.1.9 gave git the bare date "2026-09-01", which git reads as
-// 1 Sep at the current time of day in the zone it runs in (the caller's TZ, which 0.1.0 to 0.1.8 passed to git; the
-// machine's zone in 0.1.9, which dropped it): a workflow committed on 31 Aug, or on 1 Sep before the hour the check
-// ran, read SAFE. And whatever start git got, `git log --since` stops following a line of history at the first commit
-// dated before it: one back-dated commit on top hid every workflow beneath it (0.1.0 to 0.1.9, and 44bb10f and 6cac72b
-// on this branch). git now gets no date at all: it lists every commit with its committer time (%ct), the review keeps
-// those on or after 30 Aug 2026 00:00 UTC by comparing whole numbers, and git lists the workflow files those commits
-// added. These tests: workflows just inside the window (in two zones, and at the start's own second, made at UTC-7,
-// whose review line must show the date in UTC), the advisory's file names, clean twins a second before it, back-dated
-// commits on top, in between and on a merged side branch, a workflow added and removed on a side branch, a replace ref
-// and a grafts file that would hide a workflow, shallow repositories (UNKNOWN wherever the cut is: inside the window,
-// before it, at a back-dated tip, or a shallow file written into a full repository), partial clones whose remote is
-// gone, committer times that aren't whole numbers, a start that isn't an explicit instant, a git that must get no date
-// at all, and the CHANGELOG's hand check, run as written, against the review.
+// 1 Sep at the current time of day in the zone it runs in (up to 0.1.8 the zone of the TZ Wardlatch was started with,
+// the machine's when TZ was unset, which git got with the rest of the caller's environment; in 0.1.9, which gives git
+// no TZ, the machine's): a workflow committed on 31 Aug, or on 1 Sep before the hour the check ran, read SAFE. And
+// whatever start git got, `git log --since` stops following a line of history at the first commit dated before it: one
+// back-dated commit on top hid every workflow beneath it (0.1.0 to 0.1.9, and 44bb10f and 6cac72b on this branch). git
+// now gets no date at all: it lists every commit with its committer time (%ct), the review keeps those on or after
+// 30 Aug 2026 00:00 UTC by comparing whole numbers, and git lists the workflow files those commits added. These
+// tests: workflows just inside the window (in two zones, and at the start's own second, made at UTC-7, whose review
+// line must show the date in UTC), the advisory's file names, clean twins a second before it, back-dated commits on
+// top, in between and on a merged side branch, a workflow added and removed on a side branch, a replace ref and a
+// grafts file that would hide a workflow, shallow repositories (UNKNOWN wherever the cut is: inside the window, before
+// it, at a back-dated tip, or a shallow file written into a full repository), partial clones whose remote is gone,
+// committer times that aren't whole numbers, a start that isn't an explicit instant, a git that must get no date at
+// all, and the CHANGELOG's hand check, found wherever a release puts it and run as written, against the review.
 import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -331,16 +332,18 @@ test('workflows: a shallow file written into a full repository is UNKNOWN, empty
   assert.deepEqual(rows(dirname(app)), [[['REVIEW', WF]], 0]);
 });
 
-test('workflows: a git that says a repository isn\'t shallow while its shallow file names a commit is UNKNOWN, and so is one that doesn\'t answer; passing git\'s answer through, listed', () => {
+test('workflows: a git that says a repository isn\'t shallow while its shallow file names a commit is UNKNOWN, so is one that says it is with no shallow file, and one that doesn\'t answer; passing git\'s answer through, listed', () => {
   // either sign is enough: git's answer (rev-parse --is-shallow-repository) or a shallow file that isn't empty
   const app = repo(join(dir, 'says', 'app'), [{ files: { [WF]: 'on: push\n' }, date: '2026-09-05T00:00:00Z' }, { files: { 'a.txt': 'a\n' }, date: BACK }]);
   const top = gitIn(app)(['rev-parse', 'HEAD']), file = join(app, '.git', 'shallow');
   const stub = (name, sed) => `${wrap(name, `for a in "$@"; do case "$a" in --is-shallow-repository) "${REAL}" "$@" | sed '${sed}'; exit;; esac; done\n`)}:/usr/bin:/bin`;
-  const no = stub('git-says-no', '1s/^true$/false/'), dumb = stub('git-says-maybe', '1s/^.*$/maybe/'), same = stub('git-says-same', 's/^//');
+  const no = stub('git-says-no', '1s/^true$/false/'), yes = stub('git-says-yes', '1s/^false$/true/'), dumb = stub('git-says-maybe', '1s/^.*$/maybe/'), same = stub('git-says-same', 's/^//');
   const as = (root, PATH) => { const r = run(root, { PATH }); return [r.rows.map((x) => [x.status, x.reason ?? x.file]), r.code]; };
   writeFileSync(file, `${top}\n`);
   assert.deepEqual(as(dirname(app), no), [[['UNKNOWN', cutText(`${top.slice(0, 12)}, dated 1 Jan 2025 00:00 UTC`)]], 2]);
   rmSync(file);
+  // git's answer alone, with no shallow file to name a cut (a git that disagrees with its own --git-path)
+  assert.deepEqual(as(dirname(app), yes), [[['UNKNOWN', cutText()]], 2]);
   assert.deepEqual(as(dirname(app), dumb), [[['UNKNOWN', 'git didn\'t say whether its history is cut (git rev-parse gave "maybe\\n.git/shallow\\n"), so whether its history is all here is not known']], 2]);
   // clean twins: the same gits in the same repository without the shallow file
   assert.deepEqual(as(dirname(app), no), [[['REVIEW', WF]], 0]);
@@ -428,7 +431,9 @@ test('workflows: a committer time past what a date can hold is listed, its date 
 
 test('workflows: a start that is not an explicit UTC instant is UNKNOWN, never SAFE', () => {
   const root = join(dir, 'bare'), app = repo(join(root, 'app'), [{ files: { [WF]: 'on: push\n' }, date: '2026-09-15T12:00:00Z' }]);
-  for (const since of ['2026-09-01', '2026-08-30 00:00:00', '2026-08-30T00:00:00', '2026-08-30T00:00:00+00:00', '2026-08-30T00:00:00.000Z', '2026-02-30T00:00:00Z', '2026-08-30T24:00:00Z', '', undefined, START]) {
+  // the extended years round-trip through Date as they are written, so only the form's own check refuses them
+  for (const since of ['2026-09-01', '2026-08-30 00:00:00', '2026-08-30T00:00:00', '2026-08-30T00:00:00+00:00', '2026-08-30T00:00:00.000Z', '2026-02-30T00:00:00Z', '2026-08-30T24:00:00Z',
+    '+010000-01-01T00:00:00Z', '+275760-09-13T00:00:00Z', '-000001-01-01T00:00:00Z', '', undefined, START]) {
     const got = workflows.workflowsAddedSince(app, since);
     assert.ok(!Array.isArray(got) && got.error, `${JSON.stringify(since)}: ${JSON.stringify(got)}`);
   }
@@ -474,15 +479,16 @@ test('workflows: the window\'s start is its instant in seconds, named in UTC', (
   assert.equal(workflows.windowStart('2026-08-30T10:00:05Z').label, '30 Aug 2026 10:00:05 UTC');
 });
 
-/** The CHANGELOG's hand check for this review: the one command in backticks in its [Unreleased] section that runs
- *  `git ... log ... -- .github/workflows` → { line, bullet } (the list item that gives it). */
-const handCheck = () => {
-  const text = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
-  const from = text.indexOf('## [Unreleased]'), section = text.slice(from, text.indexOf('\n## [', from + 1));
-  const found = [...section.matchAll(/`([^`\n]*\bgit\b[^`\n]* log [^`\n]*-- \.github\/workflows)`/g)];
-  assert.equal(found.length, 1, `one hand check in the CHANGELOG's [Unreleased] section: ${JSON.stringify(found.map((m) => m[1]))}`);
-  const end = section.indexOf('\n  - ', found[0].index);
-  return { line: found[0][1], bullet: section.slice(section.lastIndexOf('\n  - ', found[0].index), end < 0 ? undefined : end) };
+const CHANGELOG = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
+/** The CHANGELOG's hand check for this review: the one command in backticks, anywhere in `text` (the CHANGELOG), that
+ *  runs `git ... log ... -- .github/workflows` → { line, bullet } (the list item that gives it, up to the next item or
+ *  heading). Anywhere, not by its section's name: a release moves the [Unreleased] entries under "## [X.Y.Z] - date"
+ *  (docs/RELEASING.md), and an earlier cut of this test, which looked only in [Unreleased], failed there. */
+const handCheck = (text = CHANGELOG) => {
+  const found = [...text.matchAll(/`([^`\n]*\bgit\b[^`\n]* log [^`\n]*-- \.github\/workflows)`/g)];
+  assert.equal(found.length, 1, `one hand check in the CHANGELOG: ${JSON.stringify(found.map((m) => m[1]))}`);
+  const at = found[0].index, ends = ['\n- ', '\n  - ', '\n#'].map((s) => text.indexOf(s, at)).filter((i) => i >= 0);
+  return { line: found[0][1], bullet: text.slice(Math.max(text.lastIndexOf('\n- ', at), text.lastIndexOf('\n  - ', at)), ends.length ? Math.min(...ends) : undefined) };
 };
 
 /** The hand check run as a person runs it: pasted into a shell (/bin/sh), in the repository, with their own
@@ -513,6 +519,21 @@ const craftGraph = (path, commit) => {
   buf.writeUInt32BE(0x70000000, chunk('CDAT') + i * (hashLen + 16) + hashLen);
   rmSync(file); writeFileSync(file, buf);
 };
+
+test('workflows: the CHANGELOG\'s hand check is found wherever a release puts it; none, or two, is an error', () => {
+  // docs/RELEASING.md: move "Unreleased" under "## [X.Y.Z] - YYYY-MM-DD". v0.1.8 and v0.1.9 kept an empty [Unreleased]
+  // above the new section; the release workflow runs these tests on the commit that does it. Both layouts, made from
+  // the heading the line is under now, whatever it is: an empty [Unreleased] above a version's heading, or the
+  // heading renamed in place.
+  const here = handCheck(), head = CHANGELOG.lastIndexOf('\n## [', CHANGELOG.indexOf(`\`${here.line}\``));
+  assert.ok(head >= 0, 'the fixture: the line is under a "## [" heading');
+  const [above, below] = [CHANGELOG.slice(0, head), CHANGELOG.slice(CHANGELOG.indexOf('\n', head + 1))];
+  const released = `${above}\n## [Unreleased]\n\n## [9.9.9] - 2026-10-26${below}`, renamed = `${above}\n## [9.9.9] - 2026-10-26${below}`;
+  for (const text of [released, renamed]) assert.deepEqual(handCheck(text), here);
+  // none, or a second one a reader could paste instead, fails the test rather than leaving a line untested
+  assert.throws(() => handCheck(CHANGELOG.replace(`\`${here.line}\``, '')), /one hand check in the CHANGELOG: \[\]/);
+  assert.throws(() => handCheck(`${released}\n  - \`${here.line.replace('--all', '--branches')}\`\n`), /one hand check in the CHANGELOG: \[".*",".*"\]/);
+});
 
 test('workflows: the CHANGELOG\'s hand check, run as written, lists every workflow the review lists, at the same commit and UTC date', () => {
   // So the documented command can't drift from what lib/workflows.mjs runs. The line 3dbf26b gave listed nothing for a

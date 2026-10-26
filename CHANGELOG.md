@@ -91,27 +91,32 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     workflow added and removed on a side branch is listed; a replace ref and a grafts file (cutting the history, or
     re-parenting the commit) hide nothing; a shallow repository is UNKNOWN wherever it is cut (inside the window or
     before it, at a back-dated tip over a workflow committed on 5 Sep, or by a shallow file written into a full
-    repository, empty or not, even under a git that says the repository isn't shallow), and so is one whose shallow
-    file can't be read, while the same history cloned whole is read; partial clones whose remote is gone are read
-    with nothing fetched (blobless: listed; treeless: UNKNOWN with commits in the window, SAFE without); a commit whose
-    committer date git can't read, and a git that prints a committer time that isn't a plain whole number (empty, `x`,
-    `-5`, `1.5`, `+1790000000`, ...), are UNKNOWN; a committer time past what a date can hold is listed; a bare-date
-    start is UNKNOWN; a git that writes down its arguments gets no `--since`, `--after`, `--until`, `--before`,
-    `--max-age`, `--min-age` or `--since-as-filter`. The tests up to here fail on 0.1.9's code, ten on this fix's first
-    cut, which still gave git the start, and the shallow and UTC-date ones on a later cut; each planted bug (the
-    start given to git, as `--since` or `--since-as-filter`; the start's own second left out; no shallow check; a cut
-    dated before the start taken as the window all there; git's answer or the shallow file alone taken as the sign;
-    any committer time accepted; replace refs, grafts or a commit-graph file followed; one walk instead of two calls;
-    the date in the commit's own zone) fails at least one. And the "What to do" line above, read from this file and
-    run as written, must list every workflow the review lists, at the same commit and UTC date, in repositories with a
-    replace ref, a crafted commit-graph file, a workflow only a merge commit adds, a root commit under
-    `log.showRoot=false`, renames, a commit at the start's own second from UTC-7, a workflow only on a branch that
-    isn't checked out, a side branch that added and removed one, and a signed commit under a config that names a
-    `gpg.program` (which must not run); with a grafts file it must list them only before the window, as the line's own
-    warning says. Its clean twin: a workflow committed a second before the window from UTC-7 isn't in the review, and
-    the line shows it dated 2026-08-29T23:59:59Z, which a reader can tell is outside it. The line an earlier cut of
-    this entry gave fails that test, and so does this one with any one of its options left out but `--diff-filter=A`
-    (without which it lists more).
+    repository, empty or not, even under a git that says the repository isn't shallow, or says it is with no shallow
+    file), and so is one whose shallow file can't be read, while the same history cloned whole is read; partial
+    clones whose remote is gone are read with nothing fetched (blobless: listed; treeless: UNKNOWN with commits in the
+    window, SAFE without); a commit whose committer date git can't read, and a git that prints a committer time that
+    isn't a plain whole number (empty, `x`, `-5`, `1.5`, `+1790000000`, ...), are UNKNOWN; a committer time past what
+    a date can hold is listed; a start that isn't an explicit UTC instant (a bare date, another form, a day or hour
+    that doesn't exist, a year past 9999 or before 0) is UNKNOWN; a git that writes down its arguments gets no
+    `--since`, `--after`, `--until`, `--before`, `--max-age`, `--min-age` or `--since-as-filter`. And the "What to
+    do" line above, found in this file wherever it is (a release moves it under its version's heading, and none or
+    two fails) and run as written, must list every workflow the review lists, at the same commit and UTC date, in
+    repositories with a replace ref, a crafted commit-graph file, a workflow only a merge commit adds, a root commit
+    under `log.showRoot=false`, renames, a commit at the start's own second from UTC-7, a workflow only on a branch
+    that isn't checked out, a side branch that added and removed one, and a signed commit under a config that names
+    a `gpg.program` (which must not run); with a grafts file it must list them only before the window, as the line's
+    own warning says. Its clean twin: a workflow committed a second before the window from UTC-7 isn't in the review,
+    and the line shows it dated 2026-08-29T23:59:59Z, which a reader can tell is outside it. The line an earlier cut
+    of this entry gave fails that test, and so does this one with any one of its options left out but
+    `--diff-filter=A` (without which it lists more).
+  - Run on older code with this CHANGELOG, 23 of the 24 tests in `test/workflows.test.mjs` fail on 0.1.9's code (the
+    24th reads only this file), 17 on this fix's first cut, which still gave git the start (44bb10f), and 10 on its
+    second (865d0d1, the code at 3dbf26b: shallow repositories, the UTC date a line shows, the git calls made, and the
+    hand check). Each planted bug fails at least one: the start given to git, as `--since` or `--since-as-filter`;
+    the start's own second left out; the start's form not checked; no shallow check; a cut dated before the start
+    taken as the window all there; git's answer or the shallow file alone taken as the sign; any committer time
+    accepted; replace refs, grafts or a commit-graph file followed; one walk instead of two calls; the date in the
+    commit's own zone; the hand check looked for only under `[Unreleased]`.
 
 ### Changed
 
