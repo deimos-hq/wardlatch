@@ -304,8 +304,11 @@ committer time compared. git reads each commit with its own parents: replace ref
 another (`GIT_NO_REPLACE_OBJECTS=1`; a ref under `refs/replace/` is still read as an ordinary tip, so the commit it
 points to is read as one more commit, which can add a workflow to the list but never hide one), no grafts file is read
 (`GIT_GRAFT_FILE=/dev/null`), no commit-graph file is used (`core.commitGraph=false`), and nothing is fetched.
-**Known limit: a workflow whose own commit is dated before 30 Aug 2026 isn't listed, because whoever makes a commit
-sets its date.** For the same reason a shallow repository is UNKNOWN wherever its history is cut ("its history is cut
+Each commit in the window that added a workflow file gets its own line, newest first: a file added, deleted and added
+again is listed at every commit that added it (up to 3cff5c5 it was listed once, at the earliest, so a later re-add
+by someone else wasn't shown). **Known limit: a change to a workflow file that already existed isn't listed; the check
+lists added files, as the campaign added them.** **Known limit: a workflow whose own commit is dated before 30 Aug 2026
+isn't listed, because whoever makes a commit sets its date.** For the same reason a shallow repository is UNKNOWN wherever its history is cut ("its history is cut
 (a shallow repository; the newest cut is commit …, dated …), so workflows added below the cut can't be seen: run git
 fetch --unshallow, then run again"), whether `git rev-parse --is-shallow-repository` says `true` or the shallow file
 git reads is there and not empty: the cut commit's date is no sign that the window is all there, since a `--depth 1`
@@ -354,6 +357,10 @@ read it must show no date; and git must get `--no-pager`, `GIT_NO_LAZY_FETCH=1` 
 Each has a clean twin (for the hand check, a workflow committed a second before the window from UTC-7, and one
 authored inside the window but committed a second before it, which the review doesn't list and the line shows dated
 2026-08-29T23:59:59Z).
+A workflow file added, deleted and added again inside the window must be listed at both commits, newest first, by the
+review and by the line (twins: two files each added once, one line each; a file added before the window and again
+inside it, listed only at the commit inside it); a file only changed inside the window must read SAFE, and this
+document, the CHANGELOG and the README must state that limit.
 `test/incidents.test.mjs` holds the start of every incident's window (`since`, `addedSince`) to an explicit UTC
 instant.
 

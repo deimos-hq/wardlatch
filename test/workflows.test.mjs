@@ -223,6 +223,59 @@ test('workflows: a workflow added on a side branch and removed again before the 
   assert.deepEqual(safe(twin), [[['SAFE', SAFE_TEXT]], 0]);
 });
 
+// One line per (file, commit that added it), newest first. Up to 3cff5c5 the review kept one commit per file (the
+// earliest in the window): a workflow file added, deleted and added again with other contents (Alice adds ci.yml on
+// 5 Sep and deletes it; Mallory adds ci.yml again on 8 Oct) was listed once, under Alice's commit, and Mallory's
+// wasn't shown.
+/** The rows as [status, file, whether the line's short hash is the start of `hashes[i]`, date shown]. */
+const adds = (r, hashes) => r.rows.map((x, i) => [x.status, x.file, Boolean(x.commit && hashes[i]?.startsWith(x.commit.split(' ')[0])), x.commit?.split(' ')[1]]);
+
+test('workflows: a workflow file added, deleted and added again inside the window is listed at both commits, newest first', () => {
+  const root = join(dir, 'readd'), p = repo(join(root, 'app'), []), ci = '.github/workflows/ci.yml';
+  const alice = commit(p, { [ci]: 'on: push\n# alice\n' }, '2026-09-05T10:00:00Z');
+  commit(p, { [ci]: null }, '2026-09-06T10:00:00Z');
+  const mallory = commit(p, { [ci]: 'on: push\n# mallory\n' }, '2026-10-08T10:00:00Z');
+  const r = run(root);
+  assert.deepEqual(adds(r, [mallory, alice]), [['REVIEW', ci, true, '2026-10-08'], ['REVIEW', ci, true, '2026-09-05']], r.out);
+  assert.equal(r.code, 0, 'review lines don\'t change the exit code');
+  const text = run(root, {}, { text: true }).out.split('\n').filter((l) => l.startsWith('REVIEW'));
+  assert.equal(text.length, 2, `two REVIEW lines: ${text.join('\n')}`);
+  assert.match(text[0], new RegExp(`ci\\.yml.*added ${mallory.slice(0, 7)}\\w* 2026-10-08`)); assert.match(text[1], new RegExp(`ci\\.yml.*added ${alice.slice(0, 7)}\\w* 2026-09-05`));
+});
+
+test('workflows: clean twin, two different workflow files each added once: one line each, newest first', () => {
+  const root = join(dir, 'two-files');
+  repo(join(root, 'app'), [{ files: { '.github/workflows/a.yml': 'on: push\n' }, date: '2026-09-05T10:00:00Z' },
+    { files: { '.github/workflows/b.yml': 'on: push\n' }, date: '2026-10-08T10:00:00Z' }]);
+  const r = run(root);
+  assert.deepEqual(r.rows.map((x) => [x.status, x.file, x.commit?.split(' ')[1]]), [['REVIEW', '.github/workflows/b.yml', '2026-10-08'], ['REVIEW', '.github/workflows/a.yml', '2026-09-05']], r.out);
+});
+
+test('workflows: clean twin, added before the window, deleted, and added again inside it: only the commit inside the window is listed', () => {
+  const root = join(dir, 'readd-edge'), p = repo(join(root, 'app'), []), ci = '.github/workflows/ci.yml';
+  commit(p, { [ci]: 'on: push\n# old\n' }, '2026-08-01T10:00:00Z');
+  commit(p, { [ci]: null }, '2026-08-02T10:00:00Z');
+  const inside = commit(p, { [ci]: 'on: push\n# new\n' }, '2026-10-08T10:00:00Z');
+  const r = run(root);
+  assert.deepEqual(adds(r, [inside]), [['REVIEW', ci, true, '2026-10-08']], r.out);
+});
+
+// The documented scope limit (decision #28, 26 Oct 2026): the review lists files a commit added, as the campaign added
+// them; a change to a workflow file that was already there isn't listed.
+const LIMIT = 'a change to a workflow file that already existed isn\'t listed; the check lists added files, as the campaign added them';
+test('workflows: a workflow file only changed inside the window is SAFE, and the CHANGELOG, ASSURANCE_CASE and README say so', () => {
+  const root = join(dir, 'modified');
+  repo(join(root, 'app'), [{ files: { '.github/workflows/ci.yml': 'on: push\n' }, date: '2026-08-01T10:00:00Z' },
+    { files: { '.github/workflows/ci.yml': 'on: push\n# changed\n' }, date: '2026-10-08T10:00:00Z' }]);
+  assert.deepEqual(safe(root), [[['SAFE', SAFE_TEXT]], 0]);
+  const log = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
+  const entry = log.slice(log.indexOf('## [0.1.10]'), log.indexOf('## [0.1.9]'));
+  assert.ok(entry.length > 100, 'the CHANGELOG has a [0.1.10] entry');
+  for (const [name, text] of [['CHANGELOG.md [0.1.10]', entry], ['ASSURANCE_CASE.md', readFileSync(join(ROOT, 'ASSURANCE_CASE.md'), 'utf8')], ['README.md', readFileSync(join(ROOT, 'README.md'), 'utf8')]]) {
+    assert.ok(text.replace(/\s+/g, ' ').toLowerCase().includes(LIMIT.toLowerCase()), `${name} documents the limit: "${LIMIT}"`);
+  }
+});
+
 test('workflows: a replace ref can\'t swap the workflow\'s commit for one without it; clean twin, SAFE', () => {
   // refs/replace/<commit> makes git show another commit in its place (git replace). lib/git.mjs sets
   // GIT_NO_REPLACE_OBJECTS=1, so the review reads the commit itself.
@@ -602,6 +655,9 @@ test('workflows: the CHANGELOG\'s hand check, run as written, lists every workfl
   // authored before the window, committed inside it: the line must show the committer date, the one the review
   // compares (with the author date, %ad, it would show 2026-08-01, and a reader would pass it by)
   built[repo(join(root, 'author-before'), [{ files: { [`${W}/ab.yml`]: 'on: push\n' }, date: '2026-09-15T12:00:00Z', author: '2026-08-01T12:00:00Z' }])] = [`${W}/ab.yml`];
+  // added, deleted and added again inside the window: the review and the line list it at both commits
+  built[repo(join(root, 'readd'), [{ files: { [`${W}/ci.yml`]: 'on: push\n# a\n' }, date: '2026-09-05T10:00:00Z' }, { files: { [`${W}/ci.yml`]: null }, date: '2026-09-06T10:00:00Z' },
+    { files: { [`${W}/ci.yml`]: 'on: push\n# m\n' }, date: '2026-10-08T10:00:00Z' }])] = [`${W}/ci.yml`, `${W}/ci.yml`];
   // partial clones whose remote is gone, with a workflow in the window: a fetch would run the uploadpack program the
   // clone's config names, which leaves a marker. Blobless (no file contents) is read without one, by the review and
   // the line; treeless is below.
