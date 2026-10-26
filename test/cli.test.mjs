@@ -186,7 +186,7 @@ test('a repository\'s own .git/config never makes git run a program: fsmonitor, 
   for (const h of ['post-index-change', 'reference-transaction', 'post-checkout', 'pre-auto-gc', 'post-rewrite', 'fsmonitor-watchman']) writeFileSync(join(path, '.git', 'hooks', h), `#!/bin/sh\ntouch "${join(ran, `hook-${h}`)}"\n`, { mode: 0o755 });
   // the test means something: git as 0.1.6 ran it does start the planted programs
   try { execFileSync('git', ['-C', path, 'ls-files', '-z'], { stdio: 'ignore' }); } catch { /* the marker is what counts */ }
-  try { execFileSync('git', ['-C', path, 'log', '--all', '--since=@1788048000 +0000', '--diff-filter=A', '--name-only', '--format=@@%h %cs %an', '--', '.github/workflows'], { stdio: 'ignore' }); } catch { /* as above */ }
+  try { execFileSync('git', ['-C', path, 'log', '--all', '--diff-filter=A', '--name-only', '--format=@@%h %cs %an', '--', '.github/workflows'], { stdio: 'ignore' }); } catch { /* as above */ }
   assert.ok(existsSync(join(ran, 'fsmonitor')), 'ls-files runs core.fsmonitor unless told not to');
   assert.ok(existsSync(join(ran, 'gpg')), 'log runs gpg.program on a signed commit with log.showSignature, unless told not to');
   for (const m of readdirSync(ran)) rmSync(join(ran, m));
@@ -209,7 +209,7 @@ test('a partial clone is never fetched from: git log would run the program its c
   writeFileSync(join(dir, 'lazy-uploadpack'), `#!/bin/sh\ntouch "${marker}"\nexit 1\n`, { mode: 0o755 });
   execFileSync('git', ['-C', clone, 'config', 'remote.origin.uploadpack', join(dir, 'lazy-uploadpack')]);
   // the test means something: git log as 0.1.6 ran it fetches the older trees, and runs the program to do it
-  try { execFileSync('git', ['-C', clone, 'log', '--all', '--since=@1788048000 +0000', '--diff-filter=A', '--name-only', '--format=@@%h', '--', '.github/workflows'], { stdio: 'ignore' }); } catch { /* the fetch fails; the marker is what counts */ }
+  try { execFileSync('git', ['-C', clone, 'log', '--all', '--diff-filter=A', '--name-only', '--format=@@%h', '--', '.github/workflows'], { stdio: 'ignore' }); } catch { /* the fetch fails; the marker is what counts */ }
   assert.ok(existsSync(marker), 'git log fetches missing objects through the configured program'); rmSync(marker);
   const r = run(['--incident', 'github-actions-2026-10', '--json', '--paths', root]);
   assert.equal(existsSync(marker), false, 'wardlatch made git fetch from the partial clone\'s remote');
