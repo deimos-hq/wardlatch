@@ -529,6 +529,28 @@ test('core.fsmonitor set through include.path, includeIf or config.worktree neve
   assert.deepEqual(JSON.parse(wf.out).results.map((x) => [x.status, x.file]), [['REVIEW', '.github/workflows/ci.yml']], 'GIT_DIR redirected the scan');
 });
 
+test('keys: core.worktree naming a folder above the repository (in .git/config or config.worktree) hides no committed key; clean twin, SAFE', () => {
+  // git took the repository's folder as a subfolder of that one, and `ls-files` listed only what is under it: nothing.
+  // 0.1.1 to 0.1.9, and 0.1.10 up to ffacde4, read SAFE. lib/git.mjs gives git the working folder (--work-tree).
+  const key = 'AKIA' + 'Q7RZ' + 'M2LP' + 'X9TB' + 'K4WD';            // built at runtime so this file holds no key literal
+  for (const how of ['config', 'config-worktree']) {
+    const build = (root, text) => {
+      const path = join(root, 'svc'), repo = gitRepo(path), g = (...a) => execFileSync('git', ['-C', path, ...a], { stdio: 'pipe' });
+      writeFileSync(join(path, 'config.js'), text); repo.commit();
+      if (how === 'config') g('config', 'core.worktree', root);
+      else { g('config', 'core.repositoryformatversion', '1'); g('config', 'extensions.worktreeConfig', 'true'); g('config', '--worktree', 'core.worktree', root); }
+      assert.equal(execFileSync('git', ['-C', path, 'ls-files'], { encoding: 'utf8' }), '', `${how}: the test means something: git as it runs by default lists nothing`);
+    };
+    const root = join(dir, `keys-worktree-${how}`); build(root, `module.exports = {\n  id: "${key}",\n};\n`);
+    const r = run(['--incident', 'committed-keys-2026-10', '--paths', root]);
+    assert.match(r.out, /REVIEW {2}.*svc\/config\.js:2 {2}AWS access key AKIA…\(20 chars\)/, `${how}: ${r.out}`);
+    const twin = join(dir, `keys-worktree-${how}-twin`); build(twin, 'module.exports = {};\n');
+    const t = run(['--incident', 'committed-keys-2026-10', '--paths', twin]);
+    assert.match(t.out, /SAFE {5}no committed keys found in the files of 1 local repository/, `${how} twin: ${t.out}`);
+    assert.equal(t.code, 0);
+  }
+});
+
 // ---- from the 0.1.8 red-team audit (22 Oct 2026) ---------------------------------------------------------------------
 
 test('a planted FIFO as a venv\'s certifi METADATA can\'t hang the run', () => {
