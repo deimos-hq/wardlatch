@@ -447,6 +447,7 @@ for (const inc of chosen) {
     const denied = [...lockedRoots];
     for (const repo of reposUnder(searchable, 4, denied)) {
       const hits = scanRepo(repo);
+      if (hits.own) { results.push({ incident: inc.id, kind: 'secret', status: 'UNKNOWN', repo, reason: hits.error }); print('UNKNOWN', short(repo)); note('33', hits.error); continue; }
       if (hits.error) { unread('secret', repo, hits.error); continue; }
       repos++;
       for (const h of hits) {

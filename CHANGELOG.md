@@ -105,13 +105,15 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     nothing is fetched (in a partial clone, a fetch runs what the config names for the remote:
     `GIT_NO_LAZY_FETCH=1` stops it, and `GIT_ALLOW_PROTOCOL=none` refuses every transport for a git too old to know
     that; a partial clone without a tree the line needs stops with an error, where the review reads
-    UNKNOWN). Four things the line can't get past: a `.git/info/grafts` file makes it unreliable (git follows the
+    UNKNOWN). Five things the line can't get past: a `.git/info/grafts` file makes it unreliable (git follows the
     file, and no git option turns that off; the review doesn't read it; git's "hint: Support for
     <GIT_DIR>/info/grafts is deprecated" is the sign that one is there, and the line asks git to always show it); a
     `commondir` file in a `.git` folder makes git read the history of the repository it names instead (git puts one
     only in a linked worktree's folder under `.git/worktrees`; `ls .git/commondir` shows one, and the review reads
-    that repository UNKNOWN); a `GIT_DIR` set in the shell points git at that repository instead (`unset GIT_DIR`
-    first); and in a shallow clone what is below the cut isn't there to list (run `git fetch --unshallow` first).
+    that repository UNKNOWN); a `.git` file names the repository git reads, whichever it is (`cat .git` shows it;
+    the review follows it too); a `GIT_DIR` set in the shell points git at that repository instead (`unset GIT_DIR`
+    first; a `GIT_COMMON_DIR` or `GIT_OBJECT_DIRECTORY` there makes git stop with an error); and in a shallow clone
+    what is below the cut isn't there to list (run `git fetch --unshallow` first).
   - Tests (`test/workflows.test.mjs`), each with a clean twin a second before the window or without the trick:
     workflows committed just inside the window (00:00:01 UTC on 30 Aug, 05:00 on 31 Aug at UTC+8, 09:00 UTC on 1 Sep,
     and the advisory's own file names, `github_actions_security.yml` and `security-audit.yml`, on 31 Aug) are listed
@@ -178,11 +180,16 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     `commondir` file written into a `.git` folder makes git read the refs and commits of the repository it names, and
     one naming an empty repository read SAFE. git writes a `commondir` file only in a linked worktree's own folder
     under `.git/worktrees`, and a linked worktree's `.git` is a file, so a `.git` folder whose history git reads from
-    anywhere else is now UNKNOWN ("git reads its history from …, which a commondir file in its .git folder names …"),
-    and so is a `.git` folder git doesn't take as the repository at all (an empty one inside another repository,
-    where git reads the outer one). A `.git` file (a linked worktree, a submodule) is followed as git follows it.
+    anywhere else is now UNKNOWN, for the workflow review and the committed-keys check ("git reads its history from
+    …, which a commondir file in its .git folder names …"), and so is a `.git` folder git doesn't take as the
+    repository at all (an empty one inside another repository, where git reads the outer one; an earlier cut of this
+    fix, 7bdca07, had the keys check list the outer repository's files under the inner folder, files that aren't
+    there). The `.git` folder is compared with git's by what it is on disk (device and inode), not by how its path
+    is spelled: on macOS, `--paths` in another case, or in NFC for a name stored as NFD, names the same folder while
+    git prints the name on disk, and 7bdca07, which compared the strings, read such a clean repository UNKNOWN.
   - Not a miss before, on either: `core.worktree` naming a folder that isn't above the repository, or set through
-    `include.path`, `includeIf` or `-c` (git takes it only from `.git/config` and `config.worktree`); `core.bare=true`;
+    `include.path`, `includeIf` or `-c` (git takes it only from `.git/config` and `config.worktree`); `core.bare=true`
+    in the `.git` folder of a repository with its files beside it (but see the bare layout below);
     `diff.relative`, `log.follow`, `diff.noprefix`, `log.diffMerges`, `diff.renames`, `core.ignoreCase` and
     `core.precomposeUnicode`, each on its own (`diff.relative` and `log.follow` hid a workflow only together with a
     `core.worktree` above the repository, which hid it anyway); and, from the caller's environment, `GIT_DIR`,
@@ -193,22 +200,38 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     not used either.
   - Not covered, before or now: a workflow under a folder whose name differs only in case, such as
     `.GitHub/Workflows`, isn't listed, whatever `core.ignoreCase` says (git compares each commit's paths exactly).
-    Whether GitHub runs a workflow from such a folder hasn't been checked.
+    Whether GitHub runs a workflow from such a folder hasn't been checked. A `.git` file is followed as git follows
+    it, whatever repository it names: one naming an empty repository reads SAFE for both checks (0.1.9, ffacde4 and
+    now), and so does, for the workflow review, one naming a folder whose `commondir` file names an empty
+    repository. No rule tells those apart from clean layouts: `git clone --separate-git-dir` writes a `.git` file
+    naming a repository that has no pointer back to it, and the pointer back a linked worktree's folder holds is a
+    file anyone who can write the `.git` file can write too (and a worktree moved by hand has a stale one). `cat .git`
+    shows which repository a `.git` file names. And in the bare-repository-with-worktrees layout (a `.bare` folder,
+    a `.git` file saying `gitdir: ./.bare`, and each worktree in a subfolder), the search stops at the outer folder,
+    as for any repository: the workflow review reads its history, but the committed-keys check scans no worktree's
+    files and reads SAFE (as in 0.1.9). Pass a worktree's own folder with `--paths` to scan it.
   - Tests. `test/workflows.test.mjs`: a workflow committed on 5 Sep in a repository whose `core.worktree` names the
     folder above it (absolute, as `../..`, in `config.worktree`, and with `diff.relative` and `log.follow` on top) is
     listed, and so with `core.bare=true`; each but `core.bare` first shows that git as it runs by default lists
     nothing, and each has a clean twin, the same setting with the workflow a second before the window, which reads
     SAFE, not UNKNOWN. A linked worktree and a submodule's own folder (where git sets `core.worktree` itself) are
     listed as before. A `commondir` file naming an empty repository is UNKNOWN, and so is an empty `.git` folder
-    inside another repository; without the file the repository is listed, and the outer one reads SAFE. Every git
-    call gets `--work-tree=` the folder it gets as `-C`. The hand line must list the workflow in three
+    inside another repository; without the file the repository is listed, and the outer one reads SAFE. On a file
+    system that takes them as one folder (macOS), `--paths` in another case (`casedir` for `CaseDir`) and in NFC for
+    a name stored as NFD lists the workflow, from the folder above and from the repository's own; clean twins, SAFE.
+    Every git call gets `--work-tree=` the folder it gets as `-C`. The hand line must list the workflow in three
     `core.worktree` repositories too (above the repository, in `config.worktree`, and with `diff.relative` and
     `log.follow`). `test/cli.test.mjs`: a committed key under `core.worktree` (in `.git/config` and in
-    `config.worktree`) is found; clean twin, the same without the key, SAFE. On ffacde4's code with this CHANGELOG,
-    5 of these tests fail (both `core.worktree` tests, the `commondir` test, the git-arguments test and the hand
-    check's, which compares with the review) and the linked-worktree and submodule twins pass; with `--work-tree`
-    left out of `lib/git.mjs`, 4 fail; with the `commondir` check left out, its test fails; and with `--work-tree=.`
-    left out of the hand line, the hand check's test fails.
+    `config.worktree`) is found, clean twin SAFE; a `commondir` file naming an empty repository and an empty `.git`
+    folder inside another repository are UNKNOWN for the keys check, and without the file, and from the outer
+    folder, the key is found; `--paths` in another case or in NFC for NFD finds the key, clean twins SAFE. Run with
+    this CHANGELOG: on ffacde4's code 6 of these tests fail (both `core.worktree` tests, both `commondir` tests, the
+    git-arguments test and the hand check's, which compares with the review), while the linked-worktree, submodule
+    and spelling tests pass; on 7bdca07's, 3 (the keys `commondir` test, the workflow spelling test, and the
+    workflow `commondir` test for its reason's wording); with `--work-tree` left out of `lib/git.mjs`, 4; with the
+    own-`.git` check comparing path strings, both spelling tests; with it left out of the keys check, the keys
+    `commondir` test; with it left out of both, those two `commondir` tests and the git-arguments test; and with
+    `--work-tree=.` left out of the hand line, the hand check's test.
 
 ### Changed
 
