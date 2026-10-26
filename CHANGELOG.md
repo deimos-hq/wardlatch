@@ -13,39 +13,82 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ### Fixed
 
-- **The workflow review read SAFE for a workflow committed on 31 Aug, or on 1 Sep before the hour it ran (0.1.0 to
-  0.1.9).** The `github-actions-2026-10` incident gave the window's start as the bare date `2026-09-01`, passed to git
-  as it was, and git reads a bare date as that day at the current time of day, in the machine's time zone (0.1.9 gives
-  git no `TZ`; up to 0.1.8 git got the caller's, which moved the start too). So the window began on 1 Sep at the hour
-  the check ran, not at the start of the day: a workflow committed on 31 Aug, or on 1 Sep before that hour, was not
-  read, and with nothing else found the review said "no workflow files added since 2026-09-01", SAFE, exit code 0.
-  0.1.9's known limits said it read commits dated on or after the incident's date; it read them from the run's time
-  of day on that date. The sources say to check from 31 Aug (The Hacker News and StepSecurity, with no time zone), and
-  GitGuardian reports a commit through the same compromised account at 00:30 UTC on 30 Aug. No test had a commit near
-  the start of the window.
+- **The workflow review read SAFE without having read every workflow in the window, in two ways (0.1.0 to 0.1.9).**
+  Both came from giving git the window's start with `git log --since`.
+  - *The start was a bare date.* The `github-actions-2026-10` incident gave the window's start as `2026-09-01`, passed
+    to git as it was, and git reads a bare date as that day at the current time of day, in the machine's time zone
+    (0.1.9 gives git no `TZ`; up to 0.1.8 git got the caller's, which moved the start too). So the window began on
+    1 Sep at the hour the check ran: a workflow committed on 31 Aug, or on 1 Sep before that hour, was not read, and
+    with nothing else found the review said "no workflow files added since 2026-09-01", SAFE, exit code 0. The sources
+    say to check from 31 Aug (The Hacker News and StepSecurity, with no time zone), and GitGuardian reports a commit
+    through the same compromised account at 00:30 UTC on 30 Aug. No test had a commit near the start of the window.
+  - *git stopped reading at a back-dated commit.* Given `--since`, git stops following a line of history at the first
+    commit dated before the start (its walk drops that commit before queueing its parents; only `--since-as-filter`,
+    git 2.37 and later, doesn't). Whoever makes a commit sets its date, so one commit dated before the window, on top
+    of a branch, hid every workflow added beneath it, however those were dated: on 0.1.9's code with git 2.54, a
+    workflow committed on 10 Oct with a commit dated 1 Jan 2025 on top read SAFE, exit code 0; one beneath a
+    back-dated commit with another workflow above it was left out; and a workflow on a side branch behind a
+    back-dated commit, merged inside the window and the branch deleted, read SAFE. 0.1.9's known limits named this
+    only for a later commit made on a machine with a wrong clock.
+  - Also found while fixing this, each checked on 0.1.9's code with git 2.54. A commit whose committer date git can't
+    read, on top of a workflow, did the same as a back-dated one (git takes it as 1970): SAFE. A workflow added on a
+    side branch and removed again before the merge, all inside the window, read SAFE: given a path, `git log` follows
+    only the parent a merge's files match and passed the side branch by. In a shallow clone cut inside the window, a
+    workflow added and removed again below the cut was never seen (SAFE), and a workflow still there at the cut was
+    listed as added by the cut commit, at that commit's date. Not a miss in 0.1.9: a replace ref (`refs/replace/`) and
+    a `.git/info/grafts` file that would hide a workflow's commit were already ignored (`GIT_NO_REPLACE_OBJECTS=1`
+    since 0.1.7, `GIT_GRAFT_FILE=/dev/null` in 0.1.9), and still are.
   - The window now starts at 30 Aug 2026 00:00 UTC (`"since": "2026-08-30T00:00:00Z"`, with its sources in
-    `sinceSource`).
-  - The review takes only an explicit UTC instant (`YYYY-MM-DDTHH:MM:SSZ`); anything else is UNKNOWN, never SAFE. git
-    gets it in its raw form, `--since="@1788048000 +0000"`, which it reads as the same instant whatever the zone or the
-    clock, and once per run `git rev-parse --since` checks that this git reads it as exactly that instant: one that
-    doesn't (an old or unusual git) makes each repository UNKNOWN.
-  - The SAFE line names the instant and the date it filters on: "no workflow files added in commits dated on or after
+    `sinceSource`). The review takes only an explicit UTC instant (`YYYY-MM-DDTHH:MM:SSZ`); anything else is
+    UNKNOWN, never SAFE.
+  - git gets no date at all. `git log --all --format='%H %ct'` lists every commit any branch, tag or other ref leads
+    to, with its committer time in seconds since 1970, and the review keeps those on or after the start by comparing
+    whole numbers in its own code. Then `git log --no-walk=unsorted --stdin` lists the workflow files that exactly
+    those commits added: no walk, so no side branch is passed by, and only those commits are compared with their
+    parents (a treeless partial clone with nothing in the window needs no tree, and reads SAFE as before).
+    A committer time git prints that isn't a plain whole number (git prints none for a date it can't read) makes the
+    repository UNKNOWN, never a commit left out. `--since-as-filter` would have kept the date in git, but needs git
+    2.37, and Ubuntu 22.04 ships 2.34.1: every repository there would have read UNKNOWN.
+  - A shallow clone whose history is cut on or after the start is UNKNOWN: "a shallow clone: the history is cut at
+    10 Oct 2026 12:00 UTC (commit …), inside the window that starts 30 Aug 2026 00:00 UTC, so the commits before the
+    cut aren't here to read (git fetch --unshallow fetches them)". One cut before the start is read as usual. A shallow
+    file Wardlatch can't read is UNKNOWN too.
+  - Reading every commit costs more than stopping at the start. On the maintainer's Mac (Apple M5 Pro, git 2.54), the
+    whole command on one repository took 0.5 s for 100,000 commits (0.06 s before), 0.8 s for 100,000 commits with
+    9,800 workflow files added over time (0.4 s before), and 7 s for 1.56 million commits (0.1 s before). The list of
+    commits takes about 52 bytes each, and up to 256 MB is read (about 5 million commits; 0.1.9's first cut read 64 MB
+    and so lost its findings past about 1.3 million). Each git call stops after 20 seconds; a repository that takes
+    longer, or prints more, is UNKNOWN ("git did not finish in time", "git wrote more than could be read"), never
+    SAFE.
+  - The SAFE line names the instant and the date it compares: "no workflow files added in commits dated on or after
     30 Aug 2026 00:00 UTC (committer date) in N local repositories". A review line shows the commit's committer date,
-    the one filtered on; up to 0.1.9 it showed the author date.
+    the one compared; up to 0.1.9 it showed the author date.
   - The WordPress check's `addedSince` was already an explicit UTC instant; a test now holds the start of every
     incident's window to one.
+  - Still not covered: a workflow whose own commit is dated before 30 Aug 2026 isn't listed, because whoever makes a
+    commit sets its date; and in a shallow clone cut at a commit dated before the start, what is below the cut isn't
+    on the machine to read (ASSURANCE_CASE.md, section 4).
   - **What to do:** if 0.1.0 to 0.1.9 said SAFE for `github-actions-2026-10`, run a release with this fix again, or
-    check each repository by hand (add `--all` to read every branch, as Wardlatch does):
-    `git log --since="2026-08-30T00:00:00Z" --diff-filter=A --name-only -- .github/workflows`
-  - Tests (`test/workflows.test.mjs`): workflows committed just inside the window (30 Aug 00:00:01 UTC, 31 Aug 05:00
-    at UTC+8, 1 Sep 09:00 UTC, and the advisory's own file names, `github_actions_security.yml` and
-    `security-audit.yml`, on 31 Aug) are listed with the command run under `TZ=Pacific/Kiritimati` and
-    `TZ=America/Los_Angeles`; one committed a second before it is SAFE; a bare-date start and a git that reads the
-    start as another instant are UNKNOWN. A git that writes down its arguments must get `--since=@1788048000 +0000`,
-    as one argument, in the self-check and in every `git log`; under a git that reads git's raw `@` form exactly but
-    any other start as the bare date `2026-09-01`, the advisory's file names on 31 Aug are still listed and one a
-    second before the window is still SAFE. Each fails on 0.1.9's code, at any time of day; the last two also fail
-    when only the `git log` call goes back to 0.1.9's `--since=${since}`.
+    list each repository's added workflows by hand and read the dates (anything at or after 2026-08-30T00:00:00Z is in
+    the window; each date carries its own zone offset):
+    `git log --all --full-history --diff-filter=A --name-only --format='%h %cI %an' -- .github/workflows`
+    No `--since`: given a date, git stops reading a branch at the first commit dated before it; `--full-history`
+    reads the side branches a merge would otherwise let git pass by.
+  - Tests (`test/workflows.test.mjs`), each with a clean twin a second before the window or without the trick:
+    workflows committed just inside the window (30 Aug 00:00:00 and 00:00:01 UTC, 31 Aug 05:00 at UTC+8, 1 Sep 09:00
+    UTC, and the advisory's own file names, `github_actions_security.yml` and `security-audit.yml`, on 31 Aug) are
+    listed with the command run under `TZ=Pacific/Kiritimati` and `TZ=America/Los_Angeles`; a back-dated commit on
+    top, between two workflows, and on a merged and deleted side branch hides nothing; a workflow added and removed on
+    a side branch is listed; a replace ref and a grafts file (cutting the history, or re-parenting the commit) hide
+    nothing; a shallow clone cut inside the window, and one whose shallow file can't be read, are UNKNOWN, and one cut
+    before it is read; partial clones whose remote is gone are read with nothing fetched (blobless: listed; treeless:
+    UNKNOWN with commits in the window, SAFE without); a commit whose committer date git can't read, and a git that
+    prints a committer time that isn't a plain whole number (empty, `x`, `-5`, `1.5`, `+1790000000`, ...), are
+    UNKNOWN; a bare-date start is UNKNOWN; a git that writes down its arguments gets no `--since`, `--after`,
+    `--until`, `--before`, `--max-age`, `--min-age` or `--since-as-filter`. All of them fail on 0.1.9's code, and ten
+    on this fix's first cut, which still gave git the start; each planted bug (the start given to git, as
+    `--since` or `--since-as-filter`; the start's own second left out; no shallow check; any committer time accepted;
+    replace refs or grafts followed; one walk instead of two calls) fails at least one.
 
 ### Development (no code in the package changes)
 
