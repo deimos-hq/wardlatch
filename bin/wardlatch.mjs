@@ -426,8 +426,9 @@ for (const inc of chosen) {
     const denied = [...lockedRoots];
     for (const repo of reposUnder(searchable, 4, denied)) {
       const added = workflowsAddedSince(repo, inc.since);
-      // this git reads the start as another instant: the repository is UNKNOWN, with that reason, not git's
-      if (added.badStart) { results.push({ incident: inc.id, kind: 'workflow', status: 'UNKNOWN', repo, reason: added.error }); print('UNKNOWN', short(repo)); note('33', added.error); continue; }
+      // read, but the window isn't all here or a commit's time can't be read (a shallow clone cut inside the window, a
+      // committer time that isn't a whole number): UNKNOWN with that reason, not as a repository git couldn't read
+      if (added.own) { results.push({ incident: inc.id, kind: 'workflow', status: 'UNKNOWN', repo, reason: added.error }); print('UNKNOWN', short(repo)); note('33', added.error); continue; }
       if (added.error) { unread('workflow', repo, added.error); continue; }
       repos++;
       for (const w of added) {
@@ -436,8 +437,8 @@ for (const inc of chosen) {
       }
     }
     gaps(results, inc, 'workflow', denied);
-    // the all-clear names the instant and the date git filters on: up to 0.1.9 it said "since 2026-09-01", a day git
-    // read as 1 Sep at the run's time of day
+    // the all-clear names the instant and the date compared: up to 0.1.9 it said "since 2026-09-01", a day git read as
+    // 1 Sep at the run's time of day
     if (counted(results).some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.fix}`);
     else if (!counted(results).length) allClear(results, inc, 'workflow', `no workflow files added in commits dated on or after ${start.label} (committer date) in ${repoCount(repos)}`, searchable);
   }
