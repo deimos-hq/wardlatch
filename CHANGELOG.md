@@ -70,24 +70,29 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   - Still not covered: a workflow whose own commit is dated before 30 Aug 2026 isn't listed, because whoever makes a
     commit sets its date (ASSURANCE_CASE.md, section 4).
   - **What to do:** if 0.1.0 to 0.1.9 said SAFE for `github-actions-2026-10`, run a release with this fix again, or
-    paste this line in each repository, in a POSIX shell such as bash or zsh (it doesn't run as pasted in PowerShell
-    or cmd). It has no date in it (given one, git stops reading a branch at the first commit dated before it) and
-    reads what the review reads, in one command:
-    `TZ=UTC GIT_NO_LAZY_FETCH=1 GIT_ALLOW_PROTOCOL=none git --no-pager --no-replace-objects -c core.commitGraph=false log --all --full-history --root --no-renames --diff-merges=combined --diff-filter=A --name-only --no-show-signature --date=iso-strict-local --format='%h %cd %an' -- .github/workflows`
+    paste this line at the top folder of each repository (in a subfolder it lists nothing), in a POSIX shell such as
+    bash or zsh (it doesn't run as pasted in PowerShell or cmd). It has no date in it (given one, git stops reading a
+    branch at the first commit dated before it) and reads what the review reads, in one command:
+    `TZ=UTC GIT_NO_LAZY_FETCH=1 GIT_ALLOW_PROTOCOL=none git --no-pager --no-replace-objects -c core.commitGraph=false -c advice.graftFileDeprecated=true log --all --full-history --root --no-renames --diff-merges=combined --diff-filter=A --name-only --no-show-signature --date=iso-strict-local --format='%h %ct %cd %an' -- .github/workflows`
     It lists every workflow file that any commit of any branch, tag or other ref added, each under its commit's hash,
-    committer date in UTC and author, whatever the date: check the dates yourself, and anything dated 2026-08-30 or
-    later (UTC) is in the window. A commit shown with no date (two spaces after its hash) has a committer date git
-    can't read: the review reads that repository UNKNOWN, so count it as in the window. As in the review, a replace
-    ref doesn't put another commit in a commit's place, a commit-graph file isn't used, a side branch a merge brings
-    in is read, a root commit's files are listed whatever `log.showRoot` says, a workflow that only a merge commit
-    adds is listed, one renamed into or within `.github/workflows` is listed as added, and nothing a repository's own
-    config names is run: no signature is checked (the config can name the program that checks one), no pager is
-    started (`core.pager`, `pager.log`), and nothing is fetched (in a partial clone, a fetch runs what the config
-    names for the remote: `GIT_NO_LAZY_FETCH=1` stops it, and `GIT_ALLOW_PROTOCOL=none` refuses every transport for a
-    git too old to know that; a partial clone without a tree the line needs stops with an error, where the review
-    reads UNKNOWN). Two things the line can't get past: a `.git/info/grafts` file makes it unreliable (git follows the
-    file, and no git option turns that off; the review doesn't read it), and in a shallow clone what is below the cut
-    isn't there to list (run `git fetch --unshallow` first).
+    committer time in seconds since 1970 (`%ct`), committer date in UTC (for convenience only) and author, whatever
+    the date. **Review every line whose number (the commit time, in seconds) is 1788048000 or more, or isn't a plain
+    number.** 1788048000 is the start, 2026-08-30T00:00:00Z. Compare that one integer and ignore the date text: for
+    committer times too far in the future for git to turn into a date, git prints 1970-01-01T00:00:00Z or even a
+    negative year, and those commits are in the window too. A line with no number and no date (three spaces after
+    its hash) has a committer date git can't read: count it as in the window as well (the review reads the second
+    kind UNKNOWN). As in the review, a replace ref doesn't put another commit in a commit's place, a commit-graph
+    file isn't used, a side branch a merge brings in is read, a root commit's files are listed whatever
+    `log.showRoot` says, a workflow that only a merge commit adds is listed, one renamed into or within
+    `.github/workflows` is listed as added, and nothing a repository's own config names is run: no signature is
+    checked (the config can name the program that checks one), no pager is started (`core.pager`, `pager.log`), and
+    nothing is fetched (in a partial clone, a fetch runs what the config names for the remote:
+    `GIT_NO_LAZY_FETCH=1` stops it, and `GIT_ALLOW_PROTOCOL=none` refuses every transport for a git too old to know
+    that; a partial clone without a tree the line needs stops with an error, where the review reads
+    UNKNOWN). Two things the line can't get past: a `.git/info/grafts` file makes it unreliable (git follows the
+    file, and no git option turns that off; the review doesn't read it; git's "hint: Support for
+    <GIT_DIR>/info/grafts is deprecated" is the sign that one is there, and the line asks git to always show it), and
+    in a shallow clone what is below the cut isn't there to list (run `git fetch --unshallow` first).
   - Tests (`test/workflows.test.mjs`), each with a clean twin a second before the window or without the trick:
     workflows committed just inside the window (00:00:01 UTC on 30 Aug, 05:00 on 31 Aug at UTC+8, 09:00 UTC on 1 Sep,
     and the advisory's own file names, `github_actions_security.yml` and `security-audit.yml`, on 31 Aug) are listed
@@ -117,7 +122,11 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     `GIT_NO_LAZY_FETCH=1` and `GIT_ALLOW_PROTOCOL=none` from it (no run through a pipe can see the pager, and on git
     2.54 either setting alone stops the fetch). Its clean twins: a workflow committed a second before the window from
     UTC-7, and one authored inside the window but committed a second before it, aren't in the review, and the line
-    shows each dated 2026-08-29T23:59:59Z, which a reader can tell is outside it. The line an earlier cut of this
+    shows each dated 2026-08-29T23:59:59Z, which a reader can tell is outside it. Far-future committer times (2^63-1,
+    9223372036854775807, which git shows as 1970-01-01T00:00:00Z, and 67768000000000000 with the ends of its band,
+    67767976233532800 and 67768036191676799, where git 2.54 shows a negative year such as -2147482895-02-16T20:26:40Z)
+    are listed by the review and the line, and a reader who compares only the line's `%ct` number with 1788048000
+    counts every one of them, while a commit at 1788047999 is skipped. The line an earlier cut of this
     entry gave fails that test, and so does this one with any one of its options left out but `--diff-filter=A`
     (without which it lists more).
   - Run on older code with this CHANGELOG, 23 of the 24 tests in `test/workflows.test.mjs` fail on 0.1.9's code (the

@@ -496,10 +496,10 @@ const handCheck = (text = CHANGELOG) => {
  *  commit's can't pass → [{ commit, date, file }] */
 const runHand = (line, path, env = {}) => {
   const out = execFileSync('/bin/sh', ['-c', line], { cwd: path, encoding: 'utf8', env: { ...process.env, TZ: 'America/Los_Angeles', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
-  const found = []; let commit = '', date = '';
+  const found = [], withTime = line.includes('%ct'); let commit = '', ct, date = '', rest;
   for (const l of out.split('\n')) {
-    if (l.startsWith('.github/workflows/')) found.push({ commit, date, file: l });
-    else if (l.trim()) [commit, date = ''] = l.split(' ');
+    if (l.startsWith('.github/workflows/')) found.push({ commit, ct, date, file: l });
+    else if (l.trim()) [commit, ...rest] = l.split(' '), [ct, date = ''] = withTime ? [rest[0] ?? '', rest[1] ?? ''] : [undefined, rest[0] ?? ''];
   }
   return found;
 };
@@ -650,15 +650,38 @@ test('workflows: the CHANGELOG\'s hand check, run as written, lists every workfl
   assert.deepEqual([tz, lazy, proto], ['UTC', '1', 'none'], 'git gets TZ=UTC, GIT_NO_LAZY_FETCH=1 and GIT_ALLOW_PROTOCOL=none');
   assert.ok(args.indexOf('--no-pager') >= 0 && args.indexOf('--no-pager') < args.indexOf('log'), `git gets --no-pager before log: ${JSON.stringify(args)}`);
   // a workflow added by a commit whose committer line has no date git can read: the review is UNKNOWN for the
-  // repository, and the line lists the file with no date (two spaces after the hash), which the item says to count as
+  // repository, and the line lists the file with no number and no date (three spaces after the hash), which the item says to count as
   // in the window
-  assert.match(bullet, /no date \(two spaces after its hash\)/, 'the item says what a blank date means');
+  assert.match(bullet, /no number and no date \(three spaces\s+after\s+its hash\)/, 'the item says what a blank date means');
   { const n = repo(join(root, 'no-date'), []), g = gitIn(n);
     mkdirSync(join(n, W), { recursive: true }); writeFileSync(join(n, W, 'nodate.yml'), 'on: push\n'); g(['add', '-A']);
     const body = `tree ${g(['write-tree'])}\nparent ${g(['rev-parse', 'HEAD'])}\nauthor t <t@x> 1790000000 +0000\ncommitter t <t@x>\n\nc\n`;
     g(['update-ref', 'HEAD', g(['hash-object', '-t', 'commit', '-w', '--literally', '--stdin'], { input: body })]);
     assert.match(workflows.workflowsAddedSince(n, '2026-08-30T00:00:00Z').error, /has no committer time Wardlatch can read/);
     assert.deepEqual(runHand(line, n).map((x) => [x.file, x.date]), [[`${W}/nodate.yml`, '']]); }
+  // committer times too far in the future for git to turn into a date. At 2^63-1 git prints 1970-01-01T00:00:00Z; for
+  // 67767976233532800 to 67768036191676799 it prints a NEGATIVE year (-2147482895-02-16T20:26:40Z). The reader here is
+  // the item's words: it compares the number (the %ct field) with the start it names, or counts a field that is blank
+  // or not a plain number. The date text is never read, so no date string can mislead.
+  assert.match(bullet, /1788048000/, 'the item names the start as a number of seconds');
+  assert.match(bullet, /or isn't a plain\s+number/, 'and counts a field that is not a plain number');
+  assert.equal(Date.parse('2026-08-30T00:00:00Z') / 1000, 1788048000, 'that number is the start');
+  const startSecs = Number(bullet.match(/\b(1788\d{6})\b/)?.[1]);
+  const readerCounts = (x) => x.ct === '' || !/^\d+$/.test(x.ct) || BigInt(x.ct) >= BigInt(startSecs);
+  for (const [name, ct, listed] of [['far-future', '9223372036854775807', true], ['far-negyear', '67768000000000000', true],
+    ['far-negyear-low', '67767976233532800', true], ['far-negyear-high', '67768036191676799', true], ['edge-seconds-before', '1788047999', false]]) {
+    const f = repo(join(root, name), []), g = gitIn(f);
+    mkdirSync(join(f, W), { recursive: true }); writeFileSync(join(f, W, 'far.yml'), 'on: push\n'); g(['add', '-A']);
+    const body = `tree ${g(['write-tree'])}\nparent ${g(['rev-parse', 'HEAD'])}\nauthor t <t@x> 1790000000 +0000\ncommitter t <t@x> ${ct} +0000\n\nc\n`;
+    g(['update-ref', 'HEAD', g(['hash-object', '-t', 'commit', '-w', '--literally', '--stdin'], { input: body })]);
+    const hand = runHand(line, f).filter((x) => x.file === `${W}/far.yml`);
+    assert.equal(hand.length, 1, `${name}: the line lists the file`);
+    assert.equal(hand[0].ct, ct, `${name}: the line shows the raw committer time`);
+    const review = workflows.workflowsAddedSince(f, '2026-08-30T00:00:00Z').map((x) => x.file);
+    assert.deepEqual(review, listed ? [`${W}/far.yml`] : [], `${name}: the review${listed ? ' lists it' : ' lists nothing'}`);
+    assert.equal(readerCounts(hand[0]), listed, `${name}: a reader following the item counts ${JSON.stringify(hand[0])} ${listed ? 'in' : 'out of'} the window`);
+  }
+  assert.match(bullet, /top folder of each repository/, 'the item says where to paste the line');
   // clean twins: a second before the window, from UTC-7, the review lists nothing, and the line shows a date the reader
   // can tell is before it (2026-08-29T23:59:59Z, though 16:59:59 on 29 Aug where it was made); and the same for one
   // authored inside the window but committed a second before it (the line's date is the committer's)
