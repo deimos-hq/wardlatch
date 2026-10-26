@@ -287,7 +287,11 @@ whose name differs only in case (`.GitHub/Workflows`) isn't listed; whether GitH
 checked. A `.git` file is followed as git follows it, whatever repository it names, so one naming an empty
 repository (or a folder whose `commondir` file names one) reads SAFE: `git clone --separate-git-dir` makes the same
 shape with no pointer back, and a linked worktree's pointer back can be written by whoever writes the `.git` file, so
-no rule tells them apart. In the bare-repository-with-worktrees layout (`.bare`, a `.git` file `gitdir: ./.bare`,
+no rule based on the layout tells them apart; a check that compares the workflow files on disk with the tree of the
+commit checked out could, and is planned for a later release. It is out of scope here because whoever can write to a
+repository's `.git` can hide a workflow without any trick of layout, for example by deleting the branch ref that
+leads to it, and every version reads SAFE then. In the bare-repository-with-worktrees layout (`.bare`, a `.git`
+file `gitdir: ./.bare`,
 worktrees in subfolders) the search stops at the outer folder, and the committed-keys check scans no worktree's
 files (SAFE); pass the worktree's folder to scan it. *Evidence:* `test/workflows.test.mjs` sets `core.worktree`
 above the repository (absolute, relative, in `config.worktree`, with `diff.relative` and `log.follow`) and
