@@ -22,8 +22,11 @@ let dir, home;
 
 /** Run the CLI → { code, out, err }. Output is piped, as in CI, so stdout is not a TTY and carries no colour. HOME is
  *  an empty folder of the tests' own, never the one they run with. */
+// the CLI gets the tests' own home and none of the runner's per-user config folders: on a CI runner XDG_CONFIG_HOME (and
+// GOENV) point into the runner's real home, where the go check would read its env file
+const ownEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(XDG_[A-Z_]+|GOENV|GOTOOLCHAIN)$/.test(k)));
 const run = (args, env = {}, nodeArgs = [], cwd = undefined) => {
-  const r = spawnSync(process.execPath, [...nodeArgs, BIN, ...args], { encoding: 'utf8', env: { ...process.env, HOME: home, ...env }, maxBuffer: 64 * 1024 * 1024, cwd });
+  const r = spawnSync(process.execPath, [...nodeArgs, BIN, ...args], { encoding: 'utf8', env: { ...ownEnv(), HOME: home, ...env }, maxBuffer: 64 * 1024 * 1024, cwd });
   return { code: r.status, out: r.stdout, err: r.stderr };
 };
 const gitRepo = (path) => {
@@ -534,7 +537,7 @@ test('a planted FIFO as a venv\'s certifi METADATA can\'t hang the run', () => {
   mkdirSync(join(v, 'bin'), { recursive: true }); mkdirSync(join(sp, 'certifi'), { recursive: true }); mkdirSync(join(sp, 'certifi-9.9.9.dist-info'), { recursive: true });
   writeFileSync(join(v, 'pyvenv.cfg'), 'home = /x\n'); writeFileSync(join(sp, 'certifi', 'cacert.pem'), '-----BEGIN CERTIFICATE-----\n'); writeFileSync(join(v, 'bin', 'python'), '');
   execFileSync('mkfifo', [join(sp, 'certifi-9.9.9.dist-info', 'METADATA')]);
-  const r = spawnSync(process.execPath, ['--require', offline, BIN, '--incident', 'emudhra-2026-10', '--json', '--no-containers', '--paths', proj], { encoding: 'utf8', timeout: 60000, env: { ...process.env, HOME: home, PATH: join(dir, 'empty-path') } });
+  const r = spawnSync(process.execPath, ['--require', offline, BIN, '--incident', 'emudhra-2026-10', '--json', '--no-containers', '--paths', proj], { encoding: 'utf8', timeout: 60000, env: { ...ownEnv(), HOME: home, PATH: join(dir, 'empty-path') } });
   assert.notEqual(r.signal, 'SIGTERM', 'the run hung on the FIFO');
   assert.ok(JSON.parse(r.stdout).results.length >= 0);
 });
