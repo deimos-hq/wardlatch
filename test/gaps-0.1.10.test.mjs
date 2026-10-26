@@ -25,6 +25,11 @@ const AS_ROOT = process.getuid?.() === 0;
 const EMAIL = 'ada.lovelace@example.org';
 const incident = (id) => JSON.parse(readFileSync(join(ROOT, 'lib', 'incidents', `${id}.json`), 'utf8'));
 const esc = (s) => s.replace(/[\\^$.*+?()[\]{}|/]/g, '\\$&');
+// a value as JavaScript, for the stand-in's code: JSON.stringify's text with <, > and the two line separators (JSON
+// leaves them as they are) written as \u escapes, the same value wherever the code is put
+// (CodeQL's js/bad-code-sanitization)
+const SPELLED = { '<': '\\u003c', '>': '\\u003e', '\u2028': '\\u2028', '\u2029': '\\u2029' };
+const js = (v) => JSON.stringify(v).replace(/[<>\u2028\u2029]/g, (c) => SPELLED[c]);
 let dir, home, n = 0;
 const locked = [];
 before(() => { dir = mkdtempSync(join(realpathSync(tmpdir()), 'wardlatch-gaps10-')); home = join(dir, 'home'); mkdirSync(home); });
@@ -42,7 +47,7 @@ const preload = (name, { platform, uid } = {}) => {
   const p = join(dir, `${name}.cjs`);
   writeFileSync(p, `'use strict';
 const fs = require('node:fs'), tls = require('node:tls'), net = require('node:net'), cp = require('node:child_process'), os = require('node:os'), { EventEmitter } = require('node:events');
-const DIR = ${JSON.stringify(dir)}, ROOT = ${JSON.stringify(ROOT)};
+const DIR = ${js(dir)}, ROOT = ${js(ROOT)};
 const SYS = /^\\/(?:usr|etc|opt|bin|sbin|System|Library|Applications|var|private|tmp|home|srv|snap|nix)(?:\\/|$)/;
 const mine = (p) => p === DIR || p.startsWith(DIR + '/') || p.startsWith(ROOT + '/');
 const hidden = (p) => typeof p === 'string' && SYS.test(p) && !mine(p);
@@ -52,7 +57,7 @@ tls.connect = (...a) => { const s = new EventEmitter(); s.end = s.destroy = () =
 net.connect = net.createConnection = () => { throw new Error('no network in these tests'); };
 const guard = (o) => function (f, ...r) { if (String(f) !== process.execPath && !String(f).startsWith(DIR + '/')) throw Object.assign(new Error('not run in these tests'), { code: 'ENOENT' }); return o.call(this, f, ...r); };
 for (const k of ['execFile', 'execFileSync', 'spawn', 'spawnSync']) cp[k] = guard(cp[k]);
-${platform ? `os.platform = () => ${JSON.stringify(platform)}; Object.defineProperty(process, 'platform', { value: ${JSON.stringify(platform)} });` : ''}
+${platform ? `os.platform = () => ${js(platform)}; Object.defineProperty(process, 'platform', { value: ${js(platform)} });` : ''}
 ${uid !== undefined ? `process.getuid = () => ${uid};` : ''}
 require('node:module').syncBuiltinESMExports();
 `);

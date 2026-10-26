@@ -28,6 +28,11 @@ after(() => {
 });
 
 // ---- helpers ------------------------------------------------------------------------------------------------------------
+// a value as JavaScript, for code a preload runs: JSON.stringify's text with <, > and the two line separators (JSON
+// leaves them as they are) written as \u escapes, the same value wherever the code is put
+// (CodeQL's js/bad-code-sanitization)
+const SPELLED = { '<': '\\u003c', '>': '\\u003e', '\u2028': '\\u2028', '\u2029': '\\u2029' };
+const js = (v) => JSON.stringify(v).replace(/[<>\u2028\u2029]/g, (c) => SPELLED[c]);
 const put = (p, text, mode) => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, text, mode ? { mode } : undefined); return p; };
 const exe = (p, body) => put(p, `#!/bin/sh\n${body}\n`, 0o755);
 let n = 0;
@@ -435,7 +440,7 @@ test('trust: every python3 Wardlatch starts has -B (the version check, the probe
   pythonRt(d, 'exit 1', 'exit 0', rec('path'));
   // inside the container python3 is the only tool: the control site opens; the self-signed site and the test hosts are refused
   const eng = engine('pyB', { tools: { python3: `${rec('container')}\nwhile [ $# -gt 0 ] && [ "$1" != -c ]; do shift; done; shift 2\ncase "$1" in https://emudhra.we-have-a-problem.com*) exit 0;; *) exit 10;; esac` } });
-  const starts = `for (const k of ['execFile', 'execFileSync', 'spawn', 'spawnSync']) { const o = cp[k]; cp[k] = function (f, ...r) { if (/^python/.test(String(f).split('/').pop())) fs.appendFileSync(${JSON.stringify(log)}, 'started ' + f + '\\n'); return o.call(this, f, ...r); }; }`;
+  const starts = `for (const k of ['execFile', 'execFileSync', 'spawn', 'spawnSync']) { const o = cp[k]; cp[k] = function (f, ...r) { if (/^python/.test(String(f).split('/').pop())) fs.appendFileSync(${js(log)}, 'started ' + f + '\\n'); return o.call(this, f, ...r); }; }`;
   const r = trust({ PATH: `${eng}:${d}` }, preload('pyB', { online: true, redirects: { '/usr/bin/python3': sys }, extra: starts }), []);
   const lines = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : [];
   const runs = lines.filter((l) => !l.startsWith('started ')).map((l) => l.split(' '));

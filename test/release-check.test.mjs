@@ -33,6 +33,8 @@ const changelog = (version, { unreleased = '', date = ' - 2026-11-02' } = {}) =>
   `# Changelog\n\n## [Unreleased]\n${unreleased}\n## [${version}]${date}\n\n- ${A} and ${B}.\n\n## [0.1.9] - 2026-10-23\n`;
 // the block a review begins with: all the gate reads of it
 const review = (sha, verdict = 'READY') => `\`\`\`\nCommit: ${sha}\nVerdict: ${verdict}\n\`\`\`\n\n# Review\n`;
+// text for new RegExp() that matches it as written: each character a pattern reads specially escaped, the backslash too
+const literal = (s) => s.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
 // the corpus gate's last line (scripts/corpus/run.mjs --gate, run as root before a release) for the code in dir's bin/
 // and lib/, quoted in the class audit; its SHA-256 worked out here from the files, as the corpus gate does
 const sha256 = (x) => createHash('sha256').update(x).digest('hex');
@@ -605,16 +607,15 @@ test('round 4: a word git resolves to a commit as written, between spaces (a bra
     const id = git(dir0, '-c', 'core.disambiguate=none', 'rev-parse', '--verify', '--quiet', t);
     assert.equal(git(dir0, 'cat-file', '-t', id), 'commit', t);
   }
-  const quoted = (t) => t.replace(/[\^$.*+?()[\]{}|]/g, '\\$&');
   for (const t of probes) {
     const text = `The fix was tested on ${t} and nothing else.`;
-    REFUSED(PROBE(repo(), text), text, new RegExp(`line 8 has "${quoted(t)}", which git resolves as a commit here, or finds ambiguous`));
+    REFUSED(PROBE(repo(), text), text, new RegExp(`line 8 has "${literal(t)}", which git resolves as a commit here, or finds ambiguous`));
   }
   // a search of the commit messages is refused without asking git, which would take the rest of the word as a pattern:
   // the last one, given to git, ran for over 20 seconds on a Mac before it was stopped
   for (const t of [...searches, ':/(((.*){1,255}){1,255}){1,255}']) {
     const text = `The fix was tested on ${t} and nothing else.`;
-    REFUSED(PROBE(repo(), text), text, new RegExp(`line 8 has "${quoted(t)}", which git reads as a search of the commit messages`));
+    REFUSED(PROBE(repo(), text), text, new RegExp(`line 8 has "${literal(t)}", which git reads as a search of the commit messages`));
   }
   // a word git stops on (no upstream here): refused, as git can't say what it names
   const r = PROBE(repo(), 'Compared with @{u} only.');
@@ -631,8 +632,8 @@ test('round 4: a table row with more cells than its header (GitHub doesn\'t show
     ['| a | b |\n|---|---|\n|---|---|---|', 10], ['a\n:---\nx | y', 10], ['| a | b |\n| - | - |\nplain\n| x | y | z |', 11]]) {
     // the reason states the rule as the gate applies it (docs/reviews/README.md, item 12)
     REFUSED(PROBE(repo(), text), text, new RegExp(`has a table row with \\d+ cells, more than the \\d+ of its header \\(GitHub doesn't show the cells after the header's; ${
-      'a line of only |, :, -, spaces and tabs, with at least one - (after any quote marks, spaces and tabs), starts a table, and the next line that is blank once its quote marks, spaces and tabs are taken off ends it)'
-        .replace(/[|()]/g, '\\$&')} \\(docs/reviews/README\\.md\\)`), line);
+      literal('a line of only |, :, -, spaces and tabs, with at least one - (after any quote marks, spaces and tabs), starts a table, and the next line that is blank once its quote marks, spaces and tabs are taken off ends it)')
+    } \\(docs/reviews/README\\.md\\)`), line);
   }
   for (const twin of ['| a | b |\n|---|---|\n| x | y |\n| x |', '| a | b |\n|---|---|\n| x | y |\n\nx | y | z, after a blank line', 'a | b | c, and no table',
     // a line of only quote marks, spaces and tabs ends a table too: it is blank once they are taken off
@@ -659,7 +660,7 @@ test('round 4: VERDICT, COMMIT, READY or SHIP in ASCII look-alikes (l, I, 1 or |
   for (const [text, word] of [['VERD1CT: NOT', 'VERD1CT'], ['VERDlCT: no', 'VERDlCT'], ['verd|ct: no', 'verd|ct'], ['C0MMIT: 0000000', 'C0MMIT'],
     ['Reviewed COMMlT: none', 'COMMlT'], ['C0MM1TS reviewed', 'C0MM1TS'], ['Do not SH1P.', 'SH1P'], ['Do not sh|p it', 'sh|p'], ['Do not ship.', 'ship'],
     ['Ships: no', 'Ships'], ['1ship', 'ship'], ['c0mmit_', 'c0mmit']]) {
-    REFUSED(PROBE(repo(), text), text, new RegExp(`line 8 says "${word.replace(/\|/g, '\\|')}"[^\\n]* outside the block`));
+    REFUSED(PROBE(repo(), text), text, new RegExp(`line 8 says "${literal(word)}"[^\\n]* outside the block`));
   }
   for (const twin of ['The ownership and relationship checks shipped in 0.1.4; the committed keys check, shipping since.',
     'Oil, coil, 101 items, |x| and C0FFEE are just words.']) {
@@ -701,7 +702,7 @@ test('every folder that runs counts: a change in bin/, test/, scripts/, fix/ or 
     const dir = repo();
     put(dir, f, 'changed after the review\n'); commit(dir, 'late');
     const r = gate(dir);
-    assert.equal(r.code, 1, r.out); assert.match(r.out, new RegExp(`code changed after the reviewed commit[^\\n]*${f.replace(/\./g, '\\.')}`), f);
+    assert.equal(r.code, 1, r.out); assert.match(r.out, new RegExp(`code changed after the reviewed commit[^\\n]*${literal(f)}`), f);
   }
 });
 

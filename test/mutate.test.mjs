@@ -92,6 +92,21 @@ test('every planted SAFE caught by a behaviour test: passes, and names the test 
   assert.match(summary, /\| caught \| `lib\/x\.mjs:3` \| unknown->safe \| test\/x\.test\.mjs: unknown \|/);
 });
 
+test('summary.md writes a test\'s name as it is: a | in it and a backslash in it are each escaped in its table row', { skip: SKIP }, () => {
+  // one name with a |, one with a backslash before a | and another before a letter. With the | escaped and not the
+  // backslash, a\|b was written a\\|b, which a table shows as a|b: the name's own backslash read as an escape, and lost
+  const named = `${IMPORTS}test('exposed x|y', () => assert.equal(check(true, true).status, 'EXPOSED'));
+test('unknown a\\\\|b\\\\c', () => assert.equal(check(false, false).status, 'UNKNOWN'));\n`;
+  const dir = repo({ 'test/x.test.mjs': named });
+  const r = gate(dir);
+  assert.equal(r.code, 0, r.out);
+  const { results, summary } = resultsOf(dir, r.out);
+  assert.deepEqual(results.map((x) => x.caughtBy).sort(), ['test/x.test.mjs: exposed x|y', 'test/x.test.mjs: unknown a\\|b\\c']);
+  const rows = summary.split('\n');
+  for (const row of ['| caught | `lib/x.mjs:3` | exposed->safe | test/x.test.mjs: exposed x\\|y |',
+    '| caught | `lib/x.mjs:3` | unknown->safe | test/x.test.mjs: unknown a\\\\\\|b\\\\c |']) assert.ok(rows.includes(row), `no row ${row}:\n${summary}`);
+});
+
 test('a planted SAFE no behaviour test catches: fails, naming it, even though the static SAFE test would have', { skip: SKIP }, () => {
   const dir = repo({ 'test/x.test.mjs': ONLY_EXPOSED });
   const r = gate(dir);

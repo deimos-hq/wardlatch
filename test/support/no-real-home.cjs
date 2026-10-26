@@ -40,7 +40,7 @@ globalThis[ONCE] = __filename;
 
 // the net's own looks go to fs as it was, never through the checks below
 const { lstatSync, readlinkSync, statSync, accessSync, openSync, readSync, closeSync, writeSync, writeFileSync, readFileSync,
-  readdirSync, mkdtempSync, rmSync } = fs;
+  readdirSync, mkdtempSync, rmSync, fstatSync } = fs;
 
 // what a test passes to the processes it starts, as JSON { homes, marks, nodeOptions? }: the folders, where a note
 // goes, and the NODE_OPTIONS the process was given before this file was added to it. Every process deletes it from its
@@ -465,10 +465,16 @@ const nodeKind = (p) => {
   if (key(real) === SELF) return 'self';
   const head = Buffer.alloc(256);
   let n = 0;
+  // opened first, then asked what it is: what is read is the file that was looked at, never one put there in between.
+  // O_NONBLOCK: a FIFO opens at once instead of waiting for a writer (and is then not a file: null); O_NOCTTY: a
+  // terminal opened here never becomes this process's own
   try {
-    if (!statSync(real).isFile()) return null;
-    const fd = openSync(real, 'r');
-    try { n = readSync(fd, head, 0, 256, 0); } finally { closeSync(fd); }
+    const { O_RDONLY, O_NONBLOCK = 0, O_NOCTTY = 0 } = fs.constants;
+    const fd = openSync(real, O_RDONLY | O_NONBLOCK | O_NOCTTY);
+    try {
+      if (!fstatSync(fd).isFile()) return null;
+      n = readSync(fd, head, 0, 256, 0);
+    } finally { closeSync(fd); }
   } catch { return null; }
   const text = head.subarray(0, n).toString('latin1');
   if (text.startsWith('#!')) {

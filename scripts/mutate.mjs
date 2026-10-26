@@ -448,7 +448,10 @@ const closed = results.filter((r) => r.result === 'caught' && (gapKeys.has(key(r
 for (const r of closed) console.log(`CLOSED ${gapKeys.has(key(r)) ? 'gap' : 'equivalent entry'} (now caught by: ${r.caughtBy}): take it off its list: ${where(r)}`);
 console.log(`results: ${relative(process.cwd(), join(OUT, 'results.json')) || join(OUT, 'results.json')}`);
 
-const cell = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
+// a test's name or a reason, in the summary's table and lists: each | escaped, and each backslash too, so one in the
+// text shows as written and never escapes the character after it (a \| in a name would lose its backslash); a line
+// break becomes a space
+const cell = (s) => String(s ?? '').replace(/[\\|]/g, '\\$&').replace(/\n/g, ' ');
 const md = [`## ${CRITICAL ? 'Critical mutants' : 'Mutation run'}${SHARD_N > 1 ? ` (shard ${SHARD_K}/${SHARD_N})` : ''}`, '', tally, '',
   `Caught: the suite failed, and the test named here then failed on its own on the planted bug and passed on its own on `
   + `the unmutated code, ${K} times each, interleaved. A test that fails at random, independently, with probability p can `

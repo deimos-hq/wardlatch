@@ -25,7 +25,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NET = join(ROOT, 'test', 'support', 'no-real-home.cjs');
 const MAC = process.platform === 'darwin';
-const J = JSON.stringify;
+// a value as JavaScript, for the code a probe runs: JSON.stringify's text with <, > and the two line separators (JSON
+// leaves them as they are) written as \u escapes, the same value wherever the code is put (CodeQL's
+// js/bad-code-sanitization). A word for a shell (node "<path>") is JSON.stringify's own: a shell would not read the
+// escapes.
+const SPELLED = { '<': '\\u003c', '>': '\\u003e', '\u2028': '\\u2028', '\u2029': '\\u2029' };
+const J = (v) => JSON.stringify(v).replace(/[<>\u2028\u2029]/g, (c) => SPELLED[c]);
 let dir, n = 0;
 before(() => { dir = mkdtempSync(join(tmpdir(), 'wardlatch-seal-')); });
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -127,7 +132,7 @@ test('swallows a look at the home', () => { try { require('fs').readFileSync(${J
   assert.deepEqual(viaRunnerOk.out, { status: 0 }, viaRunnerOk.err);
   assert.equal(viaRunnerOk.code, 0, viaRunnerOk.err);
   // ...and when a shell starts that node --test (the net comes by NODE_OPTIONS, which the runner passes on)
-  const viaShell = probe(m, `let status = 0; try { cp.execSync('node --test ' + ${J(J(inner))}, { stdio: 'pipe' }); } catch (e) { status = e.status; } report({ status });`);
+  const viaShell = probe(m, `let status = 0; try { cp.execSync('node --test ' + ${J(JSON.stringify(inner))}, { stdio: 'pipe' }); } catch (e) { status = e.status; } report({ status });`);
   assert.deepEqual(viaShell.out, { status: 1 }, viaShell.err);
   assert.equal(viaShell.code, 1, 'a refusal in a test file a nested node --test ran (started by a shell) did not fail the test');
   // ...and a child of a test file that runner runs in its own process (--test-isolation=none): the runner keeps the
@@ -844,10 +849,10 @@ r.shebangEnv = cp.spawnSync(${J(byEnv)}, o).status;
 r.shebangEnvS = cp.spawnSync(${J(byEnvS)}, o).status;
 r.shebangPath = cp.spawnSync(${J(byPath)}, o).status;
 r.byName = cp.spawnSync('node', [${J(g)}], o).status;
-${other.skipped ? '' : `r.otherNode = cp.spawnSync(${J(other.node)}, [${J(g)}], o).status;\n`}r.shellOption = cp.spawnSync('node ' + ${J(J(g))}, { ...o, shell: true }).status;
-try { cp.execSync('node ' + ${J(J(g))}, o); r.execSync = 0; } catch (e) { r.execSync = e.status; }
+${other.skipped ? '' : `r.otherNode = cp.spawnSync(${J(other.node)}, [${J(g)}], o).status;\n`}r.shellOption = cp.spawnSync('node ' + ${J(JSON.stringify(g))}, { ...o, shell: true }).status;
+try { cp.execSync('node ' + ${J(JSON.stringify(g))}, o); r.execSync = 0; } catch (e) { r.execSync = e.status; }
 r.fifo = cp.spawnSync(${J(fifo)}, o).error?.code ?? 'ran';
-cp.exec('node ' + ${J(J(g))}, o, (e) => { r.exec = e?.code ?? 0; cp.fork(${J(g)}, o).on('exit', (d) => { r.fork = d; console.log(JSON.stringify(r)); }); });
+cp.exec('node ' + ${J(JSON.stringify(g))}, o, (e) => { r.exec = e?.code ?? 0; cp.fork(${J(g)}, o).on('exit', (d) => { r.fork = d; console.log(JSON.stringify(r)); }); });
 `);
   const r = probe(m, `const g = ${J(g)}, o = { encoding: 'utf8', stdio: 'pipe', timeout: 20000, killSignal: 'SIGKILL' };
 const status = (f) => { try { return String(f() ?? '').includes('READ') ? 'READ' : 0; } catch (e) { return e.status ?? e.code; } };
