@@ -69,8 +69,18 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     of this fix the committer date in the commit's own zone.
   - The WordPress check's `addedSince` was already an explicit UTC instant; a test now holds the start of every
     incident's window to one.
+  - *A file added more than once was listed at one commit (0.1.0 to 0.1.9, and this fix up to 3cff5c5).* The review
+    kept one line per workflow file, at the earliest commit in the window that added it. A file added, deleted and
+    added again with other contents was listed once, at the first commit: Alice adds `.github/workflows/ci.yml` on
+    5 Sep and deletes it the next day, Mallory adds `ci.yml` again on 8 Oct, and the review showed only "added …
+    2026-09-05 Alice". It now lists every commit in the window that added each workflow file, one REVIEW line (and one
+    `--json` row, with the same `file` and `commit` fields) per file and commit, newest first: "added 4123d9f
+    2026-10-08 Mallory", then "added 3fc2679 2026-09-05 Alice". With nothing added in the window, the SAFE line is
+    unchanged.
   - Still not covered: a workflow whose own commit is dated before 30 Aug 2026 isn't listed, because whoever makes a
-    commit sets its date (ASSURANCE_CASE.md, section 4).
+    commit sets its date (ASSURANCE_CASE.md, section 4). And a change to a workflow file that already existed isn't
+    listed; the check lists added files, as the campaign added them: a commit that only changes a workflow committed
+    before the window reads SAFE.
   - **What to do:** if 0.1.0 to 0.1.9 said SAFE for `github-actions-2026-10`, run a release with this fix again, or
     paste this line at the top folder of each repository (in a subfolder it lists nothing), in a POSIX shell such as
     bash or zsh (it doesn't run as pasted in PowerShell or cmd). It has no date in it (given one, git stops reading a
@@ -78,7 +88,8 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     `TZ=UTC GIT_NO_LAZY_FETCH=1 GIT_ALLOW_PROTOCOL=none git --no-pager --no-replace-objects -c core.commitGraph=false -c advice.graftFileDeprecated=true log --all --full-history --root --no-renames --diff-merges=combined --diff-filter=A --name-only --no-show-signature --date=iso-strict-local --format='%h %ct %cd %an' -- .github/workflows`
     It lists every workflow file that any commit of any branch, tag or other ref added, each under its commit's hash,
     committer time in seconds since 1970 (`%ct`), committer date in UTC (for convenience only) and author, whatever
-    the date. **Review every line whose number (the commit time, in seconds) is 1788048000 or more, or isn't a plain
+    the date; a file added, deleted and added again is listed under each commit that added it, as the review lists
+    it. **Review every line whose number (the commit time, in seconds) is 1788048000 or more, or isn't a plain
     number.** 1788048000 is the start, 2026-08-30T00:00:00Z. Compare that one integer and ignore the date text: for
     committer times too far in the future for git to turn into a date, git prints 1970-01-01T00:00:00Z or even a
     negative year, and those commits are in the window too. A line with no number and no date (three spaces after
@@ -130,7 +141,11 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     are listed by the review and the line, and a reader who compares only the line's `%ct` number with 1788048000
     counts every one of them, while a commit at 1788047999 is skipped. The line an earlier cut of this
     entry gave fails that test, and so does this one with any one of its options left out but `--diff-filter=A`
-    (without which it lists more).
+    (without which it lists more). A workflow file added, deleted and added again inside the window is listed at both
+    commits, newest first, by the review and by the line; its clean twins: two different files each added once are
+    one line each, and a file added before the window, deleted, and added again inside it is listed only at the
+    commit inside it. A workflow file only changed inside the window reads SAFE, and a test holds this entry,
+    ASSURANCE_CASE.md and README.md to the sentence that says so.
   - Run on older code with this CHANGELOG, 23 of the 24 tests in `test/workflows.test.mjs` fail on 0.1.9's code (the
     24th reads only this file), 17 on this fix's first cut, which still gave git the start (44bb10f), and 10 on its
     second (865d0d1, the code at 3dbf26b: shallow repositories, the UTC date a line shows, the git calls made, and the
@@ -138,7 +153,10 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
     the start's own second left out; the start's form not checked; no shallow check; a cut dated before the start
     taken as the window all there; git's answer or the shallow file alone taken as the sign; any committer time
     accepted; replace refs, grafts or a commit-graph file followed; one walk instead of two calls; the date in the
-    commit's own zone; the hand check looked for only under `[Unreleased]`, or showing the author date.
+    commit's own zone; the hand check looked for only under `[Unreleased]`, or showing the author date. Those counts
+    are of the 24 tests before the fix for a file added more than once; at 3cff5c5, with this CHANGELOG, the
+    re-added file's test and the hand check's test fail (the review listed one commit), and so does the test of the
+    documented limit without its sentence, while the two clean twins pass.
 
 ### Changed
 
