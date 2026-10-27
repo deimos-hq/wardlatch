@@ -94,3 +94,32 @@ if [ "$found" -gt 0 ]; then
   cmp -s "$work/cert.pem" "$work/original.pem" || fail "undo did not restore the original"
   ok "undo restores the original byte for byte"
 fi
+
+# The same file without its "=== " name lines (some managed Macs ship it that way): the roots are found by fingerprint.
+# Before this, the fix removed nothing here and, with the test site unreachable, printed SAFE (exit 0) for a file that
+# still trusted the leaked keys.
+if [ "$found" -gt 0 ]; then
+  awk '/-----BEGIN CERTIFICATE-----/{p=1} p{print} /-----END CERTIFICATE-----/{p=0}' "$work/original.pem" >"$work/nolabel.pem"
+  cp "$work/nolabel.pem" "$work/nolabel-offline.pem"
+  run "$work/nolabel.pem"
+  [ "$code" -eq 0 ] || fail "no name lines: expected exit 0, got $code"
+  [ "$(count "$work/nolabel.pem")" -eq $((total - found)) ] || fail "no name lines: expected $((total - found)) certificates, got $(count "$work/nolabel.pem")"
+  ok "no name lines: removed $found roots by fingerprint"
+
+  # The test site unreachable (a proxy on a closed port): the file must still be fixed, never called SAFE as it was.
+  code=0
+  out=$(https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 WARDLATCH_CERT_FILE="$work/nolabel-offline.pem" bash "$fix" 2>&1) || code=$?
+  printf '%s\n' "$out" | sed 's/^/    | /'
+  [ "$code" -eq 0 ] || fail "no name lines, offline: expected exit 0, got $code"
+  [ "$(count "$work/nolabel-offline.pem")" -eq $((total - found)) ] || fail "no name lines, offline: the file was not fixed but the fix exited 0"
+  ok "no name lines, test site unreachable: fixed in the file, not a false SAFE"
+fi
+
+# A certificate the fix can't read: refused, unchanged, no backup (a file it can't fully check is never called clean).
+awk 'BEGIN{d=0} /-----BEGIN CERTIFICATE-----/ && !d {print; getline; print "!!!!" substr($0, 5); d=1; next} {print}' "$work/original.pem" >"$work/garbled.pem"
+cp "$work/garbled.pem" "$work/garbled.before"
+run "$work/garbled.pem"
+if [ "$code" -ne 2 ] || ! cmp -s "$work/garbled.pem" "$work/garbled.before" || [ "$(backups "$work/garbled.pem")" -ne 0 ]; then
+  fail "unreadable certificate: expected exit 2, unchanged, no backup"
+fi
+ok "unreadable certificate refused, unchanged"
