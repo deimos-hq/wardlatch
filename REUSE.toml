@@ -35,7 +35,7 @@ SPDX-License-Identifier = "Apache-2.0"
 
 # The Mac fix is the one source file without an in-file header, on purpose.
 # www.deimoscore.com serves this exact file as a download and publishes its
-# SHA-256 (e65db2bc...3c1e) on the page and in its changelog, so a header
+# SHA-256 (fe066b37...f7ae) on the page and in its changelog, so a header
 # comment would break the published checksum. CI fails if the file's hash
 # changes; a deliberate change updates the site's download, the printed hash
 # and its changelog record together.

@@ -21,9 +21,12 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   EXPOSED (exit 1) and changed nothing; if the site didn't answer, it printed "SAFE … no longer holds the two roots"
   (exit 0) for a file that still trusted the keys. It now finds the two roots by their SHA-256 fingerprints, removes
   them whether or not the file has name lines (on Apple's file, byte for byte the advisory's removal, as before), and
-  refuses a file with a certificate it can't read (UNKNOWN, exit 2, nothing changed). `test/fix-macos.check.sh` gains
-  the cases; the new ones fail on the old script. The download on www.deimoscore.com changes with it (SHA-256
-  `e65db2bc…3c1e`). The advisory's own one-line command has the same blind spot: on a file with no name lines it
+  refuses a file with a certificate it can't read (UNKNOWN, exit 2, nothing changed). It also refuses a file holding
+  blocks curl trusts but the fix doesn't read (`BEGIN TRUSTED CERTIFICATE`, `BEGIN X509 CERTIFICATE`): an emSign root
+  appended in that form would otherwise have read SAFE with the test site unreachable. It works on a snapshot of the
+  file and won't replace it if it changed meanwhile, and its re-test ignores `~/.curlrc` (`curl -q`).
+  `test/fix-macos.check.sh` gains the cases and counts the roots by fingerprint; the new cases fail on the old script. The download on www.deimoscore.com changes with it (SHA-256
+  `fe066b37…f7ae`). The advisory's own one-line command has the same blind spot: on a file with no name lines it
   removes nothing.
 - The Mac fix now says that a macOS update puts Apple's original file back (macOS 26.7.2 did, on 27 Oct 2026), so it
   should be run again after every update; its last line says `npx wardlatch@latest`, and it names the tools the file
