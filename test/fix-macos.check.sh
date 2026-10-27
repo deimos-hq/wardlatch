@@ -42,7 +42,8 @@ run() {
   out=$(env "$@" TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$file" bash "$fix" 2>"$work/stderr") || code=$?
   printf '%s\n' "$out" | sed 's/^/    | /'
   [ ! -s "$work/stderr" ] || { sed 's/^/    ! /' "$work/stderr"; fail "the fix wrote to stderr"; }
-  [ -z "$(ls -A "$work/tmp")" ] || fail "the fix left temporary files behind: $(ls -A "$work/tmp" | tr '\n' ' ')"
+  left=$(find "$work/tmp" -mindepth 1 -maxdepth 1 -exec basename {} \; | tr '\n' ' ')
+  [ -z "$left" ] || fail "the fix left temporary files behind: $left"
 }
 
 if [ "$(uname -s)" != Darwin ]; then
