@@ -24,10 +24,11 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   refuses a file with a certificate it can't read (UNKNOWN, exit 2, nothing changed). It also refuses a file holding
   blocks curl trusts but the fix doesn't read (`BEGIN TRUSTED CERTIFICATE`, `BEGIN X509 CERTIFICATE`): an emSign root
   appended in that form would otherwise have read SAFE with the test site unreachable. It works on a snapshot of the
-  file and won't replace it if it changed meanwhile, and its re-test ignores `~/.curlrc` (`curl -q`).
-  `test/fix-macos.check.sh` gains the cases and counts the roots by fingerprint; the new cases fail on the old script. The download on www.deimoscore.com changes with it (SHA-256
-  `fe066b37…f7ae`). The advisory's own one-line command has the same blind spot: on a file with no name lines it
-  removes nothing.
+  file and won't replace it if it changed meanwhile, it refuses a file it can't read, and its re-test ignores
+  `~/.curlrc` (`curl -q`). `test/fix-macos.check.sh` gains the cases, counts the roots by fingerprint, and checks
+  that each run prints nothing on stderr and leaves no temporary files; the new cases fail on the old script. The
+  download on www.deimoscore.com changes with it (SHA-256 `50e1e41d…21b1`). The advisory's own one-line command has
+  the same blind spot: on a file with no name lines it removes nothing.
 - The Mac fix now says that a macOS update puts Apple's original file back (macOS 26.7.2 did, on 27 Oct 2026), so it
   should be run again after every update; its last line says `npx wardlatch@latest`, and it names the tools the file
   covers (the built-in curl, git, python3, openssl, perl and ruby) and that Apple's `pip3` has its own copy.

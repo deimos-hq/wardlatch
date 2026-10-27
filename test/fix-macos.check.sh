@@ -33,10 +33,16 @@ bad() {
 }
 backups() { find "$work" -name "$(basename "$1").wardlatch-*.bak" | wc -l | tr -d ' '; }
 # Runs the fix on one file; sets $code and $out.
+# Extra VAR=value arguments after the file are set for that run only (e.g. a proxy, to make the test site unreachable).
+# Each run gets its own TMPDIR, which must be empty afterwards, and must print nothing on stderr.
 run() {
+  local file=$1; shift
   code=0
-  out=$(WARDLATCH_CERT_FILE="$1" bash "$fix" 2>&1) || code=$?
+  rm -rf "$work/tmp"; mkdir "$work/tmp"
+  out=$(env "$@" TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$file" bash "$fix" 2>"$work/stderr") || code=$?
   printf '%s\n' "$out" | sed 's/^/    | /'
+  [ ! -s "$work/stderr" ] || { sed 's/^/    ! /' "$work/stderr"; fail "the fix wrote to stderr"; }
+  [ -z "$(ls -A "$work/tmp")" ] || fail "the fix left temporary files behind: $(ls -A "$work/tmp" | tr '\n' ' ')"
 }
 
 if [ "$(uname -s)" != Darwin ]; then
@@ -87,6 +93,7 @@ if [ "$found" -gt 0 ]; then
     awk '/^(###|===) /{skip=0} /^=== .*\/CN=(AAA Certificate Services|emSign ECC Root CA - G3)$/{skip=1} !skip' "$work/original.pem" >"$work/advisory.pem"
     cmp -s "$work/cert.pem" "$work/advisory.pem" || fail "first run: not byte for byte the advisory's removal"
   fi
+  cp "$work/cert.pem" "$work/cleaned.pem"
   backup=$(find "$work" -name 'cert.pem.wardlatch-*.bak')
   cmp -s "$backup" "$work/original.pem" || fail "first run: the backup is not the original"
   ok "fixed: removed $found roots, kept $((total - found)) certificates, 644, backup identical to the original"
@@ -122,9 +129,7 @@ if [ "$found" -gt 0 ]; then
   ok "no name lines: removed $found roots by fingerprint"
 
   # The test site unreachable (a proxy on a closed port): the file must still be fixed, never called SAFE as it was.
-  code=0
-  out=$(https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 WARDLATCH_CERT_FILE="$work/nolabel-offline.pem" bash "$fix" 2>&1) || code=$?
-  printf '%s\n' "$out" | sed 's/^/    | /'
+  run "$work/nolabel-offline.pem" https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9
   [ "$code" -eq 0 ] || fail "no name lines, offline: expected exit 0, got $code"
   [ "$(count "$work/nolabel-offline.pem")" -eq $((total - found)) ] || fail "no name lines, offline: the file was not fixed but the fix exited 0"
   ok "no name lines, test site unreachable: fixed in the file, not a false SAFE"
@@ -145,19 +150,13 @@ ok "unreadable certificate refused, unchanged"
 if [ "$found" -gt 0 ]; then
   awk '/-----BEGIN CERTIFICATE-----/{k++; p=1} p{print > ("'"$work"'/one-" k ".pem")} /-----END CERTIFICATE-----/{p=0}' "$work/original.pem"
   for c in "$work"/one-*.pem; do
-    case "$(/usr/bin/openssl x509 -in "$c" -noout -fingerprint -sha256 2>/dev/null)" in *86:A1:EC:BA:08:9C:4A:8D*) root=$c ;; esac
+    case "$(/usr/bin/openssl x509 -in "$c" -noout -fingerprint -sha256 2>/dev/null)" in *86:A1:EC:BA:08:9C:4A:8D*) emsign=$c ;; esac
   done
-  cp "$work/advisory.pem" "$work/trusted.pem"
-  /usr/bin/openssl x509 -in "$root" -trustout -addtrust serverAuth >>"$work/trusted.pem"
+  cp "$work/cleaned.pem" "$work/trusted.pem"
+  /usr/bin/openssl x509 -in "$emsign" -trustout -addtrust serverAuth >>"$work/trusted.pem"
   cp "$work/trusted.pem" "$work/trusted.before"
   for net in online offline; do
-    code=0
-    if [ "$net" = offline ]; then
-      out=$(https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 WARDLATCH_CERT_FILE="$work/trusted.pem" bash "$fix" 2>&1) || code=$?
-    else
-      out=$(WARDLATCH_CERT_FILE="$work/trusted.pem" bash "$fix" 2>&1) || code=$?
-    fi
-    printf '%s\n' "$out" | sed 's/^/    | /'
+    if [ "$net" = offline ]; then run "$work/trusted.pem" https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9; else run "$work/trusted.pem"; fi
     if [ "$code" -ne 2 ] || ! cmp -s "$work/trusted.pem" "$work/trusted.before"; then fail "TRUSTED CERTIFICATE block, $net: expected exit 2, unchanged, got $code"; fi
   done
   ok "a BEGIN TRUSTED CERTIFICATE block is refused, online and offline"
