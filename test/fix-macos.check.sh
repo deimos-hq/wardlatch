@@ -91,7 +91,10 @@ if [ "$found" -gt 0 ]; then
   [ "$(backups "$work/cert.pem")" -eq 1 ] || fail "first run: expected one backup"
   if grep -q '^=== ' "$work/original.pem"; then
     awk '/^(###|===) /{skip=0} /^=== .*\/CN=(AAA Certificate Services|emSign ECC Root CA - G3)$/{skip=1} !skip' "$work/original.pem" >"$work/advisory.pem"
-    cmp -s "$work/cert.pem" "$work/advisory.pem" || fail "first run: not byte for byte the advisory's removal"
+    # (The advisory's awk only works on LF files; on others it removes nothing, so there's nothing to compare.)
+    if [ "$(count "$work/advisory.pem")" -eq $((total - found)) ]; then
+      cmp -s "$work/cert.pem" "$work/advisory.pem" || fail "first run: not byte for byte the advisory's removal"
+    fi
   fi
   cp "$work/cert.pem" "$work/cleaned.pem"
   backup=$(find "$work" -name 'cert.pem.wardlatch-*.bak')
@@ -160,4 +163,18 @@ if [ "$found" -gt 0 ]; then
     if [ "$code" -ne 2 ] || ! cmp -s "$work/trusted.pem" "$work/trusted.before"; then fail "TRUSTED CERTIFICATE block, $net: expected exit 2, unchanged, got $code"; fi
   done
   ok "a BEGIN TRUSTED CERTIFICATE block is refused, online and offline"
+fi
+
+# A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.
+cp "$work/original.pem" "$work/unreadable.pem"
+chmod 000 "$work/unreadable.pem"
+if [ ! -r "$work/unreadable.pem" ]; then
+  run "$work/unreadable.pem"
+  [ "$code" -eq 2 ] || fail "unreadable file: expected exit 2, got $code"
+  chmod 644 "$work/unreadable.pem"
+  cmp -s "$work/unreadable.pem" "$work/original.pem" || fail "unreadable file: it changed"
+  ok "unreadable file refused, unchanged"
+else
+  chmod 644 "$work/unreadable.pem"
+  echo "NOTE: running as root, so a file can't be made unreadable; skipped."
 fi
