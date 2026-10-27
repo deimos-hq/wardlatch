@@ -33,11 +33,13 @@ trust() { local r=0; /usr/bin/curl -q -s -o /dev/null --max-time 15 --cacert "$1
 certs() { grep -c 'BEGIN CERTIFICATE' "$1" || true; }
 # Prints the position (1, 2, ...) of each certificate in the file whose fingerprint is one of ROOTS, one per line.
 # Fails if any certificate can't be read, so a file we can't fully check is never called clean.
-# It runs in $( ), so its EXIT trap removes the temporary folder however it ends.
+# It runs in $( ), so its EXIT trap removes the temporary folder however it ends. The trap names the folder itself,
+# because it runs after the function's locals are gone.
 roots() {
   local d c fp
   d=$(mktemp -d -t wardlatch) || return 1
-  trap 'rm -rf "$d"' EXIT
+  # shellcheck disable=SC2064
+  trap "rm -rf '$d'" EXIT
   awk -v d="$d" '/-----BEGIN CERTIFICATE-----/{k++; f=sprintf("%s/%05d.pem", d, k)} f{print > f} /-----END CERTIFICATE-----/{close(f); f=""}' "$1" || return 1
   [ "$(find "$d" -name '*.pem' | wc -l | tr -d ' ')" -eq "$(certs "$1")" ] || return 1
   for c in "$d"/*.pem; do
@@ -63,7 +65,7 @@ strip() {
 
 # Everything below reads this snapshot, so the checks and the change are about the same bytes.
 snap=$(mktemp -t wardlatch); tmp=$(mktemp -t wardlatch); trap 'rm -f "$snap" "$tmp"' EXIT
-cp "$FILE" "$snap"
+cp "$FILE" "$snap" 2>/dev/null || { echo "UNKNOWN  Can't read $FILE. Nothing changed."; exit 2; }
 
 if [ "$(certs "$snap")" -lt 50 ]; then
   echo "UNKNOWN  $FILE holds only $(certs "$snap") certificates, so it looks damaged. Nothing changed."
