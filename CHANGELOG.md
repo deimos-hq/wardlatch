@@ -11,7 +11,7 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
-## [0.1.10] - 2026-10-26
+## [0.1.10] - 2026-10-27
 
 ### Security
 
