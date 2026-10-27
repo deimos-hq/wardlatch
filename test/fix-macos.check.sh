@@ -14,13 +14,23 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 fix="$root/fix/fix-macos.sh"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-BAD='^=== .*/CN=(AAA Certificate Services|emSign ECC Root CA - G3)$'
 source=${1:-/etc/ssl/cert.pem}
 
 fail() { echo "FAIL: $*"; exit 1; }
 ok() { echo "ok: $*"; }
 count() { grep -c 'BEGIN CERTIFICATE' "$1" || true; }
-bad() { grep -E -c "$BAD" "$1" || true; }
+# How many of the two roots a file holds, by SHA-256 fingerprint (name lines or not).
+bad() {
+  local n=0 d; d=$(mktemp -d)
+  awk -v d="$d" '/-----BEGIN CERTIFICATE-----/{k++; f=d "/" k ".pem"} f{print > f} /-----END CERTIFICATE-----/{close(f); f=""}' "$1"
+  for c in "$d"/*.pem; do
+    [ -e "$c" ] || continue
+    case "$(/usr/bin/openssl x509 -in "$c" -noout -fingerprint -sha256 2>/dev/null)" in
+      *D7:A7:A0:FB:5D:7E:27:31:D7:71:E9:48:4E:BC:DE:F7:1D:5F:0C:3E:0A:29:48:78:2B:C8:3E:E0:EA:69:9E:F4|*86:A1:EC:BA:08:9C:4A:8D:3B:BE:27:34:C6:12:BA:34:1D:81:3E:04:3C:F9:E8:A8:62:CD:5C:57:A3:6B:BE:6B) n=$((n + 1)) ;;
+    esac
+  done
+  rm -rf "$d"; echo "$n"
+}
 backups() { find "$work" -name "$(basename "$1").wardlatch-*.bak" | wc -l | tr -d ' '; }
 # Runs the fix on one file; sets $code and $out.
 run() {
@@ -42,6 +52,7 @@ chmod 644 "$work/original.pem"
 total=$(count "$work/original.pem")
 found=$(bad "$work/original.pem")
 echo "$source: $total certificates, $found of the two roots"
+[ "$found" -gt 0 ] || echo "NOTE: $source holds neither root, so the removal cases are skipped. Pass a copy of Apple's original as the first argument."
 
 # A missing file: refused, nothing created.
 run "$work/missing.pem"
@@ -72,6 +83,10 @@ if [ "$found" -gt 0 ]; then
   [ "$(count "$work/cert.pem")" -eq $((total - found)) ] || fail "first run: expected $((total - found)) certificates, got $(count "$work/cert.pem")"
   [ "$(stat -f %Lp "$work/cert.pem")" = 644 ] || fail "first run: mode is not 644"
   [ "$(backups "$work/cert.pem")" -eq 1 ] || fail "first run: expected one backup"
+  if grep -q '^=== ' "$work/original.pem"; then
+    awk '/^(###|===) /{skip=0} /^=== .*\/CN=(AAA Certificate Services|emSign ECC Root CA - G3)$/{skip=1} !skip' "$work/original.pem" >"$work/advisory.pem"
+    cmp -s "$work/cert.pem" "$work/advisory.pem" || fail "first run: not byte for byte the advisory's removal"
+  fi
   backup=$(find "$work" -name 'cert.pem.wardlatch-*.bak')
   cmp -s "$backup" "$work/original.pem" || fail "first run: the backup is not the original"
   ok "fixed: removed $found roots, kept $((total - found)) certificates, 644, backup identical to the original"
@@ -123,3 +138,27 @@ if [ "$code" -ne 2 ] || ! cmp -s "$work/garbled.pem" "$work/garbled.before" || [
   fail "unreadable certificate: expected exit 2, unchanged, no backup"
 fi
 ok "unreadable certificate refused, unchanged"
+
+# A block curl also trusts but the fix doesn't read (BEGIN TRUSTED CERTIFICATE): refused, online and offline, never
+# SAFE. Before this, a cleaned file with an emSign root appended in that form read SAFE (exit 0) when the test site was
+# unreachable.
+if [ "$found" -gt 0 ]; then
+  awk '/-----BEGIN CERTIFICATE-----/{k++; p=1} p{print > ("'"$work"'/one-" k ".pem")} /-----END CERTIFICATE-----/{p=0}' "$work/original.pem"
+  for c in "$work"/one-*.pem; do
+    case "$(/usr/bin/openssl x509 -in "$c" -noout -fingerprint -sha256 2>/dev/null)" in *86:A1:EC:BA:08:9C:4A:8D*) root=$c ;; esac
+  done
+  cp "$work/advisory.pem" "$work/trusted.pem"
+  /usr/bin/openssl x509 -in "$root" -trustout -addtrust serverAuth >>"$work/trusted.pem"
+  cp "$work/trusted.pem" "$work/trusted.before"
+  for net in online offline; do
+    code=0
+    if [ "$net" = offline ]; then
+      out=$(https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 WARDLATCH_CERT_FILE="$work/trusted.pem" bash "$fix" 2>&1) || code=$?
+    else
+      out=$(WARDLATCH_CERT_FILE="$work/trusted.pem" bash "$fix" 2>&1) || code=$?
+    fi
+    printf '%s\n' "$out" | sed 's/^/    | /'
+    if [ "$code" -ne 2 ] || ! cmp -s "$work/trusted.pem" "$work/trusted.before"; then fail "TRUSTED CERTIFICATE block, $net: expected exit 2, unchanged, got $code"; fi
+  done
+  ok "a BEGIN TRUSTED CERTIFICATE block is refused, online and offline"
+fi
