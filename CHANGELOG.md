@@ -13,6 +13,22 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [0.1.10] - 2026-10-26
 
+### Security
+
+- **The Mac fix (`fix/fix-macos.sh`) could say SAFE for a file that still trusted the leaked eMudhra keys.** It found
+  the two roots by their `=== …/CN=` name lines. Some copies of `/etc/ssl/cert.pem` (on some managed Macs) have no
+  name lines, so it found neither root and removed nothing. If the advisory's test site then answered, it printed
+  EXPOSED (exit 1) and changed nothing; if the site didn't answer, it printed "SAFE … no longer holds the two roots"
+  (exit 0) for a file that still trusted the keys. It now finds the two roots by their SHA-256 fingerprints, removes
+  them whether or not the file has name lines (on Apple's file, byte for byte the advisory's removal, as before), and
+  refuses a file with a certificate it can't read (UNKNOWN, exit 2, nothing changed). `test/fix-macos.check.sh` gains
+  the cases; the new ones fail on the old script. The download on www.deimoscore.com changes with it (SHA-256
+  `e65db2bc…3c1e`). The advisory's own one-line command has the same blind spot: on a file with no name lines it
+  removes nothing.
+- The Mac fix now says that a macOS update puts Apple's original file back (macOS 26.7.2 did, on 27 Oct 2026), so it
+  should be run again after every update; its last line says `npx wardlatch@latest`, and it names the tools the file
+  covers (the built-in curl, git, python3, openssl, perl and ruby) and that Apple's `pip3` has its own copy.
+
 ### Fixed
 
 - **The workflow review read SAFE without having read every workflow in the window, in two ways (0.1.0 to 0.1.9).**
