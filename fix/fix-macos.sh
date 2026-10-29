@@ -1,7 +1,7 @@
 #!/bin/bash
 # Wardlatch Mac fix · a free tool from Deimos AI LLC · Apache-2.0 · https://www.deimoscore.com/wardlatch/#mac
 #
-# Removes the two roots tied to the leaked eMudhra keys (AAA Certificate Services, emSign ECC Root CA - G3) from
+# Removes the two roots tied to the compromised eMudhra keys (AAA Certificate Services, emSign ECC Root CA - G3) from
 # /etc/ssl/cert.pem, the file macOS's built-in curl, git, python3 and openssl read. No macOS release has fixed it yet,
 # and a macOS update puts Apple's original file back (26.7.2 did): run this again after every update.
 # The removal is the advisory's (emudhra.we-have-a-problem.com); this script adds the safety around it:
@@ -27,7 +27,7 @@ ROOTS='D7:A7:A0:FB:5D:7E:27:31:D7:71:E9:48:4E:BC:DE:F7:1D:5F:0C:3E:0A:29:48:78:2
 [ -f "$FILE" ] || { echo "UNKNOWN  $FILE not found. Nothing changed."; exit 2; }
 SUDO=sudo; if [ "$(id -u)" -eq 0 ] || { [ -w "$FILE" ] && [ -w "$(dirname "$FILE")" ]; }; then SUDO=; fi
 
-# 0 = trusts the leaked keys, 60 = refuses them, anything else = the test site didn't answer
+# 0 = trusts the compromised keys, 60 = refuses them, anything else = the test site didn't answer
 # (-q: ignore ~/.curlrc, whose settings could change the answer)
 trust() { local r=0; /usr/bin/curl -q -s -o /dev/null --max-time 15 --cacert "$1" "$TEST_URL" || r=$?; echo "$r"; }
 certs() { grep -c 'BEGIN CERTIFICATE' "$1" || true; }
@@ -83,7 +83,7 @@ found=$(grep -c . <<<"$list" || true)
 if [ "$found" -eq 0 ]; then
   r=$(trust "$snap")
   case "$r" in
-    60) echo "SAFE     $FILE already refuses the leaked keys. Nothing changed." ;;
+    60) echo "SAFE     $FILE already refuses the compromised keys. Nothing changed." ;;
     0)  echo "EXPOSED  $FILE holds neither root but still trusts the test site. Nothing changed; please report this."; exit 1 ;;
     *)  echo "SAFE     $FILE no longer holds the two roots. Nothing changed. (The test site didn't answer, so this wasn't re-tested online.)" ;;
   esac
@@ -124,7 +124,7 @@ $SUDO chmod 644 "$FILE"
 
 r=$(trust "$FILE")
 case "$r" in
-  60) echo "SAFE     Fixed. $FILE now refuses the leaked keys: $(removed_phrase "$found" "$list"), kept $after." ;;
+  60) echo "SAFE     Fixed. $FILE now refuses the compromised keys: $(removed_phrase "$found" "$list"), kept $after." ;;
   0)  $SUDO cp -p "$backup" "$FILE"
       echo "EXPOSED  The file still trusts the test site after the change, so the original was put back. Please report this."
       exit 1 ;;

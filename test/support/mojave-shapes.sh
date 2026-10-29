@@ -25,7 +25,9 @@ set -uo pipefail
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 FIX="$REPO/fix/fix-macos.sh"
-SRC=/etc/ssl/cert.pem
+# The bundle under test. Defaults to the vendored UNFIXED fixture so this harness does not require
+# the machine running it to be vulnerable. Pass a path to test a different bundle, including the live one.
+SRC=${1:-"$REPO/test/support/fixtures/macos-27.2-cert.pem"}
 AAA='D7:A7:A0:FB:5D:7E:27:31:D7:71:E9:48:4E:BC:DE:F7:1D:5F:0C:3E:0A:29:48:78:2B:C8:3E:E0:EA:69:9E:F4'
 EMS='86:A1:EC:BA:08:9C:4A:8D:3B:BE:27:34:C6:12:BA:34:1D:81:3E:04:3C:F9:E8:A8:62:CD:5C:57:A3:6B:BE:6B'
 
