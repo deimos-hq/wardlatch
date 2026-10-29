@@ -145,13 +145,23 @@ const RUNTIME_KINDS = ['node', 'curl', 'python', 'macos-system'];
 const hostRowsOf = (results) => results.filter((r) => RUNTIME_KINDS.includes(r.kind)).length;
 // rows that count for a summary line: a skipped-folders line is information beside it, never instead of it
 const counted = (results) => results.filter((r) => r.kind !== 'skipped');
-// later copies on PATH that are scripts, and so were not run (lib/binaries.mjs copiesToRun): a REVIEW line, in --json
-// too, so a reader can tell a copy went unchecked; it doesn't change the exit code
+// Later copies on PATH that are scripts, and so were not run (lib/binaries.mjs copiesToRun): UNKNOWN, in --json too, so
+// a reader can tell a copy went unchecked, and so the exit code says 2 rather than 0.
+//
+// DECIDED 28 Oct 2026 (audit F6, owner's call), previously an open question. The audit reproduced it: a fixed php first
+// on PATH and a vulnerable one second behind a wrapper script printed "SAFE php 8.5.12" and exited 0 with 8.3.6
+// installed. Both sides were real. Against: a later copy is SHADOWED, the first is what runs, and UNKNOWN exits 2 on
+// any machine with a wrapper script behind a real binary. For: shadowed is not uninstalled, PATH differs under cron, a
+// service and CI, and this is the same ignorance lib/binaries.mjs:187 already calls UNKNOWN when the program IS run and
+// will not say its version. The iron law settles it — not having looked is UNKNOWN, never SAFE — and the cost of being
+// wrong is asymmetric: a needless exit 2 is an inconvenience, a SAFE over an installed vulnerable copy is the failure
+// this tool exists to prevent. The verdict must not depend on PATH order while the same two programs are installed.
+// test/contract-0.1.9.test.mjs R6 pinned the old behaviour and was changed with this.
 function notRunRow(results, inc, what, paths) {
   if (!paths.length) return;
   const reason = `${what}: ${paths.length === 1 ? 'a later copy' : 'later copies'} on PATH ${paths.length === 1 ? 'is a script' : 'are scripts'}, not ${paths.length === 1 ? 'a program' : 'programs'}, so Wardlatch did not run ${paths.length === 1 ? 'it' : 'them'} and ${paths.length === 1 ? 'its' : 'their'} version was not checked: ${paths.map(short).join(', ')}`;
-  results.push({ incident: inc.id, kind: 'not-run', status: 'REVIEW', paths, reason });
-  print('REVIEW', 'copies on PATH not run'); note('2', reason);
+  results.push({ incident: inc.id, kind: 'not-run', status: 'UNKNOWN', paths, reason });
+  print('UNKNOWN', 'copies on PATH not run'); note('2', reason);
 }
 
 // Folders that couldn't be opened: the one rule for every check (owner, 22 Oct 2026). Every source of them comes here.
@@ -165,7 +175,7 @@ function notRunRow(results, inc, what, paths) {
 // Up to e0e1c35 every locked folder was UNKNOWN, and any server with docker or certbot exited 2.
 // `searchesRoots`: whether this check searches the --paths folders at all (Plex's and GitLab's look only in their own
 // install places: a --paths folder that isn't there is nothing to them)
-function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, review = [] } = {}) {
+function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, review = [], links = [] } = {}) {
   for (const d of searchesRoots ? missingRoots : []) {
     const reason = `given with --paths, but ${pathState(d) === 'gone' ? 'not there' : 'not a folder'}, so it was not searched`;
     results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason });
@@ -176,6 +186,13 @@ function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, revi
   const unknown = (d, reason) => { results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason }); print('UNKNOWN', short(d)); note('33', reason); };
   const skipped = [];
   for (const d of [...new Set(found)]) unknown(d, `found, but could not be read, so it was not checked: ${how}`);
+  // A link to a folder somewhere else is not followed: a link can point into a loop, or outside what was asked for. Up
+  // to this fix a walker stepped over one in silence, so a site, a virtual environment or a repository behind a link
+  // was never looked at and the run still read SAFE — the receipt named the folders it did open, and every one of them
+  // was true. "I chose not to look" now lands where "I could not look" already did.
+  for (const d of [...new Set(links)].filter((x) => !found.includes(x))) {
+    unknown(d, 'is a link to a folder somewhere else, so it was not followed: pass --paths with the folder it points to, to include it');
+  }
   // a searched root itself (a --paths folder, or /var/www) that can't be opened is always UNKNOWN: it was asked for
   for (const d of [...new Set(dirs)].filter((x) => !found.includes(x))) {
     if (lockedRoots.includes(d) || roots.includes(d) || ownedByPerson(d, kind)) unknown(d, `could not be opened, so it was not searched: ${how}`);
@@ -279,8 +296,8 @@ for (const inc of chosen) {
     const impostors = canaries.filter((x) => x.impostor);
     if (impostors.length) note('33', `${impostors.length} test host${impostors.length === 1 ? '' : 's'} answered with a certificate from "${impostors[0].impostor}", not the compromised chain: something on this network (a TLS-inspecting firewall, a DNS filter) is in the way, and those hosts were not used`);
     const rootsPem = join(LIB, 'incidents', inc.rootsPem);
-    const deniedVenvs = [...lockedRoots], foundUnread = [], notRun = [], untested = [];
-    for (const rt of discover({ roots: searchable, denied: deniedVenvs, found: foundUnread, notRun, untested })) {
+    const deniedVenvs = [...lockedRoots], foundUnread = [], notRun = [], untested = [], links = [];
+    for (const rt of discover({ roots: searchable, denied: deniedVenvs, found: foundUnread, notRun, untested, links })) {
       const r = await check(rt, canaries, { rootsPem, controlUrl: inc.advisory });
       const row = { incident: inc.id, ...rt, ...r, fix: r.status === 'EXPOSED' ? fixFor(rt) : undefined };
       results.push(row);
@@ -369,7 +386,7 @@ for (const inc of chosen) {
       else if (r.status === 'REVIEW' && inc.reviewFix) note('2', `check: ${inc.reviewFix}`);
     };
     // what was looked at, for the all-clear's receipt; folders that couldn't be opened, for UNKNOWN rows
-    const searched = [], denied = [], foundUnread = [];
+    const searched = [], denied = [], foundUnread = [], links = [];
     if (inc.versionFiles) {
       const v = inc.versionFiles;
       for (const r of checkVersionFiles(v)) show(r, `${v.product}${r.label ? ` (${r.label})` : ''} ${r.version}  ${short(r.path)}`, v.fix);
@@ -379,7 +396,7 @@ for (const inc of chosen) {
       // an explicit --paths that doesn't exist is a search of nothing: UNKNOWN, not an all-clear for that part
       if (explicitPaths && !searchable.length) show({ status: 'UNKNOWN', reason: `none of the folders given with --paths exist (${roots.map(short).join(', ')}), so no virtual environment there was searched` }, 'folders given with --paths');
       denied.push(...lockedRoots);
-      const dirs = sitePackagesDirs({ roots: searchable, denied, found: foundUnread });
+      const dirs = sitePackagesDirs({ roots: searchable, denied, found: foundUnread, links });
       for (const r of checkSitePackages(inc.sitePackages, dirs)) show(r, `${r.what}  ${short(r.dir)}`, inc.sitePackages.fix);
       searched.push(...dirs);
     }
@@ -409,7 +426,7 @@ for (const inc of chosen) {
       }
       for (const r of checkImages(inc, byEngine)) show(r, `${r.engine} image ${r.what}`, inc.dockerFix);
     }
-    gaps(results, inc, 'install', denied, { found: foundUnread, searchesRoots: Boolean(inc.sitePackages) });
+    gaps(results, inc, 'install', denied, { found: foundUnread, searchesRoots: Boolean(inc.sitePackages), links });
     // nothing found in any part that could be looked at: the all-clear names every folder it searched. An engine that
     // couldn't be asked keeps its own UNKNOWN row (and the exit code at 2) beside it, and one that isn't running its
     // REVIEW row; a finding or another gap doesn't.
@@ -423,8 +440,8 @@ for (const inc of chosen) {
   if (start.error) { results.push({ incident: inc.id, kind: 'workflow', status: 'UNKNOWN', reason: start.error }); print('UNKNOWN', 'workflow review'); note('33', start.error); }
   if (inc.type === 'workflows' && !start.error) {
     let repos = 0;
-    const denied = [...lockedRoots];
-    for (const repo of reposUnder(searchable, 4, denied)) {
+    const denied = [...lockedRoots], links = [];
+    for (const repo of reposUnder(searchable, 4, denied, links)) {
       const added = workflowsAddedSince(repo, inc.since);
       // read, but the window isn't all here or a commit's time can't be read (a shallow repository, wherever it is cut;
       // a committer time that isn't a whole number): UNKNOWN with that reason, not as a repository git couldn't read
@@ -436,7 +453,7 @@ for (const inc of chosen) {
         print('REVIEW', `${short(repo)}/${w.file}`, c('2', `  added ${w.commit}`));
       }
     }
-    gaps(results, inc, 'workflow', denied);
+    gaps(results, inc, 'workflow', denied, { links });
     // the all-clear names the instant and the date compared: up to 0.1.9 it said "since 2026-09-01", a day git read as
     // 1 Sep at the run's time of day
     if (counted(results).some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.fix}`);
@@ -444,8 +461,8 @@ for (const inc of chosen) {
   }
   if (inc.type === 'secrets') {
     let repos = 0;
-    const denied = [...lockedRoots];
-    for (const repo of reposUnder(searchable, 4, denied)) {
+    const denied = [...lockedRoots], links = [];
+    for (const repo of reposUnder(searchable, 4, denied, links)) {
       const hits = scanRepo(repo);
       if (hits.own) { results.push({ incident: inc.id, kind: 'secret', status: 'UNKNOWN', repo, reason: hits.error }); print('UNKNOWN', short(repo)); note('33', hits.error); continue; }
       if (hits.error) { unread('secret', repo, hits.error); continue; }
@@ -456,14 +473,14 @@ for (const inc of chosen) {
         print('REVIEW', `${short(repo)}/${h.file}:${h.line}`, c('2', `  ${h.type} ${h.masked}`));
       }
     }
-    gaps(results, inc, 'secret', denied);
+    gaps(results, inc, 'secret', denied, { links });
     if (counted(results).some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.fix}`);
     else if (!counted(results).length) allClear(results, inc, 'secret', `no committed keys found in the files of ${repoCount(repos)} (current files; history needs gitleaks or trufflehog)`, searchable);
   }
   if (inc.type === 'wordpress') {
     const denied = [...lockedRoots];
-    const privateDot = [], coreOnly = [];
-    const sites = wordpressUnder(searchable, 5, denied, privateDot, coreOnly);
+    const privateDot = [], coreOnly = [], links = [];
+    const sites = wordpressUnder(searchable, 5, denied, privateDot, coreOnly, links);
     for (const core of coreOnly) {
       const reason = 'WordPress core is here, but no plugins folder is where WordPress, a moved wp-content, Bedrock or its wp-config.php puts one, so its plugins were not checked: pass --paths for the folder that holds them';
       results.push({ incident: inc.id, kind: 'wordpress', site: core, status: 'UNKNOWN', what: 'plugins folder', reason });
@@ -474,7 +491,7 @@ for (const inc of chosen) {
       print(f.status, `${short(site)} · ${f.what}`, f.reason ? c('2', `  ${f.reason}`) : '');
       if (f.status === 'EXPOSED') note('2', `fix: ${f.fix}`);
     }
-    gaps(results, inc, 'wordpress', denied, { review: privateDot });
+    gaps(results, inc, 'wordpress', denied, { review: privateDot, links });
     // sites found with none of the listed plugins are named as found (up to b03e7be this said "no WordPress installs found")
     if (!counted(results).length) allClear(results, inc, 'wordpress', sites.length ? `${sites.length} WordPress install${sites.length === 1 ? '' : 's'} found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched; none has any of the listed plugins` : `no WordPress installs found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched (run it on the server, or pass --paths)`, searchable);
     else if (counted(results).some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.reviewFix}`);

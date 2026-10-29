@@ -18,7 +18,7 @@ import { listContainers, checkContainer } from '../lib/containers.mjs';
 import { check } from '../lib/probe.mjs';
 import { droppedNodeOptions } from '../lib/run.mjs';
 import { checkBinaryAll, copiesToRun, goToolchain, judgeVersion } from '../lib/binaries.mjs';
-import { readCapped, eachPiece, isNativeProgram } from '../lib/files.mjs';
+import { readCapped, eachPiece, isNativeProgram, isSystemFolder } from '../lib/files.mjs';
 import { scanText } from '../lib/secrets.mjs';
 import { sitePackagesDirs, checkSitePackages } from '../lib/installs.mjs';
 import { reposUnder } from '../lib/workflows.mjs';
@@ -359,7 +359,7 @@ const curlDir = () => { const d = fresh('disc-curl'); exe(join(d, 'curl'), 'echo
 const discovered = (name, roots) => lib(name, `const { discover } = await import(L + '/discover.mjs');
 const untested = [];
 const out = discover({ roots: ${JSON.stringify(roots)}, pathEnv: ${JSON.stringify(curlDir())}, untested });
-console.log(JSON.stringify({ envs: out.filter((r) => r.env).map((r) => r.env).sort(), untested: untested.map((u) => u.env) }));`);
+console.log(JSON.stringify({ envs: out.filter((r) => r.env).map((r) => r.env).sort(), untested: untested.map((u) => u.fields?.env ?? u.env ?? null) }));`);
 
 test('a virtual environment without certifi gives no row; one with certifi does', () => {
   // lib/discover.mjs:28 (no certifi bundle, no row)
@@ -368,12 +368,19 @@ test('a virtual environment without certifi gives no row; one with certifi does'
   assert.deepEqual(discovered('d28', [root]), { envs: [join(root, 'withca', '.venv')], untested: [] });
 });
 
-test('discovery doesn\'t follow links or go into node_modules', () => {
-  // lib/discover.mjs:79 (links, node_modules, .git and macOS's own folders are skipped)
+// Changed 28 Oct 2026 with lib/discover.mjs (audit AUDIT-1). The link is still NOT followed — that part of this test's
+// name is unchanged and still right — but it is now NAMED as untested instead of stepped over in silence. The old
+// assertion was `untested: []`, which is to say: a virtual environment behind a link was neither tested nor mentioned,
+// and the run still read SAFE. Not following is a choice; not saying so is the defect.
+test('discovery doesn\'t follow links or go into node_modules, and says so for the link', () => {
+  // lib/discover.mjs:79 (node_modules, .git and macOS's own folders are skipped; a link is reported, not followed)
   const root = fresh('d79-root'), elsewhere = fresh('d79-elsewhere');
   venv(join(root, 'node_modules', 'pkg', '.venv')); venv(join(elsewhere, 'venv')); symlinkSync(join(elsewhere, 'venv'), join(root, 'linked'));
   venv(join(root, 'proj', '.venv'));
-  assert.deepEqual(discovered('d79', [root]), { envs: [join(root, 'proj', '.venv')], untested: [] });
+  assert.deepEqual(discovered('d79', [root]), {
+    envs: [join(root, 'proj', '.venv')],
+    untested: [join(root, 'linked')],   // the link, reported because what is behind it was not tested
+  });
 });
 
 test('the search depths: a virtual environment six folders down, a repository four down, a site five down', () => {
@@ -453,15 +460,31 @@ test('a virtual environment three levels under the home folder is found, and its
   assert.deepEqual(checkSitePackages(incident('litellm-2026-10').sitePackages, dirs).map((x) => [x.status, x.what]), [['EXPOSED', 'cook.pth']]);
 });
 
-test('virtual environments inside node_modules, .git or the Trash are not looked at, and a locked node_modules is no gap', () => {
-  // lib/installs.mjs:136 (node_modules, .git and macOS's own folders are skipped)
+test('virtual environments inside node_modules or .git are not looked at; one in a folder merely named .Trash IS', () => {
+  // lib/installs.mjs:136 (node_modules and .git are skipped). The .Trash case changed with the isSystemFolder fix:
+  // up to then any folder with that name, under any parent on any platform, was stepped over in silence, so
+  // `mkdir .Trash` hid a whole tree from every walk and the run still read SAFE. macOS's real Trash (a home folder,
+  // a volume root) is still skipped — see the isSystemFolder unit test below — but a project folder that happens to
+  // carry the name is searched, exactly as a project folder named Library is.
   const root = fresh('i136-root');
-  for (const p of ['node_modules/pkg/.venv', '.git/x/.venv', '.Trash/old/.venv']) venv(join(root, p), { certifi: false });
+  for (const p of ['node_modules/pkg/.venv', '.git/x/.venv']) venv(join(root, p), { certifi: false });
+  const hidden = venv(join(root, '.Trash', 'old', '.venv'), { certifi: false });
   const keep = venv(join(root, 'proj', '.venv'), { certifi: false });
   if (!AS_ROOT) { mkdirSync(join(root, 'web', 'node_modules'), { recursive: true }); lock(join(root, 'web', 'node_modules')); }
   const denied = [];
-  assert.deepEqual(sitePackagesDirs({ roots: [root], patterns: [], home: '', denied }), [keep]);
+  assert.deepEqual(sitePackagesDirs({ roots: [root], patterns: [], home: '', denied }).sort(), [hidden, keep].sort());
   assert.deepEqual(denied, []);
+});
+
+test('isSystemFolder skips macOS\'s own folders only where macOS puts them, never by name alone', () => {
+  if (process.platform !== 'darwin') return;
+  // literal paths, not homedir(): this file preloads no-real-home.cjs, so homedir() is a temp folder here
+  assert.equal(isSystemFolder('.Trash', '/Users/someone'), true, 'a home folder Trash is macOS\'s');
+  assert.equal(isSystemFolder('.Trashes', '/Volumes/Backup'), true, 'a volume root .Trashes is macOS\'s');
+  // and a folder that merely carries the name is searched
+  assert.equal(isSystemFolder('.Trash', '/Users/someone/proj'), false, 'a project folder named .Trash is not');
+  assert.equal(isSystemFolder('.Trashes', '/srv/www/site'), false, 'nor is one named .Trashes');
+  assert.equal(isSystemFolder('evil.photoslibrary', '/Users/someone/src'), false, 'nor a bundle name with no bundle inside');
 });
 
 // ---- WordPress ---------------------------------------------------------------------------------------------------------

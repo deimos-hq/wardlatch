@@ -512,12 +512,16 @@ test('R6 versions: every copy on PATH that may be run is judged: a later compile
   assert.deepEqual(copiesToRun('php', `${a}:${b}:${c}`), { run: [join(a, 'php'), join(b, 'php')], notRun: [join(c, 'php')] });
 });
 
-test('R6 versions: a later copy on PATH that is a script is named, never silently dropped (a review line, in --json too)', () => {
+// Changed 28 Oct 2026 with bin/wardlatch.mjs notRunRow (audit F6). This test previously pinned the row as REVIEW with
+// exit 0. That let a vulnerable program installed on the machine, shadowed by a wrapper script, read SAFE and exit 0 —
+// a verdict that flipped with PATH order while the same two programs were installed. A copy that was never run is a
+// copy whose version was never judged, which is not having looked, which is UNKNOWN.
+test('R6 versions: a later copy on PATH that is a script is named and counts as not checked (UNKNOWN, exit 2, in --json too)', () => {
   const fixed = fresh('r6-fixed'), bad = fresh('r6-bad');
   exe(join(fixed, 'php'), 'echo "PHP 8.4.27 (cli)"'); exe(join(bad, 'php'), 'echo "PHP 8.4.26 (cli)"');
   const j = runJson(['--incident', 'php-2026-10', '--paths', emptyRoot], { PATH: `${fixed}:${bad}` }, HIDE_PHP);
-  assert.ok(j.rows.some((r) => r.kind === 'not-run' && r.status === 'REVIEW' && r.paths.includes(join(bad, 'php'))), JSON.stringify(j.rows));
-  assert.equal(j.code, 0, 'a review line does not change the exit code');
+  assert.ok(j.rows.some((r) => r.kind === 'not-run' && r.status === 'UNKNOWN' && r.paths.includes(join(bad, 'php'))), JSON.stringify(j.rows));
+  assert.equal(j.code, 2, 'a copy whose version was never judged means something could not be tested');
 });
 
 test('R6 versions: a program not found says it searched PATH, never a bare "not installed"', () => {

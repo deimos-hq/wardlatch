@@ -333,11 +333,16 @@ test('on Windows a folder\'s owner can\'t be read, so it counts as a person\'s',
   assert.equal(person(0, 'workflow', { os: 'win32', self: undefined, names: new Map(), subuids: [] }), true);
 });
 
+// Status changed from REVIEW to UNKNOWN on 28 Oct 2026 with bin/wardlatch.mjs notRunRow (audit F6), for the trust check
+// as for the version checks: one rule, since it is one function. A copy that was never run is a copy that was never
+// judged, and not having looked is UNKNOWN. What this test is really about — that the later script is NAMED and is NOT
+// executed — is unchanged, and the existsSync assertion below is the part that matters most: Wardlatch must never be
+// the first thing to run an unknown script that happens to share a name.
 test('the trust check names a later node on PATH that is a script, in --json too, without running it', () => {
   const first = nodeStandIn('nr1', 'NOTHING'), second = fresh('nr2'), ran = join(dir, 'nr2-ran');
   exe(join(second, 'node'), `touch ${JSON.stringify(ran)}; echo v18.0.0`);
   const r = run(['--incident', 'emudhra-2026-10', '--no-containers', '--paths', fresh('nr-root')], { PATH: `${first}:${second}` }, ['--require', preload('nr-online', { online: true })]);
-  assert.ok(r.rows.some((x) => x.kind === 'not-run' && x.status === 'REVIEW' && x.paths.includes(join(second, 'node'))), JSON.stringify(r.rows));
+  assert.ok(r.rows.some((x) => x.kind === 'not-run' && x.status === 'UNKNOWN' && x.paths.includes(join(second, 'node'))), JSON.stringify(r.rows));
   assert.equal(existsSync(ran), false, 'the later script ran');
 });
 
