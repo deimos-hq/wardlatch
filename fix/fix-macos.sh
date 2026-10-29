@@ -90,6 +90,22 @@ if [ "$found" -eq 0 ]; then
   exit 0
 fi
 
+# How many of the two withdrawn roots this bundle actually held, in English. Apple added emSign ECC Root CA - G3
+# after Mojave, so every Mac of that era holds ONE of the two: the published page says the fix "removes the two
+# roots", and on those machines it removes one. Saying which, and that the other was already absent, is the
+# difference between a reader trusting the result and wondering whether it half-worked.
+# It does NOT name which root was missing. roots() returns certificate INDEX numbers, not fingerprints, so
+# naming it would mean a second pass over every certificate -- more work and more code in a script that edits
+# the file every TLS client on the Mac reads. The count and the fact that the other was already absent is what
+# a reader needs; which one it was is on the page.
+removed_phrase() {
+  if [ "$1" -eq 1 ]; then
+    echo "removed 1 of the 2 withdrawn roots; the other was already absent from this Mac"
+  else
+    echo "removed both withdrawn roots"
+  fi
+}
+
 before=$(certs "$snap")
 strip "$snap" "$(tr '\n' ' ' <<<"$list")" > "$tmp"
 after=$(certs "$tmp")
@@ -108,11 +124,11 @@ $SUDO chmod 644 "$FILE"
 
 r=$(trust "$FILE")
 case "$r" in
-  60) echo "SAFE     Fixed. $FILE now refuses the leaked keys: removed $found root certificates, kept $after." ;;
+  60) echo "SAFE     Fixed. $FILE now refuses the leaked keys: $(removed_phrase "$found" "$list"), kept $after." ;;
   0)  $SUDO cp -p "$backup" "$FILE"
       echo "EXPOSED  The file still trusts the test site after the change, so the original was put back. Please report this."
       exit 1 ;;
-  *)  echo "SAFE     Fixed in the file: removed $found root certificates, kept $after. (The test site didn't answer, so this wasn't re-tested online.)" ;;
+  *)  echo "SAFE     Fixed in the file: $(removed_phrase "$found" "$list"), kept $after. (The test site didn't answer, so this wasn't re-tested online.)" ;;
 esac
 echo "         Backup: $backup"
 echo "         Undo:   sudo cp -p '$backup' '$FILE'"
