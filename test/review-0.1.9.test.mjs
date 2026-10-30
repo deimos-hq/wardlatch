@@ -170,8 +170,13 @@ test('go and cloudflared not found on PATH each get a receipt row naming PATH', 
   }
 });
 
+// Changed 29 Oct 2026 (AUDIT-13): the receipt stood in for here was '/a', a path that is on no machine. safe() now
+// refuses a receipt whose entries are neither places that are there nor observations the check declared, so the
+// stand-in is a real place (ROOT, this repository). What the test holds is unchanged: the fields cannot override the
+// status or the receipt, and an empty receipt still throws. The last line is new, and is AUDIT-13's own case.
 test('safe(): the fields can never override the status or the receipt', () => {
-  const r = safe(['/a'], { status: 'EXPOSED', searched: [], note: 'x' });
-  assert.equal(r.status, 'SAFE'); assert.deepEqual(r.searched, ['/a']); assert.equal(r.note, 'x');
+  const r = safe([ROOT], { status: 'EXPOSED', searched: [], note: 'x' });
+  assert.equal(r.status, 'SAFE'); assert.deepEqual(r.searched, [ROOT]); assert.equal(r.note, 'x');
   assert.throws(() => safe([], {}), /receipt/);
+  assert.notEqual(safe(['/no/such/folder/anywhere', 'I had a thorough look around']).status, 'SAFE');
 });

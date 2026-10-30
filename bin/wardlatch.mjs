@@ -21,7 +21,7 @@ import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
 import { scanHeaders } from '../lib/headers.mjs';
 import { pathState, readText, listDir } from '../lib/files.mjs';
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
-import { safe, withdrawUnreceipted } from '../lib/report.mjs';
+import { safe, saw, withdrawUnreceipted } from '../lib/report.mjs';
 
 // npx puts the current project's node_modules/.bin, and each parent folder's, first on PATH. Wardlatch finds git,
 // python3, node, curl, php, go and the container engines on PATH and runs some of them, so a project could otherwise
@@ -129,11 +129,15 @@ const all = [];
 // With no --paths and none of the usual folders there (a fresh server, a CI runner), there is nothing of the kind to look
 // in: SAFE, and the receipt lists the folders looked for (owner, 22 Oct; 0.1.9's first cut said UNKNOWN, exit 2, and
 // whether a machine passed depended on whether an empty ~/Development happened to exist).
+// safe() withdraws a receipt that does not hold and says which entry failed, so the reason it hands back is printed,
+// not the all-clear's own words: an UNKNOWN line must never read like a clean one (lib/report.mjs).
 function allClear(results, inc, kind, text, searched) {
-  if (searched.length) { const row = { incident: inc.id, kind, ...safe(searched), reason: text }; results.push(row); print(row.status, text); return; }
+  if (searched.length) { const row = { incident: inc.id, kind, ...safe(searched, { reason: text }) }; results.push(row); print(row.status, row.reason); return; }
   if (!explicitPaths) {
     const reason = `none of the usual folders exist here (${roots.map(short).join(', ')}), so there was nothing to search: pass --paths for a folder elsewhere`;
-    const row = { incident: inc.id, kind, ...safe(roots.map((r) => `looked for ${r}`)), reason }; results.push(row); print(row.status, reason); return;
+    // nothing was opened, because none of these folders is there: "I looked for it and it was not there" is evidence of
+    // absence, which a reader checks by looking for it too — not a place, so it is declared (lib/report.mjs saw())
+    const row = { incident: inc.id, kind, ...safe(roots.map((r) => saw(`looked for ${r}`)), { reason }) }; results.push(row); print(row.status, row.reason); return;
   }
   const reason = `none of the folders given with --paths exist (${roots.map(short).join(', ')}), so nothing was searched`;
   results.push({ incident: inc.id, kind, status: 'UNKNOWN', reason });
@@ -353,7 +357,8 @@ for (const inc of chosen) {
   // isn't there gets its own receipt row naming PATH (go and cloudflared in the trust incident used to get none)
   // on Windows (not supported) program checks look in macOS and Linux places only: not checked, never "not found"
   for (const rule of platform() === 'win32' ? [] : inc.binaries ?? []) {
-    const rows = checkBinaryAll(rule);
+    const listed = [];
+    const rows = checkBinaryAll(rule, undefined, { listed });
     notRunRow(results, inc, rule.binary, rows.notRun ?? []);
     for (const r of rows) {
       const row = { incident: inc.id, kind: 'binary', binary: rule.binary, ...r, fix: r.status !== 'SAFE' ? rule.fix : undefined };
@@ -362,9 +367,13 @@ for (const inc of chosen) {
       if (r.reason) note({ EXPOSED: '31', SAFE: '2' }[r.status] ?? '33', r.reason);
       if (r.status === 'EXPOSED') note('2', `fix: ${rule.fix}`);
     }
-    // the receipt names every place looked in: PATH, and a rule's extraDirs (PHP's sbin folders, where php-fpm lives)
+    // The reason names where this check looks, including a rule's extraDirs (PHP's sbin folders, where php-fpm lives).
+    // The receipt names the folders it actually listed. Up to 0.1.10 the receipt was the extraDirs as written, so the
+    // php all-clear's receipt carried thirteen folders that are not on this machine and five glob patterns
+    // (/opt/homebrew/opt/php@*/bin) that are not paths at all — the AUDIT-10 defect in a second check, found by
+    // building the rule that now refuses it. PATH itself is one setting, not a place, so it stays declared.
     const extra = rule.binaryNames ? rule.extraDirs ?? [] : [];
-    if (!rows.length) allClear(results, inc, 'binary', `${rule.binary} not found on PATH${extra.length ? ` or in ${extra.join(', ')}` : ''} (searched: ${short(process.env.PATH ?? '')})`, [`PATH: ${process.env.PATH ?? ''}`, ...extra, ...(rule.tmpTrace ? tempDirs() : [])]);
+    if (!rows.length) allClear(results, inc, 'binary', `${rule.binary} not found on PATH${extra.length ? ` or in ${extra.join(', ')}` : ''} (searched: ${short(process.env.PATH ?? '')})`, [saw(`PATH: ${process.env.PATH ?? ''}`), ...new Set(listed), ...(rule.tmpTrace ? tempDirs() : [])]);
   }
 
   // A repository git could not read (a partial clone missing what git would have to fetch, an ownership refusal, a
@@ -418,7 +427,8 @@ for (const inc of chosen) {
       const tempsDenied = [];
       for (const t of tmpTraces(inc.tmpTrace, temps, tempsDenied)) show({ status: 'EXPOSED', path: t, reason: 'the malware ran on this machine: it leaves this marker each time it runs' }, short(t), inc.tmpFix ?? inc.sitePackages?.fix);
       foundUnread.push(...tempsDenied);
-      searched.push(...temps);
+      // and one that isn't there was not searched either: it is no more a place this run opened than a denied one
+      searched.push(...temps.filter((t) => !tempsDenied.includes(t) && pathState(t) === 'dir'));
     }
     if (inc.dockerDigests && !flag('--no-containers')) {
       hostVarsRow(results, inc, 'images');
@@ -434,7 +444,8 @@ for (const inc of chosen) {
         }
         // permission denied, no answer, too much output: the images exist but weren't seen, which is not SAFE
         if (list.error) { show({ status: 'UNKNOWN', engine: e, reason: `${list.error}, so its local images were not checked` }, `${e} images`); continue; }
-        byEngine[e] = list; searched.push(`${list.length} ${e} image${list.length === 1 ? '' : 's'}`);
+        // the engine's own list of its images: read from the engine, not from a place on disk, so it is declared
+        byEngine[e] = list; searched.push(saw(`${list.length} ${e} image${list.length === 1 ? '' : 's'}`));
       }
       for (const r of checkImages(inc, byEngine)) show(r, `${r.engine} image ${r.what}`, inc.dockerFix);
     }

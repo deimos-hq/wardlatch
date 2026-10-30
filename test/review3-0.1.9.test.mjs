@@ -134,12 +134,19 @@ test('4 under sudo by a directory user (ada@corp.example) with no home folder fo
 });
 
 // ---- 5: the receipt guard --------------------------------------------------------------------------------------------
-test('5 a SAFE row without a receipt is withdrawn, and the CLI runs every row through the guard', async () => {
+// Changed 29 Oct 2026 (AUDIT-13). Row z stood for "a row that does carry a receipt", and used '/a' to stand for a
+// place — a path that is on no machine. The guard now asks whether a receipt's entries are places that are there or
+// observations the check declared, so the stand-in has to be a real place (ROOT, this repository). Rows v and u are
+// new, and are the defect itself: a made-up path and a sentence, which the guard used to pass because a non-blank
+// string was a receipt.
+test('5 a SAFE row without a receipt, or with one that names nothing real, is withdrawn, and the CLI runs every row through the guard', async () => {
   const { withdrawUnreceipted } = await import('../lib/report.mjs');
-  const rows = [{ kind: 'x', status: 'SAFE' }, { kind: 'y', status: 'SAFE', searched: ['  '] }, { kind: 'z', status: 'SAFE', searched: ['/a'] }, { kind: 'w', status: 'EXPOSED' }];
+  const rows = [{ kind: 'x', status: 'SAFE' }, { kind: 'y', status: 'SAFE', searched: ['  '] }, { kind: 'z', status: 'SAFE', searched: [ROOT] },
+    { kind: 'v', status: 'SAFE', searched: ['/no/such/folder/anywhere'] }, { kind: 'u', status: 'SAFE', searched: ['I had a thorough look around'] },
+    { kind: 't', status: 'SAFE', searched: ['the environment'], notOnDisk: ['the environment'] }, { kind: 'w', status: 'EXPOSED' }];
   const out = withdrawUnreceipted(rows);
-  assert.deepEqual(rows.map((r) => r.status), ['UNKNOWN', 'UNKNOWN', 'SAFE', 'EXPOSED']);
-  assert.equal(out.length, 2);
+  assert.deepEqual(rows.map((r) => r.status), ['UNKNOWN', 'UNKNOWN', 'SAFE', 'UNKNOWN', 'UNKNOWN', 'SAFE', 'EXPOSED']);
+  assert.equal(out.length, 4);
   const bin = readFileSync(BIN, 'utf8');
   assert.match(bin, /withdrawUnreceipted\(all\)[\s\S]*const count = \{/, 'the guard runs on every row before the count and the exit code');
 });

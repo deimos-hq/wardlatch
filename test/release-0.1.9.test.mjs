@@ -399,13 +399,22 @@ test('PHP: php pointing at php8.3 (one file, two names) is judged once; a clean 
   assert.equal(r.code, 0);
 });
 
-test('PHP: php-fpm in an sbin folder off PATH is found; with no PHP anywhere, the receipt names those folders too', async () => {
+// Changed 29 Oct 2026 (AUDIT-10/13). This asserted that the receipt names '/usr/sbin'. The preload these tests run with
+// hides /usr/sbin, /usr/local and /opt from the run (test/support/hide-php-places.cjs), so to the run those folders are
+// not there and nothing was searched in them: naming them in a receipt was the AUDIT-10 defect in a second check, and
+// lib/report.mjs now refuses it. (On a machine where /usr/sbin is there, it IS in the receipt; what the old expectation
+// really stood for is below, in the reason, which still names every folder this check looks in.)
+test('PHP: php-fpm in an sbin folder off PATH is found; with no PHP anywhere, the reason names those folders and the receipt names the ones it could list', async () => {
   const { copiesMatching } = await import('../lib/binaries.mjs');
   const sbin = fresh('pv-sbin'); exe(join(sbin, 'php-fpm8.2'), 'echo "PHP 8.2.1 (fpm-fcgi)"');
   assert.deepEqual(copiesMatching('^php(?:-fpm|-cgi)?(?:\\d+(?:\\.\\d+)?)?$', fresh('pv-path'), [sbin]).run, [join(sbin, 'php-fpm8.2')]);
-  const r = php(['--incident', 'php-2026-10'], { PATH: fresh('pv-none') });
+  const none = fresh('pv-none');
+  const r = php(['--incident', 'php-2026-10'], { PATH: none });
   const safe = r.rows.find((x) => x.status === 'SAFE');
-  assert.ok(safe && safe.searched.includes('/usr/sbin') && /or in \/usr\/sbin/.test(safe.reason), JSON.stringify(r.rows));
+  assert.ok(safe && /or in \/usr\/sbin/.test(safe.reason), JSON.stringify(r.rows));
+  assert.ok(safe.searched.includes(none), `the one folder it could list is not in the receipt: ${JSON.stringify(safe)}`);
+  assert.deepEqual(safe.searched.filter((s) => /^\/(?:usr\/sbin|usr\/local|opt)(?:\/|$)/.test(s)), [],
+    `the receipt names a folder this run was told is not there: ${JSON.stringify(safe)}`);
 });
 
 // ---- from the strict check of 82a57b5 -----------------------------------------------------------------------------------
