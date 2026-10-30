@@ -115,14 +115,16 @@ the cleaned copy to a fresh `mktemp` file and checks it before using it (the two
 still there, at least 50 left), makes a dated backup and refuses to overwrite an existing one, copies the clean file
 in and sets 644, then compares the file it wrote with the file it built and restores the backup if the two differ.
 That comparison of two local files is the **only** thing that makes it put the original back. It then re-tests with
-`/usr/bin/curl`, and a wrong re-test is reported (EXPOSED, exit 1) with the fix left in place, because restoring
-would put both withdrawn roots back on a Mac whose network is already answering for someone else — the one Mac that
-could then never be fixed.
+`/usr/bin/curl`, and reads that re-test only after an ordinary website has loaded through the same file as a control:
+without the control, "the test host refused" and "nothing on this network answered" are one reading. A wrong re-test
+is reported (EXPOSED, exit 1) with the fix left in place, because restoring would put both withdrawn roots back on a
+Mac whose network is already answering for someone else — the one Mac that could then never be fixed.
 It changes nothing on a Mac that is already clean, so running it twice is safe. *Evidence:* CI runs
 `test/fix-macos.check.sh` on macOS against copies of the runner's real `/etc/ssl/cert.pem`: the original, a second
-run, undo from the backup, an empty file, a truncated file and a missing file, plus the refusal on Linux. One case
-drives a copy of the script whose network command is a stub: a network that accepts everything must leave the fix in
-place (exit 1, EXPOSED), and it fails on the script as it shipped on 27 Oct 2026, which puts both roots back. CI also
+run, undo from the backup, an empty file, a truncated file and a missing file, plus the refusal on Linux. Two cases
+drive a copy of the script whose network command is a stub: a network that accepts everything must leave the fix in
+place (exit 1, EXPOSED), and a network where nothing answers must not be read as a refusal. Both fail on the script
+as it shipped on 27 Oct 2026 — the first puts both roots back, the second claims a re-test nothing performed. CI also
 fails if the script stops matching the SHA-256 published with the download, so the file people run is the file that
 was tested.
 
@@ -405,10 +407,14 @@ document, the CHANGELOG and the README must state that limit.
 `test/incidents.test.mjs` holds the start of every incident's window (`since`, `addedSince`) to an explicit UTC
 instant.
 
-**The Mac fix finds the two roots by the header lines macOS writes above each certificate** (`=== …/CN=…`). If Apple
-changed that format, the script would find no root to remove; it then re-tests online, and reports EXPOSED if the file
-still trusts the test host. If the test host were also down at that moment, it would report the file as clean without
-having been able to check. The script also trusts `/usr/bin/curl` for the re-test.
+**The Mac fix's re-test is worth no more than the two hosts it can reach.** It finds the two roots by their SHA-256
+fingerprints, so how macOS writes the name lines above them cannot hide one (that it read the name lines was the
+limit here until 0.1.10). What is left is the re-test. It reads the advisory's test host only after an ordinary
+website has loaded through the same file as a control, and if either host does not answer it says so and claims no
+online result: a file it cleaned and checked is then reported as fixed *in the file*, never as re-tested. A network
+that answers for both hosts can still make the re-test say the wrong thing — what it cannot do is make the script
+undo the fix, which is why the re-test may report and never reverts. The script trusts `/usr/bin/curl` for both
+fetches.
 
 **Releases 0.1.0 to 0.1.2 are not signed by the project**, and there is one maintainer and no second reviewer. A named
 successor has held admin access to the repository and co-owned the npm package since 21 October 2026, but has not yet

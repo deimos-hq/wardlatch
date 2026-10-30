@@ -27,6 +27,14 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   driving a copy of the script whose one network command is a stub, because no real network can be made to answer
   this way on demand: a network that accepts everything must leave the fix in place. It fails on the 0.1.10 script,
   which puts both roots back on the file.
+- **A verdict was read out of the test host with no control.** `curl` exit 60 was taken as "the host refused us" and
+  anything else as "the host didn't answer", when on a network where nothing answers at all both readings are
+  worthless; for five days the npm command had a control for every row and the Mac fix had none. It now fetches
+  `$CONTROL_URL` (`https://www.apple.com/`, the host the one-line test on the page already uses) through the same
+  certificate file first, and reads the test host only if that loads. If it doesn't, a cleaned file is reported as
+  fixed *in the file*, with the control's `curl` code, and no online claim is made. A second stubbed case in
+  `test/fix-macos.check.sh` covers it: a network where nothing answers must not be read as a refusal. On the 0.1.10
+  script it prints "now refuses the compromised keys" about a test nothing performed.
 
 ### Fixed
 

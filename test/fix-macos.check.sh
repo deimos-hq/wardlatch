@@ -170,7 +170,7 @@ if [ "$found" -gt 0 ]; then
 fi
 
 # What the fix does with what the network says. These cases drive a copy of the script whose one network command is
-# a stub standing in for /usr/bin/curl, because no real network can be made to answer this way on demand. They are
+# a stub standing in for /usr/bin/curl, because no real network can be made to answer these ways on demand. They are
 # about control flow, not about curl: everything else in the copy is the shipped script, byte for byte.
 if [ "$found" -gt 0 ]; then
   sed 's|/usr/bin/curl|"${WARDLATCH_CURL:-/usr/bin/curl}"|g' "$fix" >"$work/stubbed.sh"
@@ -198,6 +198,17 @@ STUB
   [ "$(bad "$work/lying.pem")" -eq 0 ] || fail "a network that accepts everything: the fix was reverted, so the roots are back"
   [ "$(count "$work/lying.pem")" -eq $((total - found)) ] || fail "a network that accepts everything: the file is not the fixed file"
   ok "a network that accepts everything: EXPOSED, exit 1, and the fix kept"
+
+  # A network where nothing answers, but the test host's silence arrives as curl 60 and so looks like a refusal.
+  # The fix must not read a verdict out of it: the file is fixed, and the output must not say the Mac now refuses
+  # the compromised keys, because nothing was tested. Up to 29 Oct 2026 this case printed exactly that.
+  cp "$work/original.pem" "$work/nocontrol.pem"
+  run "$work/nocontrol.pem" WARDLATCH_CURL="$work/curl-stub" STUB_CONTROL=7 STUB_TEST=60
+  [ "$code" -eq 0 ] || fail "no control: expected exit 0, got $code"
+  [ "$(count "$work/nocontrol.pem")" -eq $((total - found)) ] || fail "no control: the file was not fixed"
+  grep -q 'refuses the compromised keys' <<<"$out" && fail "no control: it claimed a re-test on a network that answered nothing"
+  grep -q "didn't load" <<<"$out" || fail "no control: it did not say the control failed"
+  ok "no control: fixed in the file, and no online verdict claimed"
 
   script=$fix
 fi

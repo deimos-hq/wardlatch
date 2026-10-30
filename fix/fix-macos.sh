@@ -14,13 +14,17 @@
 #   - keeps the file readable by everyone, as macOS ships it;
 #   - checks that what landed in the file is the file it built, and puts the original back if it isn't -- the one
 #     reason it ever puts the original back, because the original is the file that trusts the compromised keys;
-#   - re-tests against the advisory's test site and reports what it finds; no network result undoes the fix.
+#   - re-tests against the advisory's test site, but only after a normal website has loaded as a control, so a
+#     network that answers nothing isn't read as a verdict; no network result undoes the fix.
 # Safe to run twice. Run it in Terminal (it asks for your Mac's password) or as root from Jamf, Kandji or Intune.
 # Copy it from the Wardlatch page in Safari. Don't fetch it with the Mac's own curl: that curl is what's exposed.
 set -euo pipefail
 
 FILE="${WARDLATCH_CERT_FILE:-/etc/ssl/cert.pem}"   # the override exists for testing on a copy
 TEST_URL="https://dv-g3b-emudhra.we-have-a-problem.com/"
+# The control host for every online verdict: an ordinary website on no compromised chain. Apple's, the same host the
+# one-line test on the page uses, so the two tests answer about the same network.
+CONTROL_URL="https://www.apple.com/"
 # SHA-256 fingerprints: AAA Certificate Services, emSign ECC Root CA - G3
 ROOTS='D7:A7:A0:FB:5D:7E:27:31:D7:71:E9:48:4E:BC:DE:F7:1D:5F:0C:3E:0A:29:48:78:2B:C8:3E:E0:EA:69:9E:F4
 86:A1:EC:BA:08:9C:4A:8D:3B:BE:27:34:C6:12:BA:34:1D:81:3E:04:3C:F9:E8:A8:62:CD:5C:57:A3:6B:BE:6B'
@@ -32,6 +36,11 @@ SUDO=sudo; if [ "$(id -u)" -eq 0 ] || { [ -w "$FILE" ] && [ -w "$(dirname "$FILE
 # 0 = trusts the compromised keys, 60 = refuses them, anything else = the test site didn't answer
 # (-q: ignore ~/.curlrc, whose settings could change the answer)
 trust() { local r=0; /usr/bin/curl -q -s -o /dev/null --max-time 15 --cacert "$1" "$TEST_URL" || r=$?; echo "$r"; }
+# The control, read before any verdict is taken from trust(). 0 = an ordinary website loaded through this same file,
+# so the network answers and the file still validates ordinary certificates; anything else and there is no online
+# verdict to be had here -- without this, "the test site refused" and "nothing on this network answered" are the
+# same reading, and the Mac that most needs this fix is the one whose network is under someone else's control.
+control() { local r=0; /usr/bin/curl -q -s -o /dev/null --max-time 15 --cacert "$1" "$CONTROL_URL" || r=$?; echo "$r"; }
 certs() { grep -c 'BEGIN CERTIFICATE' "$1" || true; }
 # Prints the position (1, 2, ...) of each certificate in the file whose fingerprint is one of ROOTS, one per line.
 # Fails if any certificate can't be read, so a file we can't fully check is never called clean.
@@ -83,12 +92,19 @@ fi
 list=$(roots "$snap") || { echo "UNKNOWN  A certificate in $FILE couldn't be read, so it wasn't checked. Nothing changed."; exit 2; }
 found=$(grep -c . <<<"$list" || true)
 if [ "$found" -eq 0 ]; then
-  r=$(trust "$snap")
-  case "$r" in
-    60) echo "SAFE     $FILE already refuses the compromised keys. Nothing changed." ;;
-    0)  echo "EXPOSED  $FILE holds neither root but still trusts the test site. Nothing changed; please report this."; exit 1 ;;
-    *)  echo "SAFE     $FILE no longer holds the two roots. Nothing changed. (The test site didn't answer, so this wasn't re-tested online.)" ;;
-  esac
+  c=$(control "$snap")
+  if [ "$c" -ne 0 ]; then
+    echo "SAFE     $FILE no longer holds the two roots. Nothing changed."
+    echo "         (An ordinary website didn't load either (curl $c), so nothing was re-tested online.)"
+  else
+    r=$(trust "$snap")
+    case "$r" in
+      60) echo "SAFE     $FILE already refuses the compromised keys. Nothing changed." ;;
+      0)  echo "EXPOSED  $FILE holds neither root but still trusts the test site. Nothing changed; please report this."; exit 1 ;;
+      *)  echo "SAFE     $FILE no longer holds the two roots. Nothing changed. (An ordinary website loaded but the test site"
+          echo "         didn't answer (curl $r), so this wasn't re-tested online.)" ;;
+    esac
+  fi
   exit 0
 fi
 
@@ -138,17 +154,24 @@ if ! cmp -s "$tmp" "$FILE"; then
   exit 1
 fi
 
-r=$(trust "$FILE")
-case "$r" in
-  60) echo "SAFE     Fixed. $FILE now refuses the compromised keys: $(removed_phrase "$found" "$list"), kept $after." ;;
-  0)  echo "EXPOSED  Fixed in the file ($(removed_phrase "$found" "$list"), kept $after), but the test site is still trusted,"
-      echo "         so something other than this file is trusting the compromised keys. The fix was kept: putting the"
-      echo "         original back would put both withdrawn roots back on this Mac. Please report this."
-      echo "         Backup: $backup"
-      echo "         Undo:   sudo cp -p '$backup' '$FILE'"
-      exit 1 ;;
-  *)  echo "SAFE     Fixed in the file: $(removed_phrase "$found" "$list"), kept $after. (The test site didn't answer, so this wasn't re-tested online.)" ;;
-esac
+c=$(control "$FILE")
+if [ "$c" -ne 0 ]; then
+  echo "SAFE     Fixed in the file: $(removed_phrase "$found" "$list"), kept $after."
+  echo "         (An ordinary website didn't load (curl $c), so this wasn't re-tested online.)"
+else
+  r=$(trust "$FILE")
+  case "$r" in
+    60) echo "SAFE     Fixed. $FILE now refuses the compromised keys: $(removed_phrase "$found" "$list"), kept $after." ;;
+    0)  echo "EXPOSED  Fixed in the file ($(removed_phrase "$found" "$list"), kept $after), but the test site is still trusted,"
+        echo "         so something other than this file is trusting the compromised keys. The fix was kept: putting the"
+        echo "         original back would put both withdrawn roots back on this Mac. Please report this."
+        echo "         Backup: $backup"
+        echo "         Undo:   sudo cp -p '$backup' '$FILE'"
+        exit 1 ;;
+    *)  echo "SAFE     Fixed in the file: $(removed_phrase "$found" "$list"), kept $after. (The test site didn't answer"
+        echo "         (curl $r), though an ordinary website loaded, so this wasn't re-tested online.)" ;;
+  esac
+fi
 echo "         Backup: $backup"
 echo "         Undo:   sudo cp -p '$backup' '$FILE'"
 echo "         This covers the built-in curl, git, python3 and openssl: the four we measured. Apple's pip3 keeps its"

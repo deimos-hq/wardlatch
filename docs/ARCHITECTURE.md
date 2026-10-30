@@ -93,19 +93,21 @@ Probes per runtime:
 
 ## The Mac fix
 
-`fix/fix-macos.sh` makes the advisory's change to `/etc/ssl/cert.pem` (removing the two roots, identified by the
-`=== …/CN=` header line macOS writes above each certificate) and adds checks around it:
+`fix/fix-macos.sh` makes the advisory's change to `/etc/ssl/cert.pem` (removing the two roots, identified by their
+SHA-256 fingerprints, since 0.1.10) and adds checks around it:
 
 ```
 refuse if not macOS, file missing, or < 50 certificates  ──> exit 2, nothing changed
-no bad root left?  ──> re-test online ──> SAFE (or EXPOSED if it still trusts) ──> nothing changed
+no bad root left?  ──> control, then re-test online ──> SAFE (or EXPOSED if it still trusts) ──> nothing changed
 write the cleaned copy to a mktemp file
   check: no bad root left, count = before − removed, ≥ 50 certificates   else exit 2, nothing changed
 dated backup (never overwrites one) ──> copy the cleaned file in ──> chmod 644
 is the file now byte for byte the file we built?
   no ──> restore the backup, EXPOSED, exit 1   <── the ONLY restore: it reads two local files and no probe result
-re-test with /usr/bin/curl against the advisory's test host:
-  refused (60) ──> SAFE, fixed    no answer ──> fixed, not re-tested    still trusted (0) ──> EXPOSED, exit 1, FIX KEPT
+control: /usr/bin/curl against an ordinary website ($CONTROL_URL, www.apple.com), through the file itself:
+  didn't load ──> fixed in the file, not re-tested, exit 0
+  loaded ──> re-test with /usr/bin/curl against the advisory's test host:
+    refused (60) ──> SAFE, fixed    no answer ──> fixed, not re-tested    still trusted (0) ──> EXPOSED, exit 1, FIX KEPT
 ```
 
 A network result never restores the backup. Restoring returns both withdrawn roots, so a revert a hostile network
