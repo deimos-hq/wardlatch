@@ -7,6 +7,8 @@
 # The removal is the advisory's (emudhra.we-have-a-problem.com); this script adds the safety around it:
 #   - finds the two roots by their SHA-256 fingerprints, not by the name lines some copies of the file don't have,
 #     and refuses a file it can't fully check (a certificate it can't read, or a block that isn't a plain certificate);
+#   - refuses a $FILE that is a symbolic link, because replacing it would replace the link and leave the file the
+#     Mac actually reads untouched and still trusting the compromised keys;
 #   - works on a snapshot of the file and refuses to replace it if it changed meanwhile;
 #   - changes nothing if the file is already clean;
 #   - keeps a dated backup and never overwrites an earlier one;
@@ -30,6 +32,10 @@ ROOTS='D7:A7:A0:FB:5D:7E:27:31:D7:71:E9:48:4E:BC:DE:F7:1D:5F:0C:3E:0A:29:48:78:2
 86:A1:EC:BA:08:9C:4A:8D:3B:BE:27:34:C6:12:BA:34:1D:81:3E:04:3C:F9:E8:A8:62:CD:5C:57:A3:6B:BE:6B'
 
 [ "$(uname -s)" = Darwin ] || { echo "This fix is for macOS. On Linux, update the ca-certificates package."; exit 2; }
+# Before anything else, and before the -f test, which is true for a symbolic link to a regular file: this fix
+# replaces the file it is given, so on a link it would replace the link and leave the bundle the Mac actually
+# reads exactly as it was. The one-line fix on the page has refused a link since CL-42; this script had no test.
+[ ! -L "$FILE" ] || { echo "UNKNOWN  $FILE is a symbolic link. Replacing it would replace the link and leave the file your Mac"; echo "         actually reads as it is. Nothing changed. Run this against that file instead (readlink $FILE)."; exit 2; }
 [ -f "$FILE" ] || { echo "UNKNOWN  $FILE not found. Nothing changed."; exit 2; }
 SUDO=sudo; if [ "$(id -u)" -eq 0 ] || { [ -w "$FILE" ] && [ -w "$(dirname "$FILE")" ]; }; then SUDO=; fi
 

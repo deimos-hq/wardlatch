@@ -24,7 +24,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=13
+expect_cases=14
 
 fail() { echo "FAIL: $*"; exit 1; }
 cases=0
@@ -98,6 +98,34 @@ if [ "$code" -ne 2 ] || ! cmp -s "$work/truncated.pem" "$work/truncated.before" 
   fail "truncated file: expected exit 2, unchanged, no backup"
 fi
 ok "truncated file refused, unchanged"
+
+# A symlinked cert.pem: refused, the link left as a link, the file it points at untouched, no backup. This fix
+# replaces the file it is given, so on a link it would leave the bundle the Mac actually reads exactly as it was.
+# The one-line fix on the page has refused a symbolic link since CL-42, and the download had no -L test at all.
+cp "$work/original.pem" "$work/link-target.pem"
+chmod 644 "$work/link-target.pem"
+ln -s "$work/link-target.pem" "$work/cert-link.pem"
+run "$work/cert-link.pem"
+[ "$code" -eq 2 ] || fail "symbolic link: expected exit 2, got $code"
+grep -q 'symbolic link' <<<"$out" || fail "symbolic link: it did not say the file is a symbolic link"
+[ -L "$work/cert-link.pem" ] || fail "symbolic link: the link itself was replaced"
+cmp -s "$work/link-target.pem" "$work/original.pem" || fail "symbolic link: the file the link points at was changed"
+[ "$(backups "$work/cert-link.pem")" -eq 0 ] || fail "symbolic link: it made a backup beside the link"
+[ "$(backups "$work/link-target.pem")" -eq 0 ] || fail "symbolic link: it made a backup beside the target"
+# Proof the refusal is what stops it: the same run on a copy of the script with that one line removed must leave
+# either the link replaced or its target rewritten. If it leaves both alone, this case proves nothing.
+grep -v '^\[ ! -L "\$FILE" \]' "$fix" >"$work/nolink.sh"
+cmp -s "$fix" "$work/nolink.sh" && fail "symbolic link: the refusal line was not found, so this case proves nothing"
+cp "$work/original.pem" "$work/link-target2.pem"
+chmod 644 "$work/link-target2.pem"
+ln -s "$work/link-target2.pem" "$work/cert-link2.pem"
+script=$work/nolink.sh
+run "$work/cert-link2.pem"
+script=$fix
+if cmp -s "$work/link-target2.pem" "$work/original.pem" && [ -L "$work/cert-link2.pem" ]; then
+  fail "symbolic link: the case does not discriminate -- with the refusal removed, the link and its target were both left alone"
+fi
+ok "a symbolic link is refused, and the file it points at is left alone"
 
 # The real file's contents.
 cp "$work/original.pem" "$work/cert.pem"
