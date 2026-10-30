@@ -17,10 +17,17 @@
 #   D  neither root present      (an already-fixed machine)
 #   E  a bundle small enough to trip the `after -lt 50` floor
 #
-# Offline and deterministic: a stub `curl` that exits 7 stands in for the advisory's test site, so no request
-# leaves this machine and the "test site didn't answer" branch is what gets exercised -- which is also the real
-# branch on a machine with no network. WARDLATCH_CERT_FILE keeps every write inside a temp folder; /etc/ssl is
-# never touched and sudo is never invoked (the file and its folder are writable, so the fix sets SUDO empty).
+# Offline and deterministic: a stub curl that exits 7 stands in for every probe, so no request leaves this machine
+# and the "an ordinary website didn't load" branch is what gets exercised -- which is also the real branch on a
+# machine with no network. WARDLATCH_CERT_FILE keeps every write inside a temp folder; /etc/ssl is never touched
+# and sudo is never invoked (the file and its folder are writable, so the fix sets SUDO empty).
+#
+# The stub is reached through WARDLATCH_CURL in a COPY of the script, the way test/fix-macos.check.sh does it.
+# Until 29 Oct 2026 this put a `curl` on PATH instead -- which the fix never consulted, because it calls
+# /usr/bin/curl by absolute path on purpose. So the stub was dead code, every shape made live requests to
+# www.apple.com and to the advisory's test host, each shape's result depended on what the network answered that
+# minute, and the branch this header claimed to exercise was not the branch taken. Shape A printing "now refuses
+# the compromised keys" was the proof: that line cannot be reached with a curl that exits 7.
 set -uo pipefail
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
@@ -34,8 +41,16 @@ EMS='86:A1:EC:BA:08:9C:4A:8D:3B:BE:27:34:C6:12:BA:34:1D:81:3E:04:3C:F9:E8:A8:62:
 WORK=$(mktemp -d /tmp/mojave-shapes.XXXXXX) || exit 2
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/bin"
-printf '#!/bin/sh\nexit 7\n' > "$WORK/bin/curl"   # the test site never answers, deterministically
+printf '#!/bin/sh\nexit 7\n' > "$WORK/bin/curl"   # no probe ever answers, deterministically
 chmod +x "$WORK/bin/curl"
+# The copy under test: the shipped script with its one network command behind WARDLATCH_CURL, and nothing else
+# changed. If the substitution matches nothing, say so and stop rather than quietly test the real network.
+RUN="$WORK/fix-stubbed.sh"
+sed 's|/usr/bin/curl|"${WARDLATCH_CURL:-/usr/bin/curl}"|g' "$FIX" > "$RUN"
+if cmp -s "$FIX" "$RUN"; then
+  echo "FAIL: no /usr/bin/curl call site found in $FIX, so these shapes would reach the real network. Nothing run."
+  exit 2
+fi
 
 # Split the bundle into one file per certificate. `inblock` matters: cert.pem carries each certificate's name
 # and a full openssl text dump BETWEEN blocks, and printing those reopens a closed handle -- the bug that made
@@ -80,7 +95,7 @@ fails=0
 shape() { # $1 = label, $2 = bundle, $3 = expected exit, $4 = expected text fragment
   local f="$WORK/run-$1.pem"
   cp "$2" "$f"
-  out=$(cd "$WORK" && WARDLATCH_CERT_FILE="$f" PATH="$WORK/bin:/usr/bin:/bin" /bin/bash "$FIX" 2>&1); code=$?
+  out=$(cd "$WORK" && WARDLATCH_CERT_FILE="$f" WARDLATCH_CURL="$WORK/bin/curl" /bin/bash "$RUN" 2>&1); code=$?
   local certs_after; certs_after=$(grep -c 'BEGIN CERTIFICATE' "$f")
   local still_aaa still_ems
   still_aaa=$(has "$f" "$AAA"); still_ems=$(has "$f" "$EMS")
@@ -113,7 +128,10 @@ shape aaa-only "$WORK/aaaonly.pem" 0 "removed 1 of the 2 withdrawn roots; the ot
 echo "C  emSign only, AAA already absent (the mirror):"
 shape ems-only "$WORK/emsonly.pem" 0 "removed 1 of the 2 withdrawn roots; the other was already absent"
 echo "D  neither root present (already fixed):"
-shape neither "$WORK/none.pem" 0 "neither"
+# "no longer holds the two roots", not "neither": shape() writes the bundle to $WORK/run-neither.pem and the fix
+# echoes that path in every line, so the old expected fragment "neither" matched the FILENAME and the assertion
+# could not fail whatever the script printed.
+shape neither "$WORK/none.pem" 0 "no longer holds the two roots"
 echo "E  a bundle below the 50-certificate floor:"
 shape tiny "$WORK/tiny.pem" 2 "UNKNOWN"
 
@@ -121,7 +139,10 @@ echo
 if [ "$fails" = 0 ]; then
   echo "all shapes behaved as expected -- which for this file means the EXPECTATIONS need challenging,"
   echo "not that the fix is proven. A run that finds nothing has not confirmed anything."
+  exit 0
 else
   echo "$fails shape(s) did not behave as expected. Each is a finding."
+  # Non-zero, so this can gate something. It exited 0 whatever happened until 29 Oct 2026, which made it a
+  # report nobody could act on automatically.
+  exit 1
 fi
-exit 0
