@@ -20,7 +20,11 @@ const FILES = walk(ROOT);
 const read = (f) => readFileSync(join(ROOT, f), 'utf8');
 const SHIPPED = FILES.filter((f) => /^(bin|lib)\/[^/]+\.mjs$/.test(f));        // the code users run
 const SOURCE = FILES.filter((f) => /\.(mjs|sh|ya?ml)$/.test(f) && f !== 'fix/fix-macos.sh');
-const VERBATIM = ['LICENSE', 'LICENSES/Apache-2.0.txt'];                       // licence texts stay exactly as published
+const VERBATIM = [
+  // Apple's shipped /etc/ssl/cert.pem, vendored so the fix's tests do not require the machine running them to be
+  // vulnerable. It is byte-identical to OpenBSD rev 1.22.2.1 and carries 223 lines with trailing spaces. Those
+  // bytes are the point: reformat it and it stops being evidence of what Apple ships.
+  'test/support/fixtures/macos-27.2-cert.pem','LICENSE', 'LICENSES/Apache-2.0.txt'];                       // licence texts stay exactly as published
 const TEXT = FILES.filter((f) => (/\.(mjs|sh|ya?ml|md|json|toml|txt|pem)$/.test(f) || ['NOTICE', '.gitignore'].includes(f)) && !VERBATIM.includes(f));
 const imports = (src) => [...src.matchAll(/^\s*import\b[^'"]*?from\s*['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)/gm)].map((m) => m[1] ?? m[2]);
 const named = (src, mod) => [...src.matchAll(new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*'${mod}'`, 'g'))].flatMap((m) => m[1].split(',').map((s) => s.trim().split(/\s+as\s+/)[0]).filter(Boolean));
