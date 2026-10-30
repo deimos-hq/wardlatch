@@ -24,7 +24,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=18
+expect_cases=20
 
 fail() { echo "FAIL: $*"; exit 1; }
 cases=0
@@ -401,8 +401,79 @@ STUB
   [ "$code" -eq 0 ] || fail "no control: expected exit 0, got $code"
   [ "$(count "$work/nocontrol.pem")" -eq $((total - found)) ] || fail "no control: the file was not fixed"
   grep -q 'refuses the compromised keys' <<<"$out" && fail "no control: it claimed a re-test on a network that answered nothing"
-  grep -q "didn't load" <<<"$out" || fail "no control: it did not say the control failed"
-  ok "no control: fixed in the file, and no online verdict claimed"
+  grep -q "didn't load before this change (curl 7) or after it (curl 7)" <<<"$out" ||
+    fail "no control: it did not give both readings of the control, before the change and after it"
+  ok "no control before or after the change: fixed in the file, and no online verdict claimed"
+
+  # The control read BEFORE anything is written, and again after: three readings where there were two. These cases
+  # need a control that answers differently on the two calls, so they use a second stub that takes its control
+  # answers from a list, one per call.
+  cat >"$work/curl-stub-ba" <<'STUB'
+#!/bin/bash
+# Stands in for /usr/bin/curl where the control has to answer differently before and after the write. The test host
+# always gets $STUB_TEST. Control calls take their answer from $STUB_CONTROLS, one per call in the order given, the
+# last repeating; the call number is kept in $STUB_STATE.
+case "$*" in
+  *we-have-a-problem.com*) exit "${STUB_TEST:?}" ;;
+esac
+n=$(cat "${STUB_STATE:?}" 2>/dev/null || echo 0)
+n=$((n + 1)); printf '%s' "$n" >"$STUB_STATE"
+i=1; last=0
+for a in ${STUB_CONTROLS:?}; do
+  last=$a
+  [ "$i" = "$n" ] && exit "$a"
+  i=$((i + 1))
+done
+exit "$last"
+STUB
+  chmod +x "$work/curl-stub-ba"
+
+  # The control loads before the change and not after it. This is the one reading here that is about the change and
+  # not about the network, and it must not revert: the two files differ by exactly the two withdrawn roots, so a
+  # revert on this reading is a revert on what the network answered, through a side door -- a MITM presenting a
+  # certificate issued under AAA Certificate Services for the control host produces precisely this pair of
+  # readings. Up to 29 Oct 2026 the control was read only AFTER the write, so this and "nothing on this network
+  # answers" were the same reading, and both printed "SAFE Fixed in the file" and exited 0.
+  cp "$work/original.pem" "$work/brokeafter.pem"
+  printf '0' >"$work/ba-state"
+  run "$work/brokeafter.pem" WARDLATCH_CURL="$work/curl-stub-ba" STUB_STATE="$work/ba-state" \
+    STUB_CONTROLS="0 60" STUB_TEST=60
+  [ "$code" -eq 2 ] || fail "the control broke with the change: expected exit 2, got $code"
+  grep -q '^UNKNOWN' <<<"$out" || fail "the control broke with the change: expected UNKNOWN"
+  grep -q '^SAFE' <<<"$out" && fail "the control broke with the change: it called the run safe"
+  grep -q 'loaded through the old file (curl 0)' <<<"$out" || fail "the control broke with the change: it did not give the reading before the change"
+  grep -q "doesn't load through the new one (curl 60)" <<<"$out" || fail "the control broke with the change: it did not give the reading after the change"
+  [ "$(bad "$work/brokeafter.pem")" -eq 0 ] || fail "the control broke with the change: the fix was reverted, so the withdrawn roots are back"
+  [ "$(count "$work/brokeafter.pem")" -eq $((total - found)) ] || fail "the control broke with the change: the file is not the fixed file"
+  grep -q 'Undo:' <<<"$out" || fail "the control broke with the change: it did not name the way back"
+  # Proof it fails on the old shape: with the baseline forced to a value no reading produced, the decision falls to
+  # the reading after the write alone, which is the control flow the script had. The run must then end in SAFE and
+  # exit 0 -- an all-clear for a Mac whose ordinary certificate validation stopped working with the change.
+  sed 's|^c0=\$(control "\$snap")$|c0=7   # (the old shape: no baseline was taken)|' "$work/stubbed.sh" >"$work/nobaseline.sh"
+  cmp -s "$work/stubbed.sh" "$work/nobaseline.sh" && fail "the control broke with the change: the baseline was not found, so this case proves nothing"
+  cp "$work/original.pem" "$work/brokeafter2.pem"
+  printf '0' >"$work/ba-state"
+  script=$work/nobaseline.sh
+  run "$work/brokeafter2.pem" WARDLATCH_CURL="$work/curl-stub-ba" STUB_STATE="$work/ba-state" \
+    STUB_CONTROLS="60" STUB_TEST=60
+  script=$work/stubbed.sh
+  [ "$code" -eq 0 ] ||
+    fail "the control broke with the change: the case does not discriminate -- with no baseline the run exited $code, not 0"
+  grep -q '^SAFE' <<<"$out" ||
+    fail "the control broke with the change: the case does not discriminate -- with no baseline it did not print SAFE"
+  ok "the control loading before the change but not after: UNKNOWN, exit 2, the fix kept and nothing reverted"
+
+  # The control loads both times, so it is meaningful and the test host's answer can be read. The third reading,
+  # and the only one that ends in a verdict about the compromised keys.
+  cp "$work/original.pem" "$work/bothcontrols.pem"
+  printf '0' >"$work/ba-state"
+  run "$work/bothcontrols.pem" WARDLATCH_CURL="$work/curl-stub-ba" STUB_STATE="$work/ba-state" \
+    STUB_CONTROLS="0 0" STUB_TEST=60
+  [ "$code" -eq 0 ] || fail "the control loads both times: expected exit 0, got $code"
+  grep -q 'now refuses the compromised keys' <<<"$out" || fail "the control loads both times: it did not read the test host"
+  [ "$(count "$work/bothcontrols.pem")" -eq $((total - found)) ] || fail "the control loads both times: the file was not fixed"
+  [ "$(bad "$work/bothcontrols.pem")" -eq 0 ] || fail "the control loads both times: a withdrawn root is still there"
+  ok "the control loading before and after: the test host is read, and the verdict is the test host's"
 
   script=$fix
 fi

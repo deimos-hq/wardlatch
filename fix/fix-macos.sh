@@ -19,8 +19,10 @@
 #   - keeps the file readable by everyone, as macOS ships it;
 #   - checks that what landed in the file is the file it built, and puts the original back if it isn't -- the one
 #     reason it ever puts the original back, because the original is the file that trusts the compromised keys;
-#   - re-tests against the advisory's test site, but only after a normal website has loaded as a control, so a
-#     network that answers nothing isn't read as a verdict; no network result undoes the fix.
+#   - reads a control -- an ordinary website, through this same file -- both before and after the change, so that
+#     "this network answers nothing" and "this change broke certificate validation on this Mac" are two readings
+#     and not one, and re-tests against the advisory's test site only when the control loads; no network result
+#     undoes the fix.
 # Safe to run twice. Run it in Terminal (it asks for your Mac's password) or as root from Jamf, Kandji or Intune.
 # Copy it from the Wardlatch page in Safari. Don't fetch it with the Mac's own curl: that curl is what's exposed.
 set -euo pipefail
@@ -153,6 +155,12 @@ if [ -n "$left" ] || [ "$after" -ne $((before - found)) ] || [ "$after" -lt 50 ]
   exit 2
 fi
 
+# The control, read BEFORE anything is written, through the file as it is. Without this baseline, the control read
+# after the write answers two questions at once -- "does this network answer anything?" and "did the change I just
+# made break certificate validation on this Mac?" -- and the script printed SAFE for both, exit 0. That is the same
+# two-readings-collapsed-into-one error the control was added to remove, one step further down the script.
+c0=$(control "$snap")
+
 backup="$FILE.wardlatch-$(date +%Y%m%d-%H%M%S).bak"
 [ ! -e "$backup" ] || { echo "UNKNOWN  $backup already exists. Nothing changed; run again in a second."; exit 2; }
 cmp -s "$FILE" "$snap" || { echo "UNKNOWN  $FILE changed while this ran. Nothing changed; run it again."; exit 2; }
@@ -194,11 +202,11 @@ if ! cmp -s "$tmp" "$FILE"; then
   exit 1
 fi
 
+# Three readings, not two, because there is now a baseline to compare with.
 c=$(control "$FILE")
-if [ "$c" -ne 0 ]; then
-  echo "SAFE     Fixed in the file: $(removed_phrase "$found" "$list"), kept $after."
-  echo "         (An ordinary website didn't load (curl $c), so this wasn't re-tested online.)"
-else
+if [ "$c" -eq 0 ]; then
+  # The control loads through the new file: this network answers, and the new file still validates ordinary
+  # certificates. So the test host's answer is about the test host, and there is a verdict to be had.
   r=$(trust "$FILE")
   case "$r" in
     60) echo "SAFE     Fixed. $FILE now refuses the compromised keys: $(removed_phrase "$found" "$list"), kept $after." ;;
@@ -211,6 +219,32 @@ else
     *)  echo "SAFE     Fixed in the file: $(removed_phrase "$found" "$list"), kept $after. (The test site didn't answer"
         echo "         (curl $r), though an ordinary website loaded, so this wasn't re-tested online.)" ;;
   esac
+elif [ "$c0" -ne 0 ]; then
+  # Nothing loaded before the change either, so this reading is about the network and not about the file. Report,
+  # keep the fix, claim nothing online.
+  echo "SAFE     Fixed in the file: $(removed_phrase "$found" "$list"), kept $after."
+  echo "         (An ordinary website didn't load before this change (curl $c0) or after it (curl $c), so nothing"
+  echo "         was re-tested online.)"
+else
+  # The one reading here that is about the change and not about the network: an ordinary website loaded through the
+  # file as it was and does not load through the file this wrote. Those two files differ by exactly the two
+  # withdrawn roots, so either that site's certificate chain needs one of them, or something on this network
+  # answered the two requests differently -- and that second reading is what an attack on this Mac looks like.
+  # Both say the same thing about what to do, which is why there is no revert here and no revert-reason for one:
+  # eMudhra's private keys are computable from certificates eMudhra published, so putting one of those roots back
+  # to make a page load is not a repair, and on the second reading it would hand both withdrawn roots to a Mac
+  # already under attack -- the door this script closed on 29 Oct 2026, which a before/after revert would reopen
+  # from the side. UNKNOWN and exit 2, because this is a thing to look at, not an all-clear.
+  echo "UNKNOWN  Fixed in the file ($(removed_phrase "$found" "$list"), kept $after), but an ordinary website that"
+  echo "         loaded through the old file (curl $c0) doesn't load through the new one (curl $c). Those two files"
+  echo "         differ only by the two withdrawn roots, so either that site's certificate is issued under AAA"
+  echo "         Certificate Services, or something on this network is presenting one that is -- and the second is"
+  echo "         what an attack on this Mac would look like. The fix was kept either way: those private keys can be"
+  echo "         computed from published certificates, so trusting that root again to make a page load would not be"
+  echo "         a repair. Decide it yourself from the two lines below. Please report this."
+  echo "         Backup: $backup"
+  echo "         Undo:   sudo cp -p '$backup' '$FILE'"
+  exit 2
 fi
 echo "         Backup: $backup"
 echo "         Undo:   sudo cp -p '$backup' '$FILE'"

@@ -41,6 +41,22 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   fixed *in the file*, with the control's `curl` code, and no online claim is made. A second stubbed case in
   `test/fix-macos.check.sh` covers it: a network where nothing answers must not be read as a refusal. On the 0.1.10
   script it prints "now refuses the compromised keys" about a test nothing performed.
+- **And the control was read only *after* the file had been replaced,** so the same error survived one step further
+  down: "this network answers nothing" and "the change I have just made broke certificate validation on this Mac"
+  arrived as the same `curl` code, and that branch printed `SAFE Fixed in the file` and exited 0 for both. The
+  control is now read through the file as it is, before anything is written, and again after, which makes three
+  readings. The control failing both times is the network, reported with both codes and no online claim. The control
+  loading both times means the test host's answer is about the test host, and is read as before. The control loading
+  before the change and not after it is the one reading that is about the change: it prints UNKNOWN (exit 2) with
+  both codes, keeps the fix and reverts nothing. **It deliberately does not revert**, and there is no second
+  `wardlatch:revert-reason` for one. The two files differ by exactly the two withdrawn roots, so either the control
+  host's certificate really is issued under `AAA Certificate Services`, or something on the network is presenting one
+  that is — and the second is a MITM producing that pair of readings on purpose, which is the reverting-on-the-
+  network door this release closed, re-opened from the side. Both readings say the same thing about what to do:
+  eMudhra's private keys are computable from certificates eMudhra published, so trusting that root again to make a
+  page load is not a repair. Three stubbed cases in `test/fix-macos.check.sh` cover the three readings, using a
+  stub whose control answers differ between the two calls. On the script before this change, the
+  before-but-not-after case prints `SAFE Fixed in the file` and exits 0.
 
 ### Fixed
 
