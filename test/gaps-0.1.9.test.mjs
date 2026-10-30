@@ -11,7 +11,7 @@ import { spawnSync, execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, chmodSync, symlinkSync, utimesSync, statSync, existsSync, readFileSync } from 'node:fs';
 import os, { tmpdir } from 'node:os';
 import { syncBuiltinESMExports } from 'node:module';
-import { join, dirname } from 'node:path';
+import { join, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseGitConfig, identityFrom, carries, headersInJson, headersInRc, headersInToml, stripJsonc, places, scanHeaders } from '../lib/headers.mjs';
 import { listContainers, checkContainer } from '../lib/containers.mjs';
@@ -304,12 +304,23 @@ test('--no-containers, and incidents without image digests, never ask the contai
   }
 });
 
+// Changed 29 Oct 2026 with the AUDIT-10 fix. This test used to pin the receipt as [versionFiles.lookedIn] — the
+// incident file's own sentence, "GitLab's version files under /opt/gitlab and /home/git/gitlab". That sentence was the
+// whole receipt behind the all-clear on a machine with no GitLab: it named two folders that were not there, nothing had
+// been opened, and a reader had nothing to go and check. The receipt is now the places the walk actually reached, so
+// what this test holds is the property the old expectation only stood in for, and holds it for whatever the walk finds
+// on the machine running the test: one SAFE row, exit 0, and every entry in its receipt a place that is there.
 test('Plex and GitLab with an existing --paths folder are SAFE, with a receipt naming where they looked', () => {
   // bin/wardlatch.mjs:373 (the version files' places go into the receipt)
   for (const id of ['plex-2026-10', 'gitlab-2026-10']) {
     const r = run(['--incident', id, '--paths', fresh('v373-root')], {}, { name: 'v373' });
-    assert.deepEqual(r.rows.map((x) => [x.status, x.searched]), [['SAFE', [incident(id).versionFiles.lookedIn]]], id);
+    assert.deepEqual(r.rows.map((x) => x.status), ['SAFE'], id);
     assert.equal(r.code, 0, id);
+    const [{ searched }] = r.rows;
+    assert.ok(searched.length, `${id}: no receipt: ${JSON.stringify(r.rows)}`);
+    for (const s of searched) assert.ok(isAbsolute(s) && existsSync(s), `${id}: the receipt entry ${JSON.stringify(s)} is not a place that is there: ${JSON.stringify(searched)}`);
+    // and the incident's description of where it looks is still shown, in the sentence a reader is given
+    assert.ok(r.rows[0].reason.includes(incident(id).versionFiles.lookedIn), `${id}: ${r.rows[0].reason}`);
   }
 });
 

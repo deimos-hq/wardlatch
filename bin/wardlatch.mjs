@@ -387,10 +387,18 @@ for (const inc of chosen) {
     };
     // what was looked at, for the all-clear's receipt; folders that couldn't be opened, for UNKNOWN rows
     const searched = [], denied = [], foundUnread = [], links = [];
+    let lookedFor = '';
     if (inc.versionFiles) {
       const v = inc.versionFiles;
-      for (const r of checkVersionFiles(v)) show(r, `${v.product}${r.label ? ` (${r.label})` : ''} ${r.version}  ${short(r.path)}`, v.fix);
-      searched.push(v.lookedIn);
+      const reached = [];
+      for (const r of checkVersionFiles(v, { reached })) show(r, `${v.product}${r.label ? ` (${r.label})` : ''} ${r.version}  ${short(r.path)}`, v.fix);
+      // The places the walk reached, never the incident file's sentence about them. `lookedIn` is prose — "GitLab's
+      // version files under /opt/gitlab and /home/git/gitlab" — and up to 0.1.10 it WAS the whole receipt behind the
+      // all-clear: on a machine with no GitLab it named two folders that are not there and nothing had been opened,
+      // so a reader had nothing to check and the receipt rule could not tell (AUDIT-10). It is a description, which
+      // belongs in the sentence a reader is given, so it moved to the reason below.
+      searched.push(...new Set(reached));
+      lookedFor = v.lookedIn;
     }
     if (inc.sitePackages) {
       // an explicit --paths that doesn't exist is a search of nothing: UNKNOWN, not an all-clear for that part
@@ -431,7 +439,7 @@ for (const inc of chosen) {
     // couldn't be asked keeps its own UNKNOWN row (and the exit code at 2) beside it, and one that isn't running its
     // REVIEW row; a finding or another gap doesn't.
     const onlyEngineGaps = counted(results).every((r) => r.engine && (r.status === 'UNKNOWN' || r.notRunning));
-    if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean));
+    if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked${lookedFor ? ` for ${lookedFor},` : ''} in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean));
   }
 
   // the window's start: an explicit UTC instant, or the review is UNKNOWN (up to 0.1.9 a bare date read SAFE: see
@@ -509,7 +517,11 @@ for (const inc of chosen) {
     }
     gaps(results, inc, 'header', [...lockedRoots, ...h.denied]);
     if (h.findings.length) note('2', `fix: ${inc.fix}`);
-    else if (!counted(results).length) allClear(results, inc, 'header', `no name or email in the ${h.settings} header setting${h.settings === 1 ? '' : 's'} found in ${h.read} file${h.read === 1 ? '' : 's'} and the environment`, [...h.files, 'the environment']);
+    // The receipt is the settings files that were read and the folders that were walked for a repository's own
+    // settings — places a reader can open. Up to 0.1.10 it also carried the words "the environment", and on a machine
+    // with no settings file that phrase was the whole receipt behind "no name or email in the 0 header settings found
+    // in 0 files": nothing to go and check (AUDIT-10). The environment is still read, and the reason still says so.
+    else if (!counted(results).length) allClear(results, inc, 'header', `no name or email in the ${h.settings} header setting${h.settings === 1 ? '' : 's'} found in ${h.read} file${h.read === 1 ? '' : 's'} and the environment`, [...h.files, ...searchable.filter((r) => !h.denied.includes(r))]);
     if (h.notUsed.length) note('2', `${h.notUsed.length} settings file${h.notUsed.length === 1 ? '' : 's'} this user can't open (so its tools can't read ${h.notUsed.length === 1 ? 'it' : 'them'} either): ${h.notUsed.slice(0, 4).map(short).join(', ')}${h.notUsed.length > 4 ? ', …' : ''}`);
     if (!h.id.name && !h.id.email) note('2', 'no git name or email is set, so only email-shaped values were looked for');
     note('2', `not covered: ${inc.notCovered}`);
