@@ -404,9 +404,13 @@ for (const inc of chosen) {
       // an explicit --paths that doesn't exist is a search of nothing: UNKNOWN, not an all-clear for that part
       if (explicitPaths && !searchable.length) show({ status: 'UNKNOWN', reason: `none of the folders given with --paths exist (${roots.map(short).join(', ')}), so no virtual environment there was searched` }, 'folders given with --paths');
       denied.push(...lockedRoots);
-      const dirs = sitePackagesDirs({ roots: searchable, denied, found: foundUnread, links });
+      const walked = [];
+      const dirs = sitePackagesDirs({ roots: searchable, denied, found: foundUnread, links, walked });
       for (const r of checkSitePackages(inc.sitePackages, dirs)) show(r, `${r.what}  ${short(r.dir)}`, inc.sitePackages.fix);
-      searched.push(...dirs);
+      // the folders the person asked about as well as the environments found in them: a --paths folder with no virtual
+      // environment in it left nothing in the receipt, so the all-clear could not be read as having searched the one
+      // place the reader named (AUDIT-11)
+      searched.push(...dirs, ...walked.filter((r) => !dirs.includes(r)));
     }
     if (inc.tmpTrace) {
       const temps = tempDirs();
