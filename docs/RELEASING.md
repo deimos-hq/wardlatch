@@ -80,6 +80,15 @@ gh attestation verify wardlatch-X.Y.Z.tgz --bundle wardlatch-X.Y.Z.tgz.sigstore.
 sha256sum -c SHA256SUMS                  # the files are byte for byte what was published
 ```
 
+That `SHA256SUMS` is the release asset, downloaded beside the release files, and it covers them — including the
+source tarball GitHub builds from the tag. The `SHA256SUMS` committed in the repository is a different file: it
+covers the packed tarballs committed here, so that `shasum -a 256 -c SHA256SUMS` is checkable in a clone with
+nothing downloaded. Repack and regenerate it when a release adds a tarball to the repository:
+
+```bash
+shasum -a 256 wardlatch-*.tgz            # append the new line; never type a digest
+```
+
 **0.1.3 and 0.1.4 verify under the repository's earlier name.** The repository moved from
 `thearchitect0x-glitch/wardlatch` to `deimos-hq/wardlatch` on 21 October 2026, after those two releases. Their
 attestations name the repository they were built in, and that cannot change, so verify them with the earlier name and the

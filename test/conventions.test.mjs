@@ -7,6 +7,7 @@ import './support/no-real-home.cjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -121,5 +122,28 @@ test('no test asks where the real home folder is: no test file takes homedir or 
     const src = read(f), code = src.replace(/(^|\s)\/\/.*$/gm, '$1');
     assert.deepEqual(named(src, 'node:os').filter((x) => ['homedir', 'userInfo'].includes(x)), [], f);
     assert.doesNotMatch(code, /\b(?:homedir|userInfo)\s*\(/, f);
+  }
+});
+
+test('SHA256SUMS is a checkable receipt: every line names a file in the repository, with its real digest', () => {
+  // docs/RELEASING.md tells people to run `sha256sum -c SHA256SUMS`. Until 29 Oct 2026 the committed file was the
+  // 0.1.9 release asset: one of its two lines named wardlatch-v0.1.9.tar.gz, which is not in the repository, so
+  // the check could not pass in a clone, and it omitted wardlatch-0.1.10.tgz, which is committed. A receipt with
+  // an uncheckable line and a missing current entry is worse than none.
+  const lines = read('SHA256SUMS').split('\n').filter((l) => l.trim() && !l.startsWith('#'));
+  assert.ok(lines.length >= 1, 'SHA256SUMS lists nothing');
+  const listed = new Set();
+  for (const line of lines) {
+    const m = /^([0-9a-f]{64}) {2}(\S.*)$/.exec(line);
+    assert.ok(m, `SHA256SUMS: not a digest line: ${line}`);
+    const [, digest, name] = m;
+    assert.ok(FILES.includes(name), `SHA256SUMS names ${name}, which is not in the repository`);
+    const actual = createHash('sha256').update(readFileSync(join(ROOT, name))).digest('hex');
+    assert.equal(actual, digest, `SHA256SUMS: ${name}`);
+    listed.add(name);
+  }
+  // and every tarball committed here is listed, so a release that adds one cannot leave it out
+  for (const f of FILES.filter((f) => /^wardlatch-[0-9.]+\.tgz$/.test(f))) {
+    assert.ok(listed.has(f), `${f} is committed but not listed in SHA256SUMS`);
   }
 });
