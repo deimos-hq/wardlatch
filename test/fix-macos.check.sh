@@ -24,7 +24,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=24
+expect_cases=25
 
 fail() { echo "FAIL: $*"; exit 1; }
 cases=0
@@ -191,6 +191,58 @@ if [ "$found" -gt 0 ]; then
   [ "$code" -eq 0 ] || fail "no name lines, offline: expected exit 0, got $code"
   [ "$(count "$work/nolabel-offline.pem")" -eq $((total - found)) ] || fail "no name lines, offline: the file was not fixed but the fix exited 0"
   ok "no name lines, test site unreachable: fixed in the file, not a false SAFE"
+
+  # Content that follows a removed root and is not a header line. A certificate's block ends at its END CERTIFICATE
+  # line; until 30 Oct 2026 the fix cleared its skip only at the next "###" or "=== " line, so everything after a
+  # removed root went with it as far as the next header -- an administrator's note, a trailing comment, a line naming
+  # what follows. Content that is not a certificate does not change the count, so `after == before - found` still
+  # matched, and the run printed a verdict and exited 0 with that content silently gone, which is the false SAFE
+  # SECURITY.md puts first. Apple's own file has a "=== " line above every certificate, so it was never live there;
+  # it was live on any hand-concatenated bundle, which is the ordinary case -- a corporate TLS-inspection root is
+  # appended to this file precisely because curl ignores the keychain.
+  # The bundle here carries one note line after every certificate, so the count of notes left is the measurement:
+  # every one of them must still be there, not $total minus the roots removed.
+  awk '/-----BEGIN CERTIFICATE-----/{p=1} p{print} /-----END CERTIFICATE-----/{p=0}' "$work/original.pem" >"$work/notes.src"
+  awk '{ print } /-----END CERTIFICATE-----/ { print "# note: the certificate above was appended by hand" }' \
+    "$work/notes.src" >"$work/notes.built"
+  [ "$(grep -c '^# note' "$work/notes.built")" -eq "$total" ] || fail "a note after a removed root: the bundle was built with $(grep -c '^# note' "$work/notes.built") notes, not $total, so this case would measure nothing"
+  cp "$work/notes.built" "$work/notes.pem"
+  run "$work/notes.pem" https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9
+  [ "$code" -eq 0 ] || fail "a note after a removed root: expected exit 0, got $code"
+  [ "$(count "$work/notes.pem")" -eq $((total - found)) ] || fail "a note after a removed root: expected $((total - found)) certificates, got $(count "$work/notes.pem")"
+  [ "$(bad "$work/notes.pem")" -eq 0 ] || fail "a note after a removed root: a withdrawn root is still there"
+  [ "$(grep -c '^# note' "$work/notes.pem")" -eq "$total" ] || fail "a note after a removed root: $(( total - $(grep -c '^# note' "$work/notes.pem") )) note line(s) were deleted with the roots"
+  # Proof it fails on the old shape: a copy of the script carrying the strip() this replaced, whose skip ran from a
+  # removed certificate to the next header line. It must lose exactly the notes that followed the removed roots, and
+  # it must do it while still exiting 0 with a verdict printed -- the silence is the defect, not the deletion.
+  cat >"$work/oldstrip.txt" <<'OLDSTRIP'
+  awk -v list="$2" '
+    BEGIN { n = split(list, a, " "); for (i = 1; i <= n; i++) drop[a[i] + 0] = 1 }
+    NR == FNR {
+      if ($0 ~ /^=== /) name = FNR
+      if ($0 ~ /-----BEGIN CERTIFICATE-----/) { k++; start[name ? name : FNR] = k; name = 0 }
+      if ($0 ~ /-----END CERTIFICATE-----/) name = 0
+      next
+    }
+    FNR in start { skip = (start[FNR] in drop) }
+    !(FNR in start) && /^(###|===) / { skip = 0 }
+    !skip' "$1" "$1"
+OLDSTRIP
+  awk -v bf="$work/oldstrip.txt" '
+    /^strip\(\) \{$/ { inside = 1; print; while ((getline l < bf) > 0) print l; close(bf); next }
+    inside { if ($0 == "}") { inside = 0; print } ; next }
+    { print }' "$fix" >"$work/oldstrip.sh"
+  cmp -s "$fix" "$work/oldstrip.sh" && fail "a note after a removed root: strip() was not found in $fix, so this case proves nothing"
+  cp "$work/notes.built" "$work/notes-old.pem"
+  script=$work/oldstrip.sh
+  run "$work/notes-old.pem" https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9
+  script=$fix
+  [ "$code" -eq 0 ] || fail "a note after a removed root: the case does not discriminate -- with the old strip() the run exited $code, not 0"
+  grep -q '^SAFE' <<<"$out" || fail "a note after a removed root: the case does not discriminate -- with the old strip() no verdict was printed, so the loss was not silent"
+  [ "$(count "$work/notes-old.pem")" -eq $((total - found)) ] || fail "a note after a removed root: the case does not discriminate -- with the old strip() the count was wrong too, so the loss was not silent"
+  [ "$(grep -c '^# note' "$work/notes-old.pem")" -eq $((total - found)) ] ||
+    fail "a note after a removed root: the case does not discriminate -- with the old strip() $(grep -c '^# note' "$work/notes-old.pem") notes survived, expected $((total - found))"
+  ok "a note after a removed root survives, where the old strip() deleted it and still exited 0"
 fi
 
 # A certificate the fix can't read: refused, unchanged, no backup (a file it can't fully check is never called clean).

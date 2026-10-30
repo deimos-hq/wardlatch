@@ -70,7 +70,22 @@ roots() {
   done
 }
 # Writes $1 without the certificates listed in $2. A certificate's block starts at its "=== " name line when it has
-# one (the advisory's removal, byte for byte) and at its BEGIN line when it doesn't; it runs to the next block.
+# one (the advisory's removal, byte for byte) and at its BEGIN line when it doesn't, and it ENDS at its
+# -----END CERTIFICATE----- line -- not at the next header.
+# Until 30 Oct 2026 the skip was cleared only by the next "###" or "=== " line, so everything between a removed
+# root and the next header went with it: a trailing comment, an administrator's note, a line naming what follows.
+# Content that is not a certificate does not change the count, so `after == before - found` still matched and the
+# run printed SAFE and exited 0 with that content silently gone. Apple's own file has a "=== " line above every
+# certificate, so it was never live there. It was live on any hand-concatenated bundle, which is the ordinary case:
+# an administrator appends a corporate TLS-inspection root to this file precisely because curl ignores the keychain.
+# Ending the block at END CERTIFICATE cannot leave part of a dropped certificate behind, which would be worse. A
+# block's start line is either its own BEGIN line or the "=== " line above it with no END line in between (pass 1
+# clears `name` at every END), so the first END line at or after the start is that certificate's own. It also
+# cannot be ended early by a stray "###" line inside the block, which the old clear-on-header rule could do: that
+# left a dropped root in the output, refused by the count check below rather than removed.
+# State 2 is the one thing after the END line that may still go: the single empty separator Apple writes between
+# blocks, which is why this is still byte for byte the advisory's removal on Apple's file. Only empty lines are
+# taken there, so nothing that carries content can be lost to it.
 strip() {
   awk -v list="$2" '
     BEGIN { n = split(list, a, " "); for (i = 1; i <= n; i++) drop[a[i] + 0] = 1 }
@@ -80,9 +95,10 @@ strip() {
       if ($0 ~ /-----END CERTIFICATE-----/) name = 0
       next
     }
-    FNR in start { skip = (start[FNR] in drop) }
-    !(FNR in start) && /^(###|===) / { skip = 0 }
-    !skip' "$1" "$1"
+    FNR in start { state = (start[FNR] in drop) ? 1 : 0 }
+    state == 2 { if ($0 == "") next; state = 0 }
+    state == 1 { if ($0 ~ /-----END CERTIFICATE-----/) state = 2; next }
+    { print }' "$1" "$1"
 }
 
 # Everything below reads this snapshot, so the checks and the change are about the same bytes. $new is the file
