@@ -55,10 +55,23 @@ reported, and what was actually true.
    told why, and it may move to a public issue with your agreement.
 3. **Fixed** in private, in the advisory's temporary fork, with a test that fails without the fix
    ([CONTRIBUTING.md](CONTRIBUTING.md#testing-policy)).
-4. **Released** as a new version on npm. If the flaw is in `fix/fix-macos.sh`, the download on
-   www.deimoscore.com, its published SHA-256 and the site's changelog record change in the same release.
+4. **Released.** A flaw in the command ships as a new version on npm. `fix/fix-macos.sh` is **not** in the npm
+   package: it is a download, so a flaw in it ships when four things move together — the file served at
+   www.deimoscore.com, its published SHA-256, the source on `main` that the page links, and the site's changelog
+   record. The page also names the **previous** SHA-256 alongside the new one, because a download has no update
+   channel: a copy already on someone's disk is never notified, and the only way they can tell which one they hold
+   is to hash it.
 5. **Disclosed**: the advisory is published (with a CVE requested through GitHub when the flaw warrants one), and
-   [CHANGELOG.md](CHANGELOG.md) names it under the release that fixes it.
+   [CHANGELOG.md](CHANGELOG.md) names it under the release that fixes it. The fix is reachable before it is
+   described: an advisory naming a trigger, while the download still carries the flaw, tells an attacker how to
+   use it against people who cannot yet act on it.
+
+**A defect we find ourselves is a report filed at the moment we find it, and runs on the same clock as yours.**
+Every deadline above used to bind us only to someone else. That is the wrong way round: we read this code more
+than anyone, so most defects in it will be found by us, and the ones we find are the ones no outside clock is
+counting. A defect we find in our own tools gets the same 72 hours, the same 7 days, the same advisory and the
+same changelog entry, and the dates we found it and shipped it are stated. If we hold one longer than that, the
+record says for how long and why.
 
 If a fix is not possible or not worth its risk, the advisory says so and explains the workaround, rather than staying
 quiet.
