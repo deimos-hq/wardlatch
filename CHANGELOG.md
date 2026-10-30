@@ -57,8 +57,54 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   page load is not a repair. Three stubbed cases in `test/fix-macos.check.sh` cover the three readings, using a
   stub whose control answers differ between the two calls. On the script before this change, the
   before-but-not-after case prints `SAFE Fixed in the file` and exits 0.
+- **The Mac fix rewrote `/etc/ssl/cert.pem` in place, and an interrupt did not stop it.** Two defects in the same
+  three lines of a script people run with `sudo`. The write was `cp "$tmp" "$FILE"`, which truncates the file and
+  then rewrites it, so a Ctrl-C, a `SIGTERM`, a `sudo` timeout or a power cut during the copy left a partially
+  written bundle — and the content-mismatch check below it never ran, because the same interruption ended the
+  script. The Mac's built-in `curl`, `git`, `python3` and `openssl` then all read a stump of a certificate file,
+  with no TLS working at all, until somebody ran the script again. The replacement is now built in a file beside
+  `/etc/ssl/cert.pem` and renamed over it, so an interruption leaves either the old bundle or the new one and never
+  half of either. Separately, the script's `trap` was on `EXIT` alone, and — measured under macOS's own
+  `/bin/bash` 3.2.57 — that does not stop it: a `SIGINT` arriving while bash waits on a plain foreground command is
+  swallowed, and bash carries on to the next line with `set -euo pipefail` in force. Interrupted just before the
+  write, the old script went on to replace the file and printed `SAFE … now refuses the compromised keys`, exit 0,
+  about a run that had been cancelled. (It stops if the signal lands in a command substitution, so it failed only
+  some of the time.) The trap is now `EXIT HUP INT TERM`, which is what the one-line fix on the page has always
+  trapped, and it removes the file beside `/etc/ssl/cert.pem` too. Two cases in `test/fix-macos.check.sh` drive
+  copies of the script, because a power cut and an interrupt landing inside a copy cannot be arranged on demand:
+  on the script before this change the first leaves a bundle under 50 certificates and the second exits 0 with a
+  SAFE line.
+- **The Mac fix wrote through a symlinked `/etc/ssl/cert.pem`.** There was no `-L` test in it anywhere, and
+  `[ -f "$FILE" ]` is true for a symbolic link to a regular file. On a Mac whose `cert.pem` is a link, the fix
+  edited whatever it pointed at, put its dated backup beside the link rather than beside the file, and printed
+  SAFE; with the atomic replacement above it would instead have replaced the link and left the Mac's real bundle
+  untouched and still trusting the compromised keys. The one-line fix on the page refuses a symbolic link, and the
+  site's Record names that refusal as a safety property of ours (CL-42) — the download people run with `sudo` did
+  not have it. It now refuses one, names the file to run against instead, changes nothing and exits 2.
+- **The Mac fix never checked the backup it told you to restore from.** `cp -p "$FILE" "$backup"` was not verified.
+  The script then replaced the file and printed an `Undo:` command naming that backup, and the content-mismatch
+  restore uses the same file as the only checked file in the run — so a short or failed backup write made both the
+  instruction and the restore wrong, silently. CL-43 was already a correction about that instruction. The backup is
+  now compared (`cmp`) with the file it came from before anything is replaced: UNKNOWN, exit 2, nothing changed, the
+  bad backup named and "don't restore from it" said outright.
 
 ### Fixed
+- **The Mac fix's own harness read the machine's live `/etc/ssl/cert.pem`,** so its green depended on the Mac
+  running it being unfixed. `test/fix-macos.check.sh` took its bundle from `${1:-/etc/ssl/cert.pem}` while every
+  removal case and every network case sits inside `if [ "$found" -gt 0 ]`: on an already-fixed Mac, or on CI's
+  `macos-latest` the day Apple ships a fixed bundle, six of its cases skipped with a NOTE and the suite still
+  exited 0. It now defaults to the vendored unfixed fixture `test/support/fixtures/macos-27.2-cert.pem`, which
+  `test/support/mojave-shapes.sh` was moved to in this same release for the same reason; a bundle holding neither
+  withdrawn root is a failure rather than a NOTE, every case counts itself, and the run prints and checks the
+  total, so a case that stops running cannot pass as silence. It runs 20 cases.
+- **"Something other than this file is trusting the compromised keys" misdiagnosed the two likeliest causes.** When
+  the fix has removed both roots and the advisory's test host is still trusted, two ordinary things look exactly
+  like that: a TLS-inspecting proxy's own root added to the certificate file, which makes the proxy sign everything
+  including that host; or the test host re-issuing its certificate from an ordinary CA, which makes it load for
+  everyone and test nothing. The old wording sent an administrator hunting for something else on their own Mac. It
+  now names both and says to rule them out first; the verdict, the exit code and the rule that the fix is kept are
+  unchanged. `removed_phrase()` also took an argument it never read, at five call sites, and no longer does.
+
 
 - **The Mac fix told the user it covers `perl` and `ruby`.** Its last lines named "the built-in curl, git, python3,
   openssl, perl and ruby", while the Wardlatch Mac FAQ says in as many words that we tested the first four and treat
