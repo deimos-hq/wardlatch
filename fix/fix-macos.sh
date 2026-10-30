@@ -11,7 +11,8 @@
 #     Mac actually reads untouched and still trusting the compromised keys;
 #   - works on a snapshot of the file and refuses to replace it if it changed meanwhile;
 #   - changes nothing if the file is already clean;
-#   - keeps a dated backup and never overwrites an earlier one;
+#   - keeps a dated backup, never overwrites an earlier one, and compares that backup with the file it came from
+#     before replacing anything, because the Undo line it prints names that backup;
 #   - writes a new file and checks it (every other certificate still there, only the two removed) before replacing;
 #   - keeps the file readable by everyone, as macOS ships it;
 #   - checks that what landed in the file is the file it built, and puts the original back if it isn't -- the one
@@ -143,6 +144,17 @@ backup="$FILE.wardlatch-$(date +%Y%m%d-%H%M%S).bak"
 [ ! -e "$backup" ] || { echo "UNKNOWN  $backup already exists. Nothing changed; run again in a second."; exit 2; }
 cmp -s "$FILE" "$snap" || { echo "UNKNOWN  $FILE changed while this ran. Nothing changed; run it again."; exit 2; }
 $SUDO cp -p "$FILE" "$backup"
+# A backup nobody checked makes the Undo line below a promise this script can't keep: it names that file as the way
+# back, and the content-mismatch restore further down uses it as the only file here that has been checked. The
+# one-line fix on the page has compared the two since CL-42, and CL-43 was already a correction about this
+# instruction; the download wrote the backup and trusted it. Nothing is replaced until the backup is the file it
+# came from.
+cmp -s "$FILE" "$backup" || {
+  echo "UNKNOWN  The backup isn't the same file as $FILE, so it couldn't be used to undo this and nothing was"
+  echo "         replaced. Don't restore from it. Check the disk has room (df -h /), delete that file and run"
+  echo "         this again.  Bad backup: $backup"
+  exit 2
+}
 $SUDO cp "$tmp" "$FILE"
 $SUDO chmod 644 "$FILE"
 

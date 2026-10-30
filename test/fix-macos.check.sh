@@ -24,7 +24,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=14
+expect_cases=15
 
 fail() { echo "FAIL: $*"; exit 1; }
 cases=0
@@ -210,6 +210,41 @@ if [ "$found" -gt 0 ]; then
     if [ "$code" -ne 2 ] || ! cmp -s "$work/trusted.pem" "$work/trusted.before"; then fail "TRUSTED CERTIFICATE block, $net: expected exit 2, unchanged, got $code"; fi
   done
   ok "a BEGIN TRUSTED CERTIFICATE block is refused, online and offline"
+fi
+
+# What the fix does while it is replacing the file. These cases drive copies of the script with one step changed,
+# because a disk that writes a short file, and a signal arriving in the middle of a copy, cannot be arranged on
+# demand. Everything else in each copy is the shipped script, byte for byte.
+if [ "$found" -gt 0 ]; then
+  # A backup that isn't the file it came from: nothing is replaced, and the bad backup is named. The fix prints an
+  # Undo line pointing at that backup and the content-mismatch restore uses it, so an unchecked backup makes both
+  # a lie. Up to 29 Oct 2026 the backup was written with `cp -p` and never compared.
+  awk '{ print }
+       /^\$SUDO cp -p "\$FILE" "\$backup"$/ { print "echo tampered >> \"$backup\"" }' "$fix" >"$work/badbackup.sh"
+  cmp -s "$fix" "$work/badbackup.sh" && fail "a bad backup: the backup step was not found, so this case proves nothing"
+  cp "$work/original.pem" "$work/badbackup.pem"
+  script=$work/badbackup.sh
+  run "$work/badbackup.pem"
+  script=$fix
+  [ "$code" -eq 2 ] || fail "a bad backup: expected exit 2, got $code"
+  grep -q "couldn't be used to undo" <<<"$out" || fail "a bad backup: it did not say the backup is unusable"
+  grep -q "Bad backup: $work/badbackup.pem.wardlatch-" <<<"$out" || fail "a bad backup: it did not name the backup it wrote"
+  cmp -s "$work/badbackup.pem" "$work/original.pem" || fail "a bad backup: the file was replaced anyway"
+  # Proof it discriminates: with the comparison taken out, the same run replaces the file and prints an Undo line
+  # naming a backup that is not the original.
+  awk '/^cmp -s "\$FILE" "\$backup" \|\| \{$/ { drop = 1 } drop { if ($0 == "}") drop = 0; next } { print }' \
+    "$work/badbackup.sh" >"$work/badbackup-nocheck.sh"
+  cmp -s "$work/badbackup.sh" "$work/badbackup-nocheck.sh" && fail "a bad backup: the comparison was not found, so this case proves nothing"
+  cp "$work/original.pem" "$work/badbackup2.pem"
+  script=$work/badbackup-nocheck.sh
+  run "$work/badbackup2.pem"
+  script=$fix
+  cmp -s "$work/badbackup2.pem" "$work/original.pem" && fail "a bad backup: the case does not discriminate -- with the comparison removed the file was not replaced either"
+  b2=$(find "$work" -name 'badbackup2.pem.wardlatch-*.bak')
+  [ -n "$b2" ] || fail "a bad backup: the run with the comparison removed wrote no backup"
+  cmp -s "$b2" "$work/original.pem" && fail "a bad backup: the case does not discriminate -- the backup it trusted was the original after all"
+  grep -q 'Undo:' <<<"$out" || fail "a bad backup: the run with the comparison removed printed no Undo line to be wrong about"
+  ok "a backup that isn't the file it came from stops the fix before anything is replaced"
 fi
 
 # What the fix does with what the network says. These cases drive a copy of the script whose one network command is
