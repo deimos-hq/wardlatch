@@ -92,7 +92,56 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   now compared (`cmp`) with the file it came from before anything is replaced: UNKNOWN, exit 2, nothing changed, the
   bad backup named and "don't restore from it" said outright.
 
+- **Not every write to `/etc/ssl/cert.pem` was the one-step one, and none of them was checked.** Two defects an
+  independent review found in the lines the atomic-write correction above had just rewritten. The
+  content-mismatch restore still copied the backup over the file **in place** — the very defect the forward write
+  had been redesigned to remove, left live on the one path that runs when something has already gone wrong;
+  interrupted mid-restore it left a 500-byte stump of 0 certificates and exited 2 printing nothing at all. And none
+  of the writes — the backup, the copy, the chmod, the rename, the restore — was checked, so `set -e` ended the run
+  with the failing command's own status, which is **1**, the code the published exit-code table reads as EXPOSED,
+  with nothing printed: a full disk, a read-only volume, an expired `sudo` timestamp, a user who is not a sudoer or
+  SIP each reported "this Mac still trusts the compromised keys" and gave no line to read. On the restore path the
+  failure skipped the EXPOSED block entirely, so the file kept bytes nobody had checked and the backup was never
+  named. There is now one function, `replace()`, that writes to the file and is the only thing in the script that
+  does: a copy into a file beside it, then a rename over it, every step checked, the file removed and
+  `/etc/ssl/cert.pem` untouched if any step fails. The forward write and the restore both go through it, and a
+  restore that cannot be made is UNKNOWN (exit 2) naming the command to run by hand. The temporary file's name is
+  fixed and recorded before it is made, so a signal in that gap no longer strands one beside the bundle for ever.
+  Four cases cover it, all rewriting `replace()` by name so they survive the lines around it moving, and each one
+  goes red on the shape it replaces.
+- **A run stopped after the file had been replaced said nothing about it.** Exit 2 means "couldn't tell, read the
+  printed line", and an interrupt landing in either probe — up to 15 seconds each, which is exactly when somebody
+  decides the script has hung — exited 2 with no line at all, after the file had already been changed. The signal
+  handler now says the file was replaced, what was removed, and names the backup and the undo command.
+- **A failing cleanup could turn UNKNOWN into EXPOSED.** Measured on macOS's own `/bin/bash` 3.2.57: with `set -e`
+  in force, a command that fails inside the `EXIT` trap ends the trap *and* overrides the script's exit status. One
+  failed `rm` in the cleanup therefore turned `exit 2` into `exit 1` — the code a Jamf, Kandji or Intune policy
+  reads as "this Mac still trusts the compromised keys". `return 0` at the end of the function does not help,
+  because errexit ends the function before reaching it; every command in the cleanup now ends in `|| true`, which
+  is load-bearing and not tidiness. A case asserts a refused run still exits 2 with a deliberately failing
+  cleanup, and goes red without the `|| true`.
 ### Fixed
+- **`test/support/mojave-shapes.sh` was testing the live network while saying it was offline, and one of its cases
+  could not fail.** Its stub `curl` was dead code: it put one on `PATH`, but the fix calls `/usr/bin/curl` by
+  absolute path on purpose, so `PATH` could never shadow it. All five shapes made live requests to
+  `www.apple.com` and to the advisory's test host, each shape's result depended on what the network answered that
+  minute, and the branch the file's header claimed to exercise was not the branch taken — shape A printing "now
+  refuses the compromised keys" was the proof, since that line cannot be reached through a `curl` that exits 7. It
+  now drives a copy of the script with the network command behind `WARDLATCH_CURL`, as
+  `test/fix-macos.check.sh` does, and stops with a message if that substitution matches nothing. Shape D looked
+  for the fragment `neither` in the output while `shape()` writes its bundle to `run-neither.pem`, which the fix
+  echoes in every line: the assertion matched the *filename* and would have passed for any output at all. It now
+  looks for what the script prints. And the harness exited 0 however many shapes failed, so it could gate nothing;
+  it exits 1 now. It is still in no CI job.
+- **Three more in `test/fix-macos.check.sh`,** landed with the write-path commit above and recorded here.
+  `$emsign` was assigned only if a certificate matched the emSign fingerprint, inside a block guarded by "this
+  bundle holds a withdrawn root" — which an AAA-only bundle satisfies — so on exactly the Mojave-era shape the
+  sibling harness exists for, the suite died with `emsign: unbound variable` instead of reporting; it now says
+  which root the bundle is missing and why the case cannot run. The byte-for-byte comparison with the advisory's
+  own removal sits behind two conditions and could silently not run inside a case that still printed ok; it now
+  says when it is skipped and why. And the guard on the curl stub only asserted that the substitution had changed
+  *something*, so it would have passed with one call site left reaching the real network — which is how the
+  sibling harness came to be wrong; it now counts every occurrence and requires all of them behind the stub.
 - **The Mac fix's own harness read the machine's live `/etc/ssl/cert.pem`,** so its green depended on the Mac
   running it being unfixed. `test/fix-macos.check.sh` took its bundle from `${1:-/etc/ssl/cert.pem}` while every
   removal case and every network case sits inside `if [ "$found" -gt 0 ]`: on an already-fixed Mac, or on CI's
