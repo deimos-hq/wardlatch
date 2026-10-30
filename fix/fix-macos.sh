@@ -11,6 +11,9 @@
 #     Mac actually reads untouched and still trusting the compromised keys;
 #   - works on a snapshot of the file and refuses to replace it if it changed meanwhile;
 #   - changes nothing if the file is already clean;
+#   - refuses a bundle too small to be a trust store, and never tells you to restore a backup: the only backup it
+#     could name is the one it writes, which holds the withdrawn roots, so on a small bundle holding neither root it
+#     reports what it found and advises nothing;
 #   - keeps a dated backup, never overwrites an earlier one, and compares that backup with the file it came from
 #     before replacing anything, because the Undo line it prints names that backup;
 #   - writes a new file and checks it (every other certificate still there, only the two removed) before replacing;
@@ -65,6 +68,11 @@ roots() {
   awk -v d="$d" '/-----BEGIN CERTIFICATE-----/{k++; f=sprintf("%s/%05d.pem", d, k)} f{print > f} /-----END CERTIFICATE-----/{close(f); f=""}' "$1" || return 1
   [ "$(find "$d" -name '*.pem' | wc -l | tr -d ' ')" -eq "$(certs "$1")" ] || return 1
   for c in "$d"/*.pem; do
+    # A file with no certificates at all splits into no files, and an unmatched glob is the pattern itself, which
+    # openssl then fails to read: without this, a bundle of 0 certificates reported "a certificate couldn't be
+    # read" rather than that it holds none. It can skip nothing real -- if any .pem exists the glob expands to
+    # real files only, and the find/certs() comparison above has already proved there is one per BEGIN line.
+    [ -e "$c" ] || continue
     fp=$(/usr/bin/openssl x509 -in "$c" -noout -fingerprint -sha256 2>/dev/null) || return 1
     if grep -qxF "${fp#*=}" <<<"$ROOTS"; then c=${c##*/}; c=${c%.pem}; echo $((10#$c)); fi
   done
@@ -159,16 +167,10 @@ trap clean EXIT
 trap stopped HUP INT TERM
 cp "$FILE" "$snap" 2>/dev/null || { echo "UNKNOWN  Can't read $FILE. Nothing changed."; exit 2; }
 
-# The one floor in this script, and the only place a number like this belongs: a judgement about the file as it was
-# found, made before anything is read out of it or written into it. It names the number, because "it looks damaged"
-# on its own tells the reader a verdict and not the reason for it.
-if [ "$(certs "$snap")" -lt 50 ]; then
-  echo "UNKNOWN  $FILE holds only $(certs "$snap") certificates, fewer than the 50 this expects of a trust store, so it"
-  echo "         looks damaged. Nothing changed."
-  echo "         Put a backup back (ls $FILE*.bak; sudo cp -p <backup> $FILE), then run this again."
-  exit 2
-fi
 # curl also trusts other PEM blocks (BEGIN TRUSTED CERTIFICATE, BEGIN X509 CERTIFICATE), which this fix doesn't read.
+# This is read before the floor below, and the fingerprints after it, because the floor now has to say whether the
+# file holds a withdrawn root: a block this fix cannot read could hold one, so "it holds neither" would otherwise be
+# a claim about bytes nobody checked.
 if [ "$(grep -c -- '-----BEGIN ' "$snap" || true)" -ne "$(grep -c -- '-----BEGIN CERTIFICATE-----' "$snap" || true)" ]; then
   echo "UNKNOWN  $FILE holds blocks that aren't plain certificates (such as BEGIN TRUSTED CERTIFICATE), which curl also"
   echo "         trusts and this fix can't check. Nothing changed. Run npx wardlatch@latest to test the Mac's tools."
@@ -176,6 +178,35 @@ if [ "$(grep -c -- '-----BEGIN ' "$snap" || true)" -ne "$(grep -c -- '-----BEGIN
 fi
 list=$(roots "$snap") || { echo "UNKNOWN  A certificate in $FILE couldn't be read, so it wasn't checked. Nothing changed."; exit 2; }
 found=$(grep -c . <<<"$list" || true)
+before=$(certs "$snap")
+
+# The one floor in this script, and the only place a number like this belongs: a judgement about the file as it was
+# found, made before anything is written into it. It names the number, because "it looks damaged" on its own tells
+# the reader a verdict and not the reason for it -- and what it says next depends on what is IN the file, not on how
+# small the file is.
+# Until 30 Oct 2026 it said the file looked damaged and told the reader to "put a backup back" whatever the file
+# held. On a small bundle holding NEITHER withdrawn root that is wrong twice over. The file may be perfectly fine
+# and simply short -- a hand-built bundle, a minimal store copied out of a container image -- and this fix has
+# nothing to remove from it, so there is nothing here to call damage. And the backup it pointed at is the one this
+# script writes, which is a copy of the file as it was BEFORE the removal and therefore holds the withdrawn roots:
+# on a small bundle correctly fixed by a first run, a second run reached this floor and advised a revert to the
+# compromised file. Advising a revert to a known-compromised state is the same defect as the network-triggered
+# revert this branch removed on 29 Oct 2026, in a script people run as root. So that case is now UNKNOWN with the
+# facts, no claim that the Mac is safe, and no advice to restore anything.
+if [ "$before" -lt 50 ]; then
+  if [ "$found" -eq 0 ]; then
+    echo "UNKNOWN  $FILE has $before certificates, fewer than the 50 this expects of a trust store. It holds neither"
+    echo "         withdrawn root, so this fix has nothing to remove. Something else may be wrong with it; nothing"
+    echo "         was changed. Run npx wardlatch@latest to test what this Mac's tools actually trust."
+  else
+    echo "UNKNOWN  $FILE holds only $before certificates, fewer than the 50 this expects of a trust store, so it"
+    echo "         looks damaged -- and it still holds a withdrawn root. This fix rebuilds the file it is given and"
+    echo "         will not rebuild one that small. Nothing changed."
+    echo "         Don't put an older copy of this file back: a copy from before this fix ran holds the withdrawn"
+    echo "         roots too. A macOS update restores Apple's own cert.pem -- run this again after one."
+  fi
+  exit 2
+fi
 if [ "$found" -eq 0 ]; then
   c=$(control "$snap")
   if [ "$c" -ne 0 ]; then
@@ -210,15 +241,14 @@ removed_phrase() {
   fi
 }
 
-before=$(certs "$snap")
 strip "$snap" "$(tr '\n' ' ' <<<"$list")" > "$tmp"
 after=$(certs "$tmp")
 left=$(roots "$tmp") || left=unreadable
 # Three separate reasons the cleaned file may not be used, each saying which one it is. Until 30 Oct 2026 they were
 # one condition and one line that reported all three as arithmetic ("didn't come out as expected (N before, M
 # after)"), and the third of them was a second 50-certificate floor.
-# That floor is gone, and this is why. The check above refuses a bundle holding fewer than 50 certificates before
-# anything is read from it, so `before` is 50 or more here, and `found` is 1 or 2; the only arithmetic that could
+# That floor is gone, and this is why. The floor above refuses a bundle holding fewer than 50 certificates before
+# anything is written to it, so `before` is 50 or more here, and `found` is 1 or 2; the only arithmetic that could
 # reach a floor on `after` was 50-1, 50-2 and 51-2, every one of which is exactly `before - found` and so exactly
 # right. It could not fire on a mangled rebuild, because a rebuild that lost or kept a certificate is caught by the
 # count check, and one that changed no count would not be caught by a floor either. So all it could ever do was

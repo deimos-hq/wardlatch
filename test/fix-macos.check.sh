@@ -24,7 +24,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=27
+expect_cases=29
 
 fail() { echo "FAIL: $*"; exit 1; }
 cases=0
@@ -79,6 +79,22 @@ echo "$source: $total certificates, $found of the two roots"
 # bundle that holds neither, those cases cannot run, and a green run would be saying only that they did not.
 [ "$found" -gt 0 ] || fail "$source holds neither withdrawn root, so the removal and network cases cannot run and this suite can prove nothing. The default source is the vendored unfixed fixture test/support/fixtures/macos-27.2-cert.pem; give that, or another bundle that still holds a root, or no argument at all."
 
+# The entry floor's OLD shape, for the three cases below that have to fail on it: the floor as it stood until
+# 30 Oct 2026, put back where it stood -- immediately after the snapshot, before anything in the file had been
+# read. It fires there and exits, so nothing after it runs, which is exactly the behaviour it had.
+cat >"$work/oldentry.txt" <<'OLDENTRY'
+if [ "$(certs "$snap")" -lt 50 ]; then
+  echo "UNKNOWN  $FILE holds only $(certs "$snap") certificates, fewer than the 50 this expects of a trust store, so it"
+  echo "         looks damaged. Nothing changed."
+  echo "         Put a backup back (ls $FILE*.bak; sudo cp -p <backup> $FILE), then run this again."
+  exit 2
+fi
+OLDENTRY
+awk -v bf="$work/oldentry.txt" '
+  { print }
+  /^cp "\$FILE" "\$snap" 2>\/dev\/null/ { while ((getline l < bf) > 0) print l; close(bf) }' "$fix" >"$work/oldentry.sh"
+cmp -s "$fix" "$work/oldentry.sh" && fail "the entry floor: the snapshot line was not found in $fix, so the floor cases below prove nothing"
+
 # A missing file: refused, nothing created.
 run "$work/missing.pem"
 if [ "$code" -ne 2 ] || [ -e "$work/missing.pem" ]; then fail "missing file: expected exit 2 and no file, got $code"; fi
@@ -90,14 +106,35 @@ run "$work/empty.pem"
 if [ "$code" -ne 2 ] || [ -s "$work/empty.pem" ] || [ "$(backups "$work/empty.pem")" -ne 0 ]; then fail "empty file: expected exit 2, unchanged, no backup"; fi
 ok "empty file refused, unchanged"
 
-# A truncated file: refused as damaged, byte for byte unchanged, no backup.
+# A truncated file: refused, byte for byte unchanged, no backup -- and refused for the right reason, which is what
+# this case asserts since 30 Oct 2026. Until then it asserted exit 2, unchanged and no backup and nothing else,
+# and the floor's old wording satisfied all three while telling the reader the file "looks damaged" and to "put a
+# backup back". This bundle holds NEITHER withdrawn root (the truncation lands inside a certificate's text dump, so
+# the certificates in it are whole and readable), so there is nothing here for this fix to remove, nothing it can
+# honestly call damage, and no copy of this file it can send the reader back to: the only backup it could name is
+# the one it writes itself, a copy of the file as it was before the removal, which holds the withdrawn roots.
 head -c 20000 "$work/original.pem" >"$work/truncated.pem"
 cp "$work/truncated.pem" "$work/truncated.before"
 run "$work/truncated.pem"
 if [ "$code" -ne 2 ] || ! cmp -s "$work/truncated.pem" "$work/truncated.before" || [ "$(backups "$work/truncated.pem")" -ne 0 ]; then
   fail "truncated file: expected exit 2, unchanged, no backup"
 fi
-ok "truncated file refused, unchanged"
+[ "$(bad "$work/truncated.pem")" -eq 0 ] || fail "truncated file: it holds a withdrawn root, so this case is measuring the other branch of the floor and not the one it describes"
+grep -q "has $(count "$work/truncated.pem") certificates, fewer than the 50 this expects" <<<"$out" ||
+  fail "truncated file: it did not name the count it found"
+grep -q 'It holds neither' <<<"$out" || fail "truncated file: it did not say the file holds neither withdrawn root"
+grep -q 'nothing to remove' <<<"$out" || fail "truncated file: it did not say this fix has nothing to remove"
+grep -qi 'looks damaged' <<<"$out" && fail "truncated file: it called a file holding neither withdrawn root damaged"
+grep -qi 'backup back\|\.bak' <<<"$out" && fail "truncated file: it sent the reader to a backup, which holds the withdrawn roots"
+grep -q '^SAFE' <<<"$out" && fail "truncated file: it claimed this Mac is safe"
+# Proof it fails on the old shape: the entry floor as it stood, on the same bytes.
+cp "$work/truncated.before" "$work/truncated-old.pem"
+script=$work/oldentry.sh
+run "$work/truncated-old.pem"
+script=$fix
+grep -qi 'looks damaged' <<<"$out" || fail "truncated file: the case does not discriminate -- the old floor did not call the file damaged"
+grep -q 'Put a backup back' <<<"$out" || fail "truncated file: the case does not discriminate -- the old floor did not advise restoring a backup"
+ok "truncated file refused as holding neither root, where the old floor called it damaged and advised a backup"
 
 # A symlinked cert.pem: refused, the link left as a link, the file it points at untouched, no backup. This fix
 # replaces the file it is given, so on a link it would leave the bundle the Mac actually reads exactly as it was.
@@ -294,6 +331,68 @@ OLDFLOOR
   cmp -s "$work/floor2.pem" "$work/floor.built" || fail "a 50-certificate bundle: the case does not discriminate -- with the floor back the file was fixed anyway"
   [ "$(backups "$work/floor2.pem")" -eq 0 ] || fail "a 50-certificate bundle: the run that refused it wrote a backup"
   ok "a 50-certificate bundle is fixed, where the second floor called 50-minus-$found an arithmetic failure and refused"
+
+  # A small bundle correctly fixed, then run again. With the post-strip floor gone (the case above), the first run
+  # fixes a bundle of 49-plus-$found certificates down to 49 -- and until 30 Oct 2026 the SECOND run then hit the
+  # ENTRY floor, which told the operator the file "looks damaged" and to "put a backup back". That backup is the one
+  # the first run wrote: a copy of the file as it was, holding the withdrawn root(s). So a correct result was
+  # reported as damage and the advice was to revert to the compromised file -- the same defect class as the
+  # network-triggered revert this branch removed on 29 Oct 2026, in a script people run as root. The size is
+  # 49 + $found so the fixed file is 49 whatever the bundle held: 50 or 51 before, 49 after, under the floor either
+  # way, and the Mojave-era one-root shape is covered rather than skipped.
+  cp "$work/floor-roots.pem" "$work/small.built"
+  awk -v want=49 '/-----BEGIN CERTIFICATE-----/{k++} k <= want { print }' "$work/floor-rest.pem" >>"$work/small.built"
+  [ "$(count "$work/small.built")" -eq $((49 + found)) ] || fail "a small bundle run twice: built $(count "$work/small.built") certificates, not $((49 + found)), so this case would measure nothing"
+  [ "$(bad "$work/small.built")" -eq "$found" ] || fail "a small bundle run twice: built it with $(bad "$work/small.built") of the withdrawn roots, not $found"
+  cp "$work/small.built" "$work/small.pem"
+  run "$work/small.pem" https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9
+  [ "$code" -eq 0 ] || fail "a small bundle run twice: the first run should fix it, got exit $code"
+  [ "$(count "$work/small.pem")" -eq 49 ] || fail "a small bundle run twice: the first run left $(count "$work/small.pem") certificates, not 49"
+  [ "$(bad "$work/small.pem")" -eq 0 ] || fail "a small bundle run twice: the first run left a withdrawn root in it"
+  [ "$(backups "$work/small.pem")" -eq 1 ] || fail "a small bundle run twice: the first run wrote $(backups "$work/small.pem") backups, not 1"
+  smallbackup=$(find "$work" -name 'small.pem.wardlatch-*.bak')
+  [ "$(bad "$smallbackup")" -eq "$found" ] || fail "a small bundle run twice: the first run's backup holds $(bad "$smallbackup") withdrawn root(s), not $found -- that it holds them is why advising a restore is the defect"
+  cp "$work/small.pem" "$work/small.after-first"
+  run "$work/small.pem" https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9
+  [ "$code" -eq 2 ] || fail "a small bundle run twice: the second run should be UNKNOWN (exit 2), got $code"
+  cmp -s "$work/small.pem" "$work/small.after-first" || fail "a small bundle run twice: the second run changed the file"
+  [ "$(backups "$work/small.pem")" -eq 1 ] || fail "a small bundle run twice: the second run wrote another backup"
+  grep -q 'has 49 certificates, fewer than the 50 this expects' <<<"$out" || fail "a small bundle run twice: the second run did not name the count it found"
+  grep -q 'It holds neither' <<<"$out" || fail "a small bundle run twice: the second run did not say the file holds neither withdrawn root"
+  grep -q 'nothing to remove' <<<"$out" || fail "a small bundle run twice: the second run did not say this fix has nothing to remove"
+  grep -qi 'looks damaged' <<<"$out" && fail "a small bundle run twice: the second run called a correctly fixed file damaged"
+  grep -qi 'backup back\|\.bak' <<<"$out" && fail "a small bundle run twice: the second run sent the reader to the backup, which holds the withdrawn root(s)"
+  grep -q '^SAFE' <<<"$out" && fail "a small bundle run twice: the second run claimed this Mac is safe"
+  # Proof it fails on the old shape: the entry floor as it stood, on the file the first run produced.
+  cp "$work/small.after-first" "$work/small-old.pem"
+  script=$work/oldentry.sh
+  run "$work/small-old.pem" https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9
+  script=$fix
+  [ "$code" -eq 2 ] || fail "a small bundle run twice: the case does not discriminate -- with the old floor back the run exited $code, not 2"
+  grep -qi 'looks damaged' <<<"$out" || fail "a small bundle run twice: the case does not discriminate -- the old floor did not call the fixed file damaged"
+  grep -q 'Put a backup back' <<<"$out" || fail "a small bundle run twice: the case does not discriminate -- the old floor did not advise restoring the backup that holds the roots"
+  ok "a small bundle correctly fixed is UNKNOWN on the next run, where the old entry floor called it damaged and sent the reader back to the roots"
+
+  # The other branch of the floor: a small bundle that DOES still hold a withdrawn root keeps today's refusal -- but
+  # not today's advice. There is no copy of this file the script can honestly send the reader back to either, for
+  # the same reason: the only backup it writes is a copy of the file as it was, roots and all.
+  cp "$work/floor-roots.pem" "$work/tinyroot.built"
+  awk -v want=10 '/-----BEGIN CERTIFICATE-----/{k++} k <= want { print }' "$work/floor-rest.pem" >>"$work/tinyroot.built"
+  [ "$(bad "$work/tinyroot.built")" -eq "$found" ] || fail "a small bundle holding a root: built it with $(bad "$work/tinyroot.built") of the withdrawn roots, not $found"
+  [ "$(count "$work/tinyroot.built")" -lt 50 ] || fail "a small bundle holding a root: built $(count "$work/tinyroot.built") certificates, which is not under the floor, so this case would measure nothing"
+  cp "$work/tinyroot.built" "$work/tinyroot.pem"
+  run "$work/tinyroot.pem" https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9
+  [ "$code" -eq 2 ] || fail "a small bundle holding a root: expected exit 2, got $code"
+  cmp -s "$work/tinyroot.pem" "$work/tinyroot.built" || fail "a small bundle holding a root: the file was changed"
+  [ "$(backups "$work/tinyroot.pem")" -eq 0 ] || fail "a small bundle holding a root: it wrote a backup"
+  grep -q 'still holds a withdrawn root' <<<"$out" || fail "a small bundle holding a root: it did not say the file still holds one"
+  grep -qi 'backup back\|\.bak' <<<"$out" && fail "a small bundle holding a root: it sent the reader to a backup, which holds the withdrawn root(s) too"
+  cp "$work/tinyroot.built" "$work/tinyroot-old.pem"
+  script=$work/oldentry.sh
+  run "$work/tinyroot-old.pem" https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9
+  script=$fix
+  grep -q 'Put a backup back' <<<"$out" || fail "a small bundle holding a root: the case does not discriminate -- the old floor did not advise restoring a backup"
+  ok "a small bundle still holding a withdrawn root is refused without being sent back to a backup that holds it"
 
   # The three reasons the cleaned file may not be used, each said in its own words. They were one condition and one
   # line reporting all three as arithmetic ("didn't come out as expected (N before, M after)"), which is a

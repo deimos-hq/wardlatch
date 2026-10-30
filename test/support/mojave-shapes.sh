@@ -15,7 +15,8 @@
 #   B  AAA only, emSign removed  (THE MOJAVE SHAPE)
 #   C  emSign only, AAA removed  (the mirror, to catch logic that only handles the first entry)
 #   D  neither root present      (an already-fixed machine)
-#   E  a bundle too small for the floor at the top of the script (refused before anything is read out of it)
+#   E  a bundle too small for the floor at the top of the script, holding neither root (refused, nothing changed,
+#      and since 30 Oct 2026 not called damaged and not sent back to a backup)
 #
 # Shape E has never reached the SECOND floor the script carried, on the rebuilt file: 12 certificates are refused
 # at the top, so that branch stayed untested, and on 30 Oct 2026 it turned out to be unreachable by anything except
@@ -137,10 +138,14 @@ echo "D  neither root present (already fixed):"
 # echoes that path in every line, so the old expected fragment "neither" matched the FILENAME and the assertion
 # could not fail whatever the script printed.
 shape neither "$WORK/none.pem" 0 "no longer holds the two roots"
-echo "E  a bundle refused by the 50-certificate floor at the top of the script:"
-# The floor's own words, not merely "UNKNOWN": the fix prints UNKNOWN on a dozen other paths, so matching that
-# alone would have passed for almost any refusal, however it was reached or explained.
-shape tiny "$WORK/tiny.pem" 2 "fewer than the 50 this expects"
+echo "E  a bundle under the 50-certificate floor, holding neither root:"
+# The floor's own words for THIS branch, not merely "UNKNOWN": the fix prints UNKNOWN on a dozen other paths, so
+# matching that alone would have passed for almost any refusal, however it was reached or explained. Since
+# 30 Oct 2026 the floor's two branches say different things, and this bundle holds neither withdrawn root, so the
+# words to expect are the ones that say so. "fewer than the 50 this expects" was matched here until then and is
+# not enough on its own any more: the floor said that while also calling the file damaged and telling the reader
+# to put a backup back, which on this branch means reverting a correct result to a file holding both roots.
+shape tiny "$WORK/tiny.pem" 2 "It holds neither"
 
 echo
 if [ "$fails" = 0 ]; then
