@@ -19,7 +19,7 @@ import { reposUnder, workflowsAddedSince, windowStart } from '../lib/workflows.m
 import { scanRepo } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
 import { scanHeaders } from '../lib/headers.mjs';
-import { pathState, readText, listDir } from '../lib/files.mjs';
+import { pathState, readText, listDir, denialCode, mandatoryRefusal, statBits } from '../lib/files.mjs';
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
 import { safe, saw, withdrawUnreceipted } from '../lib/report.mjs';
 
@@ -131,13 +131,18 @@ const all = [];
 // whether a machine passed depended on whether an empty ~/Development happened to exist).
 // safe() withdraws a receipt that does not hold and says which entry failed, so the reason it hands back is printed,
 // not the all-clear's own words: an UNKNOWN line must never read like a clean one (lib/report.mjs).
+// Stated gaps recorded for the incident being checked: folders the run could not open that do NOT change the exit code
+// (macOS's own protection, a service account's). An all-clear that sits beside them says how many, so the receipt
+// reads "I opened these, could not open 3, here they are and here is what would open them" — the only form in which
+// exit 0 is honest. Reset per incident; gaps() adds to it.
+let statedGaps = 0;
 function allClear(results, inc, kind, text, searched) {
-  if (searched.length) { const row = { incident: inc.id, kind, ...safe(searched, { reason: text }) }; results.push(row); print(row.status, row.reason); return; }
+  if (searched.length) { const row = { incident: inc.id, kind, ...safe(searched, { reason: text, gaps: statedGaps }) }; results.push(row); print(row.status, row.reason); return; }
   if (!explicitPaths) {
     const reason = `none of the usual folders exist here (${roots.map(short).join(', ')}), so there was nothing to search: pass --paths for a folder elsewhere`;
     // nothing was opened, because none of these folders is there: "I looked for it and it was not there" is evidence of
     // absence, which a reader checks by looking for it too — not a place, so it is declared (lib/report.mjs saw())
-    const row = { incident: inc.id, kind, ...safe(roots.map((r) => saw(`looked for ${r}`)), { reason }) }; results.push(row); print(row.status, row.reason); return;
+    const row = { incident: inc.id, kind, ...safe(roots.map((r) => saw(`looked for ${r}`)), { reason, gaps: statedGaps }) }; results.push(row); print(row.status, row.reason); return;
   }
   const reason = `none of the folders given with --paths exist (${roots.map(short).join(', ')}), so nothing was searched`;
   results.push({ incident: inc.id, kind, status: 'UNKNOWN', reason });
@@ -176,9 +181,13 @@ function notRunRow(results, inc, what, paths) {
 //     REVIEW line per check listing them, which doesn't change the exit code (lib/owners.mjs says which is which).
 //   - `review`: folders a check knows to be private by their place (a locked dot-folder under a web root: www-data's
 //     .ssh), listed in the REVIEW line whoever owns them.
+//   - a folder whose refusal is MANDATORY — macOS's own privacy protection, which sudo cannot lift (lib/files.mjs
+//     mandatoryRefusal(), measured 29 Oct 2026): a stated gap in the same REVIEW line, with the remedy that can
+//     actually work and the basis a reader can check with one `ls -ld`.
 // Up to e0e1c35 every locked folder was UNKNOWN, and any server with docker or certbot exited 2.
 // `searchesRoots`: whether this check searches the --paths folders at all (Plex's and GitLab's look only in their own
 // install places: a --paths folder that isn't there is nothing to them)
+// → the number of stated gaps, for the all-clear's receipt to record beside what it searched (lib/report.mjs).
 function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, review = [], links = [] } = {}) {
   for (const d of searchesRoots ? missingRoots : []) {
     const reason = `given with --paths, but ${pathState(d) === 'gone' ? 'not there' : 'not a folder'}, so it was not searched`;
@@ -188,27 +197,57 @@ function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, revi
   // on macOS a folder can be closed by privacy protection (Desktop, Documents, Downloads, iCloud), which sudo doesn't open
   const how = platform() === 'darwin' ? 'run Wardlatch with sudo if it belongs to another user, or allow your terminal Full Disk Access (System Settings → Privacy & Security) if macOS is protecting it' : 'run Wardlatch with sudo to include it';
   const unknown = (d, reason) => { results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason }); print('UNKNOWN', short(d)); note('33', reason); };
-  const skipped = [];
+  const skipped = [], why = new Map();   // the stated gaps, and the errno each was judged on
   for (const d of [...new Set(found)]) unknown(d, `found, but could not be read, so it was not checked: ${how}`);
   // A link to a folder somewhere else is not followed: a link can point into a loop, or outside what was asked for. Up
   // to this fix a walker stepped over one in silence, so a site, a virtual environment or a repository behind a link
   // was never looked at and the run still read SAFE — the receipt named the folders it did open, and every one of them
   // was true. "I chose not to look" now lands where "I could not look" already did.
+  // (a link whose target the same walk listed never reaches here: lib/files.mjs unwalkedLinks)
   for (const d of [...new Set(links)].filter((x) => !found.includes(x))) {
     unknown(d, 'is a link to a folder somewhere else, so it was not followed: pass --paths with the folder it points to, to include it');
   }
   // a searched root itself (a --paths folder, or /var/www) that can't be opened is always UNKNOWN: it was asked for
   for (const d of [...new Set(dirs)].filter((x) => !found.includes(x))) {
-    if (lockedRoots.includes(d) || roots.includes(d) || ownedByPerson(d, kind)) unknown(d, `could not be opened, so it was not searched: ${how}`);
-    else skipped.push(d);
+    // A root is NEVER a stated gap, whatever the errno: the person asked about it by name, and the only honest answer
+    // to "is this folder clean?" that could not be opened is "I do not know" (test/release-0.1.9.test.mjs:260).
+    if (lockedRoots.includes(d) || roots.includes(d)) { unknown(d, `could not be opened, so it was not searched: ${how}`); continue; }
+    // the errno is read ONCE per folder and carried: reading it again for the basis below could disagree with the
+    // channel it decided, and a row whose stated basis contradicts its own placement is worse than no basis at all
+    const code = denialCode(d);
+    // macOS's own refusal: sudo cannot lift it, and no unprivileged attacker can produce it, so saying "I could not
+    // look, run with sudo" was false twice over. A stated gap instead, with the remedy that works.
+    if (mandatoryRefusal(d, code)) { skipped.push(d); why.set(d, code); continue; }
+    if (ownedByPerson(d, kind)) { unknown(d, `could not be opened, so it was not searched: ${how}`); continue; }
+    skipped.push(d); why.set(d, code);
   }
-  skipped.push(...review.filter((d) => !skipped.includes(d)));
+  for (const d of review) if (!skipped.includes(d)) { skipped.push(d); why.set(d, denialCode(d)); }
   if (skipped.length) {
-    const list = skipped.slice(0, 8).map((d) => `${short(d)} (${ownerName(d)})`).join(', ') + (skipped.length > 8 ? `, and ${skipped.length - 8} more` : '');
-    const reason = `${skipped.length} folder${skipped.length === 1 ? '' : 's'} owned by service accounts, or private by ${skipped.length === 1 ? 'its' : 'their'} place, could not be opened and ${skipped.length === 1 ? 'was' : 'were'} not searched: ${list}. Run Wardlatch with sudo to include ${skipped.length === 1 ? 'it' : 'them'}`;
-    results.push({ incident: inc.id, kind: 'skipped', status: 'REVIEW', paths: skipped, reason });
+    // BASIS, per folder: the errno and the mode, so a reader can check the claim with one `ls -ld`. The iron law says a
+    // SAFE needs a receipt a reader can check; a gap riding beside a SAFE and keeping the exit code at 0 needs one too.
+    const basisOf = (d) => {
+      const code = why.get(d) ?? null;
+      const st = statBits(d);
+      const mode = st ? `mode 0${st.mode.toString(8).padStart(3, '0')}` : 'mode unknown';
+      const owner = st && st.uid === process.getuid?.() ? 'owner you' : `owner ${ownerName(d)}`;
+      return { code: code ?? 'readable now', basis: `${code ?? 'readable now'}, ${mode}, ${owner}`, protected: mandatoryRefusal(d, code) };
+    };
+    // TWO REMEDIES, NEVER IN ONE BREATH. Up to this fix every folder in this line got "Run Wardlatch with sudo to
+    // include them", and for a TCC-protected folder that instruction cannot work at all.
+    const TCC = 'macOS is protecting it; grant your terminal Full Disk Access in System Settings → Privacy & Security and run again — sudo cannot open this';
+    const SUDO = 'run with `sudo` to include it';
+    const folders = skipped.map((d) => { const b = basisOf(d); return { path: d, code: b.code, basis: b.basis, remedy: b.protected ? TCC : SUDO }; });
+    const say = (list) => list.slice(0, 8).map((f) => `${short(f.path)} (${f.basis})`).join(', ') + (list.length > 8 ? `, and ${list.length - 8} more` : '');
+    const prot = folders.filter((f) => f.remedy === TCC), svc = folders.filter((f) => f.remedy === SUDO);
+    const parts = [];
+    if (prot.length) parts.push(`${prot.length} folder${prot.length === 1 ? '' : 's'} macOS is protecting ${prot.length === 1 ? 'was' : 'were'} not searched: ${say(prot)}. Grant your terminal Full Disk Access (System Settings → Privacy & Security) and run again — sudo cannot open ${prot.length === 1 ? 'it' : 'these'}`);
+    if (svc.length) parts.push(`${svc.length} folder${svc.length === 1 ? '' : 's'} owned by service accounts, or private by ${svc.length === 1 ? 'its' : 'their'} place, could not be opened and ${svc.length === 1 ? 'was' : 'were'} not searched: ${say(svc)}. Run Wardlatch with sudo to include ${svc.length === 1 ? 'it' : 'them'}`);
+    const reason = parts.join('. ');
+    results.push({ incident: inc.id, kind: 'skipped', status: 'REVIEW', paths: skipped, folders, reason });
     print('REVIEW', 'folders not searched'); note('2', reason);
   }
+  statedGaps += skipped.length;
+  return skipped.length;
 }
 
 // NODE_OPTIONS words a probe doesn't need to measure trust, and that change no trust: memory, warnings, traces
@@ -235,6 +274,7 @@ if (!json) {
 for (const inc of chosen) {
   if (!json) console.log(`\n${c('1', inc.title)} ${c('2', `(${inc.date})`)}`);
   const results = [];
+  statedGaps = 0;
   // only where the home folder is read: the trust check (the probes' ~/.curlrc, the go env file, the engine's config),
   // installs and headers always; the folder checks only when their usual folders, in the home, are the ones searched;
   // never the version checks, which read PATH
