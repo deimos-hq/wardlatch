@@ -24,7 +24,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=17
+expect_cases=18
 
 fail() { echo "FAIL: $*"; exit 1; }
 cases=0
@@ -325,6 +325,42 @@ if [ "$found" -gt 0 ]; then
   [ "$code" -eq 0 ] || fail "an interrupt: the case does not discriminate -- with a trap on EXIT alone the run exited $code, not 0"
   rm -rf "$work/tmp"; mkdir "$work/tmp"
   ok "an interrupt stops the fix, where a trap on EXIT alone replaced the file and printed SAFE anyway"
+
+  # The content-mismatch restore: the one path left in this script that puts the original back, and the only kind
+  # of reason there can be for one -- the bytes now in the file are not the bytes the script built and checked, so
+  # what every TLS client on the Mac reads is a file nobody has checked, and the backup is the only file in the run
+  # that has been. The CHANGELOG said a case for it was here. It was not. This copy's write puts something else in
+  # the file afterwards, because nothing else can make that happen on demand.
+  # First, that the reason the script declares is the reason this case is about: every line putting the backup back
+  # must declare why immediately above it, and content-mismatch is the only reason there is. A restore added
+  # without a declaration, or on any other reason, fails here and needs its own case.
+  restores=$(grep -c '^  \$SUDO cp -p "\$backup" "\$FILE"$' "$fix" || true)
+  [ "$restores" -eq 1 ] || fail "content mismatch: the script has $restores restores, expected 1; each one needs its own declared reason and its own case here"
+  declared=$(grep -B1 '^  \$SUDO cp -p "\$backup" "\$FILE"$' "$fix" | sed -n 's/.*wardlatch:revert-reason=//p')
+  [ "$declared" = content-mismatch ] || fail "content mismatch: the restore declares '$declared', expected 'content-mismatch'"
+  awk '{ print } /^\$SUDO mv "\$new" "\$FILE"$/ { print "echo tampered >> \"$FILE\"" }' "$fix" >"$work/mismatch.sh"
+  cmp -s "$fix" "$work/mismatch.sh" && fail "content mismatch: the write step was not found, so this case proves nothing"
+  cp "$work/original.pem" "$work/mismatch.pem"
+  script=$work/mismatch.sh
+  run "$work/mismatch.pem"
+  script=$fix
+  [ "$code" -eq 1 ] || fail "content mismatch: expected exit 1, got $code"
+  grep -q '^EXPOSED' <<<"$out" || fail "content mismatch: expected EXPOSED"
+  grep -q "isn't the file this built and checked" <<<"$out" || fail "content mismatch: it did not say what was wrong"
+  grep -q 'Backup:' <<<"$out" || fail "content mismatch: it did not name the backup it restored from"
+  cmp -s "$work/mismatch.pem" "$work/original.pem" || fail "content mismatch: the original was not put back"
+  [ "$(bad "$work/mismatch.pem")" -eq "$found" ] || fail "content mismatch: what was put back is not the bundle that holds the withdrawn roots"
+  # Proof it discriminates: the same tamper with the restore line taken out must leave the tampered bytes in the
+  # file. If the original comes back there too, this case is not testing the restore.
+  awk '/wardlatch:revert-reason=content-mismatch/ { print; getline; next } { print }' "$work/mismatch.sh" >"$work/mismatch-norestore.sh"
+  cmp -s "$work/mismatch.sh" "$work/mismatch-norestore.sh" && fail "content mismatch: the restore line was not found, so this case proves nothing"
+  cp "$work/original.pem" "$work/mismatch2.pem"
+  script=$work/mismatch-norestore.sh
+  run "$work/mismatch2.pem"
+  script=$fix
+  cmp -s "$work/mismatch2.pem" "$work/original.pem" &&
+    fail "content mismatch: the case does not discriminate -- with the restore removed the original came back anyway"
+  ok "a file that isn't the one the script built brings the original back, declaring content-mismatch as the reason"
 fi
 
 # What the fix does with what the network says. These cases drive a copy of the script whose one network command is

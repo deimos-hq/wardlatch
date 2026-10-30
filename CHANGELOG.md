@@ -23,10 +23,16 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   (exit 1) with the fix left in place and the undo command named, because the cleaned file holds strictly fewer roots
   than the original and is never the worse of the two. The only restore left compares the file it wrote with the file
   it built (`cmp`) and restores the backup when they differ — two local files, no probe result — and declares itself
-  in the script as `# wardlatch:revert-reason=content-mismatch`. `test/fix-macos.check.sh` gains a case for it,
-  driving a copy of the script whose one network command is a stub, because no real network can be made to answer
-  this way on demand: a network that accepts everything must leave the fix in place. It fails on the 0.1.10 script,
-  which puts both roots back on the file.
+  in the script as `# wardlatch:revert-reason=content-mismatch`. `test/fix-macos.check.sh` gains a case for each of
+  those two, and until 29 Oct 2026 this entry claimed one that did not exist. *For the re-test:* a copy of the script
+  whose one network command is a stub, because no real network can be made to answer this way on demand — a network
+  that accepts everything must leave the fix in place, and it fails on the 0.1.10 script, which puts both roots back
+  on the file. *For the restore:* a copy whose write puts something other than the file the script built into
+  `/etc/ssl/cert.pem`, because nothing else can make that happen on demand — the original has to come back, byte for
+  byte, with EXPOSED and exit 1 and the backup named. That case also checks that the restore the script declares is
+  the only one in it and that `content-mismatch` is the only reason declared, so a revert added later without a
+  declaration fails until it has a case of its own. It fails on a copy of the script with the restore line removed,
+  which leaves the unchecked bytes in the file.
 - **A verdict was read out of the test host with no control.** `curl` exit 60 was taken as "the host refused us" and
   anything else as "the host didn't answer", when on a network where nothing answers at all both readings are
   worthless; for five days the npm command had a control for every row and the Mac fix had none. It now fetches
