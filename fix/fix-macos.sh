@@ -159,8 +159,12 @@ trap clean EXIT
 trap stopped HUP INT TERM
 cp "$FILE" "$snap" 2>/dev/null || { echo "UNKNOWN  Can't read $FILE. Nothing changed."; exit 2; }
 
+# The one floor in this script, and the only place a number like this belongs: a judgement about the file as it was
+# found, made before anything is read out of it or written into it. It names the number, because "it looks damaged"
+# on its own tells the reader a verdict and not the reason for it.
 if [ "$(certs "$snap")" -lt 50 ]; then
-  echo "UNKNOWN  $FILE holds only $(certs "$snap") certificates, so it looks damaged. Nothing changed."
+  echo "UNKNOWN  $FILE holds only $(certs "$snap") certificates, fewer than the 50 this expects of a trust store, so it"
+  echo "         looks damaged. Nothing changed."
   echo "         Put a backup back (ls $FILE*.bak; sudo cp -p <backup> $FILE), then run this again."
   exit 2
 fi
@@ -210,8 +214,28 @@ before=$(certs "$snap")
 strip "$snap" "$(tr '\n' ' ' <<<"$list")" > "$tmp"
 after=$(certs "$tmp")
 left=$(roots "$tmp") || left=unreadable
-if [ -n "$left" ] || [ "$after" -ne $((before - found)) ] || [ "$after" -lt 50 ]; then
-  echo "UNKNOWN  The cleaned file didn't come out as expected ($before certificates before, $after after). Nothing changed."
+# Three separate reasons the cleaned file may not be used, each saying which one it is. Until 30 Oct 2026 they were
+# one condition and one line that reported all three as arithmetic ("didn't come out as expected (N before, M
+# after)"), and the third of them was a second 50-certificate floor.
+# That floor is gone, and this is why. The check above refuses a bundle holding fewer than 50 certificates before
+# anything is read from it, so `before` is 50 or more here, and `found` is 1 or 2; the only arithmetic that could
+# reach a floor on `after` was 50-1, 50-2 and 51-2, every one of which is exactly `before - found` and so exactly
+# right. It could not fire on a mangled rebuild, because a rebuild that lost or kept a certificate is caught by the
+# count check, and one that changed no count would not be caught by a floor either. So all it could ever do was
+# refuse a correctly cleaned 50- or 51-certificate bundle, call the right answer an arithmetic failure, and leave
+# that Mac with no way to be fixed at all. The count check and the fingerprint re-read below it are the whole of
+# what there is to check here.
+if [ "$left" = unreadable ]; then
+  echo "UNKNOWN  A certificate in the cleaned file couldn't be read, so the cleaned file wasn't fully checked and"
+  echo "         was not used. Nothing changed; $FILE is as it was. Please report this."
+  exit 2
+elif [ -n "$left" ]; then
+  echo "UNKNOWN  The cleaned file still holds a withdrawn root, so it was not used. Nothing changed; $FILE is as it"
+  echo "         was. Please report this."
+  exit 2
+elif [ "$after" -ne $((before - found)) ]; then
+  echo "UNKNOWN  The cleaned file holds $after certificates, not the $((before - found)) there should be ($before before, $found removed),"
+  echo "         so it was not used. Nothing changed; $FILE is as it was. Please report this."
   exit 2
 fi
 

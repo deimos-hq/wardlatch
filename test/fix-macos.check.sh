@@ -24,7 +24,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=25
+expect_cases=27
 
 fail() { echo "FAIL: $*"; exit 1; }
 cases=0
@@ -243,6 +243,94 @@ OLDSTRIP
   [ "$(grep -c '^# note' "$work/notes-old.pem")" -eq $((total - found)) ] ||
     fail "a note after a removed root: the case does not discriminate -- with the old strip() $(grep -c '^# note' "$work/notes-old.pem") notes survived, expected $((total - found))"
   ok "a note after a removed root survives, where the old strip() deleted it and still exited 0"
+
+  # The 50-certificate bundle, which is the only arithmetic that ever reached the second floor. The check at the top
+  # of the script refuses a bundle of fewer than 50 certificates before it reads anything out of it, so a run that
+  # gets as far as the rebuild started at 50 or more and removed 1 or 2: 50-1, 50-2 and 51-2 are the only results
+  # below 50, and every one of them is exactly before-minus-found, which the count check has already proved right.
+  # So the floor could only ever fire on a correct result, report it as "didn't come out as expected (50 before, 48
+  # after)" without mentioning a floor at all, and leave that Mac with no way to be fixed. No test had ever reached
+  # the branch.
+  : >"$work/floor-roots.pem"; : >"$work/floor-rest.pem"
+  rm -rf "$work/floorsplit"; mkdir "$work/floorsplit"
+  awk -v d="$work/floorsplit" '/-----BEGIN CERTIFICATE-----/{k++; f=sprintf("%s/%05d.pem", d, k)} f{print > f} /-----END CERTIFICATE-----/{close(f); f=""}' "$work/original.pem"
+  for c in "$work/floorsplit"/*.pem; do
+    case "$(/usr/bin/openssl x509 -in "$c" -noout -fingerprint -sha256 2>/dev/null)" in
+      *D7:A7:A0:FB:5D:7E:27:31:D7:71:E9:48:4E:BC:DE:F7:1D:5F:0C:3E:0A:29:48:78:2B:C8:3E:E0:EA:69:9E:F4|*86:A1:EC:BA:08:9C:4A:8D:3B:BE:27:34:C6:12:BA:34:1D:81:3E:04:3C:F9:E8:A8:62:CD:5C:57:A3:6B:BE:6B)
+        cat "$c" >>"$work/floor-roots.pem" ;;
+      *) cat "$c" >>"$work/floor-rest.pem" ;;
+    esac
+  done
+  cp "$work/floor-roots.pem" "$work/floor.built"
+  awk -v want=$((50 - found)) '/-----BEGIN CERTIFICATE-----/{k++} k <= want { print }' "$work/floor-rest.pem" >>"$work/floor.built"
+  [ "$(count "$work/floor.built")" -eq 50 ] || fail "a 50-certificate bundle: built $(count "$work/floor.built") certificates, not 50, so this case would measure nothing"
+  [ "$(bad "$work/floor.built")" -eq "$found" ] || fail "a 50-certificate bundle: built it with $(bad "$work/floor.built") of the withdrawn roots, not $found"
+  cp "$work/floor.built" "$work/floor.pem"
+  run "$work/floor.pem" https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9
+  [ "$code" -eq 0 ] || fail "a 50-certificate bundle: expected exit 0, got $code"
+  [ "$(count "$work/floor.pem")" -eq $((50 - found)) ] || fail "a 50-certificate bundle: expected $((50 - found)) certificates, got $(count "$work/floor.pem")"
+  [ "$(bad "$work/floor.pem")" -eq 0 ] || fail "a 50-certificate bundle: a withdrawn root is still there"
+  grep -q 'Fixed' <<<"$out" || fail "a 50-certificate bundle: it did not say the file was fixed"
+  # Proof it fails on the old shape: a copy carrying the floor this replaced, inserted where it stood. It must refuse
+  # the right answer, report it as arithmetic, and leave the bundle as it was.
+  cat >"$work/oldfloor.txt" <<'OLDFLOOR'
+if [ "$after" -lt 50 ]; then
+  echo "UNKNOWN  The cleaned file didn't come out as expected ($before certificates before, $after after). Nothing changed."
+  exit 2
+fi
+OLDFLOOR
+  awk -v bf="$work/oldfloor.txt" '
+    { print }
+    /^left=\$\(roots "\$tmp"\) \|\| left=unreadable$/ { while ((getline l < bf) > 0) print l; close(bf) }' "$fix" >"$work/oldfloor.sh"
+  cmp -s "$fix" "$work/oldfloor.sh" && fail "a 50-certificate bundle: the check on the cleaned file was not found, so this case proves nothing"
+  cp "$work/floor.built" "$work/floor2.pem"
+  script=$work/oldfloor.sh
+  run "$work/floor2.pem" https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9
+  script=$fix
+  [ "$code" -eq 2 ] || fail "a 50-certificate bundle: the case does not discriminate -- with the floor back the run exited $code, not 2"
+  grep -q "didn't come out as expected (50 certificates before, $((50 - found)) after)" <<<"$out" ||
+    fail "a 50-certificate bundle: the case does not discriminate -- with the floor back it did not report the correct result as an arithmetic failure"
+  grep -qi 'floor\|fewer than' <<<"$out" && fail "a 50-certificate bundle: the case does not discriminate -- the old message mentioned a floor after all"
+  cmp -s "$work/floor2.pem" "$work/floor.built" || fail "a 50-certificate bundle: the case does not discriminate -- with the floor back the file was fixed anyway"
+  [ "$(backups "$work/floor2.pem")" -eq 0 ] || fail "a 50-certificate bundle: the run that refused it wrote a backup"
+  ok "a 50-certificate bundle is fixed, where the second floor called 50-minus-$found an arithmetic failure and refused"
+
+  # The three reasons the cleaned file may not be used, each said in its own words. They were one condition and one
+  # line reporting all three as arithmetic ("didn't come out as expected (N before, M after)"), which is a
+  # misdiagnosis for two of them: a withdrawn root surviving the rebuild, and a certificate in the rebuilt file that
+  # cannot be read, are not count problems and the count printed beside them was right. Nothing had ever reached any
+  # of the three. Each copy below changes the rebuild, and nothing else, in the one way that reaches its reason.
+  for reason in root unreadable count; do
+    case "$reason" in
+      # a rebuild that removes nothing: both withdrawn roots are still in the cleaned file, and the count is right
+      root)       sed 's|^strip "\$snap" .*|cat "$snap" > "$tmp"|' "$fix" >"$work/reason.sh"
+                  want="still holds a withdrawn root" ;;
+      # one certificate in the cleaned file made unreadable: the count is right and a root is gone, but it was not
+      # fully checked
+      unreadable) awk '{ print } /^strip "\$snap" / { print "sed -i \"\" \"s/^MII/!!!/\" \"$tmp\"" }' "$fix" >"$work/reason.sh"
+                  want="couldn't be read" ;;
+      # one extra certificate lost from the cleaned file: the only one of the three that is about the count
+      count)      awk '{ print } /^strip "\$snap" / { print "sed -i \"\" \"1,/-----END CERTIFICATE-----/d\" \"$tmp\"" }' "$fix" >"$work/reason.sh"
+                  want="not the $((total - found)) there should be" ;;
+    esac
+    cmp -s "$fix" "$work/reason.sh" && fail "the three reasons ($reason): the rebuild was not found in $fix, so this case proves nothing"
+    cp "$work/original.pem" "$work/reason.pem"
+    script=$work/reason.sh
+    run "$work/reason.pem"
+    script=$fix
+    [ "$code" -eq 2 ] || fail "the three reasons ($reason): expected exit 2, got $code"
+    grep -q "^UNKNOWN" <<<"$out" || fail "the three reasons ($reason): expected UNKNOWN"
+    grep -q "$want" <<<"$out" || fail "the three reasons ($reason): it did not say \"$want\", so it reported the wrong reason"
+    cmp -s "$work/reason.pem" "$work/original.pem" || fail "the three reasons ($reason): the file was replaced anyway"
+    [ "$(backups "$work/reason.pem")" -eq 0 ] || fail "the three reasons ($reason): it wrote a backup before refusing"
+    # and it does not report one reason in another's words: the line names this reason and no other
+    for other in "still holds a withdrawn root" "couldn't be read" "there should be"; do
+      case "$want" in *"$other"*) continue ;; esac
+      grep -q "$other" <<<"$out" && fail "the three reasons ($reason): it also said \"$other\", so the line does not name one reason"
+    done
+    rm -f "$work/reason.pem"
+  done
+  ok "each of the three reasons the cleaned file is refused is reported in its own words, not as arithmetic"
 fi
 
 # A certificate the fix can't read: refused, unchanged, no backup (a file it can't fully check is never called clean).
