@@ -11,6 +11,14 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Mac fix told the user it covers `perl` and `ruby`.** Its last lines named "the built-in curl, git, python3,
+  openssl, perl and ruby", while the Wardlatch Mac FAQ says in as many words that we tested the first four and treat
+  perl and ruby as unmeasured by us. The advisory named them on 21 Oct 2026 and has since narrowed its macOS section
+  back. The script is the artefact people run with `sudo`, so it is the worst place to carry an assurance we disclaim
+  elsewhere: it now names the four we measured and says the other two are not among them.
+
 ## [0.1.10] - 2026-10-27
 
 ### Security

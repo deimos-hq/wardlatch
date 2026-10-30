@@ -132,6 +132,7 @@ case "$r" in
 esac
 echo "         Backup: $backup"
 echo "         Undo:   sudo cp -p '$backup' '$FILE'"
-echo "         This covers the built-in curl, git, python3, openssl, perl and ruby. Apple's pip3 has its own copy: see the page."
+echo "         This covers the built-in curl, git, python3 and openssl: the four we measured. Apple's pip3 keeps its"
+echo "         own copy, and we have not measured the built-in perl or ruby. The page has both."
 echo "         For everything else: npx wardlatch@latest"
 echo "         A macOS update puts Apple's original file back: run this again after every update."
