@@ -93,6 +93,52 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   bad backup named and "don't restore from it" said outright.
 
 ### Fixed
+- **359 of the 361 folders a run called "could not be tested" on one Mac were not gaps at all, and the two
+  sentences printed about them were false.** Measured there: `--incident wordpress-plugins-2026-10 --paths ~` gave
+  311 could-not-be-tested, 0 safe, exit 2; `--incident github-actions-2026-10 --paths ~` gave 50. Of the 311, **310**
+  were symbolic links under `~/.cache/uv/wheels-vN/` that every one resolve into `~/.cache/uv/archive-v0/` — a tree
+  the same run had already walked, so the bytes had been read — and every walker pushed every link it declined into
+  the gap channel unconditionally. Of the 50, **49** were folders that are perfectly **readable** (`~/.config`,
+  `~/.ssh`, `~/.claude`, `~/.local`, `~/.gnupg`): `lib/workflows.mjs` chose not to walk any dot-folder outside a list
+  of tool-cache names, and then reported that choice through the channel whose consumers print *"could not be opened,
+  so it was not searched: run Wardlatch with sudo"*. The walk never tried to open them, so the sentence was untrue and
+  the advice could not work. "I chose not to look" was being written into the channel reserved for "I could not look",
+  and the real gaps on that machine were buried under 359 false ones — which is how could-not-be-tested becomes the
+  footnote nobody reads, and how a tool that always exits 2 teaches people to write `|| true`.
+  Three things changed. **A link whose target the same walk already listed is not a gap** and is dropped
+  (`lib/files.mjs` `unwalkedLinks`, compared by `fileId()` — device and inode, the identity that survives links,
+  firmlinks and macOS's two spellings of the start-up disk, as AUDIT-25 already uses for roots). Identity, not a path
+  prefix: a walk skips `node_modules` and stops at a depth cap, so a target merely *inside* a searched folder may
+  never have been opened, and only the folder itself having been listed proves it was. **Dot-folders are walked like
+  any other folder**, and the `TOOL_CACHES` name list is gone with the `denied?.push()` that fed on it; they are
+  almost all readable, so walking them costs a walk and produces no row. That list also held `.Trash` and `.Trashes`,
+  so until now `mkdir .Trash` in a project still hid a repository from the workflow and key checks — AUDIT-5 only half
+  fixed. And **a refusal that macOS itself makes is told apart from a lock anyone can set**, below.
+- **A folder macOS is protecting was reported as one that "could not be opened", with advice that cannot work, or
+  skipped by its name with nothing recorded at all.** `isSystemFolder()` skipped `.Trash`, `.Trashes`,
+  `Photo Booth Library` and `*.photoslibrary` by name, which made `mkdir .Trashes` a hiding place from every walk
+  (AUDIT-5) — and it was wrong about the real article too: measured 29 Oct 2026, a modern `*.photoslibrary` has **no
+  `Contents` directory**, so the bundle-marker gate returned false for the Photos library and true for Photo Booth
+  Library only by accident. Those arms are deleted, and so is the parent gate behind them. In their place is one
+  measured predicate, `mandatoryRefusal()`: macOS's privacy protection refuses `readdir` with **EPERM**, while all
+  three ways an unprivileged attacker can deny a read on their own folder give something else — `chmod 000` →
+  EACCES, a deny ACL → EACCES (with the mode bits still reading 0755), and `chflags uchg`, `hidden` or `opaque` → no
+  effect at all. So EPERM cannot be forged without root plus the user's own consent, and as root Unix permissions
+  never deny a read, which makes root's EPERM unambiguous: the rule gets *safer* with more privilege, not weaker. The
+  measurement is `test/support/errno-mechanisms.mjs`, run by hand, asserting each claim twice. A refusal that passes
+  it is a **stated gap** — still `REVIEW`, still outside the summary counts, so the all-clear and its receipt survive
+  beside it and the exit code is unchanged — but it now carries **the remedy that can actually work** ("grant your
+  terminal Full Disk Access … sudo cannot open this") instead of sharing one breath with "run with sudo", and **a
+  basis a reader can check with one `ls -ld`**: the errno, the mode and the owner, in the printed reason as well as in
+  `--json`. Everything else is as it was: a folder given with `--paths` is never a stated gap whatever its errno,
+  because the person asked about it by name; a person-owned EACCES stays could-not-be-tested and exit 2.
+- **An all-clear that sits beside stated gaps now records how many,** as `gaps` next to `searched` in its receipt, so
+  exit 0 reads "I opened these, could not open 3, here they are and here is what would open them" rather than listing
+  only what was opened and leaving the reader to assume the rest was nothing.
+  *On the Mac that was measured:* the first command goes from 311 could-not-be-tested to **10**, the second from 50
+  to **11**, and the folders that remain are real — links into `~/Library` (which `isSystemFolder` still skips) and
+  into `Versions/A/` inside an app bundle, past the walk's depth cap. Three folders macOS protects (`~/.Trash` and
+  the two photo libraries) are stated in one review line with their errno and mode.
 - **The Mac fix's own harness read the machine's live `/etc/ssl/cert.pem`,** so its green depended on the Mac
   running it being unfixed. `test/fix-macos.check.sh` took its bundle from `${1:-/etc/ssl/cert.pem}` while every
   removal case and every network case sits inside `if [ "$found" -gt 0 ]`: on an already-fixed Mac, or on CI's
