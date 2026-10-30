@@ -120,6 +120,70 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   because errexit ends the function before reaching it; every command in the cleanup now ends in `|| true`, which
   is load-bearing and not tidiness. A case asserts a refused run still exits 2 with a deliberately failing
   cleanup, and goes red without the `|| true`.
+- **The Mac fix deleted whatever followed a removed root, printed SAFE and exited 0.** `strip()` set its skip when a
+  dropped certificate's block began and cleared it only at the next `###` or `=== ` line, so everything after a
+  removed root went with it as far as the next header: a trailing comment, an administrator's note, a line naming
+  what follows. None of that is a certificate, so the count of certificates in the rebuilt file still came out at
+  exactly `before - found`, the check comparing the counts passed, and the run printed SAFE, exit 0, with those lines
+  gone and nothing said about them — the false SAFE SECURITY.md puts first, in the file every built-in TLS client on
+  the Mac reads. Apple's shipped file has a `=== ` line above every certificate, so it was never live there; it was
+  live on any hand-concatenated bundle, which is the ordinary case, because an administrator appends a corporate
+  TLS-inspection root to `/etc/ssl/cert.pem` precisely because `curl` ignores the keychain. A certificate's block
+  ends at its `-----END CERTIFICATE-----` line, so that is where the skip is cleared now. It cannot leave part of a
+  dropped certificate behind, which would be worse: a block's start line is its own BEGIN line, or the `=== ` line
+  above it with no END line in between, so the first END line at or after the start is that certificate's own. The
+  one thing after it that may still go is the single empty separator Apple writes between blocks, and only empty
+  lines are taken there, which is why the output on Apple's own file is still byte for byte the advisory's removal.
+  It also no longer under-skips: a stray `###` line between a dropped root's name line and its BEGIN line cleared
+  the old skip mid-block and left that root in the output, which the count check then refused rather than removing
+  it (measured on a built bundle before the change). The case in `test/fix-macos.check.sh` is a bundle of all 128
+  certificates with a note line after every one of them: all 128 notes must still be there afterwards. Against the
+  script as it stood it loses exactly the two that followed the withdrawn roots and still exits 0 with SAFE printed,
+  which is the whole defect, so the case asserts that too and cannot pass for the wrong reason.
+- **The second 50-certificate floor could only ever refuse a correct answer, and left those Macs with no way to be
+  fixed.** The check on the rebuilt file was one condition — a withdrawn root still in it, a count that does not
+  match, or fewer than 50 certificates — behind one line that reported all three as arithmetic: "The cleaned file
+  didn't come out as expected (N certificates before, M after)". Two of those three are not count problems, and the
+  count printed beside them was right. The floor was the worse one: the check at the top of the script already
+  refuses a bundle of fewer than 50 certificates before anything is read out of it, so a run reaching the rebuild
+  started at 50 or more and removed 1 or 2 roots, and 50−1, 50−2 and 51−2 are the only results under 50 — every one
+  of them exactly `before - found`, which the count check had already proved right. So it could fire only on an
+  arithmetically correct rebuild. On a 51-certificate bundle holding both roots it refused 49, the right answer, said
+  the arithmetic had failed when it had not, never mentioned a floor, and left that Mac unfixable. It could not have
+  caught a mangled rebuild either: one that lost or kept a certificate is caught by the count check, and one that
+  changed no count would not be caught by a floor. The floor is gone; the count check and the fingerprint re-read of
+  the rebuilt file are the whole of what is checked there, now as three separate reasons, each naming the one thing
+  it found and nothing it did not. Three cases, where nothing had reached the branch at all: a 50-certificate bundle
+  built from the fixture (which the floor refuses, as arithmetic, with the floor put back); the three reasons, each
+  on a copy of the script whose rebuild is changed in the one way that reaches one of them; and
+  `test/support/mojave-shapes.sh` shape E, which now matches a floor's own words rather than "UNKNOWN", which almost
+  any refusal would have satisfied.
+- **A correctly fixed Mac was told to put the withdrawn roots back.** With the floor above gone, a small bundle is
+  fixed properly on the first run — 51 certificates holding both roots become 49 — and the second run then hit the
+  *entry* floor, fewer than 50 certificates, which said the file "looks damaged" and gave one instruction:
+  `Put a backup back (ls $FILE*.bak; sudo cp -p <backup> $FILE)`. That backup is the only one this script ever
+  writes: a copy of the file as it was, taken immediately before the removal, holding both withdrawn roots. So the
+  one piece of advice a correctly fixed Mac was given was to restore the compromised file, in a script people run as
+  root, with nothing said about what that would restore — the same defect as the network-triggered revert removed
+  above, reached by another route. It also called a file damaged on no evidence: a 49-certificate bundle may simply
+  be short, and this fix has nothing to remove from one that holds neither root. The floor now reads the file before
+  it says anything about it. Under the floor and holding **neither** root, with every certificate readable, it
+  reports UNKNOWN (exit 2), changes nothing, and gives the facts only: the count it found, that the file holds
+  neither withdrawn root so this fix has nothing to remove, and that something else may be wrong with it. It does
+  not say the file looks damaged, does not name a backup, and claims nothing about whether the Mac is safe. Under the
+  floor and **still holding** a root, it keeps the refusal it had, minus the advice: it says a root is still in the
+  file and that an older copy of the file holds the withdrawn roots too, and names the one route that does work (a
+  macOS update restores Apple's own `cert.pem`, after which this can be run again). Under the floor with a
+  certificate that **cannot be read**, the existing "a certificate in this file couldn't be read" refusal applies,
+  which never advised a backup. The BEGIN-TRUSTED-CERTIFICATE check and the fingerprint pass now run before the
+  floor, because the floor has to be able to say whether a withdrawn root is in the file and a block this fix cannot
+  read could hold one. Three cases in `test/fix-macos.check.sh`, all failing against a copy of the script with the
+  floor put back where it stood: a small bundle run twice (the first run's backup is asserted to hold the roots,
+  because that is why the old advice was a defect); a small bundle still holding a root; and the existing truncated-
+  file case, which asserted only exit 2, the file unchanged and no backup written — all three of which the old
+  wording satisfied while telling the reader a file holding neither root looked damaged and sending them to a backup
+  holding both. It now also asserts the count is named, that the file holds neither root, and that the output does
+  not say "looks damaged", does not name a backup, and does not print SAFE. 29 cases run where there were 27.
 ### Fixed
 - **359 of the 361 folders a run called "could not be tested" on one Mac were not gaps at all, and the two
   sentences printed about them were false.** Measured there: `--incident wordpress-plugins-2026-10 --paths ~` gave
