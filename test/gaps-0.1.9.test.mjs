@@ -487,15 +487,24 @@ test('virtual environments inside node_modules or .git are not looked at; one in
   assert.deepEqual(denied, []);
 });
 
-test('isSystemFolder skips macOS\'s own folders only where macOS puts them, never by name alone', () => {
+// Changed 29 Oct 2026 (AUDIT-5, and the false-safes fix). This test pinned the place-gated NAME rule: .Trash under a
+// home folder and .Trashes at a volume root were system folders, skipped by name wherever macOS keeps one. The gate
+// made the hiding place smaller and left it standing — and it was wrong about the real article, measured the same day:
+// a modern *.photoslibrary has no Contents directory, so the bundle-marker arm returned false for Photos and true for
+// Photo Booth Library only by accident. Nothing is skipped by name any more except macOS's own Library, which keeps
+// its place gate (a project folder called Library is searched: ca530b7). The Trash and the photo libraries are walked,
+// and the EPERM they answer with is read as the mandatory refusal it is (lib/files.mjs mandatoryRefusal).
+test('isSystemFolder gates only macOS\'s own Library, and never decides by a folder\'s name', () => {
   if (process.platform !== 'darwin') return;
   // literal paths, not homedir(): this file preloads no-real-home.cjs, so homedir() is a temp folder here
-  assert.equal(isSystemFolder('.Trash', '/Users/someone'), true, 'a home folder Trash is macOS\'s');
-  assert.equal(isSystemFolder('.Trashes', '/Volumes/Backup'), true, 'a volume root .Trashes is macOS\'s');
-  // and a folder that merely carries the name is searched
-  assert.equal(isSystemFolder('.Trash', '/Users/someone/proj'), false, 'a project folder named .Trash is not');
-  assert.equal(isSystemFolder('.Trashes', '/srv/www/site'), false, 'nor is one named .Trashes');
-  assert.equal(isSystemFolder('evil.photoslibrary', '/Users/someone/src'), false, 'nor a bundle name with no bundle inside');
+  for (const [name, parent] of [['.Trash', '/Users/someone'], ['.Trashes', '/Volumes/Backup'],
+    ['.Trash', '/Users/someone/proj'], ['.Trashes', '/srv/www/site'], ['evil.photoslibrary', '/Users/someone/src'],
+    ['Photo Booth Library', '/Users/someone/Pictures'], ['Photos Library.photoslibrary', '/Users/someone/Pictures']]) {
+    assert.equal(isSystemFolder(name, parent), false, `${parent}/${name}: no name decides a walk`);
+  }
+  // the one arm that remains is gated on its place AND on macOS's own folders being inside it
+  assert.equal(isSystemFolder('Library', '/'), true, '/Library, with macOS\'s own folders in it');
+  assert.equal(isSystemFolder('Library', '/srv/www/site'), false, 'a project folder called Library is searched');
 });
 
 // ---- WordPress ---------------------------------------------------------------------------------------------------------

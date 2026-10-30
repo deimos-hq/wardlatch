@@ -7,7 +7,7 @@ import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, chmodSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, chmodSync, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -151,15 +151,58 @@ exit 1`);
   assert.deepEqual(seen, [join(dir, 'ca/extra.pem'), join(dir, 'ca/curl.pem'), join(dir, 'ca/req.pem')]);
 });
 
-test('8 macOS\'s own folders (the Trash, the Photos library) are never searched, so --paths ~ doesn\'t end in UNKNOWN for them', { skip: AS_ROOT && 'root opens every folder' }, () => {
-  const h = fresh('m8-home');
-  for (const p of [join(h, '.Trash', 'x'), join(h, 'Pictures', 'Photos Library.photoslibrary', 'x'), join(h, 'Pictures', 'Photo Booth Library', 'x')]) { put(join(p, 'f'), ''); lock(dirname(join(p, 'f'))); }
-  for (const id of ['github-actions-2026-10', 'committed-keys-2026-10', 'wordpress-plugins-2026-10']) {
-    const r = run(['--incident', id, '--paths', h], { HOME: h, PATH: '/usr/bin:/bin' });
-    assert.ok(!r.rows.some((x) => x.status === 'UNKNOWN'), `${id}: ${JSON.stringify(r.rows)}`);
-    assert.equal(r.code, 0, id);
-  }
-});
+// REWRITTEN 29 Oct 2026 (the false-safes fix), not deleted: the OUTCOME it demands is right and the fix broke it on a
+// real machine, which is a genuine regression and the reason this test is here. Its MECHANISM was wrong twice, and
+// both mistakes made it pass for reasons that had nothing to do with what it claims to check:
+//   - it built a fake "protected bundle" with lock(), which is chmod 000, and this machine measures that as EACCES — a
+//     lock the owner chose, forgeable by anyone, which must stay UNKNOWN and exit 2. The test demanded exit 0 for it,
+//     i.e. it demanded the hiding place.
+//   - its `.Trash` arm escaped failure only because lib/workflows.mjs's TOOL_CACHES list swallowed the name, and for
+//     the WordPress check only because isSystemFolder() matched the name under a parent its fixture happened to make
+//     look like a home folder.
+// A real macOS refusal is EPERM and cannot be built by an unprivileged test at all. So this now asks the machine for
+// the real article at run time and skips when there is none, in the style of serviceLockedRoot() in
+// test/release-0.1.9.test.mjs. The real ~/Pictures/*.photoslibrary is measured by test/support/errno-mechanisms.mjs,
+// which is run by hand: support/no-real-home.cjs rightly refuses to let a test read the person's own home.
+// What the outcome now is: a folder macOS protects does not end the run in UNKNOWN, the all-clear still fires and the
+// exit code is 0 — the thing this test was written to protect — but it is STATED, in a REVIEW line that names the
+// errno, the mode, the owner and the remedy that can actually work. Silence is what it used to buy.
+// test/false-safes.test.mjs holds the full contract; this keeps the outcome pinned where it was first demanded.
+test('8 a folder macOS is protecting does not end --paths in UNKNOWN: the all-clear fires, exit 0, and the gap is stated',
+  { skip: (process.platform !== 'darwin' || AS_ROOT) && 'macOS, as a user (root is never refused by DAC)' }, async (t) => {
+    const { mandatoryRefusal } = await import('../lib/files.mjs');
+    // a real folder macOS refuses, with nothing person-owned locked beside it (that would be UNKNOWN, correctly)
+    const pick = () => {
+      const ok = (d, depth) => {   // → a protected folder below d, or null if anything else under it is shut
+        let ents; try { ents = readdirSync(d, { withFileTypes: true }); } catch { return null; }
+        let hit = null;
+        for (const e of ents) {
+          if (!e.isDirectory() || e.isSymbolicLink()) { if (e.isSymbolicLink()) return null; continue; }
+          const p = join(d, e.name);
+          let code = null; try { readdirSync(p); } catch (err) { code = err.code; }
+          if (code) { if (!mandatoryRefusal(p, code)) return null; hit = hit ?? p; continue; }
+          if (depth > 0) { const k = ok(p, depth - 1); if (k === null && !existsSync(p)) return null; hit = hit ?? k; }
+        }
+        return hit;
+      };
+      for (const base of ['/private/var/protected', '/private/var/db', '/Library']) {
+        let ents; try { ents = readdirSync(base, { withFileTypes: true }); } catch { continue; }
+        for (const e of ents) { if (!e.isDirectory() || e.isSymbolicLink()) continue; const hit = ok(join(base, e.name), 3); if (hit) return { root: join(base, e.name), gap: hit }; }
+      }
+      return null;
+    };
+    const found = pick();
+    if (!found) return t.skip('no folder macOS refuses, cleanly, on this machine');
+    for (const id of ['github-actions-2026-10', 'committed-keys-2026-10', 'wordpress-plugins-2026-10']) {
+      const r = run(['--incident', id, '--paths', found.root], { HOME: fresh(`m8-home-${id}`), PATH: '/usr/bin:/bin' });
+      assert.ok(!r.rows.some((x) => x.status === 'UNKNOWN'), `${id}: macOS's own refusal must not end the run in UNKNOWN: ${JSON.stringify(r.rows)}`);
+      assert.equal(r.code, 0, id);
+      // and it is said, not passed over in silence as the name lists used to do
+      const skipped = r.rows.find((x) => x.kind === 'skipped');
+      assert.ok(skipped?.paths?.includes(found.gap), `${id}: the gap must be stated, not skipped by name: ${JSON.stringify(r.rows)}`);
+      assert.match(skipped.reason, /EPERM.*Full Disk Access/s, `${id}: with the basis and the remedy that works: ${skipped.reason}`);
+    }
+  });
 
 test('9 the header check reads $CURL_HOME/.config/curlrc, which curl reads too', () => {
   const h = fresh('h9-home'), ch = fresh('h9-curlhome');

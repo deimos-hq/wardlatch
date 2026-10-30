@@ -151,10 +151,22 @@ test('a skipped-folders line never stands in for the machine\'s runtimes, and ne
   assert.equal(t.code, 2);
 });
 
-test('WordPress: a dot-folder in the web root (/var/www/.ssh, www-data\'s own) is not searched or reported', { skip: AS_ROOT && 'root' }, () => {
-  const root = fresh('o4-www'); lock(fresh('o4-www/.ssh'));
+// RETIRED 29 Oct 2026 (the false-safes fix), and rewritten to assert what its fixture actually builds.
+//
+// As written it was titled for www-data's .ssh under a web root, and demanded no UNKNOWN and exit 0. Its fixture was
+// never that scenario: `fresh('o4-www/.ssh')` is created by the test, so it is owned by the user running the tests, and
+// a user cannot chown a folder to another account. `lock()` is chmod 000, which this machine measures as EACCES — a
+// lock the owner chose, forgeable by anyone, and exactly the hiding place the iron law exists to catch. So the honest
+// answer for this fixture is UNKNOWN and exit 2, which is what gaps() gives it (a person-owned denial), and the old
+// assertion was pinning the defect this branch exists to remove: a dot-folder's NAME putting a person-owned EACCES
+// into the REVIEW channel, where it cannot change the exit code.
+// The scenario the title names — a dot-folder a SERVICE owns — cannot be built by an unprivileged test at all, and is
+// held instead by `serviceLockedRoot()` above, which finds a real one on this machine and skips when there is none.
+test('WordPress: a locked dot-folder in the web root that the person running owns is could-not-be-tested, exit 2', { skip: AS_ROOT && 'root' }, () => {
+  const root = fresh('o4-www'), shut = fresh('o4-www/.ssh'); lock(shut);
   const r = sys(['--incident', 'wordpress-plugins-2026-10', '--paths', root]);
-  assert.equal(unknowns(r).length, 0, JSON.stringify(r.rows)); assert.equal(r.code, 0);
+  assert.ok(unknowns(r).some((x) => x.path === shut), `a chmod 000 folder the user owns is EACCES, not macOS's refusal: ${JSON.stringify(r.rows)}`);
+  assert.equal(r.code, 2);
 });
 
 // ---- nothing to search ---------------------------------------------------------------------------------------------------
@@ -265,16 +277,28 @@ test('a searched root that can\'t be opened is always could-not-be-tested, whoev
   }
 });
 
-test('WordPress: a site in a dot-folder (.staging) is checked; a locked dot-folder is a review line, never could-not-be-tested', { skip: AS_ROOT && 'root' }, () => {
+// SPLIT 29 Oct 2026 (the false-safes fix). The first half is the finding this branch exists for and is unchanged: a
+// site in a dot-folder is a site, and the backdoored plugin in it is EXPOSED, exit 1. Up to 558eaef a `.staging` copy
+// was passed over and the run read SAFE.
+test('WordPress: a site in a dot-folder (.staging) is checked', { skip: AS_ROOT && 'root' }, () => {
   const root = fresh('wd-root'), site = join(root, '.staging');
   put(join(site, 'wp-includes', 'version.php'), '<?php $wp_version = "6.8";');
   put(join(site, 'wp-content', 'plugins', 'seo-by-rank-math-pro', 'rank-math-pro.php'), '<?php\n/*\n * Version: 3.0.123\n */\n');
   const r = sys(['--incident', 'wordpress-plugins-2026-10', '--paths', root]);
   assert.ok(r.rows.some((x) => x.status === 'EXPOSED'), JSON.stringify(r.rows)); assert.equal(r.code, 1);
-  const www = fresh('wd-www'); lock(fresh('wd-www/.ssh'));
+});
+
+// The second half — a locked `.ssh` is "a review line, never could-not-be-tested" — is RETIRED, for the same reason as
+// the o4-www test above: `lock()` is chmod 000 on a folder the test user owns, which is EACCES, a lock anyone can set.
+// Blessing exit 0 for it is blessing the hiding place. AUDIT-26 says so in as many words about this very assertion.
+// What replaces it asserts the discrimination instead: the same fixture is UNKNOWN and exit 2, and the REVIEW channel
+// is reserved for a refusal the person running cannot have produced.
+test('WordPress: a locked dot-folder the person owns is could-not-be-tested, not a review line', { skip: AS_ROOT && 'root' }, () => {
+  const www = fresh('wd-www'), shut = fresh('wd-www/.ssh'); lock(shut);
   const w = sys(['--incident', 'wordpress-plugins-2026-10', '--paths', www]);
-  assert.equal(unknowns(w).length, 0, JSON.stringify(w.rows));
-  assert.ok(w.rows.some((x) => x.kind === 'skipped' && x.paths.includes(join(www, '.ssh'))), JSON.stringify(w.rows)); assert.equal(w.code, 0);
+  assert.ok(unknowns(w).some((x) => x.path === shut), JSON.stringify(w.rows));
+  assert.ok(!w.rows.some((x) => x.kind === 'skipped' && x.paths.includes(shut)), `a person-owned EACCES must not ride in the channel that keeps the exit code at 0: ${JSON.stringify(w.rows)}`);
+  assert.equal(w.code, 2);
 });
 
 test('a known install place that can\'t be opened (~/.local/lib, a temp folder) is could-not-be-tested, whoever owns it, and not in the receipt', { skip: (process.platform !== 'darwin' || AS_ROOT) && 'macOS (/private/var/root), as a user' }, () => {

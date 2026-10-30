@@ -123,7 +123,12 @@ test('4 a project folder named Library is searched, even with a Caches folder in
   // a folder that only looks like macOS's (macOS's folders inside) but isn't where macOS keeps one is searched
   mkdirSync(join(fresh('k4-home'), 'Library', 'Preferences'), { recursive: true });
   assert.equal(isSystemFolder('Library', join(dir, 'k4-home')), false);
-  assert.equal(isSystemFolder('.Trash', join(dir, 'k4-home')), true);
+  // Changed 29 Oct 2026. This line asserted `true`: .Trash was a system folder by NAME, gated on nothing but its
+  // parent, two lines below the assertion that a name must not decide for Library — which is AUDIT-5's whole
+  // complaint, stated by this file against itself. No name, extension, bundle marker or parent place gates a walk any
+  // more: .Trash is walked like any other folder, and the refusal it gives on a real Mac is read for what it is
+  // (lib/files.mjs mandatoryRefusal, measured the same day). See test 10 below for the rule that replaced it.
+  assert.equal(isSystemFolder('.Trash', join(dir, 'k4-home')), false);
   if (process.platform === 'darwin') {
     // a home folder of the test's own where macOS keeps one (/Users/<name>), never the real one
     mkdirSync(join(fresh('k4-user'), 'Library', 'Preferences'), { recursive: true });
