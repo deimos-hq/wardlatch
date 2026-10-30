@@ -14,7 +14,7 @@
 #   - keeps a dated backup, never overwrites an earlier one, and compares that backup with the file it came from
 #     before replacing anything, because the Undo line it prints names that backup;
 #   - writes a new file and checks it (every other certificate still there, only the two removed) before replacing;
-#   - replaces the file by renaming the new one over it, in one step, so an interruption leaves either the old file
+#   - makes every change to the file by renaming a finished file over it, in one step, so an interruption leaves
 #     or the new one and never half of either, and removes its temporary files on a Ctrl-C or a shutdown too;
 #   - keeps the file readable by everyone, as macOS ships it;
 #   - checks that what landed in the file is the file it built, and puts the original back if it isn't -- the one
@@ -93,14 +93,54 @@ strip() {
 # `set -euo pipefail` in force. Interrupted just before the write, the script went on to replace the file and
 # printed SAFE, exit 0, about a run that had been cancelled. (bash does stop if the signal lands inside a command
 # substitution, so the old shape failed only some of the time, which is worse.)
-new=
-clean() { rm -f "$snap" "$tmp"; [ -z "$new" ] || $SUDO rm -f "$new"; }
+new=        # the file beside $FILE, while there is one
+replaced=   # set once $FILE has been replaced, so a run stopped after that can say so
+# Every command here ends in `|| true`, and that is load-bearing rather than tidy. Measured on /bin/bash 3.2.57:
+# with `set -e` in force, a failing command inside the EXIT trap ends the trap AND overrides the script's exit
+# status, so one failed `rm` turned `exit 2` ("couldn't tell") into `exit 1`, which the published exit-code table
+# reads as EXPOSED. `return 0` at the end does not help -- errexit ends the function before reaching it.
+clean() { rm -f "$snap" "$tmp" || true; [ -z "$new" ] || $SUDO rm -f "$new" || true; }
+# A signal. Exit 2, not the conventional 130: 2 is this script's "couldn't tell, read the printed line", and an
+# interrupted run reached no verdict, which is the same thing to a fleet tool. The page publishes an exit-code
+# table that Jamf, Kandji and Intune policies are built on, and a fourth code in it would be one no policy has a
+# branch for. If $FILE has already been replaced by then, this says so and names the way back: exit 2 tells the
+# reader to read the printed line, and a stopped run that changed the file and printed nothing left them with
+# neither a line nor a clue.
+stopped() {
+  clean
+  [ -z "$replaced" ] || {
+    echo "UNKNOWN  Stopped before this could re-test, and $FILE had already been replaced with the cleaned file"
+    echo "         ($(removed_phrase "$found"), kept $after). It is whole, not half-written. Run this again."
+    echo "         Backup: $backup"
+    echo "         Undo:   sudo cp -p '$backup' '$FILE'"
+  }
+  exit 2
+}
+# Puts the bytes of $1 into $FILE in one step, and the ONLY thing in this script that writes to $FILE: a copy into
+# a file beside it, then a rename over it. A rename within one directory is one step the kernel either did or
+# didn't do, so whatever stops the script, $FILE holds either the old bundle or the new one and never half of
+# either. Copying into $FILE in place truncated it first, so a Ctrl-C, a sudo timeout or a power cut during that
+# copy left every built-in TLS client on the Mac -- curl, git, python3, openssl -- reading a stump of a certificate
+# file until somebody ran this again. The file is made beside $FILE, not in $TMPDIR, because a rename only works
+# within one filesystem, and with the same $SUDO as the write, so it belongs to whoever owns $FILE. Its name is
+# fixed and recorded BEFORE it is made, so a signal arriving while it is being made still finds it in $new; a name
+# that is already taken is left alone and never removed, because it is not this run's to remove. Returns non-zero
+# with $FILE untouched if any step fails, and every step is checked: unchecked, `set -e` ended the run with cp's
+# own status, which is 1 -- the code the published table reads as EXPOSED -- and printed nothing at all.
+replace() {
+  new="$(dirname "$FILE")/.wardlatch-new.$$"
+  [ ! -e "$new" ] || { new=; return 1; }
+  if $SUDO cp "$1" "$new" && $SUDO chmod 644 "$new"; then
+    $SUDO mv "$new" "$FILE" && { new=; return 0; }
+  fi
+  $SUDO rm -f "$new" || true
+  new=
+  return 1
+}
+
 snap=$(mktemp -t wardlatch); tmp=$(mktemp -t wardlatch)
 trap clean EXIT
-# Exit 2, not the conventional 130: 2 is this script's "couldn't tell, read the printed line", and an interrupted
-# run reached no verdict, which is the same thing to a fleet tool. The page publishes an exit-code table that Jamf,
-# Kandji and Intune policies are built on, and a fourth code in it would be a code nobody's policy has a branch for.
-trap 'clean; exit 2' HUP INT TERM
+trap stopped HUP INT TERM
 cp "$FILE" "$snap" 2>/dev/null || { echo "UNKNOWN  Can't read $FILE. Nothing changed."; exit 2; }
 
 if [ "$(certs "$snap")" -lt 50 ]; then
@@ -168,7 +208,7 @@ c0=$(control "$snap")
 backup="$FILE.wardlatch-$(date +%Y%m%d-%H%M%S).bak"
 [ ! -e "$backup" ] || { echo "UNKNOWN  $backup already exists. Nothing changed; run again in a second."; exit 2; }
 cmp -s "$FILE" "$snap" || { echo "UNKNOWN  $FILE changed while this ran. Nothing changed; run it again."; exit 2; }
-$SUDO cp -p "$FILE" "$backup"
+$SUDO cp -p "$FILE" "$backup" || { echo "UNKNOWN  Couldn't write the backup $backup, so nothing was replaced. Check the disk has room (df -h /)."; exit 2; }
 # A backup nobody checked makes the Undo line below a promise this script can't keep: it names that file as the way
 # back, and the content-mismatch restore further down uses it as the only file here that has been checked. The
 # one-line fix on the page has compared the two since CL-42, and CL-43 was already a correction about this
@@ -180,17 +220,8 @@ cmp -s "$FILE" "$backup" || {
   echo "         this again.  Bad backup: $backup"
   exit 2
 }
-# The replacement is built in a file beside $FILE and renamed over it, so $FILE is never a half-written bundle: a
-# rename within one directory is one step the kernel either did or didn't do. Copying into $FILE in place truncated
-# it first, so a Ctrl-C, a sudo timeout or a power cut during that copy left every built-in TLS client on the Mac
-# -- curl, git, python3, openssl -- reading a stump of a certificate file, with the check below never reached,
-# until somebody ran this again. The file is made beside $FILE, not in $TMPDIR, because a rename only works within
-# one filesystem; it is made with the same $SUDO as the write, so it belongs to whoever owns $FILE.
-new=$($SUDO mktemp "$(dirname "$FILE")/.wardlatch-new.XXXXXX") || { echo "UNKNOWN  Can't make a temporary file beside $FILE. Nothing changed."; exit 2; }
-$SUDO cp "$tmp" "$new"
-$SUDO chmod 644 "$new"
-$SUDO mv "$new" "$FILE"
-new=   # renamed into place, so there is nothing beside $FILE left to remove
+replace "$tmp" || { echo "UNKNOWN  Couldn't replace $FILE, so nothing was changed. Check the disk has room (df -h /)"; echo "         and that this ran with enough privilege.  Backup: $backup"; exit 2; }
+replaced=1
 
 # The only path here that puts the original back, and the only kind of reason there may be for one: the bytes now in
 # $FILE are not the bytes this script built and checked, so what every TLS client on this Mac reads is a file nobody
@@ -198,12 +229,21 @@ new=   # renamed into place, so there is nothing beside $FILE left to remove
 # else; no probe result reaches it. A revert on a network reading would mean the one Mac that can never be fixed is
 # the one already under attack, because putting the original back puts both withdrawn roots back.
 if ! cmp -s "$tmp" "$FILE"; then
+  # Through replace(), like the forward write: an interrupted restore left $FILE a stump when it copied the backup
+  # over it in place, which is the defect the forward write was redesigned to remove and this path still had.
+  # The declaration goes immediately above the call, and the harness checks that it is there.
   # wardlatch:revert-reason=content-mismatch
-  $SUDO cp -p "$backup" "$FILE"
-  echo "EXPOSED  What was written to $FILE isn't the file this built and checked, so the original was put back and this"
-  echo "         Mac still trusts the compromised keys. Nothing else was changed. Run it again; please report this."
-  echo "         Backup: $backup"
-  exit 1
+  if replace "$backup"; then
+    echo "EXPOSED  What was written to $FILE isn't the file this built and checked, so the original was put back and this"
+    echo "         Mac still trusts the compromised keys. Nothing else was changed. Run it again; please report this."
+    echo "         Backup: $backup"
+    exit 1
+  fi
+  echo "UNKNOWN  What was written to $FILE isn't the file this built and checked, AND the original couldn't be put"
+  echo "         back, so $FILE now holds bytes nothing has checked. Put it back yourself, now:"
+  echo "         sudo cp -p '$backup' '$FILE'"
+  echo "         Then run this again; please report this."
+  exit 2
 fi
 
 # Three readings, not two, because there is now a baseline to compare with.

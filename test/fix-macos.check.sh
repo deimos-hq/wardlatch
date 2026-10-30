@@ -24,7 +24,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=20
+expect_cases=24
 
 fail() { echo "FAIL: $*"; exit 1; }
 cases=0
@@ -136,11 +136,19 @@ if [ "$found" -gt 0 ]; then
   [ "$(count "$work/cert.pem")" -eq $((total - found)) ] || fail "first run: expected $((total - found)) certificates, got $(count "$work/cert.pem")"
   [ "$(stat -f %Lp "$work/cert.pem")" = 644 ] || fail "first run: mode is not 644"
   [ "$(backups "$work/cert.pem")" -eq 1 ] || fail "first run: expected one backup"
-  if grep -q '^=== ' "$work/original.pem"; then
+  # The byte-for-byte comparison with the advisory's own removal. It is doubly conditional, so it says out loud
+  # when it does not happen: a comparison that silently did not run, inside a case that still reports ok, is the
+  # shape of defect this suite spent 29 Oct 2026 removing from itself.
+  if ! grep -q '^=== ' "$work/original.pem"; then
+    echo "    - not compared with the advisory's removal: this bundle has no \"=== \" name lines for it to work on"
+  else
     awk '/^(###|===) /{skip=0} /^=== .*\/CN=(AAA Certificate Services|emSign ECC Root CA - G3)$/{skip=1} !skip' "$work/original.pem" >"$work/advisory.pem"
     # (The advisory's awk only works on LF files; on others it removes nothing, so there's nothing to compare.)
-    if [ "$(count "$work/advisory.pem")" -eq $((total - found)) ]; then
+    if [ "$(count "$work/advisory.pem")" -ne $((total - found)) ]; then
+      echo "    - not compared with the advisory's removal: its awk left $(count "$work/advisory.pem") certificates, not $((total - found)), so it removed nothing here"
+    else
       cmp -s "$work/cert.pem" "$work/advisory.pem" || fail "first run: not byte for byte the advisory's removal"
+      echo "    - and byte for byte the advisory's own removal"
     fi
   fi
   cp "$work/cert.pem" "$work/cleaned.pem"
@@ -199,9 +207,14 @@ ok "unreadable certificate refused, unchanged"
 # unreachable.
 if [ "$found" -gt 0 ]; then
   awk '/-----BEGIN CERTIFICATE-----/{k++; p=1} p{print > ("'"$work"'/one-" k ".pem")} /-----END CERTIFICATE-----/{p=0}' "$work/original.pem"
+  emsign=
   for c in "$work"/one-*.pem; do
     case "$(/usr/bin/openssl x509 -in "$c" -noout -fingerprint -sha256 2>/dev/null)" in *86:A1:EC:BA:08:9C:4A:8D*) emsign=$c ;; esac
   done
+  # A bundle holding AAA but not emSign satisfies the guard above, and this case needs the emSign root to build
+  # its TRUSTED CERTIFICATE block from. Without this the suite died with "emsign: unbound variable" on exactly the
+  # Mojave-era shape test/support/mojave-shapes.sh exists for.
+  [ -n "$emsign" ] || fail "a BEGIN TRUSTED CERTIFICATE block: $source holds no emSign ECC Root CA - G3 to build the block from, so this case cannot run. Give a bundle that holds it, or no argument at all."
   cp "$work/cleaned.pem" "$work/trusted.pem"
   /usr/bin/openssl x509 -in "$emsign" -trustout -addtrust serverAuth >>"$work/trusted.pem"
   cp "$work/trusted.pem" "$work/trusted.before"
@@ -213,14 +226,39 @@ if [ "$found" -gt 0 ]; then
 fi
 
 # What the fix does while it is replacing the file. These cases drive copies of the script with one step changed,
-# because a disk that writes a short file, and a signal arriving in the middle of a copy, cannot be arranged on
-# demand. Everything else in each copy is the shipped script, byte for byte.
+# because a disk that writes a short file, a write that fails, and a signal arriving in the middle of a copy cannot
+# be arranged on demand. Everything else in each copy is the shipped script, byte for byte.
+#
+# Most of them rewrite replace(), the one function in the script that writes to $FILE, by name rather than by line,
+# so they keep working when the lines around it move. body() prints the script with replace()'s body replaced by
+# the lines given; prefix() prints it with lines added at the top of that body.
+# (awk -v cannot carry a newline, so the lines go through a file.)
+body() {   # $1 = out file, rest = lines to use as replace()'s whole body
+  local out=$1; shift
+  printf '%s\n' "$@" >"$work/body.txt"
+  awk -v bf="$work/body.txt" '
+    /^replace\(\) \{$/ { inside = 1; print; while ((getline l < bf) > 0) print l; close(bf); next }
+    inside { if ($0 == "}") { inside = 0; print } ; next }
+    { print }' "$fix" >"$out"
+  cmp -s "$fix" "$out" && fail "replace() was not found in $fix, so the cases about the write prove nothing"
+  return 0
+}
+prefix() {   # $1 = out file, rest = lines to put at the top of replace()'s body
+  local out=$1; shift
+  printf '%s\n' "$@" >"$work/body.txt"
+  awk -v bf="$work/body.txt" '
+    { print }
+    /^replace\(\) \{$/ { while ((getline l < bf) > 0) print l; close(bf) }' "$fix" >"$out"
+  cmp -s "$fix" "$out" && fail "replace() was not found in $fix, so the cases about the write prove nothing"
+  return 0
+}
+
 if [ "$found" -gt 0 ]; then
   # A backup that isn't the file it came from: nothing is replaced, and the bad backup is named. The fix prints an
   # Undo line pointing at that backup and the content-mismatch restore uses it, so an unchecked backup makes both
   # a lie. Up to 29 Oct 2026 the backup was written with `cp -p` and never compared.
   awk '{ print }
-       /^\$SUDO cp -p "\$FILE" "\$backup"$/ { print "echo tampered >> \"$backup\"" }' "$fix" >"$work/badbackup.sh"
+       /^\$SUDO cp -p "\$FILE" "\$backup" \|\|/ { print "echo tampered >> \"$backup\"" }' "$fix" >"$work/badbackup.sh"
   cmp -s "$fix" "$work/badbackup.sh" && fail "a bad backup: the backup step was not found, so this case proves nothing"
   cp "$work/original.pem" "$work/badbackup.pem"
   script=$work/badbackup.sh
@@ -250,9 +288,9 @@ if [ "$found" -gt 0 ]; then
   # a TERM to the script itself, because a Ctrl-C landing inside a copy, a sudo timeout and a power cut cannot be
   # arranged on demand. The bundle must be left exactly as it was: the replacement is a rename, which the kernel
   # either did or didn't do.
-  awk '/^\$SUDO cp "\$tmp" "\$new"$/ { print "head -c 500 \"$tmp\" > \"$new\"; kill -TERM $$"; next } { print }' \
-    "$fix" >"$work/interrupted.sh"
-  cmp -s "$fix" "$work/interrupted.sh" && fail "an interrupted write: the write step was not found, so this case proves nothing"
+  body "$work/interrupted.sh" \
+    '  new="$(dirname "$FILE")/.wardlatch-new.$$"' \
+    '  head -c 500 "$1" > "$new"; kill -TERM $$'
   cp "$work/original.pem" "$work/interrupted.pem"
   script=$work/interrupted.sh
   run "$work/interrupted.pem"
@@ -263,13 +301,7 @@ if [ "$found" -gt 0 ]; then
   [ "$(backups "$work/interrupted.pem")" -eq 1 ] || fail "an interrupted write: expected the backup to have been written already"
   # Proof it discriminates: the same interruption in the shape this script had until 29 Oct 2026, which copied
   # straight into the bundle and so truncated it first, must leave a stump. That is the defect.
-  awk '/^new=\$\(\$SUDO mktemp / { next }
-       /^\$SUDO cp "\$tmp" "\$new"$/ { print "head -c 500 \"$tmp\" > \"$FILE\"; kill -TERM $$"; next }
-       /^\$SUDO chmod 644 "\$new"$/ { next }
-       /^\$SUDO mv "\$new" "\$FILE"$/ { next }
-       /^new=   # renamed into place/ { next }
-       { print }' "$fix" >"$work/inplace.sh"
-  cmp -s "$fix" "$work/inplace.sh" && fail "an interrupted write: the in-place shape was not built, so this case proves nothing"
+  body "$work/inplace.sh" '  head -c 500 "$1" > "$FILE"; kill -TERM $$'
   cp "$work/original.pem" "$work/inplace.pem"
   script=$work/inplace.sh
   run "$work/inplace.pem"
@@ -280,6 +312,116 @@ if [ "$found" -gt 0 ]; then
     fail "an interrupted write: the case does not discriminate -- the in-place write left a usable bundle"
   ok "a signal during the write leaves the bundle whole, never half-written"
 
+  # A write that fails: a full disk, a read-only volume, an expired sudo timestamp, SIP. All of those are "couldn't
+  # tell", which is exit 2 with a printed line. Unchecked, `set -e` ended the run with the failing command's own
+  # status, which is 1 -- the code the published table reads as EXPOSED, meaning this Mac still trusts the
+  # compromised keys -- and the EXIT trap printed nothing, so there was no line to read either.
+  body "$work/writefails.sh" '  return 1'
+  cp "$work/original.pem" "$work/writefails.pem"
+  script=$work/writefails.sh
+  run "$work/writefails.pem"
+  script=$fix
+  [ "$code" -eq 2 ] || fail "a failed write: expected exit 2, got $code"
+  grep -q '^UNKNOWN' <<<"$out" || fail "a failed write: expected UNKNOWN, got no line to read"
+  grep -q "Couldn't replace" <<<"$out" || fail "a failed write: it did not say the write failed"
+  cmp -s "$work/writefails.pem" "$work/original.pem" || fail "a failed write: the bundle changed anyway"
+  # And the same for the backup, which is the first write of the run.
+  sed 's#^\$SUDO cp -p "\$FILE" "\$backup" ||#false ||#' "$fix" >"$work/backupfails.sh"
+  cmp -s "$fix" "$work/backupfails.sh" && fail "a failed write: the backup step was not found, so this case proves nothing"
+  cp "$work/original.pem" "$work/backupfails.pem"
+  script=$work/backupfails.sh
+  run "$work/backupfails.pem"
+  script=$fix
+  [ "$code" -eq 2 ] || fail "a failed backup: expected exit 2, got $code"
+  grep -q "Couldn't write the backup" <<<"$out" || fail "a failed backup: it did not say the backup could not be written"
+  cmp -s "$work/backupfails.pem" "$work/original.pem" || fail "a failed backup: the bundle changed anyway"
+  [ "$(backups "$work/backupfails.pem")" -eq 0 ] || fail "a failed backup: it left a backup behind"
+  # Proof both discriminate: with the checks taken off those two writes, the run exits 1 with nothing printed.
+  for t in writefails backupfails; do
+    case "$t" in
+      writefails) sed 's#^replace "\$tmp" || .*$#replace "$tmp"#' "$work/$t.sh" >"$work/$t-nocheck.sh" ;;
+      backupfails) sed 's#^false || { echo "UNKNOWN  Couldn.t write the backup.*$#false#' "$work/$t.sh" >"$work/$t-nocheck.sh" ;;
+    esac
+    cmp -s "$work/$t.sh" "$work/$t-nocheck.sh" && fail "a failed write: the check on $t was not found, so this case proves nothing"
+    cp "$work/original.pem" "$work/$t-nocheck.pem"
+    script=$work/$t-nocheck.sh
+    run "$work/$t-nocheck.pem"
+    script=$fix
+    [ "$code" -eq 1 ] || fail "a failed write: the case does not discriminate -- unchecked, $t exited $code, not the EXPOSED code 1"
+    [ -z "$out" ] || fail "a failed write: the case does not discriminate -- unchecked, $t printed something: $out"
+  done
+  ok "a write that fails is UNKNOWN with a line to read, not a silent EXPOSED"
+
+  # The content-mismatch restore: the one path left in this script that puts the original back, and the only kind
+  # of reason there can be for one -- the bytes now in the file are not the bytes the script built and checked, so
+  # what every TLS client on the Mac reads is a file nobody has checked, and the backup is the only file in the run
+  # that has been. The CHANGELOG said a case for it was here. It was not. This copy's write puts something else in
+  # the file afterwards, because nothing else can make that happen on demand.
+  # First, that the reason the script declares is the reason this case is about. replace() is the only thing in the
+  # script that writes to the file; nothing outside it may, there are exactly two calls, and the one that puts the
+  # backup back must declare why immediately above it. A write added anywhere else, or a second restore, or a
+  # restore on another reason, fails here and needs a case of its own.
+  awk '/^replace\(\) \{$/ { inside = 1 } inside { if ($0 == "}") inside = 0; next } { print }' "$fix" >"$work/outside-replace.sh"
+  stray=$(grep -cE '\b(cp|mv|install|tee|dd|ln)\b[^;|]*"\$FILE"[[:space:]]*(;|\||$)|>[[:space:]]*"\$FILE"' "$work/outside-replace.sh" || true)
+  [ "$stray" -eq 0 ] || fail "content mismatch: $stray line(s) outside replace() write to \$FILE, so they are not covered by the cases above and need their own"
+  calls=$(grep -c 'replace "' "$fix" || true)
+  [ "$calls" -eq 2 ] || fail "content mismatch: replace() is called $calls time(s), expected 2 (the fix and the restore); a third needs a declared reason and a case here"
+  declared=$(grep -B1 '\breplace "\$backup"' "$fix" | sed -n 's/^ *# *wardlatch:revert-reason=//p')
+  [ "$declared" = content-mismatch ] || fail "content mismatch: the restore declares '$declared', expected 'content-mismatch'"
+  awk '{ print } /^replaced=1$/ { print "echo tampered >> \"$FILE\"" }' "$fix" >"$work/mismatch.sh"
+  cmp -s "$fix" "$work/mismatch.sh" && fail "content mismatch: the write step was not found, so this case proves nothing"
+  cp "$work/original.pem" "$work/mismatch.pem"
+  script=$work/mismatch.sh
+  run "$work/mismatch.pem"
+  script=$fix
+  [ "$code" -eq 1 ] || fail "content mismatch: expected exit 1, got $code"
+  grep -q '^EXPOSED' <<<"$out" || fail "content mismatch: expected EXPOSED"
+  grep -q "isn't the file this built and checked" <<<"$out" || fail "content mismatch: it did not say what was wrong"
+  grep -q 'Backup:' <<<"$out" || fail "content mismatch: it did not name the backup it restored from"
+  cmp -s "$work/mismatch.pem" "$work/original.pem" || fail "content mismatch: the original was not put back"
+  [ "$(bad "$work/mismatch.pem")" -eq "$found" ] || fail "content mismatch: what was put back is not the bundle that holds the withdrawn roots"
+  # Proof it discriminates: the same tamper on a copy that cannot put the original back must leave the tampered
+  # bytes in the file. If the original comes back there too, this case is not testing the restore.
+  prefix "$work/mismatch-norestore.sh" '  case "$1" in *.bak) return 1 ;; esac'
+  awk '{ print } /^replaced=1$/ { print "echo tampered >> \"$FILE\"" }' "$work/mismatch-norestore.sh" >"$work/mismatch-norestore2.sh"
+  cp "$work/original.pem" "$work/mismatch2.pem"
+  script=$work/mismatch-norestore2.sh
+  run "$work/mismatch2.pem"
+  script=$fix
+  cmp -s "$work/mismatch2.pem" "$work/original.pem" &&
+    fail "content mismatch: the case does not discriminate -- with the restore refused the original came back anyway"
+  # And a restore that cannot be made is UNKNOWN with the command to run by hand, not a silent exit 1 leaving
+  # unchecked bytes in the file with nothing said.
+  [ "$code" -eq 2 ] || fail "content mismatch: a restore that failed should exit 2, got $code"
+  grep -q "couldn't be put" <<<"$out" || fail "content mismatch: a restore that failed did not say so"
+  grep -q "sudo cp -p '$work/mismatch2.pem.wardlatch-" <<<"$out" || fail "content mismatch: a restore that failed did not give the command to put it back"
+  ok "a file that isn't the one the script built brings the original back, declaring content-mismatch as the reason"
+
+  # The restore is a rename too. Interrupted, it must leave the file whole -- the unchecked bytes or the original,
+  # never a stump. Up to this change the restore copied the backup over the file in place, which is the very defect
+  # the forward write was redesigned to remove, still live on the one path that runs when something has gone wrong.
+  prefix "$work/restore-cut.sh" \
+    '  case "$1" in *.bak) new="$(dirname "$FILE")/.wardlatch-new.$$"; head -c 500 "$1" > "$new"; kill -TERM $$ ;; esac'
+  awk '{ print } /^replaced=1$/ { print "echo tampered >> \"$FILE\"" }' "$work/restore-cut.sh" >"$work/restore-cut2.sh"
+  cp "$work/original.pem" "$work/restorecut.pem"
+  script=$work/restore-cut2.sh
+  run "$work/restorecut.pem"
+  script=$fix
+  [ "$(count "$work/restorecut.pem")" -ge 50 ] ||
+    fail "an interrupted restore: the bundle was left a stump of $(count "$work/restorecut.pem") certificates"
+  [ -z "$(find "$work" -name '.wardlatch-new.*' -print -quit)" ] || fail "an interrupted restore: the half-written file was left beside the bundle"
+  # Proof it discriminates: the same interruption of a restore that copies straight over the file leaves a stump.
+  prefix "$work/restore-inplace.sh" \
+    '  case "$1" in *.bak) head -c 500 "$1" > "$FILE"; kill -TERM $$ ;; esac'
+  awk '{ print } /^replaced=1$/ { print "echo tampered >> \"$FILE\"" }' "$work/restore-inplace.sh" >"$work/restore-inplace2.sh"
+  cp "$work/original.pem" "$work/restoreinplace.pem"
+  script=$work/restore-inplace2.sh
+  run "$work/restoreinplace.pem"
+  script=$fix
+  [ "$(count "$work/restoreinplace.pem")" -lt 50 ] ||
+    fail "an interrupted restore: the case does not discriminate -- restoring straight over the file left it usable too"
+  ok "an interrupted restore leaves the bundle whole, never half-written"
+
   # An interrupt while the fix is running, delivered just before the write. macOS's /bin/bash is 3.2.57, and with
   # a trap on EXIT alone a SIGINT that reaches this script while it is waiting on a plain foreground command is
   # swallowed: bash carries on to the NEXT line, `set -euo pipefail` and all. So an interrupt during the backup
@@ -287,9 +429,8 @@ if [ "$found" -gt 0 ]; then
   # /etc/ssl/cert.pem, then print SAFE and exit 0, about a run the person had cancelled. (bash does stop if the
   # interrupt lands in a command substitution, which is why this has to be landed on a plain command to be seen at
   # all; the run is put in its own process group so the signal reaches bash and nothing else.)
-  awk '/^\$SUDO cp "\$tmp" "\$new"$/ { print "touch \"$WL_AT_THE_WRITE\"; /bin/sleep 3" } { print }' "$fix" >"$work/atwrite.sh"
-  cmp -s "$fix" "$work/atwrite.sh" && fail "an interrupt: the write step was not found, so this case proves nothing"
-  sed "s|^trap 'clean; exit 2' HUP INT TERM\$|# (the old shape: a trap on EXIT alone)|" "$work/atwrite.sh" >"$work/atwrite-exitonly.sh"
+  prefix "$work/atwrite.sh" '  touch "$WL_AT_THE_WRITE"; /bin/sleep 3'
+  sed "s|^trap stopped HUP INT TERM\$|# (the old shape: a trap on EXIT alone)|" "$work/atwrite.sh" >"$work/atwrite-exitonly.sh"
   cmp -s "$work/atwrite.sh" "$work/atwrite-exitonly.sh" && fail "an interrupt: the signal trap was not found, so this case proves nothing"
   interrupt() {   # $1 = script copy, $2 = bundle. Interrupts it at the write; sets $code and $out.
     local pid i
@@ -328,41 +469,71 @@ if [ "$found" -gt 0 ]; then
   rm -rf "$work/tmp"; mkdir "$work/tmp"
   ok "an interrupt stops the fix, where a trap on EXIT alone replaced the file and printed SAFE anyway"
 
-  # The content-mismatch restore: the one path left in this script that puts the original back, and the only kind
-  # of reason there can be for one -- the bytes now in the file are not the bytes the script built and checked, so
-  # what every TLS client on the Mac reads is a file nobody has checked, and the backup is the only file in the run
-  # that has been. The CHANGELOG said a case for it was here. It was not. This copy's write puts something else in
-  # the file afterwards, because nothing else can make that happen on demand.
-  # First, that the reason the script declares is the reason this case is about: every line putting the backup back
-  # must declare why immediately above it, and content-mismatch is the only reason there is. A restore added
-  # without a declaration, or on any other reason, fails here and needs its own case.
-  restores=$(grep -c '^  \$SUDO cp -p "\$backup" "\$FILE"$' "$fix" || true)
-  [ "$restores" -eq 1 ] || fail "content mismatch: the script has $restores restores, expected 1; each one needs its own declared reason and its own case here"
-  declared=$(grep -B1 '^  \$SUDO cp -p "\$backup" "\$FILE"$' "$fix" | sed -n 's/.*wardlatch:revert-reason=//p')
-  [ "$declared" = content-mismatch ] || fail "content mismatch: the restore declares '$declared', expected 'content-mismatch'"
-  awk '{ print } /^\$SUDO mv "\$new" "\$FILE"$/ { print "echo tampered >> \"$FILE\"" }' "$fix" >"$work/mismatch.sh"
-  cmp -s "$fix" "$work/mismatch.sh" && fail "content mismatch: the write step was not found, so this case proves nothing"
-  cp "$work/original.pem" "$work/mismatch.pem"
-  script=$work/mismatch.sh
-  run "$work/mismatch.pem"
+  # An interrupt AFTER the file has been replaced. Exit 2 means "read the printed line", so a run stopped once the
+  # file was already changed has to say that it was, and name the way back. The window is the two probes, up to 15
+  # seconds each, which is exactly when somebody decides the script has hung and stops it.
+  sed 's|^control() { local r=0; |control() { local r=0; touch "$WL_AT_THE_WRITE"; /bin/sleep 3; |' "$fix" >"$work/afterwrite.sh"
+  cmp -s "$fix" "$work/afterwrite.sh" && fail "an interrupt after the write: control() was not found, so this case proves nothing"
+  sed 's#^  \[ -z "\$replaced" \] || {$#  [ -n "$replaced" ] || {#' "$work/afterwrite.sh" >"$work/afterwrite-silent.sh"
+  cmp -s "$work/afterwrite.sh" "$work/afterwrite-silent.sh" && fail "an interrupt after the write: the report was not found, so this case proves nothing"
+  cp "$work/original.pem" "$work/afterwrite.pem"
+  # the baseline control pauses too, so the first interrupt chance is before the write; let that one pass by
+  # waiting for the SECOND touch of the sentinel, which is the control read after the file was replaced.
+  interrupt_after() {   # $1 = script copy, $2 = bundle. Sets $code and $out.
+    local pid i
+    rm -rf "$work/tmp"; mkdir "$work/tmp"
+    rm -f "$work/at-the-write"
+    set -m
+    env TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$2" WL_AT_THE_WRITE="$work/at-the-write" \
+      bash "$1" >"$work/interrupt.out" 2>&1 &
+    pid=$!
+    set +m
+    for i in $(seq 1 400); do
+      [ -e "$work/at-the-write" ] && [ "$(count "$2")" -ne "$total" ] && break
+      /bin/sleep 0.1
+    done
+    kill -INT "$pid" 2>/dev/null || true
+    code=0; wait "$pid" || code=$?
+    out=$(cat "$work/interrupt.out")
+    printf '%s\n' "$out" | sed 's/^/    | /'
+  }
+  interrupt_after "$work/afterwrite.sh" "$work/afterwrite.pem"
+  [ "$code" -eq 2 ] || fail "an interrupt after the write: expected exit 2, got $code"
+  [ "$(count "$work/afterwrite.pem")" -eq $((total - found)) ] || fail "an interrupt after the write: the bundle is not the fixed file"
+  grep -q 'had already been replaced' <<<"$out" || fail "an interrupt after the write: it did not say the file had been replaced"
+  grep -q "Backup: $work/afterwrite.pem.wardlatch-" <<<"$out" || fail "an interrupt after the write: it did not name the backup"
+  grep -q 'Undo:' <<<"$out" || fail "an interrupt after the write: it did not give the way back"
+  # Proof it discriminates: with that report taken out, the same interrupt prints nothing at all about a file it
+  # had already changed -- exit 2 telling the reader to read a line that does not exist.
+  cp "$work/original.pem" "$work/afterwrite2.pem"
+  interrupt_after "$work/afterwrite-silent.sh" "$work/afterwrite2.pem"
+  [ -z "$out" ] ||
+    fail "an interrupt after the write: the case does not discriminate -- without the report it still printed: $out"
+  rm -rf "$work/tmp"; mkdir "$work/tmp"
+  ok "an interrupt after the file was replaced says so, and names the way back"
+
+  # The exit code a stopped or refused run reports, which the EXIT trap can quietly change. Measured on
+  # /bin/bash 3.2.57: with `set -e`, a failing command inside the EXIT trap ends the trap AND overrides the exit
+  # status, so one failed `rm` in the cleanup turned exit 2 ("couldn't tell") into exit 1, which the published
+  # table reads as EXPOSED -- this Mac still trusts the compromised keys. `return 0` at the end does not help:
+  # errexit ends the function before reaching it. Every command in clean() ends in `|| true` for that reason.
+  sed 's#^clean() { rm -f "\$snap" "\$tmp" || true; #clean() { /usr/bin/false || true; #' "$fix" >"$work/cleanfails.sh"
+  cmp -s "$fix" "$work/cleanfails.sh" && fail "the cleanup's exit code: clean() was not found, so this case proves nothing"
+  cp "$work/original.pem" "$work/cleanfails.pem"
+  : >"$work/cleanfails-empty.pem"
+  script=$work/cleanfails.sh
+  run "$work/cleanfails-empty.pem"
   script=$fix
-  [ "$code" -eq 1 ] || fail "content mismatch: expected exit 1, got $code"
-  grep -q '^EXPOSED' <<<"$out" || fail "content mismatch: expected EXPOSED"
-  grep -q "isn't the file this built and checked" <<<"$out" || fail "content mismatch: it did not say what was wrong"
-  grep -q 'Backup:' <<<"$out" || fail "content mismatch: it did not name the backup it restored from"
-  cmp -s "$work/mismatch.pem" "$work/original.pem" || fail "content mismatch: the original was not put back"
-  [ "$(bad "$work/mismatch.pem")" -eq "$found" ] || fail "content mismatch: what was put back is not the bundle that holds the withdrawn roots"
-  # Proof it discriminates: the same tamper with the restore line taken out must leave the tampered bytes in the
-  # file. If the original comes back there too, this case is not testing the restore.
-  awk '/wardlatch:revert-reason=content-mismatch/ { print; getline; next } { print }' "$work/mismatch.sh" >"$work/mismatch-norestore.sh"
-  cmp -s "$work/mismatch.sh" "$work/mismatch-norestore.sh" && fail "content mismatch: the restore line was not found, so this case proves nothing"
-  cp "$work/original.pem" "$work/mismatch2.pem"
-  script=$work/mismatch-norestore.sh
-  run "$work/mismatch2.pem"
+  [ "$code" -eq 2 ] || fail "the cleanup's exit code: a refused run should exit 2 whatever the cleanup does, got $code"
+  # Proof it discriminates: without the `|| true`, the same failing cleanup turns that 2 into 1.
+  sed 's#^clean() { rm -f "\$snap" "\$tmp" || true; #clean() { /usr/bin/false; #' "$fix" >"$work/cleanfails-bare.sh"
+  cmp -s "$fix" "$work/cleanfails-bare.sh" && fail "the cleanup's exit code: clean() was not found, so this case proves nothing"
+  script=$work/cleanfails-bare.sh
+  run "$work/cleanfails-empty.pem"
   script=$fix
-  cmp -s "$work/mismatch2.pem" "$work/original.pem" &&
-    fail "content mismatch: the case does not discriminate -- with the restore removed the original came back anyway"
-  ok "a file that isn't the one the script built brings the original back, declaring content-mismatch as the reason"
+  [ "$code" -eq 1 ] ||
+    fail "the cleanup's exit code: the case does not discriminate -- with a bare failing cleanup the run exited $code, not 1"
+  ok "a failing cleanup cannot turn UNKNOWN into EXPOSED"
 fi
 
 # What the fix does with what the network says. These cases drive a copy of the script whose one network command is
@@ -371,6 +542,15 @@ fi
 if [ "$found" -gt 0 ]; then
   sed 's|/usr/bin/curl|"${WARDLATCH_CURL:-/usr/bin/curl}"|g' "$fix" >"$work/stubbed.sh"
   cmp -s "$fix" "$work/stubbed.sh" && fail "the network cases: the stub replaced nothing, so they would test the real network"
+  # EVERY call site, not merely one. With one left behind these cases would still reach the real network on that
+  # path and pass for the wrong reason, which is exactly how test/support/mojave-shapes.sh came to claim it was
+  # offline while every one of its shapes made live requests. Counted by occurrence, not by line.
+  curls=$(grep -o '/usr/bin/curl' "$fix" | wc -l | tr -d ' ')
+  [ "$curls" -ge 2 ] || fail "the network cases: expected at least 2 /usr/bin/curl call sites in the script, found $curls"
+  behind=$(grep -o 'WARDLATCH_CURL:-/usr/bin/curl' "$work/stubbed.sh" | wc -l | tr -d ' ')
+  allcurl=$(grep -o '/usr/bin/curl' "$work/stubbed.sh" | wc -l | tr -d ' ')
+  [ "$behind" -eq "$curls" ] && [ "$allcurl" -eq "$curls" ] ||
+    fail "the network cases: the script has $curls /usr/bin/curl call site(s), and the stubbed copy has $allcurl of which $behind are behind the stub; every one must be, or those paths reach the real network"
   cat >"$work/curl-stub" <<'STUB'
 #!/bin/bash
 # Stands in for /usr/bin/curl: $STUB_TEST for the advisory's test host, $STUB_CONTROL for anything else. Prints
