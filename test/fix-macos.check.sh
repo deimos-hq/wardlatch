@@ -24,7 +24,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=15
+expect_cases=17
 
 fail() { echo "FAIL: $*"; exit 1; }
 cases=0
@@ -245,6 +245,86 @@ if [ "$found" -gt 0 ]; then
   cmp -s "$b2" "$work/original.pem" && fail "a bad backup: the case does not discriminate -- the backup it trusted was the original after all"
   grep -q 'Undo:' <<<"$out" || fail "a bad backup: the run with the comparison removed printed no Undo line to be wrong about"
   ok "a backup that isn't the file it came from stops the fix before anything is replaced"
+
+  # A signal in the middle of the write. The copy into the file beside the bundle is replaced by a short write and
+  # a TERM to the script itself, because a Ctrl-C landing inside a copy, a sudo timeout and a power cut cannot be
+  # arranged on demand. The bundle must be left exactly as it was: the replacement is a rename, which the kernel
+  # either did or didn't do.
+  awk '/^\$SUDO cp "\$tmp" "\$new"$/ { print "head -c 500 \"$tmp\" > \"$new\"; kill -TERM $$"; next } { print }' \
+    "$fix" >"$work/interrupted.sh"
+  cmp -s "$fix" "$work/interrupted.sh" && fail "an interrupted write: the write step was not found, so this case proves nothing"
+  cp "$work/original.pem" "$work/interrupted.pem"
+  script=$work/interrupted.sh
+  run "$work/interrupted.pem"
+  script=$fix
+  cmp -s "$work/interrupted.pem" "$work/original.pem" ||
+    fail "an interrupted write: the bundle is neither the old file nor the new one ($(count "$work/interrupted.pem") certificates)"
+  [ -z "$(find "$work" -name '.wardlatch-new.*' -print -quit)" ] || fail "an interrupted write: the half-written file was left beside the bundle"
+  [ "$(backups "$work/interrupted.pem")" -eq 1 ] || fail "an interrupted write: expected the backup to have been written already"
+  # Proof it discriminates: the same interruption in the shape this script had until 29 Oct 2026, which copied
+  # straight into the bundle and so truncated it first, must leave a stump. That is the defect.
+  awk '/^new=\$\(\$SUDO mktemp / { next }
+       /^\$SUDO cp "\$tmp" "\$new"$/ { print "head -c 500 \"$tmp\" > \"$FILE\"; kill -TERM $$"; next }
+       /^\$SUDO chmod 644 "\$new"$/ { next }
+       /^\$SUDO mv "\$new" "\$FILE"$/ { next }
+       /^new=   # renamed into place/ { next }
+       { print }' "$fix" >"$work/inplace.sh"
+  cmp -s "$fix" "$work/inplace.sh" && fail "an interrupted write: the in-place shape was not built, so this case proves nothing"
+  cp "$work/original.pem" "$work/inplace.pem"
+  script=$work/inplace.sh
+  run "$work/inplace.pem"
+  script=$fix
+  cmp -s "$work/inplace.pem" "$work/original.pem" &&
+    fail "an interrupted write: the case does not discriminate -- interrupting a copy straight into the bundle left it whole too"
+  [ "$(count "$work/inplace.pem")" -lt 50 ] ||
+    fail "an interrupted write: the case does not discriminate -- the in-place write left a usable bundle"
+  ok "a signal during the write leaves the bundle whole, never half-written"
+
+  # An interrupt while the fix is running, delivered just before the write. macOS's /bin/bash is 3.2.57, and with
+  # a trap on EXIT alone a SIGINT that reaches this script while it is waiting on a plain foreground command is
+  # swallowed: bash carries on to the NEXT line, `set -euo pipefail` and all. So an interrupt during the backup
+  # copy -- or during any of the copies, on a slow disk or a busy Mac -- left the script to go on and replace
+  # /etc/ssl/cert.pem, then print SAFE and exit 0, about a run the person had cancelled. (bash does stop if the
+  # interrupt lands in a command substitution, which is why this has to be landed on a plain command to be seen at
+  # all; the run is put in its own process group so the signal reaches bash and nothing else.)
+  awk '/^\$SUDO cp "\$tmp" "\$new"$/ { print "touch \"$WL_AT_THE_WRITE\"; /bin/sleep 3" } { print }' "$fix" >"$work/atwrite.sh"
+  cmp -s "$fix" "$work/atwrite.sh" && fail "an interrupt: the write step was not found, so this case proves nothing"
+  sed "s|^trap 'clean; exit 130' HUP INT TERM\$|# (the old shape: a trap on EXIT alone)|" "$work/atwrite.sh" >"$work/atwrite-exitonly.sh"
+  cmp -s "$work/atwrite.sh" "$work/atwrite-exitonly.sh" && fail "an interrupt: the signal trap was not found, so this case proves nothing"
+  interrupt() {   # $1 = script copy, $2 = bundle. Interrupts it at the write; sets $code and $out.
+    local pid i
+    rm -rf "$work/tmp"; mkdir "$work/tmp"
+    rm -f "$work/at-the-write"
+    set -m
+    env TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$2" WL_AT_THE_WRITE="$work/at-the-write" \
+      bash "$1" >"$work/interrupt.out" 2>&1 &
+    pid=$!
+    set +m
+    for i in $(seq 1 200); do [ -e "$work/at-the-write" ] && break; /bin/sleep 0.1; done
+    [ -e "$work/at-the-write" ] || fail "an interrupt: the run never reached the write, so there was nothing to interrupt"
+    kill -INT "$pid" 2>/dev/null || true
+    code=0; wait "$pid" || code=$?
+    out=$(cat "$work/interrupt.out")
+    printf '%s\n' "$out" | sed 's/^/    | /'
+  }
+  cp "$work/original.pem" "$work/atwrite.pem"
+  interrupt "$work/atwrite.sh" "$work/atwrite.pem"
+  [ "$code" -ne 0 ] || fail "an interrupt: the run exited 0 after being interrupted"
+  cmp -s "$work/atwrite.pem" "$work/original.pem" || fail "an interrupt: the bundle was replaced after the run was interrupted"
+  grep -qE '^(SAFE|EXPOSED)' <<<"$out" && fail "an interrupt: it printed a verdict about a run that was interrupted"
+  [ -z "$(find "$work" -name '.wardlatch-new.*' -print -quit)" ] || fail "an interrupt: the file beside the bundle was left behind"
+  [ -z "$(find "$work/tmp" -mindepth 1 -maxdepth 1 -print -quit)" ] || fail "an interrupt: temporary files were left in TMPDIR"
+  # Proof it discriminates: with the trap back on EXIT alone the same interrupt must fail to stop the run, so the
+  # bundle is replaced and a verdict printed about it. If it stops there too, this case is proving nothing.
+  cp "$work/original.pem" "$work/atwrite2.pem"
+  interrupt "$work/atwrite-exitonly.sh" "$work/atwrite2.pem"
+  cmp -s "$work/atwrite2.pem" "$work/original.pem" &&
+    fail "an interrupt: the case does not discriminate -- with a trap on EXIT alone the interrupt stopped the run too"
+  grep -qE '^(SAFE|EXPOSED)' <<<"$out" ||
+    fail "an interrupt: the case does not discriminate -- with a trap on EXIT alone no verdict was printed either"
+  [ "$code" -eq 0 ] || fail "an interrupt: the case does not discriminate -- with a trap on EXIT alone the run exited $code, not 0"
+  rm -rf "$work/tmp"; mkdir "$work/tmp"
+  ok "an interrupt stops the fix, where a trap on EXIT alone replaced the file and printed SAFE anyway"
 fi
 
 # What the fix does with what the network says. These cases drive a copy of the script whose one network command is

@@ -14,6 +14,8 @@
 #   - keeps a dated backup, never overwrites an earlier one, and compares that backup with the file it came from
 #     before replacing anything, because the Undo line it prints names that backup;
 #   - writes a new file and checks it (every other certificate still there, only the two removed) before replacing;
+#   - replaces the file by renaming the new one over it, in one step, so an interruption leaves either the old file
+#     or the new one and never half of either, and removes its temporary files on a Ctrl-C or a shutdown too;
 #   - keeps the file readable by everyone, as macOS ships it;
 #   - checks that what landed in the file is the file it built, and puts the original back if it isn't -- the one
 #     reason it ever puts the original back, because the original is the file that trusts the compromised keys;
@@ -81,8 +83,19 @@ strip() {
     !skip' "$1" "$1"
 }
 
-# Everything below reads this snapshot, so the checks and the change are about the same bytes.
-snap=$(mktemp -t wardlatch); tmp=$(mktemp -t wardlatch); trap 'rm -f "$snap" "$tmp"' EXIT
+# Everything below reads this snapshot, so the checks and the change are about the same bytes. $new is the file
+# beside $FILE that the replacement is built in; it is empty until there is one.
+# HUP, INT and TERM as well as EXIT, which is what the one-line fix on the page traps. An interrupt has to STOP
+# this script, and on EXIT alone it did not: measured on 29 Oct 2026 under macOS's /bin/bash 3.2.57, a SIGINT
+# arriving while bash waits on a plain foreground command is swallowed, and bash carries on to the next line with
+# `set -euo pipefail` in force. Interrupted just before the write, the script went on to replace the file and
+# printed SAFE, exit 0, about a run that had been cancelled. (bash does stop if the signal lands inside a command
+# substitution, so the old shape failed only some of the time, which is worse.)
+new=
+clean() { rm -f "$snap" "$tmp"; [ -z "$new" ] || $SUDO rm -f "$new"; }
+snap=$(mktemp -t wardlatch); tmp=$(mktemp -t wardlatch)
+trap clean EXIT
+trap 'clean; exit 130' HUP INT TERM
 cp "$FILE" "$snap" 2>/dev/null || { echo "UNKNOWN  Can't read $FILE. Nothing changed."; exit 2; }
 
 if [ "$(certs "$snap")" -lt 50 ]; then
@@ -155,8 +168,17 @@ cmp -s "$FILE" "$backup" || {
   echo "         this again.  Bad backup: $backup"
   exit 2
 }
-$SUDO cp "$tmp" "$FILE"
-$SUDO chmod 644 "$FILE"
+# The replacement is built in a file beside $FILE and renamed over it, so $FILE is never a half-written bundle: a
+# rename within one directory is one step the kernel either did or didn't do. Copying into $FILE in place truncated
+# it first, so a Ctrl-C, a sudo timeout or a power cut during that copy left every built-in TLS client on the Mac
+# -- curl, git, python3, openssl -- reading a stump of a certificate file, with the check below never reached,
+# until somebody ran this again. The file is made beside $FILE, not in $TMPDIR, because a rename only works within
+# one filesystem; it is made with the same $SUDO as the write, so it belongs to whoever owns $FILE.
+new=$($SUDO mktemp "$(dirname "$FILE")/.wardlatch-new.XXXXXX") || { echo "UNKNOWN  Can't make a temporary file beside $FILE. Nothing changed."; exit 2; }
+$SUDO cp "$tmp" "$new"
+$SUDO chmod 644 "$new"
+$SUDO mv "$new" "$FILE"
+new=   # renamed into place, so there is nothing beside $FILE left to remove
 
 # The only path here that puts the original back, and the only kind of reason there may be for one: the bytes now in
 # $FILE are not the bytes this script built and checked, so what every TLS client on this Mac reads is a file nobody
