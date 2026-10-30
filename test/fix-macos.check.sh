@@ -2,11 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Deimos AI LLC
 #
-# Runs fix/fix-macos.sh on COPIES of this Mac's /etc/ssl/cert.pem, never on the real file (which is only read):
-# the original, a second run, undo from the backup, an empty file, a truncated file and a missing file. Off macOS it
-# checks that the fix refuses to run. CI runs it on macos-latest and ubuntu-latest; it is safe on your own Mac too.
-# On a Mac that is already fixed, pass a copy of Apple's original as the first argument (for example the backup the
-# fix made) to exercise the removal itself: bash test/fix-macos.check.sh /etc/ssl/cert.pem.wardlatch-<date>.bak
+# Runs fix/fix-macos.sh on COPIES of a certificate bundle, never on the real /etc/ssl/cert.pem: the original, a
+# second run, undo from the backup, an empty file, a truncated file and a missing file. Off macOS it checks that the
+# fix refuses to run. CI runs it on macos-latest and ubuntu-latest; it is safe on your own Mac too.
+#
+# The bundle it works from defaults to the vendored UNFIXED fixture, test/support/fixtures/macos-27.2-cert.pem, for
+# the reason test/support/fixtures/README.md gives: every removal case and every network case here needs a bundle
+# that still holds the two withdrawn roots, so reading the runner's live /etc/ssl/cert.pem made this suite's green
+# depend on the runner being unfixed. On an already-fixed Mac -- or on CI's macos-latest the day Apple ships a fixed
+# bundle -- the cases skipped with a NOTE and the suite stayed green. They now cannot skip: a source holding neither
+# root is a failure here, and the run prints how many cases it ran. Pass a path to test a different bundle,
+# including the live one: bash test/fix-macos.check.sh /etc/ssl/cert.pem
 # The fix re-tests against the advisory's public test host, so this needs the network (the unit tests do not).
 set -euo pipefail
 
@@ -14,10 +20,15 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 fix="$root/fix/fix-macos.sh"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-source=${1:-/etc/ssl/cert.pem}
+source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
+# Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
+# because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
+# a case, and the run tells you the number to put here.
+expect_cases=13
 
 fail() { echo "FAIL: $*"; exit 1; }
-ok() { echo "ok: $*"; }
+cases=0
+ok() { cases=$((cases + 1)); echo "ok: $*"; }
 count() { grep -c 'BEGIN CERTIFICATE' "$1" || true; }
 # How many of the two roots a file holds, by SHA-256 fingerprint (name lines or not).
 bad() {
@@ -54,6 +65,7 @@ if [ "$(uname -s)" != Darwin ]; then
   [ "$code" -eq 2 ] || fail "off macOS the fix should exit 2, got $code"
   grep -q 'This fix is for macOS' <<<"$out" || fail "off macOS the fix should say it is for macOS"
   ok "refuses to run off macOS"
+  echo "$cases cases ran (off macOS, where the fix refuses to run)"
   exit 0
 fi
 
@@ -62,7 +74,10 @@ chmod 644 "$work/original.pem"
 total=$(count "$work/original.pem")
 found=$(bad "$work/original.pem")
 echo "$source: $total certificates, $found of the two roots"
-[ "$found" -gt 0 ] || echo "NOTE: $source holds neither root, so the removal cases are skipped. Pass a copy of Apple's original as the first argument."
+# Not a NOTE. Everything this suite is for -- the removal, the undo, the shapes with no name lines, and every case
+# about what the fix does with an answer from the network -- needs a bundle that still holds a withdrawn root. On a
+# bundle that holds neither, those cases cannot run, and a green run would be saying only that they did not.
+[ "$found" -gt 0 ] || fail "$source holds neither withdrawn root, so the removal and network cases cannot run and this suite can prove nothing. The default source is the vendored unfixed fixture test/support/fixtures/macos-27.2-cert.pem; give that, or another bundle that still holds a root, or no argument at all."
 
 # A missing file: refused, nothing created.
 run "$work/missing.pem"
@@ -225,4 +240,10 @@ if [ ! -r "$work/unreadable.pem" ]; then
 else
   chmod 644 "$work/unreadable.pem"
   echo "NOTE: running as root, so a file can't be made unreadable; skipped."
+  cases=$((cases + 1))   # counted, so the total below still means every case was reached
 fi
+
+# The count, printed and checked. Showing it is the point: a case that silently stopped running is what made this
+# suite green on a bundle it could prove nothing about.
+echo "$cases cases ran against $source ($total certificates, $found of the two roots)"
+[ "$cases" -eq "$expect_cases" ] || fail "$cases cases ran, expected $expect_cases. If you added or removed a case, set expect_cases to $cases; otherwise a case stopped running."
