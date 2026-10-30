@@ -138,6 +138,7 @@ fi
 # naming it would mean a second pass over every certificate -- more work and more code in a script that edits
 # the file every TLS client on the Mac reads. The count and the fact that the other was already absent is what
 # a reader needs; which one it was is on the page.
+# It takes the count and nothing else. Every call site used to pass $list after it, which this never read.
 removed_phrase() {
   if [ "$1" -eq 1 ]; then
     echo "removed 1 of the 2 withdrawn roots; the other was already absent from this Mac"
@@ -209,20 +210,26 @@ if [ "$c" -eq 0 ]; then
   # certificates. So the test host's answer is about the test host, and there is a verdict to be had.
   r=$(trust "$FILE")
   case "$r" in
-    60) echo "SAFE     Fixed. $FILE now refuses the compromised keys: $(removed_phrase "$found" "$list"), kept $after." ;;
-    0)  echo "EXPOSED  Fixed in the file ($(removed_phrase "$found" "$list"), kept $after), but the test site is still trusted,"
-        echo "         so something other than this file is trusting the compromised keys. The fix was kept: putting the"
-        echo "         original back would put both withdrawn roots back on this Mac. Please report this."
+    60) echo "SAFE     Fixed. $FILE now refuses the compromised keys: $(removed_phrase "$found"), kept $after." ;;
+    0)  echo "EXPOSED  Fixed in the file ($(removed_phrase "$found"), kept $after), but the advisory's test site is"
+        echo "         still trusted. Two ordinary things look exactly like this, and both are likelier than"
+        echo "         anything stranger. A TLS-inspecting proxy's own root may have been added to this file (or to"
+        echo "         whichever file your tools read): the proxy then signs everything, and that site loads"
+        echo "         whatever this file holds. Or the test site may have re-issued its certificate from an"
+        echo "         ordinary CA, in which case it now loads for everyone and tests nothing. Rule those two out"
+        echo "         before you go looking for something else on this Mac that trusts the compromised keys. The"
+        echo "         fix was kept either way: putting the original back would put both withdrawn roots back."
+        echo "         Please report this."
         echo "         Backup: $backup"
         echo "         Undo:   sudo cp -p '$backup' '$FILE'"
         exit 1 ;;
-    *)  echo "SAFE     Fixed in the file: $(removed_phrase "$found" "$list"), kept $after. (The test site didn't answer"
+    *)  echo "SAFE     Fixed in the file: $(removed_phrase "$found"), kept $after. (The test site didn't answer"
         echo "         (curl $r), though an ordinary website loaded, so this wasn't re-tested online.)" ;;
   esac
 elif [ "$c0" -ne 0 ]; then
   # Nothing loaded before the change either, so this reading is about the network and not about the file. Report,
   # keep the fix, claim nothing online.
-  echo "SAFE     Fixed in the file: $(removed_phrase "$found" "$list"), kept $after."
+  echo "SAFE     Fixed in the file: $(removed_phrase "$found"), kept $after."
   echo "         (An ordinary website didn't load before this change (curl $c0) or after it (curl $c), so nothing"
   echo "         was re-tested online.)"
 else
@@ -235,7 +242,7 @@ else
   # to make a page load is not a repair, and on the second reading it would hand both withdrawn roots to a Mac
   # already under attack -- the door this script closed on 29 Oct 2026, which a before/after revert would reopen
   # from the side. UNKNOWN and exit 2, because this is a thing to look at, not an all-clear.
-  echo "UNKNOWN  Fixed in the file ($(removed_phrase "$found" "$list"), kept $after), but an ordinary website that"
+  echo "UNKNOWN  Fixed in the file ($(removed_phrase "$found"), kept $after), but an ordinary website that"
   echo "         loaded through the old file (curl $c0) doesn't load through the new one (curl $c). Those two files"
   echo "         differ only by the two withdrawn roots, so either that site's certificate is issued under AAA"
   echo "         Certificate Services, or something on this network is presenting one that is -- and the second is"

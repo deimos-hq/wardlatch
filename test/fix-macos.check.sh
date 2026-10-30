@@ -391,7 +391,11 @@ STUB
   grep -q '^EXPOSED' <<<"$out" || fail "a network that accepts everything: expected EXPOSED"
   [ "$(bad "$work/lying.pem")" -eq 0 ] || fail "a network that accepts everything: the fix was reverted, so the roots are back"
   [ "$(count "$work/lying.pem")" -eq $((total - found)) ] || fail "a network that accepts everything: the file is not the fixed file"
-  ok "a network that accepts everything: EXPOSED, exit 1, and the fix kept"
+  # And it names the two ordinary causes. "Something other than this file is trusting the compromised keys" is a
+  # misdiagnosis for both of them, and sends an admin hunting the wrong thing on their own Mac.
+  grep -q 'TLS-inspecting proxy' <<<"$out" || fail "a network that accepts everything: it did not name a TLS-inspecting proxy's root in the file as a cause"
+  grep -q "re-issued its certificate" <<<"$out" || fail "a network that accepts everything: it did not name the test site re-issuing its certificate as a cause"
+  ok "a network that accepts everything: EXPOSED, exit 1, the fix kept, and the two ordinary causes named"
 
   # A network where nothing answers, but the test host's silence arrives as curl 60 and so looks like a refusal.
   # The fix must not read a verdict out of it: the file is fixed, and the output must not say the Mac now refuses
