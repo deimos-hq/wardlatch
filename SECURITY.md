@@ -58,9 +58,13 @@ reported, and what was actually true.
 4. **Released.** A flaw in the command ships as a new version on npm. `fix/fix-macos.sh` is **not** in the npm
    package: it is a download, so a flaw in it ships when four things move together — the file served at
    www.deimoscore.com, its published SHA-256, the source on `main` that the page links, and the site's changelog
-   record. The page also names the **previous** SHA-256 alongside the new one, because a download has no update
-   channel: a copy already on someone's disk is never notified, and the only way they can tell which one they hold
-   is to hash it.
+   record. Every SHA-256 this file has ever had stays published, because a download has no update channel: a copy
+   already on someone's disk is never notified, and the only way they can tell which one they hold is to hash it and
+   look the result up. The place that chain lives is the site's **Record**, not the download page: each Record entry
+   that changes the file prints the file's new digest and names the entry holding the one before it, back to the
+   first. The page prints exactly one digest, the file it is serving now, and the site's build fails on any other
+   64-hex digest in a Wardlatch page's `<main>` — so a superseded checksum can never sit beside a current one where
+   a reader could take either for the file they have just downloaded.
 5. **Disclosed**: the advisory is published (with a CVE requested through GitHub when the flaw warrants one), and
    [CHANGELOG.md](CHANGELOG.md) names it under the release that fixes it. The fix is reachable before it is
    described: an advisory naming a trigger, while the download still carries the flaw, tells an attacker how to
