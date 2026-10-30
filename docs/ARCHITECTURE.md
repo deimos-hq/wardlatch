@@ -102,9 +102,14 @@ no bad root left?  ──> re-test online ──> SAFE (or EXPOSED if it still t
 write the cleaned copy to a mktemp file
   check: no bad root left, count = before − removed, ≥ 50 certificates   else exit 2, nothing changed
 dated backup (never overwrites one) ──> copy the cleaned file in ──> chmod 644
+is the file now byte for byte the file we built?
+  no ──> restore the backup, EXPOSED, exit 1   <── the ONLY restore: it reads two local files and no probe result
 re-test with /usr/bin/curl against the advisory's test host:
-  refused (60) ──> SAFE, fixed       still trusted (0) ──> restore the backup, exit 1       no answer ──> fixed, not re-tested
+  refused (60) ──> SAFE, fixed    no answer ──> fixed, not re-tested    still trusted (0) ──> EXPOSED, exit 1, FIX KEPT
 ```
+
+A network result never restores the backup. Restoring returns both withdrawn roots, so a revert a hostile network
+could trigger would leave the Mac that most needs the fix as the one Mac that can never have it.
 
 It uses `sudo` only for the commands that write (the backup, the copy, the `chmod`, and a restore), and not at all
 when the file and its folder are writable by the user (as in the tests, which point it at a copy with

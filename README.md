@@ -77,7 +77,8 @@ rebuild them with. Check your browser on the advisory's own page.
 
 `fix/fix-macos.sh` removes the two roots tied to the leaked eMudhra keys from `/etc/ssl/cert.pem` (the advisory's
 change) with checks around it: no change on a fixed Mac, a dated backup it never overwrites, a check of the new file
-before it replaces the old one, a re-test, and a restore on a wrong result. Download it in Safari from
+before it replaces the old one, a check that what landed in the file is what it built — the one thing that makes it
+put the original back — and a re-test that reports and never reverts. Download it in Safari from
 https://www.deimoscore.com/wardlatch/#mac and run `bash ~/Downloads/wardlatch-fix-macos.sh`, or deploy it as a root
 script from Jamf, Kandji or Intune.
 

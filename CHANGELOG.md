@@ -11,6 +11,23 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
+### Security
+
+- **The Mac fix undid itself on what the network said.** After writing the cleaned `/etc/ssl/cert.pem`, it re-tested
+  against the advisory's test host and, if that host answered and was trusted (`curl` exit 0), copied the backup back
+  over the file. The backup is Apple's original: it holds both withdrawn roots. Anything that can answer for
+  `dv-g3b-emudhra.we-have-a-problem.com` on the Mac's network — a transparent proxy, a captive portal, or anyone
+  holding the compromised eMudhra keys, which is anyone at all, since they were computed from published certificates
+  — could therefore make the fix hand both roots back to the Mac it had just fixed, and that Mac is the one that
+  could then never be fixed. The re-test now reports and never reverts: a still-trusted test host prints EXPOSED
+  (exit 1) with the fix left in place and the undo command named, because the cleaned file holds strictly fewer roots
+  than the original and is never the worse of the two. The only restore left compares the file it wrote with the file
+  it built (`cmp`) and restores the backup when they differ — two local files, no probe result — and declares itself
+  in the script as `# wardlatch:revert-reason=content-mismatch`. `test/fix-macos.check.sh` gains a case for it,
+  driving a copy of the script whose one network command is a stub, because no real network can be made to answer
+  this way on demand: a network that accepts everything must leave the fix in place. It fails on the 0.1.10 script,
+  which puts both roots back on the file.
+
 ### Fixed
 
 - **The Mac fix told the user it covers `perl` and `ruby`.** Its last lines named "the built-in curl, git, python3,

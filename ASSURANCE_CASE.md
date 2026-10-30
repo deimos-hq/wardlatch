@@ -22,7 +22,7 @@ These are its security requirements: what a user can rely on.
 | **R4** | **Never prints a secret it finds.** A committed key is reported by type, file, line and a mask. | Output is pasted into tickets and chats. |
 | **R5** | **What it reads can't forge what it prints.** Names from the disk, git and containers can't hide or rewrite a line. | The things being checked may be under an attacker's control (a compromised WordPress site, a cloned repository). |
 | **R6** | **No host shell, no dependencies.** Programs are started with argument lists; the code is Node's standard library and this repository. | Removes command injection and a supply chain from a tool meant for supply-chain incidents. |
-| **R7** | **The Mac fix leaves `/etc/ssl/cert.pem` intact or correctly cleaned, never worse**, with a backup it never overwrites, and puts the original back if the result is wrong. | It runs as root on a file every built-in tool on the Mac depends on. |
+| **R7** | **The Mac fix leaves `/etc/ssl/cert.pem` intact or correctly cleaned, never worse**, with a backup it never overwrites, and puts the original back only when what landed in the file is not what it built — never on a network result. | It runs as root on a file every built-in tool on the Mac depends on. |
 
 What a user **cannot** expect: a SAFE covers the runtimes Wardlatch found, for the incidents it knows, at the moment
 it ran, and nothing more. It fixes nothing (except the Mac fix, when run). It does not check browsers, compiled
@@ -113,10 +113,16 @@ built-ins and the project's files, no `dependencies`); `test/cli.test.mjs` (unkn
 **R7, the Mac fix: boundary B6.** The script refuses a file that looks damaged (fewer than 50 certificates), writes
 the cleaned copy to a fresh `mktemp` file and checks it before using it (the two roots gone, every other certificate
 still there, at least 50 left), makes a dated backup and refuses to overwrite an existing one, copies the clean file
-in and sets 644, then re-tests with `/usr/bin/curl` and restores the backup if the file still trusts the test host.
+in and sets 644, then compares the file it wrote with the file it built and restores the backup if the two differ.
+That comparison of two local files is the **only** thing that makes it put the original back. It then re-tests with
+`/usr/bin/curl`, and a wrong re-test is reported (EXPOSED, exit 1) with the fix left in place, because restoring
+would put both withdrawn roots back on a Mac whose network is already answering for someone else — the one Mac that
+could then never be fixed.
 It changes nothing on a Mac that is already clean, so running it twice is safe. *Evidence:* CI runs
 `test/fix-macos.check.sh` on macOS against copies of the runner's real `/etc/ssl/cert.pem`: the original, a second
-run, undo from the backup, an empty file, a truncated file and a missing file, plus the refusal on Linux. CI also
+run, undo from the backup, an empty file, a truncated file and a missing file, plus the refusal on Linux. One case
+drives a copy of the script whose network command is a stub: a network that accepts everything must leave the fix in
+place (exit 1, EXPOSED), and it fails on the script as it shipped on 27 Oct 2026, which puts both roots back. CI also
 fails if the script stops matching the SHA-256 published with the download, so the file people run is the file that
 was tested.
 

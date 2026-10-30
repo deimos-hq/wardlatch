@@ -35,11 +35,14 @@ backups() { find "$work" -name "$(basename "$1").wardlatch-*.bak" | wc -l | tr -
 # Runs the fix on one file; sets $code and $out.
 # Extra VAR=value arguments after the file are set for that run only (e.g. a proxy, to make the test site unreachable).
 # Each run gets its own TMPDIR, which must be empty afterwards, and must print nothing on stderr.
+# $script is the script it runs: the shipped one, except in the network cases at the end, which point it at a copy
+# whose one network command is a stub (no real network can be made to answer those ways on demand).
+script=$fix
 run() {
   local file=$1; shift
   code=0
   rm -rf "$work/tmp"; mkdir "$work/tmp"
-  out=$(env "$@" TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$file" bash "$fix" 2>"$work/stderr") || code=$?
+  out=$(env "$@" TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$file" bash "$script" 2>"$work/stderr") || code=$?
   printf '%s\n' "$out" | sed 's/^/    | /'
   [ ! -s "$work/stderr" ] || { sed 's/^/    ! /' "$work/stderr"; fail "the fix wrote to stderr"; }
   left=$(find "$work/tmp" -mindepth 1 -maxdepth 1 -exec basename {} \; | tr '\n' ' ')
@@ -164,6 +167,39 @@ if [ "$found" -gt 0 ]; then
     if [ "$code" -ne 2 ] || ! cmp -s "$work/trusted.pem" "$work/trusted.before"; then fail "TRUSTED CERTIFICATE block, $net: expected exit 2, unchanged, got $code"; fi
   done
   ok "a BEGIN TRUSTED CERTIFICATE block is refused, online and offline"
+fi
+
+# What the fix does with what the network says. These cases drive a copy of the script whose one network command is
+# a stub standing in for /usr/bin/curl, because no real network can be made to answer this way on demand. They are
+# about control flow, not about curl: everything else in the copy is the shipped script, byte for byte.
+if [ "$found" -gt 0 ]; then
+  sed 's|/usr/bin/curl|"${WARDLATCH_CURL:-/usr/bin/curl}"|g' "$fix" >"$work/stubbed.sh"
+  cmp -s "$fix" "$work/stubbed.sh" && fail "the network cases: the stub replaced nothing, so they would test the real network"
+  cat >"$work/curl-stub" <<'STUB'
+#!/bin/bash
+# Stands in for /usr/bin/curl: $STUB_TEST for the advisory's test host, $STUB_CONTROL for anything else. Prints
+# nothing and exits with that code, as curl -s -o /dev/null does.
+case "$*" in
+  *we-have-a-problem.com*) exit "${STUB_TEST:?}" ;;
+  *) exit "${STUB_CONTROL:?}" ;;
+esac
+STUB
+  chmod +x "$work/curl-stub"
+  script=$work/stubbed.sh
+
+  # A network that accepts everything: the test host answers AND is trusted, after the two roots were removed from
+  # the file. The fix must be KEPT and the Mac reported exposed, never reverted: putting the original back would
+  # hand both withdrawn roots to a Mac whose network is already answering for someone else, which is the one Mac
+  # that could then never be fixed. Up to 29 Oct 2026 this case restored the backup and exited 1.
+  cp "$work/original.pem" "$work/lying.pem"
+  run "$work/lying.pem" WARDLATCH_CURL="$work/curl-stub" STUB_CONTROL=0 STUB_TEST=0
+  [ "$code" -eq 1 ] || fail "a network that accepts everything: expected exit 1, got $code"
+  grep -q '^EXPOSED' <<<"$out" || fail "a network that accepts everything: expected EXPOSED"
+  [ "$(bad "$work/lying.pem")" -eq 0 ] || fail "a network that accepts everything: the fix was reverted, so the roots are back"
+  [ "$(count "$work/lying.pem")" -eq $((total - found)) ] || fail "a network that accepts everything: the file is not the fixed file"
+  ok "a network that accepts everything: EXPOSED, exit 1, and the fix kept"
+
+  script=$fix
 fi
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.

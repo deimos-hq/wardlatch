@@ -12,7 +12,9 @@
 #   - keeps a dated backup and never overwrites an earlier one;
 #   - writes a new file and checks it (every other certificate still there, only the two removed) before replacing;
 #   - keeps the file readable by everyone, as macOS ships it;
-#   - re-tests against the advisory's test site, and puts the original back if the result is wrong.
+#   - checks that what landed in the file is the file it built, and puts the original back if it isn't -- the one
+#     reason it ever puts the original back, because the original is the file that trusts the compromised keys;
+#   - re-tests against the advisory's test site and reports what it finds; no network result undoes the fix.
 # Safe to run twice. Run it in Terminal (it asks for your Mac's password) or as root from Jamf, Kandji or Intune.
 # Copy it from the Wardlatch page in Safari. Don't fetch it with the Mac's own curl: that curl is what's exposed.
 set -euo pipefail
@@ -122,11 +124,28 @@ $SUDO cp -p "$FILE" "$backup"
 $SUDO cp "$tmp" "$FILE"
 $SUDO chmod 644 "$FILE"
 
+# The only path here that puts the original back, and the only kind of reason there may be for one: the bytes now in
+# $FILE are not the bytes this script built and checked, so what every TLS client on this Mac reads is a file nobody
+# has checked, and the backup is the only file here that has been. It compares two local files and reads nothing
+# else; no probe result reaches it. A revert on a network reading would mean the one Mac that can never be fixed is
+# the one already under attack, because putting the original back puts both withdrawn roots back.
+if ! cmp -s "$tmp" "$FILE"; then
+  # wardlatch:revert-reason=content-mismatch
+  $SUDO cp -p "$backup" "$FILE"
+  echo "EXPOSED  What was written to $FILE isn't the file this built and checked, so the original was put back and this"
+  echo "         Mac still trusts the compromised keys. Nothing else was changed. Run it again; please report this."
+  echo "         Backup: $backup"
+  exit 1
+fi
+
 r=$(trust "$FILE")
 case "$r" in
   60) echo "SAFE     Fixed. $FILE now refuses the compromised keys: $(removed_phrase "$found" "$list"), kept $after." ;;
-  0)  $SUDO cp -p "$backup" "$FILE"
-      echo "EXPOSED  The file still trusts the test site after the change, so the original was put back. Please report this."
+  0)  echo "EXPOSED  Fixed in the file ($(removed_phrase "$found" "$list"), kept $after), but the test site is still trusted,"
+      echo "         so something other than this file is trusting the compromised keys. The fix was kept: putting the"
+      echo "         original back would put both withdrawn roots back on this Mac. Please report this."
+      echo "         Backup: $backup"
+      echo "         Undo:   sudo cp -p '$backup' '$FILE'"
       exit 1 ;;
   *)  echo "SAFE     Fixed in the file: $(removed_phrase "$found" "$list"), kept $after. (The test site didn't answer, so this wasn't re-tested online.)" ;;
 esac
