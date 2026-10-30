@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkBinaryAll } from '../lib/binaries.mjs';
-import { hasReceipt, safe } from '../lib/report.mjs';
+import { hasReceipt, safe, withdrawUnreceipted } from '../lib/report.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
@@ -76,10 +76,51 @@ test('AUDIT-12 a SAFE row\'s reason claims more than its receipt covers: the OVH
     `the receipt names only the program, so the "no envchecker folder in the temp directories" half cannot be audited: ${JSON.stringify(row.searched)}`);
 });
 
-test('AUDIT-13 withdrawUnreceipted() cannot catch any of this: it checks the shape of a receipt, never its truth', () => {
-  const madeUp = safe(['/no/such/folder/anywhere', 'I had a thorough look around']);
-  assert.equal(madeUp.status, 'SAFE');
-  assert.equal(hasReceipt(madeUp), true, 'premise: any non-blank string is a receipt');
-  assert.ok(madeUp.searched.every((s) => isAbsolute(String(s)) && existsSync(String(s))),
-    `lib/report.mjs lets a SAFE through whose receipt names nothing that exists: ${JSON.stringify(madeUp.searched)}`);
+// AUDIT-13, rewritten 30 Oct 2026, and this is why rather than a tidy-up. The original test took the defect it was
+// written to find as its PREMISES: its first two lines asserted that safe() returns SAFE for a made-up receipt and
+// that hasReceipt() says yes to a prose sentence, in those words ("premise: any non-blank string is a receipt"), and
+// only its third line was the finding. A test built that way cannot pass after any correct fix -- once the gate
+// refuses a made-up receipt the premises are false, so it goes red for the right reason and stays red for ever, and a
+// suite with a permanent red in it is a suite nobody reads. 00b6332 fixed the gate on this branch; the finding is now
+// asserted the way round that survives it. What AUDIT-13 found is that the rule standing between an UNKNOWN and a
+// SAFE tested the SHAPE of a receipt and never its truth, and that the second enforcement on the way out called the
+// same shape-only test and so could catch nothing. Both are asserted here as refusals.
+test('AUDIT-13 the receipt gate refuses a made-up receipt, in safe() and again in withdrawUnreceipted()', () => {
+  const prose = 'I had a thorough look around';
+  const nowhere = '/no/such/folder/anywhere';
+  assert.ok(!existsSync(nowhere), 'this case needs a path that is not on this machine');
+
+  // safe() must not hand back an all-clear for a receipt naming a path that is not there and a sentence about
+  // looking. It comes back UNKNOWN rather than throwing, because a folder read a moment ago can be gone by the time
+  // the rule runs, and the iron law's answer to that is UNKNOWN and never SAFE.
+  const madeUp = safe([nowhere, prose], { kind: 'audit13', reason: 'nothing found here' });
+  assert.equal(madeUp.status, 'UNKNOWN',
+    `a receipt naming ${nowhere} and a prose sentence still yielded ${madeUp.status}: ${JSON.stringify(madeUp)}`);
+  assert.match(madeUp.reason, /cannot be checked by looking/, 'the withdrawal has to say why, not just change the status');
+  // both failing entries named, so a reader can see which part of the receipt did not hold
+  assert.ok(madeUp.reason.includes(nowhere), `the made-up path is not named in the reason: ${madeUp.reason}`);
+  assert.ok(madeUp.reason.includes(prose), `the prose entry is not named in the reason: ${madeUp.reason}`);
+
+  // hasReceipt() is the rule itself, and it must say no to the same thing whoever assembled the row.
+  assert.equal(hasReceipt({ status: 'SAFE', searched: [nowhere, prose] }), false,
+    'hasReceipt() still accepts any non-blank string, so the shape-only test is still the rule');
+
+  // withdrawUnreceipted() is the second enforcement, and it has to catch a row safe() never made: lib/binaries.mjs
+  // and lib/installs.mjs push the file they read onto the front of a receipt after the fact, so the row that reaches
+  // the way out is not the object safe() returned. It changes the row in place and returns the ones it changed.
+  const row = { status: 'SAFE', kind: 'audit13', reason: 'nothing found here', searched: [nowhere, prose] };
+  const withdrawn = withdrawUnreceipted([row]);
+  assert.equal(withdrawn.length, 1, `withdrawUnreceipted() let a made-up receipt through: ${JSON.stringify(row)}`);
+  assert.equal(withdrawn[0], row, 'it should return the row it was given, changed in place');
+  assert.equal(row.status, 'UNKNOWN');
+  assert.match(row.reason, /cannot be checked by looking/);
+
+  // And the gate is not simply refusing everything, which would pass every assertion above and be a different
+  // defect: a receipt naming a place that IS on this machine still yields SAFE, and is left alone on the way out.
+  const real = safe([dir], { kind: 'audit13', reason: 'nothing found here' });
+  assert.equal(real.status, 'SAFE', `an existing folder is not a receipt any more: ${JSON.stringify(real)}`);
+  assert.deepEqual(real.searched, [dir]);
+  assert.ok(real.searched.every((s) => isAbsolute(String(s)) && existsSync(String(s))));
+  assert.equal(hasReceipt(real), true);
+  assert.deepEqual(withdrawUnreceipted([{ ...real }]), [], 'the way out withdrew an all-clear whose receipt holds');
 });
