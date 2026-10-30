@@ -97,7 +97,10 @@ new=
 clean() { rm -f "$snap" "$tmp"; [ -z "$new" ] || $SUDO rm -f "$new"; }
 snap=$(mktemp -t wardlatch); tmp=$(mktemp -t wardlatch)
 trap clean EXIT
-trap 'clean; exit 130' HUP INT TERM
+# Exit 2, not the conventional 130: 2 is this script's "couldn't tell, read the printed line", and an interrupted
+# run reached no verdict, which is the same thing to a fleet tool. The page publishes an exit-code table that Jamf,
+# Kandji and Intune policies are built on, and a fourth code in it would be a code nobody's policy has a branch for.
+trap 'clean; exit 2' HUP INT TERM
 cp "$FILE" "$snap" 2>/dev/null || { echo "UNKNOWN  Can't read $FILE. Nothing changed."; exit 2; }
 
 if [ "$(certs "$snap")" -lt 50 ]; then

@@ -289,7 +289,7 @@ if [ "$found" -gt 0 ]; then
   # all; the run is put in its own process group so the signal reaches bash and nothing else.)
   awk '/^\$SUDO cp "\$tmp" "\$new"$/ { print "touch \"$WL_AT_THE_WRITE\"; /bin/sleep 3" } { print }' "$fix" >"$work/atwrite.sh"
   cmp -s "$fix" "$work/atwrite.sh" && fail "an interrupt: the write step was not found, so this case proves nothing"
-  sed "s|^trap 'clean; exit 130' HUP INT TERM\$|# (the old shape: a trap on EXIT alone)|" "$work/atwrite.sh" >"$work/atwrite-exitonly.sh"
+  sed "s|^trap 'clean; exit 2' HUP INT TERM\$|# (the old shape: a trap on EXIT alone)|" "$work/atwrite.sh" >"$work/atwrite-exitonly.sh"
   cmp -s "$work/atwrite.sh" "$work/atwrite-exitonly.sh" && fail "an interrupt: the signal trap was not found, so this case proves nothing"
   interrupt() {   # $1 = script copy, $2 = bundle. Interrupts it at the write; sets $code and $out.
     local pid i
@@ -309,7 +309,9 @@ if [ "$found" -gt 0 ]; then
   }
   cp "$work/original.pem" "$work/atwrite.pem"
   interrupt "$work/atwrite.sh" "$work/atwrite.pem"
-  [ "$code" -ne 0 ] || fail "an interrupt: the run exited 0 after being interrupted"
+  # Exit 2 exactly, not merely non-zero: the Mac page publishes an exit-code table that fleet policies are built
+  # on, and it lists 0, 1 and 2. An interrupted run reached no verdict, which is what 2 means there.
+  [ "$code" -eq 2 ] || fail "an interrupt: expected exit 2, got $code"
   cmp -s "$work/atwrite.pem" "$work/original.pem" || fail "an interrupt: the bundle was replaced after the run was interrupted"
   grep -qE '^(SAFE|EXPOSED)' <<<"$out" && fail "an interrupt: it printed a verdict about a run that was interrupted"
   [ -z "$(find "$work" -name '.wardlatch-new.*' -print -quit)" ] || fail "an interrupt: the file beside the bundle was left behind"

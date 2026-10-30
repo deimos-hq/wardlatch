@@ -70,7 +70,11 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
   write, the old script went on to replace the file and printed `SAFE … now refuses the compromised keys`, exit 0,
   about a run that had been cancelled. (It stops if the signal lands in a command substitution, so it failed only
   some of the time.) The trap is now `EXIT HUP INT TERM`, which is what the one-line fix on the page has always
-  trapped, and it removes the file beside `/etc/ssl/cert.pem` too. Two cases in `test/fix-macos.check.sh` drive
+  trapped, and it removes the file beside `/etc/ssl/cert.pem` too. A run stopped that way exits 2, the code this
+  script already uses for "couldn't tell", because an interrupted run reached no verdict and because the exit-code
+  table the Mac page publishes for Jamf, Kandji and Intune lists 0, 1 and 2 — a fourth code would be one no fleet
+  policy has a branch for. That table's exit-2 row now also names the symbolic link, the unverified backup, the
+  interrupted run, and the one exit-2 case that does follow a change to the file. Two cases in `test/fix-macos.check.sh` drive
   copies of the script, because a power cut and an interrupt landing inside a copy cannot be arranged on demand:
   on the script before this change the first leaves a bundle under 50 certificates and the second exits 0 with a
   SAFE line.
