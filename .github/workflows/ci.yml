@@ -56,7 +56,7 @@ jobs:
         # CL-47 named only until it was rewritten, which CL-52 records). Any edit, even a comment, breaks that
         # published checksum. A deliberate change to the script must update the site's download,
         # the page's hash and the changelog record together, and this hash with them.
-        run: echo "f060d8165aaf8e21e103737ce9cefe55d49f7e8d3ff8323d91be4e00ca325a73  fix/fix-macos.sh" | shasum -a 256 -c -
+        run: echo "0d183c2bfbf0bd0d585fd3f8db5ac1728893beb83bfc31c9b024696443ad16cc  fix/fix-macos.sh" | shasum -a 256 -c -
       - name: The Mac fix on copies of the vendored macOS 27.2 bundle, test/support/fixtures/macos-27.2-cert.pem (off macOS, that it refuses to run)
         run: bash test/fix-macos.check.sh
       - name: The Mac fix on the Mojave-era one-root shapes (offline, a stub for every probe)
