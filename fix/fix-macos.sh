@@ -179,7 +179,7 @@ stopped() {
   clean
   [ -z "$replaced" ] || {
     echo "UNKNOWN  Stopped before this could re-test, and $FILE had already been replaced with the cleaned file"
-    echo "         ($(removed_phrase "$found"), kept $after). It is whole, not half-written. Run this again."
+    echo "         ($(removed_phrase), kept $after). It is whole, not half-written. Run this again."
     echo "         Backup: $backup"
     echo "         Undo:   sudo cp -p '$backup' '$FILE'"
   }
@@ -301,20 +301,27 @@ if [ "$found" -eq 0 ]; then
   exit 0
 fi
 
-# How many of the two withdrawn roots this bundle actually held, in English. Apple added emSign ECC Root CA - G3
-# after Mojave, so every Mac of that era holds ONE of the two: the published page says the fix "removes the two
-# roots", and on those machines it removes one. Saying which, and that the other was already absent, is the
-# difference between a reader trusting the result and wondering whether it half-worked.
-# It does NOT name which root was missing. roots() returns certificate INDEX numbers, not fingerprints, so
-# naming it would mean a second pass over every certificate -- more work and more code in a script that edits
-# the file every TLS client on the Mac reads. The count and the fact that the other was already absent is what
-# a reader needs; which one it was is on the page.
-# It takes the count and nothing else. Every call site used to pass $list after it, which this never read.
+# The names of the withdrawn roots this file held, from what roots() found in it. Copies are counted.
+held() {
+  local a=$AAA_NAME e=$EMS_NAME
+  [ "$naaa" -le 1 ] || a="$naaa copies of $AAA_NAME"
+  [ "$nems" -le 1 ] || e="$nems copies of $EMS_NAME"
+  if [ "$naaa" -gt 0 ] && [ "$nems" -gt 0 ]; then echo "$a and $e"
+  elif [ "$naaa" -gt 0 ]; then echo "$a"
+  else echo "$e"; fi
+}
+# What this run removed, by name, and nothing it did not establish. Apple added emSign ECC Root CA - G3 after Mojave,
+# so every Mac of that era holds ONE of the two, and this says which one was removed and that this FILE did not hold
+# the other. Until 31 Oct 2026 it said "removed both withdrawn roots" whenever it removed two certificates -- two
+# copies of AAA Certificate Services included -- and "the other was already absent from this Mac", which is a claim
+# about a Mac drawn from one file.
 removed_phrase() {
-  if [ "$1" -eq 1 ]; then
-    echo "removed 1 of the 2 withdrawn roots; the other was already absent from this Mac"
+  if [ "$naaa" -gt 0 ] && [ "$nems" -gt 0 ]; then
+    if [ "$found" -eq 2 ]; then echo "removed both withdrawn roots"; else echo "removed both withdrawn roots ($(held))"; fi
+  elif [ "$naaa" -gt 0 ]; then
+    echo "removed $(held) (this file did not hold the other withdrawn root, $EMS_NAME)"
   else
-    echo "removed both withdrawn roots"
+    echo "removed $(held) (this file did not hold the other withdrawn root, $AAA_NAME)"
   fi
 }
 
@@ -374,7 +381,7 @@ replaced=1
 # $FILE are not the bytes this script built and checked, so what every TLS client on this Mac reads is a file nobody
 # has checked, and the backup is the only file here that has been. It compares two local files and reads nothing
 # else; no probe result reaches it. A revert on a network reading would mean the one Mac that can never be fixed is
-# the one already under attack, because putting the original back puts both withdrawn roots back.
+# the one already under attack, because putting the original back puts the withdrawn roots back.
 if ! cmp -s "$tmp" "$FILE"; then
   # Through replace(), like the forward write: an interrupted restore left $FILE a stump when it copied the backup
   # over it in place, which is the defect the forward write was redesigned to remove and this path still had.
@@ -400,43 +407,45 @@ if [ "$c" -eq 0 ]; then
   # certificates. So the test host's answer is about the test host, and there is a verdict to be had.
   r=$(trust "$FILE")
   case "$r" in
-    60) echo "SAFE     Fixed. $FILE now refuses the compromised keys: $(removed_phrase "$found"), kept $after." ;;
-    0)  echo "EXPOSED  Fixed in the file ($(removed_phrase "$found"), kept $after), but the advisory's test site is"
+    60) echo "SAFE     Fixed. $FILE now refuses the compromised keys: $(removed_phrase), kept $after." ;;
+    0)  echo "EXPOSED  Fixed in the file ($(removed_phrase), kept $after), but the advisory's test site is"
         echo "         still trusted. Two ordinary things look exactly like this, and both are likelier than"
         echo "         anything stranger. A TLS-inspecting proxy's own root may have been added to this file (or to"
         echo "         whichever file your tools read): the proxy then signs everything, and that site loads"
         echo "         whatever this file holds. Or the test site may have re-issued its certificate from an"
         echo "         ordinary CA, in which case it now loads for everyone and tests nothing. Rule those two out"
         echo "         before you go looking for something else on this Mac that trusts the compromised keys. The"
-        echo "         fix was kept either way: putting the original back would put both withdrawn roots back."
-        echo "         Please report this."
+        echo "         fix was kept either way: putting the original back would put"
+        echo "         $(held) back. Please report this."
         echo "         Backup: $backup"
         echo "         Undo:   sudo cp -p '$backup' '$FILE'"
         exit 1 ;;
-    *)  echo "SAFE     Fixed in the file: $(removed_phrase "$found"), kept $after. (The test site didn't answer"
+    *)  echo "SAFE     Fixed in the file: $(removed_phrase), kept $after. (The test site didn't answer"
         echo "         (curl $r), though an ordinary website loaded, so this wasn't re-tested online.)" ;;
   esac
 elif [ "$c0" -ne 0 ]; then
   # Nothing loaded before the change either, so this reading is about the network and not about the file. Report,
   # keep the fix, claim nothing online.
-  echo "SAFE     Fixed in the file: $(removed_phrase "$found"), kept $after."
+  echo "SAFE     Fixed in the file: $(removed_phrase), kept $after."
   echo "         (An ordinary website didn't load before this change (curl $c0) or after it (curl $c), so nothing"
   echo "         was re-tested online.)"
 else
   # The one reading here that is about the change and not about the network: an ordinary website loaded through the
-  # file as it was and does not load through the file this wrote. Those two files differ by exactly the two
-  # withdrawn roots, so either that site's certificate chain needs one of them, or something on this network
-  # answered the two requests differently -- and that second reading is what an attack on this Mac looks like.
+  # file as it was and does not load through the file this wrote. The certificates in those two files differ by
+  # exactly the withdrawn roots removed -- by name, whatever this file held, not "the two" and not AAA by default --
+  # so either that site's certificate chain needs one of them, or something on this network answered the two
+  # requests differently -- and that second reading is what an attack on this Mac looks like.
   # Both say the same thing about what to do, which is why there is no revert here and no revert-reason for one:
   # eMudhra's private keys are computable from certificates eMudhra published, so putting one of those roots back
   # to make a page load is not a repair, and on the second reading it would hand both withdrawn roots to a Mac
   # already under attack -- the door this script closed on 29 Oct 2026, which a before/after revert would reopen
   # from the side. UNKNOWN and exit 2, because this is a thing to look at, not an all-clear.
-  echo "UNKNOWN  Fixed in the file ($(removed_phrase "$found"), kept $after), but an ordinary website that"
-  echo "         loaded through the old file (curl $c0) doesn't load through the new one (curl $c). Those two files"
-  echo "         differ only by the two withdrawn roots, so either that site's certificate is issued under AAA"
-  echo "         Certificate Services, or something on this network is presenting one that is -- and the second is"
-  echo "         what an attack on this Mac would look like. The fix was kept either way: those private keys can be"
+  echo "UNKNOWN  Fixed in the file ($(removed_phrase), kept $after), but an ordinary website that"
+  echo "         loaded through the old file (curl $c0) doesn't load through the new one (curl $c). The certificates"
+  echo "         in the two files differ only by $(held), so"
+  echo "         either that website's certificate chain needs what was removed, or this network answered the two"
+  echo "         requests differently -- and the second is what an attack on this Mac would look like. The fix was"
+  echo "         kept either way: those private keys can be"
   echo "         computed from published certificates, so trusting that root again to make a page load would not be"
   echo "         a repair. Decide it yourself from the two lines below. Please report this."
   echo "         Backup: $backup"
