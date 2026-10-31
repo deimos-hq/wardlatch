@@ -489,3 +489,70 @@ test('eMudhra: each withdrawn root carries the SHA-256 of its SubjectPublicKeyIn
   // the two the round-4 brief names, re-derived with LibreSSL 3.3.6 and OpenSSL 4.0.3 (the commit says how)
   assert.deepEqual(inc.distrustedRoots.map((r) => r.spkiSha256), ['bd153ed7b0434f6886b17bce8bbe84ed340c7132d702a8f4fa318f756ecbd6f3', '8d417db2dd8bf5e3084d1e3f196d583849d81bdd4c00c70b9d39369e96b8c782']);
 });
+
+// ---- round 3's lib mutants that no test caught ------------------------------------------------------------------------
+// Round 3's re-read 3 planted twelve mutants in round-3 lib code and seven survived the whole suite: L02, L04, L05, L06,
+// L09, L11 and L12. L05 and L06 are held by the derKind() test above, L11 by the crash.mjs test, and L02 (venvOfPackages
+// without its pyvenv.cfg test, in its round-4 form) by reread-r2's R2-N2. These hold the other three, each shown failing
+// on its mutant in the round-4 mutant run.
+
+// L04: holdsMore() counting macOS's own Library. A folder past the depth cap that holds nothing but macOS's Library
+// leaves nothing unsearched there (the walks never enter it). The only place a test can find a Library that is macOS's
+// own without touching a real home is `/`: every name in it but Library is given as not entered.
+test('L04 holdsMore(): a folder whose only folder is macOS\'s own Library holds nothing more to walk', { skip: process.platform !== 'darwin' && 'macOS' }, async (t) => {
+  const { holdsMore, isSystemFolder } = await import('../lib/files.mjs');
+  if (!isSystemFolder('Library', '/')) return t.skip('no macOS Library at / on this machine');
+  const others = readdirSync('/').filter((n) => n !== 'Library');
+  assert.equal(holdsMore('/', others), false);
+  // the control: one other folder of / left in, and it holds more
+  const dirs = readdirSync('/', { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== 'Library').map((e) => e.name);
+  assert.equal(holdsMore('/', others.filter((n) => n !== dirs[0])), true, dirs[0]);
+});
+
+// L09: Bedrock 1.0.0's layout (app/, config/ and wp/ side by side) dropped from bedrockApp(). A Bedrock 1.0.0 checkout
+// with no core yet has its app/plugins checked as a loose plugins folder, new plugin folders listed for review; with the
+// mutant, a plugin folder of no listed name in it went unlisted, "SAFE no WordPress installs found".
+test('L09 a Bedrock 1.0.0 checkout with no core: its app/plugins is checked, new plugin folders listed for review', () => {
+  for (const [name, conf] of [['1.0.0', ''], ['1.1', 'web']]) {
+    const root = fresh(`l09-${name}`);
+    const app = conf ? join(root, conf, 'app') : join(root, 'app');
+    put(join(root, 'config', 'application.php'), "<?php\n$root_dir = dirname(__DIR__);\n");
+    mkdirSync(join(app, 'plugins', 'shiny-new-plugin'), { recursive: true });
+    const r = json([...WP, '--paths', root]);
+    assert.ok(r.rows.some((x) => x.status === 'REVIEW' && x.what === 'plugin folder shiny-new-plugin'), `Bedrock ${name}: ${JSON.stringify(r.rows).slice(0, 1500)}`);
+  }
+});
+
+// L12: `--list` printing the incident titles without clean(). The incident data is Wardlatch's own, but it is printed
+// like everything else, so a title carrying a hidden character is written out. A copy of the package with one more
+// incident file, never the tree under test, holds the fixture.
+test('L12 --list prints an incident title escaped', async () => {
+  const { cpSync } = await import('node:fs');
+  const copy = fresh('l12-pkg');
+  for (const p of ['bin', 'lib', 'package.json']) cpSync(join(ROOT, p), join(copy, p), { recursive: true });
+  const rlo = String.fromCodePoint(0x202e);
+  writeFileSync(join(copy, 'lib', 'incidents', 'zz-l12.json'), JSON.stringify({ id: 'zz-l12', date: '2026-10-01', type: 'workflows', since: '2026-10-01T00:00:00Z', title: `before${rlo}after` }));
+  const r = spawnSync(process.execPath, [join(copy, 'bin', 'wardlatch.mjs'), '--list'], { encoding: 'utf8', env: { HOME: home, PATH: '/usr/bin:/bin' }, cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.stdout.includes('zz-l12  2026-10-01  before\\u{202e}after'), r.stdout);
+  assert.ok(!r.stdout.includes(rlo), 'no raw U+202E');
+});
+
+// A guard for round 4's inVenv rule (lib/files.mjs holdsMore()): a venv one level past the depth floor (its own folder
+// is where the cap stops) makes no depth-limit row for its flat bin, empty include and lib leading to its checked
+// packages; a plain folder of the same shape, not a venv, still does, for the folders in it.
+test('a venv one level past the depth floor makes no depth-limit row for its bin, include and lib; a plain folder there does', async () => {
+  const root = fresh('own-past-floor');
+  const env = certifiVenv(join(root, 'a', 'b', 'c', 'd', 'e', '.venv'));
+  mkdirSync(join(env, 'include'), { recursive: true });
+  const plain = join(root, 'a', 'b', 'c', 'd', 'e', 'plain');
+  mkdirSync(join(plain, 'bin'), { recursive: true }); mkdirSync(join(plain, 'include'), { recursive: true });
+  const { sitePackagesDirs } = await import('../lib/installs.mjs');
+  const deep = [], links = [];
+  const dirs = sitePackagesDirs({ roots: [root], patterns: [], home: '', denied: [], deep, links });
+  assert.ok(dirs.includes(join(env, 'lib', 'python3.12', 'site-packages')), 'the venv\'s packages were checked');
+  assert.deepEqual(deep, [plain], 'installs');
+  const r = await discovered([root]);
+  assert.ok(r.envs.includes(env), JSON.stringify(r.envs));
+  assert.deepEqual(r.deep, [plain], 'trust');
+});
