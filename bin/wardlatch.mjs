@@ -622,7 +622,7 @@ for (const inc of chosen) {
       results.push({ incident: inc.id, kind: 'header', status: f.status, file: f.file, where: f.where, carries: f.carries, to: f.to, fix: inc.fix });
       print(f.status, `${short(f.file)} · ${f.where}`, c('2', `  carries ${f.carries}, ${f.to}`));
     }
-    gaps(results, inc, 'header', [...lockedRoots, ...h.denied], { deep: h.deep, levels: 4 });
+    gaps(results, inc, 'header', [...lockedRoots, ...h.denied], { links: h.links, deep: h.deep, levels: 4 });
     if (h.findings.length) note('2', `fix: ${inc.fix}`);
     // The receipt is the settings files that were read and the folders that were walked for a repository's own
     // settings — places a reader can open. Up to 0.1.10 it also carried the words "the environment", and on a machine

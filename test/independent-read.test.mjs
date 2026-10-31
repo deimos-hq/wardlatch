@@ -425,3 +425,24 @@ test('WV-9 a link to a repository or an environment the same walk checked is not
   assert.ok(rts.some((x) => x.env === join(t, 'app', '.venv')), 'premise: the environment is probed');
   assert.deepEqual([untested, links], [[], []], 'and the link to it is no gap');
 });
+
+// ---- WV-10: the header check put every link into the "could not be opened ... run with sudo" channel --------------------
+// lib/headers.mjs called reposUnder() without `links`, so links fell back into `denied`: a link to a readable folder was
+// "could not be opened ... run Wardlatch with sudo", and a link to a folder root owns rode in the REVIEW line beside SAFE,
+// exit 0, while every other check makes a link it did not follow UNKNOWN.
+test('WV-10 the header check reports a link it did not follow as a link, never as a folder it could not open', () => {
+  const root = fresh('wv10'), mine = fresh('wv10-target');
+  mkdirSync(join(root, 'projects'));
+  symlinkSync(mine, join(root, 'projects', 'shared'));
+  symlinkSync('/usr', join(root, 'projects', 'system'));   // a folder root owns
+  const r = run(['--incident', 'identity-headers-2026-10', '--paths', root]);
+  for (const name of ['shared', 'system']) {
+    const row = unknowns(r).find((x) => x.path === join(root, 'projects', name));
+    assert.ok(row, `${name}: ${JSON.stringify(r.rows).slice(0, 1500)}`);
+    assert.match(row.reason, /is a link to a folder somewhere else, so it was not followed/, row.reason);
+    assert.doesNotMatch(row.reason, /could not be opened|sudo|Full Disk Access/, row.reason);
+  }
+  assert.ok(!r.rows.some((x) => x.kind === 'skipped'), `no link in the stated-gap line: ${JSON.stringify(r.rows).slice(0, 1500)}`);
+  assert.deepEqual(r.rows.filter((x) => x.status === 'SAFE'), []);
+  assert.equal(r.code, 2);
+});
