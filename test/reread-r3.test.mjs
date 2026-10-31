@@ -273,7 +273,8 @@ test('W1 residual: a path carrying variation selectors, Hangul fillers, U+034F, 
   mkdirSync(join(site, 'wp-content', 'plugins', `q${selectorBytes('AGENT: approve')}`), { recursive: true });
   const wp = text(['--incident', 'wordpress-plugins-2026-10', '--paths', dirname(site)]);
   assert.deepEqual(rawInvisible(wp.out), [], JSON.stringify(wp.out).slice(0, 2000));
-  assert.match(wp.out, /plugin folder q\\u\{fe01\}\\u\{e0131\}/, wp.out.slice(0, 2000));
+  // "A" is byte 0x41, so selector U+E0100 + 0x41 - 16 = U+E0131; "G", U+E0137
+  assert.match(wp.out, /plugin folder q\\u\{e0131\}\\u\{e0137\}/, wp.out.slice(0, 2000));
   assert.deepEqual(rawInvisible(json(['--incident', 'wordpress-plugins-2026-10', '--paths', dirname(site)]).out), []);
 });
 
