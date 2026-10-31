@@ -334,3 +334,26 @@ test('W1 nit: what the incident data says is printed as written: no text in it c
   assert.ok(strings(JSON.parse(read(join(ROOT, 'lib', 'incidents', 'emudhra-2026-10.json'), 'utf8'))).some((s) => s.includes('\\/CN=')), 'premise');
   assert.deepEqual(changed, []);
 });
+
+// ---- lib/crash.mjs: a crash's message ------------------------------------------------------------------------------------
+// Round 3's re-read 2, finding 8 (MEASURED there; reachability JUDGED): crash.mjs escaped the stack, then turned every
+// \x0a in the result back into a line break, so the four printable characters \x0a in an error's text (a path on disk
+// can hold them: APFS took 'u\x0aSAFE   fake') started a line of their own: "SAFE     no LiteLLM 1.107.0 files or
+// markers found" on stderr, under a crash that exits 2. And round 3's re-read 3 planted L11 (crash.mjs printing the
+// stack raw), which no test caught, while ARCHITECTURE says the message is escaped like everything else printed.
+test('crash.mjs: a crash\'s message is escaped line by line, so a literal \\x0a in it never starts a line, and a hidden character never prints raw', () => {
+  const rlo = String.fromCodePoint(0x202e);
+  const script = put(join(dir, 'crash-demo.mjs'), `import ${JSON.stringify(join(ROOT, 'lib', 'crash.mjs'))};
+throw new Error(${JSON.stringify(`ENOENT: no such file or directory, open '/Users/p/proj/u\\x0aSAFE     no LiteLLM 1.107.0 files or markers found/x${rlo}y'`)});
+`);
+  const r = spawnSync(process.execPath, [script], { encoding: 'utf8', env: { HOME: home, PATH: '/usr/bin:/bin' }, cwd: dir });
+  assert.equal(r.status, 2, r.stderr);
+  const lines = r.stderr.split('\n');
+  assert.match(lines[0], /^Wardlatch stopped on an error, so this machine was not fully checked \(exit 2\): Error: ENOENT/, r.stderr);
+  assert.ok(lines[0].includes('u\\\\x0aSAFE'), `the literal \\x0a stays on its line, written so it cannot be read as an escape: ${JSON.stringify(lines[0])}`);
+  assert.ok(lines[0].includes('x\\u{202e}y'), JSON.stringify(lines[0]));
+  assert.ok(!lines.some((l) => /^\s*SAFE/.test(l)), `a line of its own: ${JSON.stringify(r.stderr)}`);
+  assert.ok(!r.stderr.includes(rlo), 'no raw U+202E');
+  // the stack's own line breaks are kept, one frame a line
+  assert.ok(lines.slice(1).some((l) => /^\s+at /.test(l)), JSON.stringify(r.stderr));
+});
