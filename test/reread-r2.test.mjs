@@ -254,3 +254,105 @@ console.log(JSON.stringify(checkVersionFiles({ product: 'GitLab', fixedIn: '18.4
   const row = e.rows.find((x) => x.dir === sp && x.status === 'UNKNOWN');
   assert.match(row?.reason ?? '', SUDO, JSON.stringify(e.rows));
 });
+
+// ---- R2-N1, R2-N2, R2-N4, RR-5: the d4d4c71 regressions, and what a virtual environment hides -----------------------------
+// d4d4c71 made a --paths folder that IS a virtual environment be probed by the trust walk instead of walked (R2-N1), and
+// made the installs walk add a folder or a LINK named site-packages or dist-packages without walking it or reporting it
+// (R2-N2): a project made with `python3 -m venv .` holding services/api/.venv, a folder named site-packages holding a
+// stealer's venv, and a link named site-packages read SAFE, exit 0. Neither walk ever went into a venv found below a
+// searched folder (R2-N4), and the trust walk examined nothing when given a venv's lib or site-packages (RR-5).
+// The rule now: every folder given with --paths is walked; every venv met is checked (its site-packages, or its
+// certifi bundle) AND walked, except the folders it keeps its own files in (bin, include, lib, share, …), which are
+// checked with it and named in the receipt; a site-packages folder that is not a venv's own is walked like any folder,
+// and a link of that name follows the link rule. The venv's own folders are not walked because a real one is deep:
+// MEASURED, a fresh `python3 -m venv` (Python 3.14, pip 26.1.2) has folders 9 levels below its root, so walking it as
+// it is gives a depth-limit row, exit 2, on every `--paths <venv>`, the advice the trust check itself prints.
+/** A venv for the trust walk: bin/python, pyvenv.cfg and a certifi bundle. */
+function certifiVenv(root) {
+  const sp = join(root, 'lib', 'python3.12', 'site-packages');
+  put(join(root, 'bin', 'python'), 'not run by Wardlatch\n');
+  put(join(root, 'pyvenv.cfg'), 'home = /usr\n');
+  put(join(sp, 'certifi', 'cacert.pem'), '-----BEGIN CERT' + 'IFICATE-----\nQUFB\n-----END CERT' + 'IFICATE-----\n');
+  put(join(sp, 'certifi-2026.06.17.dist-info', 'METADATA'), 'Version: 2026.06.17\n');
+  return root;
+}
+/** Folders as deep as a real venv's own: pip's tree in site-packages, and jupyter's in share/. */
+function deepInside(env) {
+  put(join(env, 'lib', 'python3.12', 'site-packages', 'pip', '_internal', 'operations', 'install', 'x', 'y', 'f.py'), '');
+  put(join(env, 'share', 'jupyter', 'labextensions', '@w', 'manager', 'static', 'f.js'), '');
+}
+const discovered = async (roots) => {
+  const { discover } = await import('../lib/discover.mjs');
+  const untested = [], links = [], deep = [], denied = [], found = [];
+  const rts = discover({ roots, pathEnv: fresh('no-programs'), untested, links, deep, denied, found });
+  const envs = [...rts.map((x) => x.env), ...untested.map((x) => x.fields?.env)].filter(Boolean);
+  return { envs, deep, links };
+};
+
+test('R2-N1 the trust walk walks a --paths folder that is itself a venv, and a venv found below one', async () => {
+  const proj = certifiVenv(fresh('n1/proj'));                       // `python3 -m venv .` in a project
+  const inner = certifiVenv(join(proj, 'services', 'api', '.venv'));
+  const r = await discovered([proj]);
+  assert.ok(r.envs.includes(proj), `the venv given: ${JSON.stringify(r)}`);
+  assert.ok(r.envs.includes(inner), `the venv inside it: ${JSON.stringify(r)}`);
+  // R2-N4: the same project one level below the folder given
+  const r2 = await discovered([dirname(proj)]);
+  assert.ok(r2.envs.includes(inner), `a venv inside a venv found below the folder given: ${JSON.stringify(r2)}`);
+});
+
+test('RR-5 the trust walk given a venv\'s lib or site-packages folder probes that venv', async () => {
+  const env = certifiVenv(join(fresh('rr5'), '.venv'));
+  for (const given of [join(env, 'lib'), join(env, 'lib', 'python3.12', 'site-packages')]) {
+    const r = await discovered([given]);
+    assert.ok(r.envs.includes(env), `--paths ${given}: ${JSON.stringify(r)}`);
+  }
+});
+
+test('R2-N1 walking a venv does not walk the folders it keeps its own files in, so --paths <venv> makes no depth-limit row', async () => {
+  // fails on the re-read's candidate fix (probe, then walk the venv as it is)
+  const env = certifiVenv(join(fresh('n1-deep'), '.venv'));
+  deepInside(env);
+  const r = await discovered([env]);
+  assert.deepEqual(r.deep, [], JSON.stringify(r));
+  const { sitePackagesDirs } = await import('../lib/installs.mjs');
+  for (const given of [env, dirname(env), join(env, 'lib')]) {
+    const deep = [], links = [];
+    sitePackagesDirs({ roots: [given], patterns: [], home: '', denied: [], deep, links });
+    assert.deepEqual(deep, [], `installs, --paths ${given}`);
+  }
+});
+
+test('R2-N2 a folder named site-packages below a searched folder is walked, and a link of that name is a link not followed', () => {
+  const a = fresh('n2-name');
+  const stealer = litellmVenv(join(a, 'site-packages', 'vendored', '.venv'));
+  const r = json([...LITELLM, '--paths', a]);
+  assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && x.dir === stealer), JSON.stringify(r.rows).slice(0, 2000));
+  assert.equal(r.code, 1);
+  const b = fresh('n2-link');
+  litellmVenv(join(b, 'vol', 'app', '.venv'));
+  mkdirSync(join(b, 'root', 'proj'), { recursive: true });
+  symlinkSync(join(b, 'vol'), join(b, 'root', 'proj', 'site-packages'));
+  const l = json([...LITELLM, '--paths', join(b, 'root')]);
+  assert.deepEqual(l.rows.filter((x) => x.status === 'SAFE'), [], `a name let a link escape the link rule: ${JSON.stringify(l.rows).slice(0, 2000)}`);
+  assert.ok(unknowns(l).some((x) => x.path === join(b, 'root', 'proj', 'site-packages')), JSON.stringify(l.rows).slice(0, 2000));
+  assert.equal(l.code, 2);
+});
+
+test('R2-N4 the installs walk goes into a venv found below a searched folder, past the folders the venv keeps its own files in', () => {
+  const root = fresh('n4');
+  const proj = join(root, 'proj');
+  litellmVenv(proj);                                                 // a project made with `python3 -m venv .`, clean
+  rmSync(join(proj, 'lib', 'python3.12', 'site-packages', 'cook.pth'));
+  rmSync(join(proj, 'lib', 'python3.12', 'site-packages', 'litellm-1.107.0.dist-info'), { recursive: true });
+  const stealer = litellmVenv(join(proj, 'services', 'api', '.venv'));
+  const r = json([...LITELLM, '--paths', root]);
+  assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && x.dir === stealer), JSON.stringify(r.rows).slice(0, 2000));
+  assert.equal(r.code, 1);
+  // and a clean run names what it did not search inside a venv
+  rmSync(join(proj, 'services'), { recursive: true });
+  const clean = json([...LITELLM, '--paths', root]);
+  const safe = clean.rows.find((x) => x.status === 'SAFE');
+  assert.ok(safe?.notSearched?.some((n) => /virtual environment/.test(n) && /\blib\b/.test(n)), JSON.stringify(clean.rows));
+  const t = text([...LITELLM, '--paths', root]).out;
+  assert.match(t.split('\n')[t.split('\n').findIndex((x) => x.startsWith('SAFE')) + 1] ?? '', /inside a virtual environment/, t);
+});
