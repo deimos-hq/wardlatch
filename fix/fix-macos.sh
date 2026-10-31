@@ -55,7 +55,10 @@ trust() { local r=0; /usr/bin/curl -q -s -o /dev/null --max-time 15 --cacert "$1
 # verdict to be had here -- without this, "the test site refused" and "nothing on this network answered" are the
 # same reading, and the Mac that most needs this fix is the one whose network is under someone else's control.
 control() { local r=0; /usr/bin/curl -q -s -o /dev/null --max-time 15 --cacert "$1" "$CONTROL_URL" || r=$?; echo "$r"; }
-certs() { grep -c 'BEGIN CERTIFICATE' "$1" || true; }
+# Certificates are lines that START with the BEGIN marker, which is all LibreSSL reads as one. Until 31 Oct 2026 the
+# marker counted anywhere in a line, so a comment that mentioned it ("paste each certificate from its -----BEGIN
+# CERTIFICATE----- line ...") made a bundle LibreSSL reads without complaint unfixable, as "a certificate can't be read".
+certs() { grep -c '^-----BEGIN CERTIFICATE-----' "$1" || true; }
 # Prints the position (1, 2, ...) of each certificate in the file whose fingerprint is one of ROOTS, one per line.
 # Fails if any certificate can't be read, so a file we can't fully check is never called clean.
 # It runs in $( ), so its EXIT trap removes the temporary folder however it ends. The trap names the folder itself,
@@ -65,7 +68,7 @@ roots() {
   d=$(mktemp -d -t wardlatch) || return 1
   # shellcheck disable=SC2064
   trap "rm -rf '$d'" EXIT
-  awk -v d="$d" '/-----BEGIN CERTIFICATE-----/{k++; f=sprintf("%s/%05d.pem", d, k)} f{print > f} /-----END CERTIFICATE-----/{close(f); f=""}' "$1" || return 1
+  awk -v d="$d" '/^-----BEGIN CERTIFICATE-----/{k++; f=sprintf("%s/%05d.pem", d, k)} f{print > f} /^-----END CERTIFICATE-----/{close(f); f=""}' "$1" || return 1
   [ "$(find "$d" -name '*.pem' | wc -l | tr -d ' ')" -eq "$(certs "$1")" ] || return 1
   for c in "$d"/*.pem; do
     # A file with no certificates at all splits into no files, and an unmatched glob is the pattern itself, which
@@ -99,13 +102,13 @@ strip() {
     BEGIN { n = split(list, a, " "); for (i = 1; i <= n; i++) drop[a[i] + 0] = 1 }
     NR == FNR {
       if ($0 ~ /^=== /) name = FNR
-      if ($0 ~ /-----BEGIN CERTIFICATE-----/) { k++; start[name ? name : FNR] = k; name = 0 }
-      if ($0 ~ /-----END CERTIFICATE-----/) name = 0
+      if ($0 ~ /^-----BEGIN CERTIFICATE-----/) { k++; start[name ? name : FNR] = k; name = 0 }
+      if ($0 ~ /^-----END CERTIFICATE-----/) name = 0
       next
     }
     FNR in start { state = (start[FNR] in drop) ? 1 : 0 }
     state == 2 { if ($0 == "") next; state = 0 }
-    state == 1 { if ($0 ~ /-----END CERTIFICATE-----/) state = 2; next }
+    state == 1 { if ($0 ~ /^-----END CERTIFICATE-----/) state = 2; next }
     { print }' "$1" "$1"
 }
 
@@ -171,7 +174,7 @@ cp "$FILE" "$snap" 2>/dev/null || { echo "UNKNOWN  Can't read $FILE. Nothing cha
 # This is read before the floor below, and the fingerprints after it, because the floor now has to say whether the
 # file holds a withdrawn root: a block this fix cannot read could hold one, so "it holds neither" would otherwise be
 # a claim about bytes nobody checked.
-if [ "$(grep -c -- '-----BEGIN ' "$snap" || true)" -ne "$(grep -c -- '-----BEGIN CERTIFICATE-----' "$snap" || true)" ]; then
+if [ "$(grep -c -- '^-----BEGIN ' "$snap" || true)" -ne "$(grep -c -- '^-----BEGIN CERTIFICATE-----' "$snap" || true)" ]; then
   echo "UNKNOWN  $FILE holds blocks that aren't plain certificates (such as BEGIN TRUSTED CERTIFICATE), which curl also"
   echo "         trusts and this fix can't check. Nothing changed. Run npx wardlatch@latest to test the Mac's tools."
   exit 2
