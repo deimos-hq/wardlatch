@@ -401,3 +401,27 @@ test('WV-12 a DER certificate named .crt or .pem is not a gap; other binary unde
   assert.doesNotMatch(row.reason, /named as a text file/, row.reason);
   assert.equal(o.code, 2);
 });
+
+// ---- WV-9: a link to a repository or venv the same walk found and checked was UNKNOWN -----------------------------------
+// reposUnder() and discover() never recorded a found repository or environment as walked, so a link to one (current ->
+// proj, .venv -> app/.venv) was UNKNOWN beside its own clean row, and the printed advice (--paths it) changed nothing.
+test('WV-9 a link to a repository or an environment the same walk checked is not a gap', async () => {
+  const root = fresh('wv9');
+  repoWith(join(root, 'proj'), { 'README.md': '# proj\n' });
+  symlinkSync(join(root, 'proj'), join(root, 'current'));
+  for (const id of ['github-actions-2026-10', 'committed-keys-2026-10']) {
+    for (const paths of [[root], [root, join(root, 'proj')]]) {
+      const r = run(['--incident', id, ...paths.flatMap((p) => ['--paths', p])]);
+      assert.deepEqual(unknowns(r), [], `${id} ${paths.length} paths: ${JSON.stringify(r.rows).slice(0, 1500)}`);
+      assert.equal(r.code, 0, id);
+    }
+  }
+  const { discover } = await import('../lib/discover.mjs');
+  const t = fresh('wv9-trust');
+  certifiVenv(join(t, 'app', '.venv'));
+  symlinkSync(join(t, 'app', '.venv'), join(t, '.venv'));
+  const untested = [], links = [];
+  const rts = discover({ roots: [t], pathEnv: fresh('wv9-no-programs'), untested, links });
+  assert.ok(rts.some((x) => x.env === join(t, 'app', '.venv')), 'premise: the environment is probed');
+  assert.deepEqual([untested, links], [[], []], 'and the link to it is no gap');
+});
