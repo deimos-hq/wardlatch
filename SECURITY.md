@@ -69,8 +69,10 @@ reported, and what was actually true.
    look the result up. The place that chain lives is the site's **Record**, not the download page: each Record entry
    that changes the file prints the file's new digest and names the entry holding the one before it, back to the
    first. The page prints exactly one digest, the file it is serving now, and the site's build fails on any other
-   64-hex digest in a Wardlatch page's `<main>` — so a superseded checksum can never sit beside a current one where
-   a reader could take either for the file they have just downloaded.
+   digest written as 64 lowercase hex digits in a Wardlatch page's `<main>`, the form the pages print — so a
+   superseded checksum written that way can't sit beside the current one where a reader could take either for the
+   file they have just downloaded. The guard reads only that form: the same digest in capitals, or split by a tag,
+   passes it.
 5. **Disclosed**: the advisory is published (with a CVE requested through GitHub when the flaw warrants one), and
    [CHANGELOG.md](CHANGELOG.md) names it under the release that fixes it. The fix is reachable before it is
    described: an advisory naming a trigger, while the download still carries the flaw, tells an attacker how to
