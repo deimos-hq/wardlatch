@@ -9,7 +9,7 @@ import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, mkdirSync, mkdtempSync, rmSync, realpathSync, readdirSync, statSync, symlinkSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -356,4 +356,57 @@ throw new Error(${JSON.stringify(`ENOENT: no such file or directory, open '/User
   assert.ok(!r.stderr.includes(rlo), 'no raw U+202E');
   // the stack's own line breaks are kept, one frame a line
   assert.ok(lines.slice(1).some((l) => /^\s+at /.test(l)), JSON.stringify(r.stderr));
+});
+
+// ---- committed keys -------------------------------------------------------------------------------------------------------
+/** A git repository at `path` with `files` ({ name: Buffer|string }) committed. */
+function repoWith(path, files) {
+  mkdirSync(path, { recursive: true });
+  const g = (...a) => execFileSync('git', ['-C', path, '-c', 'commit.gpgsign=false', ...a], { stdio: 'pipe', env: { PATH: '/usr/bin:/bin', HOME: home, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.invalid', GIT_AUTHOR_DATE: '2026-10-20T12:00:00Z', GIT_COMMITTER_DATE: '2026-10-20T12:00:00Z' } });
+  g('init', '-q', '-b', 'main');
+  for (const [name, body] of Object.entries(files)) put(join(path, name), body);
+  g('add', '-A'); g('commit', '-qm', 'add');
+  return { path, g };
+}
+const KEYS = ['--incident', 'committed-keys-2026-10'];
+const pkcs8 = async () => (await import('node:crypto')).generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ type: 'pkcs8', format: 'der' });
+
+// Round 3's re-read 2, finding 5 (MEASURED there: OpenSSL 4.0.3 `openssl pkey -inform DER` loads it): a DER private
+// key followed by more than 1 MB of other bytes was skipped with no row, in the working tree and from git's index,
+// because the file was read whole under a 1 MB cap before derKind() ever saw it, whose own rule is that a key is a key
+// whatever follows it. The repository read "SAFE no committed keys found", exit 0.
+test('a DER key followed by more than 1 MB of other bytes is found, in the working tree and deleted from it', async () => {
+  const key = Buffer.concat([await pkcs8(), Buffer.alloc(1100000)]);
+  const root = fresh('der-big');
+  const { path } = repoWith(join(root, 'app'), { 'deploy-key.bin': key, 'README.md': '# app\n' });
+  const r = json([...KEYS, '--paths', root]);
+  assert.deepEqual(r.rows.filter((x) => x.status === 'REVIEW').map((x) => [x.file, x.type]), [['deploy-key.bin', 'private key (DER, PKCS #8)']], JSON.stringify(r.rows).slice(0, 1500));
+  assert.deepEqual(r.rows.filter((x) => x.status === 'SAFE'), []);
+  rmSync(join(path, 'deploy-key.bin'));
+  const d = json([...KEYS, '--paths', root]);
+  assert.deepEqual(d.rows.filter((x) => x.status === 'REVIEW').map((x) => x.file), ['deploy-key.bin'], `from git's copy: ${JSON.stringify(d.rows).slice(0, 1500)}`);
+});
+
+// Two lib mutants round 3's re-read 3 planted in derKind() survived the whole suite (L05: derKids() accepting
+// children that do not fill their parent exactly; L06: an indefinite length allowed on a primitive element, which BER
+// never has). Each turns a malformed structure, which openssl refuses, into a "private key" row. These hold both rules.
+test('derKind(): children that overrun their parent, or a primitive with an indefinite length, are not a key', async () => {
+  const { derKind } = await import('../lib/secrets.mjs');
+  const key = await pkcs8();
+  assert.equal(derKind(key)?.type, 'private key (DER, PKCS #8)', 'the control: the well-formed key');
+  // L05: the outer SEQUENCE says it is two bytes shorter than its children are; the bytes are all there
+  const short = Buffer.from(key); short[1] === 0x81 ? short[2] -= 2 : short[1] -= 2;
+  assert.ok(key[1] < 0x80 || key[1] === 0x81, 'premise: a short or one-byte long-form length');
+  assert.equal(derKind(short), null, 'children that do not fill their parent exactly');
+  // L06: an encrypted PKCS #8 shape whose OCTET STRING (primitive, 0x04) claims an indefinite length
+  // SEQUENCE { OID pbeWithSHAAnd3-KeyTripleDES-CBC (1.2.840.113549.1.12.1.3), NULL }
+  const algSeq = Buffer.from('300e060a2a864886f70d010c01030500', 'hex');
+  const octets = Buffer.concat([Buffer.from([0x04, 0x80]), Buffer.from([0x04, 0x01, 0x41]), Buffer.from([0, 0])]);
+  const body = Buffer.concat([algSeq, octets]);
+  const enc = Buffer.concat([Buffer.from([0x30, body.length]), body]);
+  assert.equal(derKind(enc), null, 'a primitive element with an indefinite length');
+  // the control for it: the same with a definite length is an encrypted key
+  const defOctets = Buffer.from([0x04, 0x03, 0x04, 0x01, 0x41]);
+  const body2 = Buffer.concat([algSeq, defOctets]);
+  assert.equal(derKind(Buffer.concat([Buffer.from([0x30, body2.length]), body2]))?.type, 'encrypted private key (DER, PKCS #8)');
 });
