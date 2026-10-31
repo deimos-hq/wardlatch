@@ -387,6 +387,31 @@ if [ "${WL_AWK:-}" = tamper-tmp ] && [ ! -e "$WL_AWK_STATE" ]; then
 fi
 exit "$r"
 SHIM
+cat >"$shims/tee" <<'SHIM'
+#!/bin/bash
+# r4: the file to be renamed into place may be made by `tee <dir>/.wardlatch-new.* <source` rather than by cp, so that
+# root writes it without opening any path of the user's. WL_CP's new-file modes act on it as they act on cp: the
+# forward copy is the one made before any rename into place (WL_MV_STATE absent or 0), the restore's the one after.
+dst=''
+for a in "$@"; do dst=$a; done
+case "$dst" in */.wardlatch-new.*) ;; *) exec /usr/bin/tee "$@" ;; esac
+n=$(cat "${WL_MV_STATE:-/dev/null}" 2>/dev/null); fwd=''; [ "${n:-0}" != 0 ] || fwd=1
+case "${WL_CP:-}" in
+  partial-new) if [ -n "$fwd" ]; then head -c 1000 >"$dst"; exit 1; fi ;;
+  kill-in-new) if [ -n "$fwd" ]; then head -c 500 >"$dst"; kill -TERM "$PPID"; /bin/sleep 1; exit 1; fi ;;
+  tamper-new-append) if [ -n "$fwd" ]; then { cat; cat "$WL_TAMPER"; } >"$dst"; exit 0; fi ;;
+  tamper-new-swap)
+    if [ -n "$fwd" ]; then
+      /usr/bin/awk -v t="$WL_TAMPER" 'BEGIN { while ((getline l < t) > 0) rep = rep l "\n" }
+        /^-----BEGIN CERTIFICATE-----/ && !done { skip = 1 }
+        skip { if ($0 ~ /^-----END CERTIFICATE-----/) { printf "%s", rep; skip = 0; done = 1 }; next }
+        { print }' >"$dst"
+      exit 0
+    fi ;;
+  sig-restore-cp) if [ -z "$fwd" ]; then : >"$WL_MARK"; /bin/sleep 3; fi ;;
+esac
+exec /usr/bin/tee "$@"
+SHIM
 chmod +x "$r2/curl" "$r2/openssl" "$shims"/*
 # Runs $1 on bundle $2 in the background, in its own process group, with the VAR=value arguments after them; waits
 # for a stand-in to touch $WL_MARK, then sends INT to the script itself, as a Ctrl-C would reach it (another signal
