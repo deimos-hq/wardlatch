@@ -480,9 +480,10 @@ These were found by the same independent read of 31 Oct 2026, and each fix has a
 - **Every clean Rank Math PRO install read could-not-be-tested: the indicator search would not read a `readme.txt`.**
   It read only code files, skipped pictures, fonts and archives, and reported every other file — `readme.txt`, a
   `.pot`, `.json`, `LICENSE` — as not searched, so a clean site read SAFE for the plugin and UNKNOWN for the search,
-  exit 2, with no remedy. Every file that isn't a picture, font, style, archive, media file or document is now
-  searched, within the same caps (4,000 files of under 2 MB, 12 levels deep; what a cap leaves out is still
-  UNKNOWN). (1c6a8cd)
+  exit 2, with no remedy. Every file that isn't a picture, font, style sheet, source map (`.map`), archive, media
+  file, document, translation file (`.mo`, `.po`) or `.lock` file is now searched (a `.min.js` file is searched, as
+  code), within the same caps (4,000 files of under 2 MB, 12 levels deep; what a cap leaves out is still UNKNOWN).
+  The files of those kinds are passed over with no row. (1c6a8cd)
 - **The installs check's quick look round the home folder made every link it declined could-not-be-tested.** That
   look says nothing about a folder it can't open, by design, but reported every link: `~/OneDrive` linking into
   `~/Library/CloudStorage`, as cloud-drive clients make it, made every LiteLLM run exit 2, whatever `--paths` named.
