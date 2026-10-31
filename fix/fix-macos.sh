@@ -27,7 +27,8 @@
 #   - keeps a dated backup and never overwrites an earlier one; the copy is made under a temporary name and compared
 #     with the snapshot first, so the dated name only ever holds a complete copy of the file this run checked;
 #   - removes only each withdrawn root's own lines -- its certificate, the name and description lines directly above
-#     it when they are that root's, and the one empty line after it -- and nothing else in the file;
+#     it when they are that root's exactly as openssl prints them, and the one empty line after it -- and nothing
+#     else in the file;
 #   - writes the new file beside the old one and checks THAT file -- byte for byte the file it built, every other
 #     certificate still there, no withdrawn root left -- before replacing anything;
 #   - makes every change to the file by renaming a finished file over it, in one step, so an interruption leaves the
@@ -265,7 +266,8 @@ strip() {
     END { if (broken) exit 1 }' "$1" "$1"
 }
 
-# Everything below reads this snapshot, so the checks and the change are about the same bytes.
+# The run's state, and the traps' handlers. The checks and the change are made on a snapshot of $FILE, so that they
+# are about the same bytes, and the backup must bear the snapshot out (checkbackup()) before anything is replaced.
 # HUP, INT and TERM as well as EXIT, which is what the one-line fix on the page traps. An interrupt has to STOP
 # this script, and on EXIT alone it did not: measured on 29 Oct 2026 under macOS's /bin/bash 3.2.57, a SIGINT
 # arriving while bash waits on a plain foreground command is swallowed, and bash carries on to the next line with
