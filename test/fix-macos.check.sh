@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=59
+expect_cases=60
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -269,10 +269,15 @@ SHIM
 cat >"$shims/mktemp" <<'SHIM'
 #!/bin/bash
 # Fails the WL_MKTEMP_FAIL-th call (counted in WL_MKTEMP_STATE), as a full or unwritable folder would;
-# WL_MKTEMP_LOG records the path of every file it makes.
+# WL_MKTEMP_LOG records the path of every file it makes. WL_MKTEMP_ORPHAN=new or backup makes the file beside the
+# bundle of that kind and then fails without printing its name, as when a signal stops mktemp before the name
+# reaches the script.
 n=$(cat "${WL_MKTEMP_STATE:-/dev/null}" 2>/dev/null); n=$(( ${n:-0} + 1 ))
 [ -z "${WL_MKTEMP_STATE:-}" ] || printf '%s' "$n" >"$WL_MKTEMP_STATE"
 if [ "$n" = "${WL_MKTEMP_FAIL:-0}" ]; then echo "mktemp: mkstemp failed on $*: No space left on device" >&2; exit 1; fi
+if [ -n "${WL_MKTEMP_ORPHAN:-}" ]; then
+  for a in "$@"; do case "$a" in */.wardlatch-"$WL_MKTEMP_ORPHAN".*) /usr/bin/mktemp "$@" >/dev/null; exit 1 ;; esac; done
+fi
 p=$(/usr/bin/mktemp "$@") || exit
 [ -z "${WL_MKTEMP_LOG:-}" ] || echo "$p" >>"$WL_MKTEMP_LOG"
 echo "$p"
@@ -1739,6 +1744,23 @@ grep -q 'has 0 certificates, fewer than the 50' <<<"$out" || fail "an empty file
 grep -q 'It holds neither' <<<"$out" || fail "an empty file: it did not say it holds neither withdrawn root"
 grep -q "couldn't be read" <<<"$out" && fail "an empty file: it said a certificate couldn't be read"
 ok "an empty file is reported as holding no certificates and neither root"
+# ---- r2 end case
+
+# ---- r2 case: orphan-temp
+# A file mktemp made beside the bundle whose name never reached the script -- a signal while mktemp ran, before it
+# printed the name -- is still removed: the cleanup looks for this run's own names there. The stand-in makes the
+# file and fails without printing its name. Added after a mutant that took out replace()'s own removal survived
+# because this cleanup removes the same file at exit, and no case reached the cleanup itself.
+d=$r2/orphan; mkdir "$d"
+for which in new backup; do
+  cp "$work/original.pem" "$d/cert.pem"
+  run "$d/cert.pem" PATH="$shims:$PATH" WL_MKTEMP_ORPHAN="$which" "$offline" "$OFFLINE"
+  [ "$code" -eq 2 ] || fail "a $which file whose name never reached the script: expected UNKNOWN, exit 2, got $code"
+  [ -z "$(beside "$d/cert.pem")" ] || fail "a $which file whose name never reached the script: it was left beside the bundle: $(beside "$d/cert.pem")"
+  cmp -s "$d/cert.pem" "$work/original.pem" || fail "a $which file whose name never reached the script: the bundle changed"
+  rm -f "$d"/cert.pem.wardlatch-*.bak
+done
+ok "a file made beside the bundle whose name never reached the script is removed all the same"
 # ---- r2 end case
 
 # ---- r2 case: header
