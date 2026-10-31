@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=71
+expect_cases=72
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -2149,6 +2149,30 @@ for how in fixed:0 clean:0 empty:2; do
 done
 sigrun_sig=INT
 ok "a signal during the cleanup at exit leaves the verdict alone: one line, its own exit code"
+# ---- r3 end case
+
+# ---- r3 case: indent-note
+# An administrator's indented line inside a withdrawn root's Apple entry, between "Certificate:" and the fingerprint
+# lines. Until 31 Oct 2026 any indented line there counted as part of openssl's text dump, so the note went with the
+# root, under SAFE, exit 0 (the third read: F3's residual). The entry is now removed only when it is exactly what this
+# Mac's openssl prints for that root; otherwise every line above the certificate stays, and only its block and the
+# empty line after it go. Also checked: the unedited entry, beside it, still goes whole.
+d=$work/r3/indent; mkdir -p "$d"
+note='    # IT note: AAA kept for the legacy SCEP server until 2027 (ticket 4411)'
+awk -v n="$note" 'NR == 2 { print; print n; next } { print }' "$r2/aaa-entry.pem" >"$d/noted-entry.pem"
+grep -qxF -- "$note" "$d/noted-entry.pem" || fail "an indented note: the entry was not built with the note in it"
+{ cat "$r2/emsonly.pem"; cat "$d/noted-entry.pem"; echo; } >"$d/cert.pem"
+{ cat "$r2/P.pem"; awk '/^-----BEGIN CERTIFICATE-----/ { exit } { print }' "$d/noted-entry.pem"; } >"$d/expected.pem"
+run "$d/cert.pem" "$offline" "$OFFLINE"
+[ "$code" -eq 0 ] || fail "an indented note: expected the bundle fixed, exit 0, got $code"
+[ "$(bad "$d/cert.pem")" -eq 0 ] || fail "an indented note: a withdrawn root is still there"
+grep -qxF -- "$note" "$d/cert.pem" || fail "an indented note: the administrator's note was deleted with the root"
+if ! cmp -s "$d/cert.pem" "$d/expected.pem"; then
+  diff "$d/expected.pem" "$d/cert.pem" | head -10 | sed 's/^/    > /'
+  fail "an indented note: the file is not the bundle with only the certificate (and emSign's whole entry) removed"
+fi
+rm -f "$d"/cert.pem.wardlatch-*.bak
+ok "an indented line an administrator added inside a withdrawn root's entry is kept; only the certificate goes"
 # ---- r3 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.

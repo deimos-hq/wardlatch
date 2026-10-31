@@ -181,21 +181,46 @@ inspect() {
 }
 # The $2-th certificate of $1, from its BEGIN line to its END line, as roots() hands it to openssl.
 block() { awk -v k="$2" '/^-----BEGIN CERTIFICATE-----/ { n++ } n == k { print } n == k && /^-----END CERTIFICATE-----/ { exit }' "$1"; }
+# Apple's entry for the $2-th certificate of $1 (a withdrawn root; $3 is AAA or EMS) as this Mac's openssl prints it:
+# "=== <subject>", the text dump without the key, the signature or the issuer, then the SHA-1 and SHA-256 fingerprint
+# lines. Measured on 31 Oct 2026: byte for byte the entry above each of the 128 certificates in macOS 27.2's cert.pem
+# (LibreSSL 3.3.6). Where the file's lines are not this -- another openssl's way of printing, or a line someone
+# added -- strip() keeps every line above the certificate.
+entry() {
+  local t r
+  t=$(block "$1" "$2") || return 1
+  r=$(printf '%s\n' "$t" | /usr/bin/openssl x509 -noout -subject -text -certopt no_pubkey,no_sigdump,no_issuer -sha1 -fingerprint 2>/dev/null) || return 1
+  case "$r" in 'subject= '*) ;; *) return 1 ;; esac
+  if [ "$3" = AAA ]; then t=$AAA; else t=$EMS; fi
+  printf '=== %s\nSHA256 Fingerprint=%s' "${r#subject= }" "$t"
+}
 # Writes $1 without the certificates listed in $2 ("position:kind ..." as roots() found them). For each one it
 # removes exactly these lines, and every other line in the file is kept, whatever it says:
 #   - its own block, from its -----BEGIN CERTIFICATE----- line to its own -----END CERTIFICATE----- line;
 #   - for the root itself (not a certificate found by its key alone),
-#     its name, when the name is directly above the block and is that root's: Apple's shape ("=== /.../CN=<name>",
-#     then "Certificate:", the openssl text dump of the certificate, and its own "SHA256 Fingerprint=" line directly
-#     above BEGIN -- every line of it indented, empty, or one of those three) or mk-ca-bundle's (the name, then a line
-#     of "=" exactly as long, directly above BEGIN);
+#     its name, when the name is directly above the block and is that root's: Apple's shape -- "=== <subject>",
+#     "Certificate:", the openssl text dump, "SHA1 Fingerprint=" and "SHA256 Fingerprint=", directly above BEGIN --
+#     when those lines are, every one of them and nothing else, what this Mac's openssl prints for that certificate
+#     (entry()), or mk-ca-bundle's (the name, then a line of "=" exactly as long, directly above BEGIN);
 #   - the one empty line directly after the block, the separator Apple writes between blocks. That and Apple's name
 #     shape are why this is still byte for byte the advisory's removal on Apple's file.
 # Until 31 Oct 2026 a "=== " line anywhere above a removed root started its block, so an administrator's own "=== "
 # line above a root they had appended, and every line between it and the certificate, went with the root, and the
 # count check could not see it (it counts certificates). Every empty line after a removed root went too, not one.
+# After that, until a third read the same day, any indented line between "Certificate:" and the fingerprint lines
+# counted as the dump, so an administrator's indented note inside a withdrawn root's entry went with it, under SAFE.
 strip() {
-  awk -v list="$2" -v aaa="$AAA" -v ems="$EMS" -v aname="$AAA_NAME" -v ename="$EMS_NAME" '
+  local p e envs
+  envs=(WL_STRIP=1)
+  # Split on purpose: $2 is "position:kind" pairs, digits, colons, AAA, EMS and -KEY only.
+  # shellcheck disable=SC2086
+  set -f; set -- "$1" $2; set +f
+  for p in "${@:2}"; do
+    case "${p#*:}" in AAA|EMS) e=$(entry "$1" "${p%%:*}" "${p#*:}") || e=''; envs+=("WL_ENTRY_${p%%:*}=$e") ;; esac
+  done
+  # The list again, as one word for awk.
+  p="${*:2}"
+  env "${envs[@]}" awk -v list="$p" -v aaa="$AAA" -v ems="$EMS" -v aname="$AAA_NAME" -v ename="$EMS_NAME" '
     BEGIN {
       n = split(list, a, " ")
       for (i = 1; i <= n; i++) { split(a[i], p, ":"); drop[p[1] + 0] = p[2] }
@@ -220,15 +245,18 @@ strip() {
         if (b > 2 && L[b - 1] ~ /^=+$/ && L[b - 2] == name && length(L[b - 1]) == length(name)) {
           gone[b - 1] = 1; gone[b - 2] = 1
         }
-        # Apple: "=== .../CN=<name>", "Certificate:", the dump, "SHA256 Fingerprint=<this root>", directly above
-        if (b > 1 && L[b - 1] == "SHA256 Fingerprint=" fp) {
+        # Apple: from the nearest "=== " line above to "SHA256 Fingerprint=<this root>" directly above BEGIN, when
+        # those lines are exactly the entry this Mac openssl prints for it (from entry(), in the environment).
+        want = ENVIRON["WL_ENTRY_" c]
+        if (want != "" && b > 1 && L[b - 1] == "SHA256 Fingerprint=" fp) {
           for (s = b - 1; s >= 1; s--) {
             if (L[s] ~ /^=== /) break
-            if (L[s] !~ /^(Certificate:$|SHA1 Fingerprint=|SHA256 Fingerprint=|[ \t]|$)/) { s = 0; break }
+            if (L[s] ~ /^-----(BEGIN|END) /) { s = 0; break }
           }
-          tail = "/CN=" name
-          if (s >= 1 && L[s + 1] == "Certificate:" && length(L[s]) >= length(tail) && substr(L[s], length(L[s]) - length(tail) + 1) == tail) {
-            for (j = s; j < b; j++) gone[j] = 1
+          if (s >= 1) {
+            got = L[s]
+            for (j = s + 1; j < b; j++) got = got "\n" L[j]
+            if (got == want) for (j = s; j < b; j++) gone[j] = 1
           }
         }
       }
