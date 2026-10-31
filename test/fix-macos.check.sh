@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=76
+expect_cases=77
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -2000,14 +2000,24 @@ ok "a copy of a withdrawn root with a bit changed (same key, another fingerprint
 # ---- r3 end case
 
 # ---- r3 case: key-constants
-# The public keys the fix matches are the withdrawn roots' own: each is the key of the certificate in
-# lib/incidents/ (the incident's roots, which test/incidents.test.mjs ties to its distrusted fingerprints), and the
-# SHA-256 the script's comment gives for each is the SHA-256 of that key's SubjectPublicKeyInfo.
-for r in aaa:AAA_KEY emsign:EMS_KEY; do
+# The key bytes the fix matches are the withdrawn roots' own: AAA_N is the first 48 bytes of the modulus of AAA
+# Certificate Services in lib/incidents/, EMS_X the X coordinate of emSign ECC Root CA - G3's point there (the incident's
+# roots, which test/incidents.test.mjs ties to its distrusted fingerprints); and the SHA-256 the script's comment gives
+# for each is the SHA-256 of that root's SubjectPublicKeyInfo. (Until r4 the fix matched the base64 of the whole
+# SubjectPublicKeyInfo, AAA_KEY and EMS_KEY, which missed the same key in another encoding: the r4 case samekey-enc.)
+for r in aaa:AAA_N emsign:EMS_X; do
   pem=$root/lib/incidents/emudhra-2026-10-root-${r%%:*}.pem
   [ -s "$pem" ] || fail "the keys: $pem is not there"
-  real=$(/usr/bin/openssl x509 -in "$pem" -noout -pubkey | sed '1d;$d' | tr -d '\n')
-  inscript=$(sed -n "s/^${r#*:}='\\([A-Za-z0-9+/=]*\\)'\$/\\1/p" "$fix")
+  if [ "${r%%:*}" = aaa ]; then
+    real=$(/usr/bin/openssl x509 -in "$pem" -noout -modulus | sed 's/^Modulus=//' | tr 'A-F' 'a-f'); real=${real:0:96}
+  else
+    real=$(/usr/bin/openssl x509 -in "$pem" -noout -pubkey | /usr/bin/openssl pkey -pubin -outform DER | xxd -p | tr -d '\n')
+    # P-384, named curve, uncompressed point: the X coordinate is the 48 bytes after this header
+    [ "${real:0:48}" = 3076301006072a8648ce3d020106052b8104002203620004 ] || fail "the keys: $pem is not the P-384 key this expects"
+    real=${real:48:96}
+  fi
+  [ "${#real}" -eq 96 ] || fail "the keys: could not read 48 bytes of the key of $pem"
+  inscript=$(sed -n "s/^${r#*:}='\\([0-9a-f]*\\)'\$/\\1/p" "$fix")
   [ -n "$inscript" ] || fail "the keys: ${r#*:} was not found in $fix"
   [ "$inscript" = "$real" ] || fail "the keys: ${r#*:} in the script is not the key of $pem"
   spki=$(/usr/bin/openssl x509 -in "$pem" -noout -pubkey | /usr/bin/openssl pkey -pubin -outform DER | /usr/bin/openssl dgst -sha256 | sed 's/.* //')
@@ -2279,6 +2289,90 @@ cmp -s "$d/cert.pem" "$work/original.pem" || fail "the cleaned file changed afte
 rm -f "$d"/cert.pem.wardlatch-*.bak
 ok "the new file's SHA-256 comes from the rebuild, so a cleaned file changed after it was written never lands"
 # ---- r3 end case
+
+# ---- r4 cases
+# Added on 31 Oct 2026 after the round-3 re-reads. Like the r2 and r3 cases, each stands on the setup above alone.
+
+# ---- r4 case: samekey-enc
+# A copy of a withdrawn root that carries its key in another valid encoding: emSign ECC Root CA - G3's EC point
+# compressed or hybrid, or its curve given by explicit parameters instead of by name (and both at once); AAA Certificate
+# Services' RSA key labelled RSA-PSS. Each copy keeps the root's own signature bytes. LibreSSL trusts a root re-encoded
+# in each of these ways (shown below on throwaway roots of the same kinds, each with a leaf it signed; and measured with
+# /usr/bin/curl on 31 Oct 2026), and `openssl x509 -pubkey` prints each in its own encoding, so the round-3 comparison
+# of that text with the root's missed every one: the copy stayed in the file under SAFE, exit 0. The key is now compared
+# by its own bytes as openssl decodes them, so each copy must be found, removed, and named as a certificate with that
+# root's key.
+d=$work/r4/samekeyenc; mkdir -p "$d"
+libre() { /usr/bin/openssl crl2pkcs7 -nocrl -certfile "$1" 2>/dev/null | /usr/bin/openssl pkcs7 -print_certs 2>/dev/null | grep -c '^-----BEGIN CERTIFICATE-----' || true; }
+spkihex() { /usr/bin/openssl x509 -in "$1" -noout -pubkey | /usr/bin/openssl pkey -pubin -outform DER 2>/dev/null | xxd -p | tr -d '\n'; }
+derlen() { if [ "$1" -lt 128 ]; then printf '%02x' "$1"; elif [ "$1" -lt 256 ]; then printf '81%02x' "$1"; else printf '82%04x' "$1"; fi; }
+derhdr() {   # $1 = hex starting at a SEQUENCE: prints the header's length in hex digits and the content's in bytes
+  local b=$((0x${1:2:2}))
+  if [ "$b" -lt 128 ]; then echo "4 $b"; elif [ "$b" -eq 129 ]; then echo "6 $((0x${1:4:2}))"; elif [ "$b" -eq 130 ]; then echo "8 $((0x${1:4:4}))"; else echo "0 0"; fi
+}
+respki() {   # $1 = certificate, $2 = SubjectPublicKeyInfo (DER hex), $3 = out: the certificate with that key, its signature kept
+  local h old oh ol t th tl tbs after inner
+  h=$(/usr/bin/openssl x509 -in "$1" -outform DER | xxd -p | tr -d '\n'); old=$(spkihex "$1")
+  read -r oh ol <<<"$(derhdr "$h")"; t=${h:$oh}; read -r th tl <<<"$(derhdr "$t")"
+  [ "$oh" -gt 0 ] && [ "$th" -gt 0 ] || fail "a key in another encoding: $1 is not a certificate this can rebuild"
+  tbs=${t:$th:$((tl * 2))}; after=${t:$((th + tl * 2))}
+  case "$tbs" in *"$old"*"$old"*) fail "a key in another encoding: the key is in $1 twice" ;; *"$old"*) ;; *) fail "a key in another encoding: the key was not found in $1" ;; esac
+  tbs=${tbs/"$old"/"$2"}
+  inner="30$(derlen $(( ${#tbs} / 2 )))$tbs$after"
+  printf '%s' "30$(derlen $(( ${#inner} / 2 )))$inner" | xxd -r -p | /usr/bin/openssl x509 -inform DER -out "$3" ||
+    fail "a key in another encoding: openssl could not read the rebuilt $3"
+}
+reenc() {    # $1 = certificate, $2 = how, $3 = out
+  local k bits
+  case "$2" in
+    compressed|hybrid) k=$(/usr/bin/openssl x509 -in "$1" -noout -pubkey | /usr/bin/openssl ec -pubin -conv_form "$2" -outform DER 2>/dev/null | xxd -p | tr -d '\n') ;;
+    explicit) k=$(/usr/bin/openssl x509 -in "$1" -noout -pubkey | /usr/bin/openssl ec -pubin -param_enc explicit -outform DER 2>/dev/null | xxd -p | tr -d '\n') ;;
+    explicit-compressed) k=$(/usr/bin/openssl x509 -in "$1" -noout -pubkey | /usr/bin/openssl ec -pubin -param_enc explicit -conv_form compressed -outform DER 2>/dev/null | xxd -p | tr -d '\n') ;;
+    pss) k=$(spkihex "$1"); bits=${k#30820122300d06092a864886f70d0101010500}
+         [ "$bits" != "$k" ] || fail "a key in another encoding: $1 is not a 2048-bit RSA key in the usual encoding"
+         k=30820120300b06092a864886f70d01010a$bits ;;
+  esac
+  [ -n "$k" ] || fail "a key in another encoding: openssl could not re-encode the key of $1 ($2)"
+  respki "$1" "$k" "$3"
+}
+# LibreSSL trusts each encoding: a throwaway root of the same kind, re-encoded the same way, still verifies a leaf it
+# signed (for RSA-PSS, a leaf signed with PSS, which the key labelled that way is for).
+/usr/bin/openssl ecparam -name secp384r1 -genkey -noout -out "$d/ec.key" 2>/dev/null &&
+  /usr/bin/openssl req -x509 -new -key "$d/ec.key" -sha384 -days 30 -subj /CN=Throwaway-P384 -out "$d/ec.pem" 2>/dev/null &&
+  /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -keyout "$d/rsa.key" -sha256 -days 30 -subj /CN=Throwaway-RSA -out "$d/rsa.pem" 2>/dev/null &&
+  /usr/bin/openssl req -newkey rsa:2048 -nodes -keyout "$d/leaf.key" -subj /CN=leaf.example -out "$d/leaf.csr" 2>/dev/null &&
+  /usr/bin/openssl x509 -req -in "$d/leaf.csr" -CA "$d/ec.pem" -CAkey "$d/ec.key" -set_serial 2 -days 30 -sha384 -out "$d/ec-leaf.pem" 2>/dev/null &&
+  /usr/bin/openssl x509 -req -in "$d/leaf.csr" -CA "$d/rsa.pem" -CAkey "$d/rsa.key" -set_serial 3 -days 30 -sha256 \
+    -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:32 -out "$d/rsa-leaf.pem" 2>/dev/null ||
+  fail "a key in another encoding: openssl could not make the throwaway roots"
+for how in compressed hybrid explicit explicit-compressed pss; do
+  if [ "$how" = pss ]; then t=rsa; else t=ec; fi
+  reenc "$d/$t.pem" "$how" "$d/$t-$how.pem"
+  [ "$(/usr/bin/openssl verify -purpose sslserver -CAfile "$d/$t-$how.pem" "$d/$t-leaf.pem" 2>&1)" = "$d/$t-leaf.pem: OK" ] ||
+    fail "a key in another encoding ($how): LibreSSL does not trust a root re-encoded this way, so this case would measure nothing"
+done
+for shape in ems:compressed ems:hybrid ems:explicit ems:explicit-compressed aaa:pss both:compressed; do
+  r=${shape%%:*}; how=${shape#*:}; copy=$d/$r-$how.pem
+  if [ "$r" = aaa ]; then reenc "$r2/aaa.pem" "$how" "$copy"; else reenc "$r2/ems.pem" "$how" "$copy"; fi
+  [ "$(/usr/bin/openssl x509 -in "$copy" -noout -pubkey)" != "$(/usr/bin/openssl x509 -in "$r2/${r/both/ems}.pem" -noout -pubkey)" ] ||
+    fail "a key in another encoding ($shape): openssl prints the copy's key as the root's, so this case would measure nothing"
+  case "$r" in
+    ems) cat "$r2/P.pem" "$copy" >"$d/cert.pem"
+         want='removed a certificate with the key of emSign ECC Root CA - G3 (this file did not hold the other withdrawn root, AAA Certificate Services)' ;;
+    aaa) cat "$r2/P.pem" "$copy" >"$d/cert.pem"
+         want='removed a certificate with the key of AAA Certificate Services (this file did not hold the other withdrawn root, emSign ECC Root CA - G3)' ;;
+    both) cat "$work/original.pem" "$copy" >"$d/cert.pem"
+          want='removed both withdrawn roots (AAA Certificate Services and emSign ECC Root CA - G3 and 1 other certificate with its key)' ;;
+  esac
+  [ "$(libre "$d/cert.pem")" -eq "$(certs_in "$d/cert.pem")" ] || fail "a key in another encoding ($shape): LibreSSL does not read every certificate, so this case would measure nothing"
+  run "$d/cert.pem" "$offline" "$OFFLINE"
+  [ "$code" -eq 0 ] || fail "a key in another encoding ($shape): expected the file fixed, exit 0, got $code"
+  cmp -s "$d/cert.pem" "$r2/P.pem" || fail "a key in another encoding ($shape): the file is not the advisory's removal ($(certs_in "$d/cert.pem") certificates): the copy carrying a withdrawn root's key is still in it"
+  grep -qF -- "$want" <<<"$out" || fail "a key in another encoding ($shape): it did not say \"$want\""
+  rm -f "$d"/cert.pem.wardlatch-*.bak
+done
+ok "a withdrawn root's key in another encoding (EC point compressed or hybrid, explicit curve, RSA-PSS) is found and removed"
+# ---- r4 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.
 cp "$work/original.pem" "$work/unreadable.pem"

@@ -6,7 +6,8 @@
 # and a macOS update puts Apple's original file back (26.7.2 did): run this again after every update.
 # The removal is the advisory's (emudhra.we-have-a-problem.com); this script adds the safety around it:
 #   - finds the two roots by their SHA-256 fingerprints, not by the name lines some copies of the file don't have,
-#     and by their public keys too, so a copy with a bit changed or a root re-issued with the same key is removed;
+#     and by their public keys too, compared as openssl decodes them whatever encoding a certificate stores them in,
+#     so a copy with a bit changed, a root re-issued with the same key, or the key re-encoded is removed;
 #     and refuses a file it can't fully check: a certificate it can't read, a block that isn't a plain certificate,
 #     a -----BEGIN marker anywhere but at the start of a line, or fewer fingerprints read than certificates counted;
 #   - refuses a $FILE that is a symbolic link: replacing it would put a file of this script's own where the link is,
@@ -58,14 +59,23 @@ AAA='D7:A7:A0:FB:5D:7E:27:31:D7:71:E9:48:4E:BC:DE:F7:1D:5F:0C:3E:0A:29:48:78:2B:
 EMS='86:A1:EC:BA:08:9C:4A:8D:3B:BE:27:34:C6:12:BA:34:1D:81:3E:04:3C:F9:E8:A8:62:CD:5C:57:A3:6B:BE:6B'
 AAA_NAME='AAA Certificate Services'
 EMS_NAME='emSign ECC Root CA - G3'
-# And their public keys, each the base64 of its SubjectPublicKeyInfo as `openssl x509 -pubkey` prints it, on one line.
-# A certificate carrying one of these keys is trusted to sign for it whatever else it says: a copy with one bit of its
-# signature flipped, or a root re-issued with the same key, has another fingerprint and the same key, and LibreSSL,
-# OpenSSL 3.6.4 and Apple's python3 trust it (measured 31 Oct 2026). SHA-256 of each SubjectPublicKeyInfo:
+# And their public keys. A certificate carrying one of these keys is trusted to sign for it whatever else it says: a
+# copy with one bit of its signature flipped, or a root re-issued with the same key, has another fingerprint and the
+# same key, and LibreSSL, OpenSSL 3.6.4 and Apple's python3 trust it (measured 31 Oct 2026). SHA-256 of each root's
+# SubjectPublicKeyInfo as it ships:
 #   AAA Certificate Services  bd153ed7b0434f6886b17bce8bbe84ed340c7132d702a8f4fa318f756ecbd6f3
 #   emSign ECC Root CA - G3   8d417db2dd8bf5e3084d1e3f196d583849d81bdd4c00c70b9d39369e96b8c782
-AAA_KEY='MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvkCd9G7h6naHHE1FRI6+RsiDBp3BKv4YH47kAvrzq11QihYxC5oG0MVwIs1JLVRjzLZuaEYLU+rLTCTAvHJO6vEVrvRUmhIKw3qyM2Di2olV8yJY897cz++DhqKMlE+faPKYkEaEJ8d2v+PMNSyLXgdkZYLASLCokflhn3YgUKiRx2a163hiA1bwihoT6jGjHqCZ/Tj29icyWG8H9Wu4+xQrr7eqzNZjX3OM2gWZqDioyxd4NlGs6Z70eDqNzw/ZQuKYDKsvnw4B3u+fmUnxLd+sdE0bmLVHxeUp0fmQGMdinL6DxyZ7Poolx8DdneY1aBAgnY/Y3tLDhJwNXugvyQIDAQAB'
-EMS_KEY='MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEI6UMuC0S9SjzsbLd4gISgJ45X0lNn8klNFl07LsGHOfAcq/ori/hQVSHFKhKsuh8guZbarXcs3XOiwbQhiO/RtWODz8E9Ncckn72pWPC9V+OLk+hGBkCKzIKgmR9FpPR'
+# The same key can be stored in other encodings, and LibreSSL and /usr/bin/curl trust a root stored in each of them
+# (measured 31 Oct 2026 on throwaway roots, each verifying a leaf it signed): an EC point compressed or hybrid, the curve
+# given by explicit parameters instead of its name, an RSA key labelled RSA-PSS. `openssl x509 -pubkey` prints each in
+# its own encoding, so comparing that text -- as this did until then -- missed all of them, and the copy stayed under
+# SAFE. So the key is compared by its own bytes as openssl decodes and prints them (-text): every encoding of an EC point
+# carries its X coordinate, and every encoding of an RSA key its modulus, byte for byte. These are emSign's X coordinate
+# (48 bytes) and the first 48 bytes of AAA's modulus, in lowercase hex as openssl prints them.
+AAA_N='be409df46ee1ea76871c4d45448ebe46c883069dc12afe181f8ee402faf3ab5d508a16310b9a06d0c57022cd492d5463'
+EMS_X='23a50cb82d12f528f3b1b2dde20212809e395f494d9fc925345974ecbb061ce7c072afe8ae2fe141548714a84ab2e87c'
+# Everything of -text but the public key.
+KEYTEXT=no_header,no_version,no_serial,no_signame,no_validity,no_subject,no_issuer,no_extensions,no_sigdump,no_aux
 # Nothing below runs a command until the traps are set, after the functions: see "The traps" further down.
 
 # The symbolic-link check, before the -f test, which is true for a symbolic link to a regular file. This fix replaces
@@ -116,24 +126,31 @@ sha() {
 }
 # Reads one certificate (PEM, in $1) and sets $kind: AAA or EMS when it is that withdrawn root, byte for byte by its
 # SHA-256 fingerprint; AAA-KEY or EMS-KEY when it is another certificate carrying that root's public key; - for any
-# other certificate. One openssl call prints both the fingerprint and the key. Returns 1 when openssl couldn't read
-# the certificate, and 2 when what it printed isn't a fingerprint and a public key, so the caller doesn't count it.
+# other certificate. One openssl call prints both the fingerprint and the key, decoded: its "pub:" (EC) or "Modulus:"
+# (RSA) bytes in hex, which are compared with AAA_N and EMS_X. Returns 1 when openssl couldn't read the certificate, and 2 when what it printed isn't a
+# fingerprint and a decoded key -- a key openssl can't decode can't be compared -- so the caller doesn't count it.
 classify() {
   local o f k
   kind=''
-  o=$(printf '%s\n' "$1" | /usr/bin/openssl x509 -noout -fingerprint -sha256 -pubkey 2>/dev/null) || return 1
-  f=${o#*SHA256 Fingerprint=}; f=${f%%$'\n'*}
-  # 32 pairs of hex digits joined by colons
-  case "$f" in *[!0-9A-F:]*|'') return 2 ;; esac
-  [ "${#f}" -eq 95 ] || return 2
-  case "$o" in *$'\n-----BEGIN PUBLIC KEY-----\n'*$'\n-----END PUBLIC KEY-----'*) ;; *) return 2 ;; esac
-  k=${o#*-----BEGIN PUBLIC KEY-----}; k=${k%%-----END PUBLIC KEY-----*}; k=${k//$'\n'/}
-  case "$k" in *[!A-Za-z0-9+/=]*|'') return 2 ;; esac
-  if [ "$f" = "$AAA" ]; then kind=AAA
-  elif [ "$f" = "$EMS" ]; then kind=EMS
-  elif [ "$k" = "$AAA_KEY" ]; then kind=AAA-KEY
-  elif [ "$k" = "$EMS_KEY" ]; then kind=EMS-KEY
-  else kind=-; fi
+  # Spaces, tabs, colons and line breaks taken out by tr, so the dump's hex digits are joined up, the fingerprint is
+  # 64 hex digits, and what follows it is "SubjectPublicKeyInfo...". (Taking them out in bash instead is quadratic in
+  # bash 3.2: 26 s for the 128 certificates of macOS 27.2's file, measured 31 Oct 2026.)
+  o=$(printf '%s\n' "$1" | /usr/bin/openssl x509 -noout -fingerprint -sha256 -text -certopt "$KEYTEXT" 2>/dev/null | tr -d ' \t\n:') || return 1
+  case "$o" in SHA256Fingerprint=*) ;; *) return 2 ;; esac
+  f=${o#SHA256Fingerprint=}; k=${f:64}; f=${f:0:64}
+  case "$f" in *[!0-9A-F]*) return 2 ;; esac
+  [ "${#f}" -eq 64 ] || return 2
+  # The key, decoded: "pub" (EC) or "Modulus" (RSA) and its bytes. Nothing else that is printed holds either word.
+  case "$k" in SubjectPublicKeyInfo*pub[0-9a-f]*|SubjectPublicKeyInfo*Modulus[0-9a-f]*) ;; *) return 2 ;; esac
+  if [ "$f" = "${AAA//:/}" ]; then kind=AAA
+  elif [ "$f" = "${EMS//:/}" ]; then kind=EMS
+  else
+    case "$k" in
+      *"$AAA_N"*) kind=AAA-KEY ;;
+      *"$EMS_X"*) kind=EMS-KEY ;;
+      *) kind=- ;;
+    esac
+  fi
 }
 # Prints one line for each certificate in $1 that carries a withdrawn root's key: its position (1, 2, ...) and what
 # classify() found it to be, AAA, EMS, AAA-KEY or EMS-KEY. Fails -- so the caller says UNKNOWN and changes nothing --
