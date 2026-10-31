@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=68
+expect_cases=69
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -2076,6 +2076,30 @@ for n in 2 3 4 6 7 8 9; do
 done
 chmod 644 "$d/cert.pem"
 ok "sudo refusing a later call is reported in sudo's own words, and nothing is blamed on the disk"
+# ---- r3 end case
+
+# ---- r3 case: early-signal
+# A signal before the script's traps were set: during uname (the first command), and while mktemp makes the snapshot
+# and has not yet printed its name. Until 31 Oct 2026 the traps came after both temporary files, so such a run exited
+# 143, 130 or 129 with no line and left the snapshot in TMPDIR (the third read; the window is milliseconds in a real
+# run, and the stand-ins hold it open). Each must print a line, exit 2, change nothing and leave nothing behind (sigrun
+# checks TMPDIR and the line).
+d=$work/r3/early; mkdir -p "$d"
+for how in uname:TERM uname:INT uname:HUP mktemp:INT mktemp:TERM; do
+  cp "$work/original.pem" "$d/cert.pem"; rm -f "$d/state"
+  sigrun_sig=${how#*:}
+  if [ "${how%%:*}" = uname ]; then
+    sigrun "$fix" "$d/cert.pem" PATH="$shims:$PATH" WL_UNAME=hold "$offline" "$OFFLINE"
+  else
+    sigrun "$fix" "$d/cert.pem" PATH="$shims:$PATH" WL_MKTEMP_HOLD=1 WL_MKTEMP_STATE="$d/state" "$offline" "$OFFLINE"
+  fi
+  sigrun_sig=INT
+  [ "$code" -eq 2 ] || fail "a signal before the traps ($how): expected exit 2, got $code"
+  grep -q '^UNKNOWN  Stopped before this changed anything' <<<"$out" || fail "a signal before the traps ($how): it did not say it stopped before changing anything"
+  cmp -s "$d/cert.pem" "$work/original.pem" || fail "a signal before the traps ($how): the bundle changed"
+  [ -z "$(beside "$d/cert.pem")" ] && [ "$(baks "$d/cert.pem")" -eq 0 ] || fail "a signal before the traps ($how): it left something beside the bundle"
+done
+ok "a signal at the very start of a run, or while the snapshot is being made, prints a line and leaves nothing"
 # ---- r3 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.

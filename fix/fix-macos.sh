@@ -39,7 +39,7 @@
 #     a certificate refused after the change apart from a network that stopped answering; it re-tests against the
 #     advisory's test site only when the control loads, and no network result undoes the fix;
 #   - on macOS, prints a line that starts with SAFE, EXPOSED or UNKNOWN whenever it exits, after a Ctrl-C (INT), a
-#     HUP or a TERM too.
+#     HUP or a TERM too, from its first command on (before that, bash has only read the script).
 # Safe to run twice. Run it in Terminal (it asks for your Mac's password) or as root from Jamf, Kandji or Intune.
 # Copy it from the Wardlatch page in Safari. Don't fetch it with the Mac's own curl: that curl is what's exposed.
 set -euo pipefail
@@ -65,9 +65,9 @@ EMS_NAME='emSign ECC Root CA - G3'
 #   emSign ECC Root CA - G3   8d417db2dd8bf5e3084d1e3f196d583849d81bdd4c00c70b9d39369e96b8c782
 AAA_KEY='MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvkCd9G7h6naHHE1FRI6+RsiDBp3BKv4YH47kAvrzq11QihYxC5oG0MVwIs1JLVRjzLZuaEYLU+rLTCTAvHJO6vEVrvRUmhIKw3qyM2Di2olV8yJY897cz++DhqKMlE+faPKYkEaEJ8d2v+PMNSyLXgdkZYLASLCokflhn3YgUKiRx2a163hiA1bwihoT6jGjHqCZ/Tj29icyWG8H9Wu4+xQrr7eqzNZjX3OM2gWZqDioyxd4NlGs6Z70eDqNzw/ZQuKYDKsvnw4B3u+fmUnxLd+sdE0bmLVHxeUp0fmQGMdinL6DxyZ7Poolx8DdneY1aBAgnY/Y3tLDhJwNXugvyQIDAQAB'
 EMS_KEY='MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEI6UMuC0S9SjzsbLd4gISgJ45X0lNn8klNFl07LsGHOfAcq/ori/hQVSHFKhKsuh8guZbarXcs3XOiwbQhiO/RtWODz8E9Ncckn72pWPC9V+OLk+hGBkCKzIKgmR9FpPR'
+# Nothing below runs a command until the traps are set, after the functions: see "The traps" further down.
 
-[ "$(uname -s)" = Darwin ] || { echo "This fix is for macOS. On Linux, update the ca-certificates package."; exit 2; }
-# Before anything else, and before the -f test, which is true for a symbolic link to a regular file. This fix replaces
+# The symbolic-link check, before the -f test, which is true for a symbolic link to a regular file. This fix replaces
 # the file it is given by renaming a new file over it, and a rename over a link replaces the LINK: $FILE would become
 # a file of this script's own, stop following whatever the link points to (an administrator set that link up for a
 # reason), and the file it points to would be left exactly as it was. Until 31 Oct 2026 the refusal said the Mac
@@ -84,10 +84,6 @@ linked() {
   echo "         WARDLATCH_CERT_FILE='${to:-<the file the link points to>}' bash '$me'"
   exit 2
 }
-[ ! -L "$FILE" ] || linked
-[ -f "$FILE" ] || { echo "UNKNOWN  $FILE not found. Nothing changed."; exit 2; }
-SUDO=sudo; if [ "$(id -u)" -eq 0 ] || { [ -w "$FILE" ] && [ -w "$(dirname "$FILE")" ]; }; then SUDO=; fi
-DIR=$(dirname "$FILE")
 
 # 0 = trusts the compromised keys, 60 = refuses them, anything else = the test site didn't answer
 # (-q: ignore ~/.curlrc, whose settings could change the answer)
@@ -254,14 +250,22 @@ writing=''    # set just BEFORE the first file is made beside $FILE: until then 
 published=''  # set once the backup has its dated name
 replaced=''   # set once the cleaned file has been renamed over $FILE
 orig='' want='' after='' backup='' naaa=0 nems=0 kaaa=0 kems=0 found=0 kind='' why='' step=''
+snap='' tmp=''  # the two temporary files, once mktemp has named them
+SUDO='' DIR=''  # set once $FILE is known to be a file
 # Every command here ends in `|| true`, and that is load-bearing rather than tidy. Measured on /bin/bash 3.2.57:
 # with `set -e` in force, a failing command inside the EXIT trap ends the trap AND overrides the script's exit
 # status, so one failed `rm` turned `exit 2` ("couldn't tell") into `exit 1`, which the published exit-code table
 # reads as EXPOSED. `return 0` at the end does not help -- errexit ends the function before reaching it.
-# strays() is for a file made beside $FILE whose name was not yet known when the signal came: mktemp chooses it.
-clean() { rm -f "$snap" "$tmp" || true; [ -z "$new" ] || $SUDO rm -f "$new" || true; new=''; [ -z "$bnew" ] || $SUDO rm -f "$bnew" || true; bnew=''; strays || true; }
+# strays() is for a file made beside $FILE, or in TMPDIR, whose name was not yet known when the signal came: mktemp
+# chooses it, so each carries this run's process id. The traps are set before either temporary file is made, so
+# clean() can run before they have names.
+clean() { [ -z "$snap" ] || rm -f "$snap" || true; [ -z "$tmp" ] || rm -f "$tmp" || true; [ -z "$new" ] || $SUDO rm -f "$new" || true; new=''; [ -z "$bnew" ] || $SUDO rm -f "$bnew" || true; bnew=''; strays || true; }
 strays() {
   local f
+  for f in "${TMPDIR:-/tmp}"/wardlatch.$$.*; do
+    if [ -e "$f" ] || [ -L "$f" ]; then rm -f "$f" || true; fi
+  done
+  [ -n "$DIR" ] || return 0
   for f in "$DIR"/.wardlatch-new.$$.* "$DIR"/.wardlatch-backup.$$.*; do
     if [ -e "$f" ] || [ -L "$f" ]; then $SUDO rm -f "$f" || true; fi
   done
@@ -431,20 +435,34 @@ nobackup() {
   exit 2
 }
 
-snap=$(mktemp "${TMPDIR:-/tmp}/wardlatch.XXXXXX" 2>/dev/null) || {
-  echo "UNKNOWN  Couldn't make a temporary file in ${TMPDIR:-/tmp} (mktemp failed), so $FILE wasn't read. Nothing changed."
-  exit 2
-}
-tmp=$(mktemp "${TMPDIR:-/tmp}/wardlatch.XXXXXX" 2>/dev/null) || {
-  rm -f "$snap" || true
-  echo "UNKNOWN  Couldn't make a temporary file in ${TMPDIR:-/tmp} (mktemp failed), so $FILE wasn't read. Nothing changed."
-  exit 2
-}
+# The traps, before any command runs: before uname, readlink, id and dirname, and before either temporary file is made.
+# Until 31 Oct 2026 they were set after all of those, so a signal in that time -- milliseconds in a real run -- ended
+# the run with 130, 143 or 129 and no line, and left the snapshot in TMPDIR (the third read). Between bash starting and
+# this line only assignments and function definitions run.
+trap clean EXIT
+trap stopped HUP INT TERM
+
+[ "$(uname -s)" = Darwin ] || { echo "This fix is for macOS. On Linux, update the ca-certificates package."; exit 2; }
+# The symbolic-link check comes before the -f test, which is true for a link to a file (see linked()).
+[ ! -L "$FILE" ] || linked
+[ -f "$FILE" ] || { echo "UNKNOWN  $FILE not found. Nothing changed."; exit 2; }
+SUDO=sudo; if [ "$(id -u)" -eq 0 ] || { [ -w "$FILE" ] && [ -w "$(dirname "$FILE")" ]; }; then SUDO=; fi
+DIR=$(dirname "$FILE")
+
 # The temporary files go where TMPDIR says. `mktemp -t` on macOS ignores TMPDIR for the per-user folder, so until
 # 31 Oct 2026 the harness's "no temporary files left behind" check watched a folder this script never wrote to.
 # Both are checked: unchecked, `set -e` ended the run with mktemp's own status, 1 -- the published table's EXPOSED.
-trap clean EXIT
-trap stopped HUP INT TERM
+# Each name carries this run's process id, so strays() can remove one whose name never reached the script.
+snap=$(mktemp "${TMPDIR:-/tmp}/wardlatch.$$.XXXXXX" 2>/dev/null) || {
+  snap=''
+  echo "UNKNOWN  Couldn't make a temporary file in ${TMPDIR:-/tmp} (mktemp failed), so $FILE wasn't read. Nothing changed."
+  exit 2
+}
+tmp=$(mktemp "${TMPDIR:-/tmp}/wardlatch.$$.XXXXXX" 2>/dev/null) || {
+  tmp=''
+  echo "UNKNOWN  Couldn't make a temporary file in ${TMPDIR:-/tmp} (mktemp failed), so $FILE wasn't read. Nothing changed."
+  exit 2
+}
 cp "$FILE" "$snap" 2>/dev/null || { echo "UNKNOWN  Can't read $FILE. Nothing changed."; exit 2; }
 orig=$(sha "$snap") || { echo "UNKNOWN  Couldn't take the SHA-256 of $FILE (openssl failed), so it wasn't checked. Nothing changed."; exit 2; }
 
