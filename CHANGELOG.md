@@ -236,8 +236,9 @@ counted. Each fix below has a test that fails on da8f5c2 and passes after it.
   and whether the folder's own permission bits would have let this run in. On macOS it says that privacy protection
   is a common cause, which allowing the terminal Full Disk Access may lift, and that a sandbox the run is inside, or a
   security tool, refuses the same way and sudo may not lift it; it never claims to know which. Off macOS it names a
-  sandbox, a security module or a FUSE mount. A service's folders that refuse with EACCES keep the rule of 22 Oct
-  2026, one review line. The cost, judged: on a Mac whose searched folders include ones macOS protects, a run now
+  sandbox, a security module or a FUSE mount. As built, the rule covers EPERM: a service's folders that refuse with
+  EACCES keep the rule of 22 Oct 2026, one review line beside an all-clear, exit 0. Whether decision #32 covers them
+  too is a question the owner has not yet answered, and this entry will say so when he has. The cost, judged: on a Mac whose searched folders include ones macOS protects, a run now
   exits 2 until the terminal has Full Disk Access or those folders are left out. Tests in
   `test/independent-read.test.mjs`: the LiteLLM case through an EPERM the test makes, the row's words, and a real
   unprivileged `sandbox-exec` run, which skips and says why when it is already inside a sandbox; the three tests that
