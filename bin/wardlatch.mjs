@@ -213,13 +213,18 @@ function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, revi
   const MAYBE = platform() === 'darwin'
     ? 'On macOS this is often its privacy protection, which allowing your terminal Full Disk Access (System Settings → Privacy & Security) may lift; a sandbox this run is inside, or a security tool, refuses the same way, and sudo may not lift it'
     : 'A sandbox this run is inside, a security module (SELinux, AppArmor) or a file system such as a FUSE mount refuses this way, and sudo may not lift it';
+  // → { reason, extra } for the errnos that are UNKNOWN whoever owns the folder, with what is true of each; else null.
+  // EPERM: owner decision #32. ENAMETOOLONG: the folder is there (the walk listed its name) and its full path is longer
+  // than the system takes, so no one opens it by that path; up to this fix it read as "not there" (WV-6).
   const refusal = (d, code, lead) => {
+    if (code === 'ENAMETOOLONG') return { extra: { code }, reason: `${lead}: its full path is longer than this system lets a program open (ENAMETOOLONG, ${Buffer.byteLength(d)} bytes), so it could not be read` };
+    if (code !== 'EPERM') return null;
     const b = basisOf(d, code);
     return { extra: { code: b.code, basis: b.basis }, reason: `${lead}: the system refused it (${b.basis})${mandatoryRefusal(d, code) ? ', although its permission bits would let this run in' : ''}. ${MAYBE}` };
   };
   const cannot = (d, lead) => {
-    const code = denialCode(d);
-    if (code === 'EPERM') { const r = refusal(d, code, lead); unknown(d, r.reason, r.extra); return; }
+    const r = refusal(d, denialCode(d), lead);
+    if (r) { unknown(d, r.reason, r.extra); return; }
     unknown(d, `${lead}: ${how}`);
   };
   const skipped = [], why = new Map();   // the stated gaps, and the errno each was judged on
@@ -239,8 +244,9 @@ function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, revi
     // the errno is read ONCE per folder and carried: reading it again for the basis below could disagree with the
     // channel it decided, and a row whose stated basis contradicts its own placement is worse than no basis at all
     const code = denialCode(d);
-    // EPERM, whoever owns the folder and whether or not it was asked for by name: UNKNOWN (owner decision #32)
-    if (code === 'EPERM') { const r = refusal(d, code, 'could not be opened, so it was not searched'); unknown(d, r.reason, r.extra); continue; }
+    // EPERM (owner decision #32) or a path too long to open: UNKNOWN, whoever owns it and whether or not it was asked for
+    const special = refusal(d, code, 'could not be opened, so it was not searched');
+    if (special) { unknown(d, special.reason, special.extra); continue; }
     if (lockedRoots.includes(d) || roots.includes(d)) { unknown(d, `could not be opened, so it was not searched: ${how}`); continue; }
     if (ownedByPerson(d, kind)) { unknown(d, `could not be opened, so it was not searched: ${how}`); continue; }
     skipped.push(d); why.set(d, code);
@@ -248,7 +254,8 @@ function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, revi
   for (const d of review) {
     if (skipped.includes(d)) continue;
     const code = denialCode(d);
-    if (code === 'EPERM') { const r = refusal(d, code, 'could not be opened, so it was not searched'); unknown(d, r.reason, r.extra); continue; }
+    const special = refusal(d, code, 'could not be opened, so it was not searched');
+    if (special) { unknown(d, special.reason, special.extra); continue; }
     skipped.push(d); why.set(d, code);
   }
   if (skipped.length) {

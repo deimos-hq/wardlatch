@@ -7,7 +7,7 @@
 import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -127,3 +127,46 @@ test('MUT-12 mandatoryRefusal() reads the permission bits that apply to this use
   assert.doesNotMatch(r.rows.find((x) => x.path === shut)?.reason ?? 'missing', /permission bits would let this run in/, JSON.stringify(r.rows));
   assert.equal(r.rows.find((x) => x.path === shut)?.status, 'UNKNOWN');
 });
+
+// ---- WV-6: a path longer than the system takes read as "not there" ----------------------------------------------------
+// lib/files.mjs put ENAMETOOLONG in GONE, so a folder whose full path is past PATH_MAX (1,024 bytes on macOS, 4,096 on
+// Linux) read as absent and a site in it read SAFE with no row. The folders are built with relative mkdir and cd, as
+// the refuter's longpath.sh did, since nothing opens them by their full path; and removed with rm, which walks relatively.
+const PATH_MAX = process.platform === 'darwin' ? 1024 : 4096;
+const NAME = 'n'.repeat(250);
+/** Folders of 250-byte names below `base` until the path is past PATH_MAX; then `then` (a shell snippet) runs in the last
+ *  one. → the deepest folder's absolute path (which nothing can open). */
+const tooLong = (base, then = ':') => {
+  const n = Math.ceil((PATH_MAX + 1 - base.length) / (NAME.length + 1));
+  execFileSync('/bin/sh', ['-c', `cd "$1" && i=0 && while [ $i -lt ${n} ]; do mkdir "$2" && cd "$2" || exit 1; i=$((i+1)); done && ${then}`, 'sh', base, NAME], { stdio: 'pipe' });
+  return { deep: join(base, ...Array(n).fill(NAME)), levels: n };
+};
+const rmTree = (p) => execFileSync('/bin/rm', ['-rf', p], { stdio: 'pipe' });
+
+test('WV-6 a folder whose full path is too long to open is "denied" with its errno, never "gone"', async () => {
+  const { listDir, pathState } = await import('../lib/files.mjs');
+  const base = fresh('wv6-unit');
+  const { deep } = tooLong(base);
+  try {
+    assert.ok(Buffer.byteLength(deep) > PATH_MAX, 'premise: the path is past PATH_MAX');
+    assert.deepEqual(listDir(deep), { denied: true, code: 'ENAMETOOLONG' });
+    assert.equal(pathState(deep), 'denied');
+  } finally { rmTree(base); }
+});
+
+test('WV-6 a WordPress site in a folder whose path is too long is could-not-be-tested, exit 2, not SAFE',
+  { skip: process.platform !== 'darwin' && 'only macOS\'s PATH_MAX (1,024) is reached within the walk\'s 5 levels' }, () => {
+    const base = fresh('wv6-cli');
+    const site = 'mkdir -p site/wp-includes site/wp-content/plugins/seo-by-rank-math-pro && echo \'<?php $wp_version = "6.7";\' > site/wp-includes/version.php && printf \'<?php\\n/*\\nPlugin Name: Rank Math PRO\\nVersion: 3.0.123\\n*/\\n\' > site/wp-content/plugins/seo-by-rank-math-pro/rank-math-pro.php';
+    const { deep, levels } = tooLong(base, site);
+    try {
+      assert.ok(levels <= 5, `premise: within the WordPress walk's 5 levels (${levels})`);
+      const r = run(['--incident', 'wordpress-plugins-2026-10', '--paths', base]);
+      assert.deepEqual(r.rows.filter((x) => x.status === 'SAFE'), [], `an all-clear over a site it could not open: ${JSON.stringify(r.rows).slice(0, 2000)}`);
+      const row = unknowns(r).find((x) => x.code === 'ENAMETOOLONG');
+      assert.ok(row && deep.startsWith(row.path), `the folder it could not open is its own row: ${JSON.stringify(r.rows).slice(0, 2000)}`);
+      assert.match(row.reason, /longer than this system lets a program open/, row.reason);
+      assert.doesNotMatch(row.reason, /sudo|Full Disk Access/, 'neither can open it');
+      assert.equal(r.code, 2);
+    } finally { rmTree(base); }
+  });
