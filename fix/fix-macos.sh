@@ -6,7 +6,8 @@
 # and a macOS update puts Apple's original file back (26.7.2 did): run this again after every update.
 # The removal is the advisory's (emudhra.we-have-a-problem.com); this script adds the safety around it:
 #   - finds the two roots by their SHA-256 fingerprints, not by the name lines some copies of the file don't have,
-#     and by their public keys too, so a copy with a bit changed or a root re-issued with the same key is removed;
+#     and by their public keys too, compared as openssl decodes them whatever encoding a certificate stores them in,
+#     so a copy with a bit changed, a root re-issued with the same key, or the key re-encoded is removed;
 #     and refuses a file it can't fully check: a certificate it can't read, a block that isn't a plain certificate,
 #     a -----BEGIN marker anywhere but at the start of a line, or fewer fingerprints read than certificates counted;
 #   - refuses a $FILE that is a symbolic link: replacing it would put a file of this script's own where the link is,
@@ -17,9 +18,10 @@
 #     is the one it cannot see);
 #   - and because that snapshot is in your temporary folder, where anything running as you can change it, nothing
 #     read from it is taken on trust: before replacing anything, the backup (beside the file, where only the file's
-#     owner can change it) must have the snapshot's SHA-256, hold each certificate to be removed as what it was found
-#     to be, and give byte for byte the cleaned file when cleaned the same way; a file found clean is read again
-#     from the file itself;
+#     owner can change it) must have the snapshot's SHA-256, read exactly as the snapshot did -- every certificate
+#     readable, the same withdrawn roots and copies at the same places and no others -- and give byte for byte the
+#     cleaned file when cleaned the same way; a file found clean, or too small to fix, is read again from the file
+#     itself;
 #   - changes nothing if the file is already clean;
 #   - refuses a bundle too small to be a trust store, and never advises putting back a copy that holds a withdrawn
 #     root: the only way back it ever names is its own backup, in the Undo line under a SAFE result or under a run
@@ -30,7 +32,8 @@
 #     it when they are that root's exactly as openssl prints them, and the one empty line after it -- and nothing
 #     else in the file;
 #   - writes the new file beside the old one and checks THAT file -- byte for byte the file it built, every other
-#     certificate still there, no withdrawn root left -- before replacing anything;
+#     certificate still there, no withdrawn root left -- before replacing anything; root writes it from what your own
+#     shell hands it, and never opens a file in your temporary folder;
 #   - makes every change to the file by renaming a finished file over it, in one step, so an interruption leaves the
 #     old file or the new one and never half of either, and removes its temporary files on a Ctrl-C or a shutdown too;
 #   - keeps the file readable by everyone, as macOS ships it;
@@ -39,8 +42,13 @@
 #   - reads a control -- an ordinary website, through this same file -- both before and after the change, and tells
 #     a certificate refused after the change apart from a network that stopped answering; it re-tests against the
 #     advisory's test site only when the control loads, and no network result undoes the fix;
-#   - on macOS, prints a line that starts with SAFE, EXPOSED or UNKNOWN whenever it exits, after a Ctrl-C (INT), a
-#     Ctrl-\ (QUIT), a HUP or a TERM too, from its first command on (before that, bash has only read the script).
+#   - on macOS, prints a line that starts with SAFE, EXPOSED or UNKNOWN whenever it exits, from its first command on
+#     (before that, bash has only read the script), and exits 2 after any signal it can catch whose default is to end
+#     a process: a Ctrl-C (INT), a Ctrl-\ (QUIT), HUP, TERM, ABRT, PIPE, ALRM (a timeout), XCPU (a CPU limit), XFSZ,
+#     VTALRM, PROF, USR1 and USR2. Not the fault signals, ILL, TRAP, EMT, FPE, BUS, SEGV and SYS: when bash itself
+#     raises one, a trap on it would run on top of the fault, so they keep their default, and any of them, or SIGKILL,
+#     ends the run with no line;
+#   - exits 0 only after a SAFE line and 1 only after an EXPOSED one: a line that can't be written ends it with 2.
 # Safe to run twice. Run it in Terminal (it asks for your Mac's password) or as root from Jamf, Kandji or Intune.
 # Copy it from the Wardlatch page in Safari. Don't fetch it with the Mac's own curl: that curl is what's exposed.
 set -euo pipefail
@@ -58,14 +66,23 @@ AAA='D7:A7:A0:FB:5D:7E:27:31:D7:71:E9:48:4E:BC:DE:F7:1D:5F:0C:3E:0A:29:48:78:2B:
 EMS='86:A1:EC:BA:08:9C:4A:8D:3B:BE:27:34:C6:12:BA:34:1D:81:3E:04:3C:F9:E8:A8:62:CD:5C:57:A3:6B:BE:6B'
 AAA_NAME='AAA Certificate Services'
 EMS_NAME='emSign ECC Root CA - G3'
-# And their public keys, each the base64 of its SubjectPublicKeyInfo as `openssl x509 -pubkey` prints it, on one line.
-# A certificate carrying one of these keys is trusted to sign for it whatever else it says: a copy with one bit of its
-# signature flipped, or a root re-issued with the same key, has another fingerprint and the same key, and LibreSSL,
-# OpenSSL 3.6.4 and Apple's python3 trust it (measured 31 Oct 2026). SHA-256 of each SubjectPublicKeyInfo:
+# And their public keys. A certificate carrying one of these keys is trusted to sign for it whatever else it says: a
+# copy with one bit of its signature flipped, or a root re-issued with the same key, has another fingerprint and the
+# same key, and LibreSSL, OpenSSL 3.6.4 and Apple's python3 trust it (measured 31 Oct 2026). SHA-256 of each root's
+# SubjectPublicKeyInfo as it ships:
 #   AAA Certificate Services  bd153ed7b0434f6886b17bce8bbe84ed340c7132d702a8f4fa318f756ecbd6f3
 #   emSign ECC Root CA - G3   8d417db2dd8bf5e3084d1e3f196d583849d81bdd4c00c70b9d39369e96b8c782
-AAA_KEY='MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvkCd9G7h6naHHE1FRI6+RsiDBp3BKv4YH47kAvrzq11QihYxC5oG0MVwIs1JLVRjzLZuaEYLU+rLTCTAvHJO6vEVrvRUmhIKw3qyM2Di2olV8yJY897cz++DhqKMlE+faPKYkEaEJ8d2v+PMNSyLXgdkZYLASLCokflhn3YgUKiRx2a163hiA1bwihoT6jGjHqCZ/Tj29icyWG8H9Wu4+xQrr7eqzNZjX3OM2gWZqDioyxd4NlGs6Z70eDqNzw/ZQuKYDKsvnw4B3u+fmUnxLd+sdE0bmLVHxeUp0fmQGMdinL6DxyZ7Poolx8DdneY1aBAgnY/Y3tLDhJwNXugvyQIDAQAB'
-EMS_KEY='MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEI6UMuC0S9SjzsbLd4gISgJ45X0lNn8klNFl07LsGHOfAcq/ori/hQVSHFKhKsuh8guZbarXcs3XOiwbQhiO/RtWODz8E9Ncckn72pWPC9V+OLk+hGBkCKzIKgmR9FpPR'
+# The same key can be stored in other encodings, and LibreSSL and /usr/bin/curl trust a root stored in each of them
+# (measured 31 Oct 2026 on throwaway roots, each verifying a leaf it signed): an EC point compressed or hybrid, the curve
+# given by explicit parameters instead of its name, an RSA key labelled RSA-PSS. `openssl x509 -pubkey` prints each in
+# its own encoding, so comparing that text -- as this did until then -- missed all of them, and the copy stayed under
+# SAFE. So the key is compared by its own bytes as openssl decodes and prints them (-text): every encoding of an EC point
+# carries its X coordinate, and every encoding of an RSA key its modulus, byte for byte. These are emSign's X coordinate
+# (48 bytes) and the first 48 bytes of AAA's modulus, in lowercase hex as openssl prints them.
+AAA_N='be409df46ee1ea76871c4d45448ebe46c883069dc12afe181f8ee402faf3ab5d508a16310b9a06d0c57022cd492d5463'
+EMS_X='23a50cb82d12f528f3b1b2dde20212809e395f494d9fc925345974ecbb061ce7c072afe8ae2fe141548714a84ab2e87c'
+# Everything of -text but the public key.
+KEYTEXT=no_header,no_version,no_serial,no_signame,no_validity,no_subject,no_issuer,no_extensions,no_sigdump,no_aux
 # Nothing below runs a command until the traps are set, after the functions: see "The traps" further down.
 
 # The symbolic-link check, before the -f test, which is true for a symbolic link to a regular file. This fix replaces
@@ -74,15 +91,28 @@ EMS_KEY='MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEI6UMuC0S9SjzsbLd4gISgJ45X0lNn8klNFl07Ls
 # reason), and the file it points to would be left exactly as it was. Until 31 Oct 2026 the refusal said the Mac
 # would go on reading the old bundle, which is not what happens, and told the reader to run this "against that file"
 # without saying how. The way is WARDLATCH_CERT_FILE, so the refusal now prints the command, with the file in it.
+# The link's target is named only when every character of it is plain: letters, digits, space and / . _ + @ , : = ~ % -.
+# Whoever made the link chose that name, and until r4 it went raw into the command printed below, inside single
+# quotes: a name holding a single quote broke out of them, so the command a reader pasted ran something of the link
+# maker's choosing, then this fix without WARDLATCH_CERT_FILE; and U+202E or U+2028 in a name reached the terminal
+# raw (the round-3 re-read). The script's own path is printed on the same terms.
+plain() { case "$1" in ''|*[!A-Za-z0-9\ /._+@,:=~%-]*) return 1 ;; esac; }
 linked() {
   local to me
   to=$(readlink "$FILE" 2>/dev/null) || to=
   case "$to" in /*|'') ;; *) to="$(dirname "$FILE")/$to" ;; esac
-  case "$0" in *.sh) me=$0 ;; *) me='<this script>' ;; esac
-  echo "UNKNOWN  $FILE is a symbolic link${to:+ to $to}. Nothing changed. Replacing it would replace the link with a"
-  echo "         file of this run's own: $FILE would stop following the file it points to, and that file would be left"
-  echo "         as it is. To fix the file it points to, run this again with that file named:"
-  echo "         WARDLATCH_CERT_FILE='${to:-<the file the link points to>}' bash '$me'"
+  me='<this script>'; case "$0" in *.sh) ! plain "$0" || me=$0 ;; esac
+  if [ -z "$to" ] || plain "$to"; then
+    echo "UNKNOWN  $FILE is a symbolic link${to:+ to $to}. Nothing changed. Replacing it would replace the link with a"
+    echo "         file of this run's own: $FILE would stop following the file it points to, and that file would be left"
+    echo "         as it is. To fix the file it points to, run this again with that file named:"
+    echo "         WARDLATCH_CERT_FILE='${to:-<the file the link points to>}' bash '$me'"
+  else
+    echo "UNKNOWN  $FILE is a symbolic link, to a file whose name holds characters this doesn't print. Nothing changed."
+    echo "         Replacing it would replace the link with a file of this run's own: $FILE would stop following the"
+    echo "         file it points to, and that file would be left as it is. To fix the file it points to, run this again"
+    echo "         with WARDLATCH_CERT_FILE set to that file, once you have checked its name (ls -l shows it)."
+  fi
   exit 2
 }
 
@@ -116,24 +146,31 @@ sha() {
 }
 # Reads one certificate (PEM, in $1) and sets $kind: AAA or EMS when it is that withdrawn root, byte for byte by its
 # SHA-256 fingerprint; AAA-KEY or EMS-KEY when it is another certificate carrying that root's public key; - for any
-# other certificate. One openssl call prints both the fingerprint and the key. Returns 1 when openssl couldn't read
-# the certificate, and 2 when what it printed isn't a fingerprint and a public key, so the caller doesn't count it.
+# other certificate. One openssl call prints both the fingerprint and the key, decoded: its "pub:" (EC) or "Modulus:"
+# (RSA) bytes in hex, which are compared with AAA_N and EMS_X. Returns 1 when openssl couldn't read the certificate, and 2 when what it printed isn't a
+# fingerprint and a decoded key -- a key openssl can't decode can't be compared -- so the caller doesn't count it.
 classify() {
   local o f k
   kind=''
-  o=$(printf '%s\n' "$1" | /usr/bin/openssl x509 -noout -fingerprint -sha256 -pubkey 2>/dev/null) || return 1
-  f=${o#*SHA256 Fingerprint=}; f=${f%%$'\n'*}
-  # 32 pairs of hex digits joined by colons
-  case "$f" in *[!0-9A-F:]*|'') return 2 ;; esac
-  [ "${#f}" -eq 95 ] || return 2
-  case "$o" in *$'\n-----BEGIN PUBLIC KEY-----\n'*$'\n-----END PUBLIC KEY-----'*) ;; *) return 2 ;; esac
-  k=${o#*-----BEGIN PUBLIC KEY-----}; k=${k%%-----END PUBLIC KEY-----*}; k=${k//$'\n'/}
-  case "$k" in *[!A-Za-z0-9+/=]*|'') return 2 ;; esac
-  if [ "$f" = "$AAA" ]; then kind=AAA
-  elif [ "$f" = "$EMS" ]; then kind=EMS
-  elif [ "$k" = "$AAA_KEY" ]; then kind=AAA-KEY
-  elif [ "$k" = "$EMS_KEY" ]; then kind=EMS-KEY
-  else kind=-; fi
+  # Spaces, tabs, colons and line breaks taken out by tr, so the dump's hex digits are joined up, the fingerprint is
+  # 64 hex digits, and what follows it is "SubjectPublicKeyInfo...". (Taking them out in bash instead is quadratic in
+  # bash 3.2: 26 s for the 128 certificates of macOS 27.2's file, measured 31 Oct 2026.)
+  o=$(printf '%s\n' "$1" | /usr/bin/openssl x509 -noout -fingerprint -sha256 -text -certopt "$KEYTEXT" 2>/dev/null | tr -d ' \t\n:') || return 1
+  case "$o" in SHA256Fingerprint=*) ;; *) return 2 ;; esac
+  f=${o#SHA256Fingerprint=}; k=${f:64}; f=${f:0:64}
+  case "$f" in *[!0-9A-F]*) return 2 ;; esac
+  [ "${#f}" -eq 64 ] || return 2
+  # The key, decoded: "pub" (EC) or "Modulus" (RSA) and its bytes. Nothing else that is printed holds either word.
+  case "$k" in SubjectPublicKeyInfo*pub[0-9a-f]*|SubjectPublicKeyInfo*Modulus[0-9a-f]*) ;; *) return 2 ;; esac
+  if [ "$f" = "${AAA//:/}" ]; then kind=AAA
+  elif [ "$f" = "${EMS//:/}" ]; then kind=EMS
+  else
+    case "$k" in
+      *"$AAA_N"*) kind=AAA-KEY ;;
+      *"$EMS_X"*) kind=EMS-KEY ;;
+      *) kind=- ;;
+    esac
+  fi
 }
 # Prints one line for each certificate in $1 that carries a withdrawn root's key: its position (1, 2, ...) and what
 # classify() found it to be, AAA, EMS, AAA-KEY or EMS-KEY. Fails -- so the caller says UNKNOWN and changes nothing --
@@ -279,9 +316,13 @@ bnew=''       # the file beside $FILE the backup is copied into, until it has it
 writing=''    # set just BEFORE the first file is made beside $FILE: until then this run has written nothing there
 published=''  # set once the backup has its dated name
 replaced=''   # set once the cleaned file has been renamed over $FILE
-orig='' want='' after='' backup='' naaa=0 nems=0 kaaa=0 kems=0 found=0 kind='' why='' step=''
+orig='' want='' after='' backup='' naaa=0 nems=0 kaaa=0 kems=0 found=0 kind='' why='' step='' meant=''
 snap='' tmp=''  # the two temporary files, once mktemp has named them
 SUDO='' DIR=''  # set once $FILE is known to be a file
+# The signals the traps below catch (stopped()), and that the run ignores once its answer is in (settled(), stopped()
+# itself, and the cleanup at exit). Kept in one place: until r4 three lists of four, and the round-3 re-read found the
+# cleanup's list could lose one and no case would see it.
+SIGNALS='HUP INT QUIT TERM ABRT PIPE ALRM XCPU XFSZ VTALRM PROF USR1 USR2'
 # Every command here ends in `|| true`, and that is load-bearing rather than tidy. Measured on /bin/bash 3.2.57:
 # with `set -e` in force, a failing command inside the EXIT trap ends the trap AND overrides the script's exit
 # status, so one failed `rm` turned `exit 2` ("couldn't tell") into `exit 1`, which the published exit-code table
@@ -310,7 +351,9 @@ strays() {
 # said "replaced with the cleaned file (removed both withdrawn roots)" about a file holding both of them again.
 stopped() {
   local now
-  trap '' HUP INT QUIT TERM
+  # shellcheck disable=SC2086
+  trap '' $SIGNALS
+  exec >&3
   clean
   if [ -z "$writing" ]; then
     echo "UNKNOWN  Stopped before this changed anything: nothing was written to $FILE or beside it. Run this again."
@@ -338,7 +381,14 @@ stopped() {
 # Called once the last reading is in, just before the verdict is printed: from here the run has its answer, and a
 # signal is ignored rather than stop it half-way through saying so. Until 31 Oct 2026 a signal here, or during the
 # cleanup at exit, ran stopped(), which printed "UNKNOWN  Stopped ..." under the verdict and turned exit 0 or 1 into 2.
-settled() { trap '' HUP INT QUIT TERM; }
+# shellcheck disable=SC2086
+settled() { trap '' $SIGNALS; }
+# The last thing the EXIT trap does, with the status the run was ending with: 0 comes only from a SAFE line and 1 only
+# from an EXPOSED one, which sets $meant just before its `exit 1`; every other status is 2. Until r4 a verdict line that
+# could not be written (standard output closed, a log file on a full volume) failed under `set -e` and ended the run
+# with echo's status, 1, which the published table reads as EXPOSED, after the file was fixed (the round-3 re-read);
+# now the line that could not be read ends it with 2, and so does any other command that fails unchecked.
+ended() { if { [ "$1" -eq 1 ] && [ "$meant" != 1 ]; } || [ "$1" -gt 2 ]; then exit 2; fi; }
 # What this file held of one withdrawn root: $1 copies of the root itself and $2 other certificates with its key, $3
 # its name. A certificate found by the key alone is named as that, not as the root: it is not byte for byte the root.
 one() {
@@ -394,7 +444,14 @@ replace() {
   if [ "$1" = "$tmp" ]; then expect=$want; else expect=$orig; fi
   step=mktemp; new=$($SUDO mktemp "$DIR/.wardlatch-new.$$.XXXXXX" 2>&1) || { why=$new; new=''; return 1; }
   case "$new" in "$DIR"/.wardlatch-new.$$.*) ;; *) why=$new; new=''; return 1 ;; esac
-  if step=cp && why=$($SUDO cp "$1" "$new" 2>&1) && step=chmod && why=$($SUDO chmod 644 "$new" 2>&1); then
+  # The bytes go in through tee's standard input, which this run's own shell opens, as the invoking user: root writes
+  # the file it just made and opens nothing else. Until 31 Oct 2026 root copied $1 itself (`sudo cp`), and $1 is the
+  # cleaned file in the invoking user's temporary folder: a process running as that user that turned it into a link to
+  # a root-only file while the run waited for the password got root to copy that file here and make it readable by
+  # everyone (chmod 644, below) before the digest check removed it (the round-3 re-read, with a stand-in sudo). Now a
+  # link to a file the user can't read fails here, as the user, and what is made readable is only what the user could
+  # already read.
+  if step=tee && why=$($SUDO tee "$new" 2>&1 <"$1" >/dev/null) && step=chmod && why=$($SUDO chmod 644 "$new" 2>&1); then
     got=$(sha "$new") || got=''
     if [ "$got" != "$expect" ] || { [ "$1" = "$tmp" ] && ! built "$new"; }; then
       $SUDO rm -f "$new" || true
@@ -439,17 +496,16 @@ built() { local n l; n=$(certs "$1") && [ "$n" -eq "$after" ] && l=$(roots "$1")
 # a same-user process that swapped one certificate of the snapshot while it was read, and put the snapshot back before
 # the backup was compared with it, landed its own root in $FILE under SAFE, exit 0 (the F1 class; measured by the third
 # read, 4 runs of 4). Fails if any of the three doesn't hold.
+# The second is the whole reading, made again on the backup: every certificate read, no marker after other text, no
+# other kind of block, and exactly the withdrawn roots and copies the snapshot showed, at the same places. Until r4 it
+# was each certificate on the removal list, so a root hidden from the reads of the snapshot was never on the list, the
+# backup bore the list out, and the one thing left to stop it landing was built() on the new file (the round-3 re-read:
+# with built() taken out, SAFE with AAA Certificate Services left in $FILE).
 checkbackup() {
-  local p t
+  local s=$spec b=$before
   [ "$(sha "$backup")" = "$orig" ] || return 1
-  # Split on purpose: $drop is "position:kind" pairs, digits, colons, AAA, EMS and -KEY only.
-  # shellcheck disable=SC2086
-  set -f; set -- $drop; set +f
-  for p in "$@"; do
-    t=$(block "$backup" "${p%%:*}") || return 1
-    classify "$t" || return 1
-    [ "$kind" = "${p#*:}" ] || return 1
-  done
+  inspect "$backup" || return 1
+  { [ "$spec" = "$s" ] && [ "$before" -eq "$b" ]; } || return 1
   [ "$(strip "$backup" "$drop" | sha -)" = "$want" ]
 }
 # The backup copy failed or isn't the file this run checked: the partial copy is removed and the dated name is never
@@ -488,11 +544,20 @@ nosnap() {
 # The cleanup at exit ignores the signals first: it runs after the verdict line, and a signal during it ran stopped(),
 # which printed a second line contradicting the first and turned exit 0 or 1 into 2 (the third read). settled() does
 # the same from the moment the last reading is in, for the lines of the verdict itself.
-trap 'trap "" HUP INT QUIT TERM; clean' EXIT
+# File descriptor 3 is the standard output this run started with, where stopped() writes its line: a signal can arrive
+# while standard output is sent somewhere else, as it is into the cleaned file while that is written (`strip ...
+# >"$tmp"`), and until r4 the line went into that file, which clean() then deletes, and the run ended with no line (the
+# round-3 re-read). A run whose standard output is closed has nowhere to print a line, and ends here, changing nothing.
+exec 3>&1 || exit 2
+trap 'r=$?; trap "" $SIGNALS; clean; ended "$r"' EXIT
 trap stopped HUP INT TERM
 # And QUIT, which Ctrl-\ sends: untrapped, it ended the run with 131 and no line, and left a .wardlatch-new.<pid>.*
 # file beside $FILE -- root's, in a real run -- that a later run's strays() never removes (the third read).
 trap stopped QUIT
+# And every other signal whose default is to end a process, except the fault signals (see the header): until r4 USR1,
+# ALRM -- what the usual timeout wrapper sends -- and XCPU, among others, ended the run with 158, 142 or 152 and no line,
+# after the rename too (the round-3 re-read).
+trap stopped ABRT PIPE ALRM XCPU XFSZ VTALRM PROF USR1 USR2
 
 [ "$(uname -s)" = Darwin ] || { echo "This fix is for macOS. On Linux, update the ca-certificates package."; exit 2; }
 # The symbolic-link check comes before the -f test, which is true for a link to a file (see linked()).
@@ -574,6 +639,15 @@ found=$((naaa + nems))
 # revert this branch removed on 29 Oct 2026, in a script people run as root. So that case is now UNKNOWN with the
 # facts, no claim that the Mac is safe, and no advice to restore anything.
 if [ "$before" -lt 50 ]; then
+  # What this says about $FILE is read from $FILE: the snapshot is in the invoking user's temporary folder, and until r4 a
+  # same-user process that swapped it for a small clean bundle made this say "It holds neither withdrawn root" about a
+  # file that held both (the round-3 re-read). Still UNKNOWN then, but the line was untrue.
+  sb=$before; ss=$spec; r=0; inspect "$FILE" || r=$?
+  if [ "$r" -ne 0 ] || [ "$spec" != "$ss" ] || [ "$before" -ne "$sb" ]; then
+    echo "UNKNOWN  The copy of $FILE this run read has $sb certificates, but $FILE itself doesn't read the same way now:"
+    echo "         it changed while this ran, or something changed the copy in ${TMPDIR:-/tmp}. Nothing changed. Run this again."
+    exit 2
+  fi
   if [ "$found" -eq 0 ]; then
     echo "UNKNOWN  $FILE has $before certificates, fewer than the 50 this expects of a trust store. It holds neither"
     echo "         withdrawn root, so this fix has nothing to remove. Something else may be wrong with it; nothing"
@@ -609,7 +683,7 @@ if [ "$found" -eq 0 ]; then
     settled
     case "$r" in
       60) echo "SAFE     $FILE already refuses the compromised keys. Nothing changed." ;;
-      0)  echo "EXPOSED  $FILE holds neither root but still trusts the test site. Nothing changed; please report this."; exit 1 ;;
+      0)  echo "EXPOSED  $FILE holds neither root but still trusts the test site. Nothing changed; please report this."; meant=1; exit 1 ;;
       *)  echo "SAFE     $FILE no longer holds the two roots. Nothing changed. (An ordinary website loaded but the test site"
           echo "         didn't answer (curl $r), so this wasn't re-tested online.)" ;;
     esac
@@ -707,7 +781,7 @@ if [ "$landed" != "$want" ]; then
     echo "EXPOSED  What was written to $FILE isn't the file this built and checked, so the original was put back and this"
     echo "         Mac still trusts the compromised keys. Nothing else was changed. Run it again; please report this."
     echo "         Backup: $backup"
-    exit 1
+    meant=1; exit 1
   fi
   # No command to put the backup back by hand: it holds the withdrawn roots, and this says what each file holds
   # rather than advise a revert. Until 31 Oct 2026 it printed "Put it back yourself, now: sudo cp -p ...".
@@ -737,7 +811,7 @@ if [ "$c" -eq 0 ]; then
         echo "         fix was kept either way: putting the original back would put"
         echo "         $(held) back. Please report this."
         echo "         Backup: $backup (the file as it was; it holds $(held))"
-        exit 1 ;;
+        meant=1; exit 1 ;;
     *)  echo "SAFE     Fixed in the file: $(removed_phrase), kept $after. (The test site didn't answer"
         echo "         (curl $r), though an ordinary website loaded, so this wasn't re-tested online.)" ;;
   esac

@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=76
+expect_cases=94
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -185,6 +185,10 @@ cat >"$r2/curl" <<'STUB'
 # Stands in for /usr/bin/curl. The advisory's test host gets $STUB_TEST. A control call gets $STUB_CONTROL, or, when
 # $STUB_CONTROLS is set, the next of its answers, one per call, the last repeating (counted in $STUB_STATE). With
 # STUB_HOLD=1 the first control call touches $WL_MARK and waits, so a case can stop the run there.
+# r4: STUB_ONLY_FILE=1: a call whose --cacert is not $WARDLATCH_CERT_FILE itself gets 77, an answer nothing expects.
+# STUB_MARK_TEST=1: the call to the test host touches $WL_MARK first (the last reading a run takes).
+if [ -n "${STUB_ONLY_FILE:-}" ]; then prev=''; for a in "$@"; do if [ "$prev" = --cacert ] && [ "$a" != "$WARDLATCH_CERT_FILE" ]; then exit 77; fi; prev=$a; done; fi
+case "$*" in *we-have-a-problem.com*) [ -z "${STUB_MARK_TEST:-}" ] || : >"$WL_MARK" ;; esac
 case "$*" in *we-have-a-problem.com*) exit "${STUB_TEST:?}" ;; esac
 n=$(cat "${STUB_STATE:-/dev/null}" 2>/dev/null); n=$(( ${n:-0} + 1 ))
 [ -z "${STUB_STATE:-}" ] || printf '%s' "$n" >"$STUB_STATE"
@@ -308,6 +312,10 @@ if [ "$n" = "${WL_MKTEMP_FAIL:-0}" ]; then echo "mktemp: mkstemp failed on $*: N
 # r3: WL_MKTEMP_HOLD=1 makes the first file, then touches $WL_MARK and waits before printing its name, so a case can
 # send a signal while the name has not yet reached the script.
 if [ "${WL_MKTEMP_HOLD:-}" = 1 ] && [ "$n" = 1 ]; then p=$(/usr/bin/mktemp "$@") || exit; : >"$WL_MARK"; /bin/sleep 3; echo "$p"; exit 0; fi
+# r4: WL_MKTEMP_ORPHAN=tmp does the same for a file in TMPDIR (wardlatch.*).
+if [ "${WL_MKTEMP_ORPHAN:-}" = tmp ]; then
+  for a in "$@"; do case "$a" in "${TMPDIR:-/tmp}"/wardlatch.*) /usr/bin/mktemp "$@" >/dev/null; exit 1 ;; esac; done
+fi
 if [ -n "${WL_MKTEMP_ORPHAN:-}" ]; then
   for a in "$@"; do case "$a" in */.wardlatch-"$WL_MKTEMP_ORPHAN".*) /usr/bin/mktemp "$@" >/dev/null; exit 1 ;; esac; done
 fi
@@ -330,8 +338,27 @@ cat >"$shims/sudo" <<'SHIM'
 if [ "${WL_SUDO:-}" = grant ]; then
   n=$(cat "$WL_SUDO_STATE" 2>/dev/null); n=$(( ${n:-0} + 1 )); printf '%s' "$n" >"$WL_SUDO_STATE"
   if [ "$n" = "${WL_SUDO_REFUSE:-0}" ]; then echo 'sudo: 3 incorrect password attempts' >&2; exit 1; fi
-  [ "$1" != -v ] || exit 0
-  exec "$@"
+  # r4: WL_SUDO_LOG records each granted command, so a case can see what root was asked to open.
+  [ -z "${WL_SUDO_LOG:-}" ] || printf '%s\n' "$*" >>"$WL_SUDO_LOG"
+  # r4: WL_SUDO_SECRET names a file of mode 000, which this user can't read and root can: each granted command runs with
+  # it readable, as root would, and it is unreadable again after. At -v, where the run waits for the password, the
+  # cleaned file in TMPDIR (a wardlatch.* file holding something other than the bundle) becomes a symbolic link to it,
+  # as a process running as this user could make it. Afterwards, a file beside the bundle holding the secret's first
+  # line is recorded in WL_SUDO_LEAK.
+  if [ "$1" = -v ]; then
+    if [ -n "${WL_SUDO_SECRET:-}" ]; then
+      for t in "${TMPDIR:-/tmp}"/wardlatch.*; do
+        if [ -s "$t" ] && ! cmp -s "$t" "$WARDLATCH_CERT_FILE"; then /bin/rm -f "$t"; ln -s "$WL_SUDO_SECRET" "$t"; fi
+      done
+    fi
+    exit 0
+  fi
+  [ -n "${WL_SUDO_SECRET:-}" ] || exec "$@"
+  /bin/chmod 600 "$WL_SUDO_SECRET"; "$@"; r=$?; /bin/chmod 000 "$WL_SUDO_SECRET"
+  for f in "$(dirname "$WARDLATCH_CERT_FILE")"/.wardlatch-*; do
+    if [ -f "$f" ] && /usr/bin/grep -qF 'root-only secret' "$f" 2>/dev/null; then echo "$f" >>"$WL_SUDO_LEAK"; fi
+  done
+  exit "$r"
 fi
 exit 1
 SHIM
@@ -345,6 +372,26 @@ if [ "${WL_GREP:-}" = swap ] && [ -s "${WL_SWAP_STATE:-}" ] && [ ! -e "$WL_SWAP_
   for a in "$@"; do last=$a; done
   if [ "$last" = "$s" ]; then : >"$WL_SWAP_STATE.done"; /bin/cp "$WL_VARIANT" "$s"; fi
 fi
+# r4: WL_GREP_TMP=<file>: the first grep that reads the cleaned file (a wardlatch.* file in TMPDIR holding something,
+# not the snapshot and not a copy of the bundle) first keeps its contents in $WL_STASH, and its name in $WL_STASH.path,
+# and puts <file>'s contents in its place: the checks on the cleaned file then read what a same-user process chose.
+if [ -n "${WL_GREP_TMP:-}" ] && [ ! -e "$WL_STASH.path" ]; then
+  last=''
+  for a in "$@"; do last=$a; done
+  case "$last" in
+    "${TMPDIR:-/tmp}"/wardlatch.*)
+      if [ -s "$last" ] && [ "$last" != "$(cat "${WL_SWAP_STATE:-/dev/null}" 2>/dev/null)" ] && ! cmp -s "$last" "$WARDLATCH_CERT_FILE"; then
+        /bin/cp "$last" "$WL_STASH"; printf '%s' "$last" >"$WL_STASH.path"; /bin/cp "$WL_GREP_TMP" "$last"
+      fi ;;
+  esac
+fi
+# r4: WL_GREP_NEW=race: the first grep that reads the new file beside the bundle (.wardlatch-new.*, which built() checks)
+# first appends $WL_CORP to the bundle, as an administrator could at that moment. Once: $WL_GREP_NEW_STATE.
+if [ "${WL_GREP_NEW:-}" = race ] && [ ! -e "$WL_GREP_NEW_STATE" ]; then
+  last=''
+  for a in "$@"; do last=$a; done
+  case "$last" in */.wardlatch-new.*) : >"$WL_GREP_NEW_STATE"; cat "$WL_CORP" >>"$WARDLATCH_CERT_FILE" ;; esac
+fi
 exec /usr/bin/grep "$@"
 SHIM
 cat >"$shims/rm" <<'SHIM'
@@ -352,20 +399,25 @@ cat >"$shims/rm" <<'SHIM'
 # WL_RM=hold: the first rm that names a file in $TMPDIR (the cleanup when the script exits) touches $WL_MARK and waits,
 # so a case can send a signal while the cleanup runs. Once only: $WL_RM_STATE records it.
 if [ "${WL_RM:-}" = hold ] && [ ! -e "$WL_RM_STATE" ]; then
-  for a in "$@"; do case "$a" in "${TMPDIR:-/tmp}"/wardlatch.*) : >"$WL_RM_STATE"; : >"$WL_MARK"; /bin/sleep 3; break ;; esac; done
+  for a in "$@"; do case "$a" in "${TMPDIR:-/tmp}"/wardlatch.*) : >"$WL_RM_STATE"; : >"$WL_MARK"; /bin/sleep "${WL_HOLD:-3}"; break ;; esac; done
 fi
 exec /bin/rm "$@"
 SHIM
 cat >"$shims/uname" <<'SHIM'
 #!/bin/bash
-# WL_UNAME=hold: touches $WL_MARK and waits, so a case can send a signal at the very start of the script.
-if [ "${WL_UNAME:-}" = hold ]; then : >"$WL_MARK"; /bin/sleep 3; fi
+# WL_UNAME=hold: touches $WL_MARK and waits (r4: WL_HOLD seconds, 3 if unset), so a case can send a signal at the very start.
+if [ "${WL_UNAME:-}" = hold ]; then : >"$WL_MARK"; /bin/sleep "${WL_HOLD:-3}"; fi
 exec /usr/bin/uname "$@"
 SHIM
 cat >"$shims/date" <<'SHIM'
 #!/bin/bash
 # WL_DATE pins the stamp the fix puts in its backup's name.
 if [ -n "${WL_DATE:-}" ] && [ "${1:-}" = +%Y%m%d-%H%M%S ]; then echo "$WL_DATE"; exit 0; fi
+# r4: WL_STASH: the first date call (the backup's name, after the checks on the cleaned file) puts back what the grep
+# stand-in kept, so the cleaned file is again the one the fix built.
+if [ -n "${WL_STASH:-}" ] && [ -e "$WL_STASH.path" ] && [ ! -e "$WL_STASH.back" ]; then
+  : >"$WL_STASH.back"; /bin/cp "$WL_STASH" "$(cat "$WL_STASH.path")"
+fi
 exec /bin/date "$@"
 SHIM
 cat >"$shims/awk" <<'SHIM'
@@ -373,6 +425,16 @@ cat >"$shims/awk" <<'SHIM'
 # WL_AWK=tamper-tmp: once, right after the first awk that leaves a temporary file of the fix's (a wardlatch.* file in
 # $TMPDIR that is not a copy of the bundle) holding something -- that is, as soon as the cleaned file is written --
 # one certificate of that file is swapped for $WL_TAMPER, as a same-user process could, before its SHA-256 is taken.
+# r4: WL_AWK=restore-snap: the first awk after the grep stand-in swapped the snapshot (the cleaned file being built) first
+# puts the bundle's bytes back in it, so what was read and what is built from differ, as a same-user process can make them.
+if [ "${WL_AWK:-}" = restore-snap ] && [ -e "$WL_SWAP_STATE.done" ] && [ ! -e "$WL_SWAP_STATE.back" ]; then
+  : >"$WL_SWAP_STATE.back"; /bin/cp "$WARDLATCH_CERT_FILE" "$(cat "$WL_SWAP_STATE")"
+fi
+# r4: WL_AWK=hold-strip: the first awk that strip() runs (it alone sets WL_STRIP=1) -- the cleaned file being written --
+# touches $WL_MARK and waits first, so a case can send a signal while the cleaned file is built. Once: $WL_AWK_STATE.
+if [ "${WL_AWK:-}" = hold-strip ] && [ "${WL_STRIP:-}" = 1 ] && [ ! -e "$WL_AWK_STATE" ]; then
+  : >"$WL_AWK_STATE"; : >"$WL_MARK"; /bin/sleep 3
+fi
 /usr/bin/awk "$@"; r=$?
 if [ "${WL_AWK:-}" = tamper-tmp ] && [ ! -e "$WL_AWK_STATE" ]; then
   for t in "${TMPDIR:-/tmp}"/wardlatch.*; do
@@ -387,7 +449,56 @@ if [ "${WL_AWK:-}" = tamper-tmp ] && [ ! -e "$WL_AWK_STATE" ]; then
 fi
 exit "$r"
 SHIM
+cat >"$shims/link" <<'SHIM'
+#!/bin/bash
+# r4: WL_LINK=reswap: just after the backup gets its dated name, the snapshot (its name in $WL_SWAP_STATE) is swapped for
+# $WL_VARIANT again, as a same-user process could, so the backup and the snapshot differ from then on.
+/bin/link "$@"; r=$?
+if [ "${WL_LINK:-}" = reswap ] && [ -s "${WL_SWAP_STATE:-}" ]; then /bin/cp "$WL_VARIANT" "$(cat "$WL_SWAP_STATE")"; fi
+exit "$r"
+SHIM
+cat >"$shims/tee" <<'SHIM'
+#!/bin/bash
+# r4: the file to be renamed into place may be made by `tee <dir>/.wardlatch-new.* <source` rather than by cp, so that
+# root writes it without opening any path of the user's. WL_CP's new-file modes act on it as they act on cp: the
+# forward copy is the one made before any rename into place (WL_MV_STATE absent or 0), the restore's the one after.
+dst=''
+for a in "$@"; do dst=$a; done
+case "$dst" in */.wardlatch-new.*) ;; *) exec /usr/bin/tee "$@" ;; esac
+n=$(cat "${WL_MV_STATE:-/dev/null}" 2>/dev/null); fwd=''; [ "${n:-0}" != 0 ] || fwd=1
+case "${WL_CP:-}" in
+  partial-new) if [ -n "$fwd" ]; then head -c 1000 >"$dst"; exit 1; fi ;;
+  # r4: full-new: the copy fails part-way on a full disk, in tee's own words.
+  full-new) if [ -n "$fwd" ]; then head -c 1000 >"$dst"; echo "tee: $dst: No space left on device" >&2; exit 1; fi ;;
+  kill-in-new) if [ -n "$fwd" ]; then head -c 500 >"$dst"; kill -TERM "$PPID"; /bin/sleep 1; exit 1; fi ;;
+  tamper-new-append) if [ -n "$fwd" ]; then { cat; cat "$WL_TAMPER"; } >"$dst"; exit 0; fi ;;
+  tamper-new-swap)
+    if [ -n "$fwd" ]; then
+      /usr/bin/awk -v t="$WL_TAMPER" 'BEGIN { while ((getline l < t) > 0) rep = rep l "\n" }
+        /^-----BEGIN CERTIFICATE-----/ && !done { skip = 1 }
+        skip { if ($0 ~ /^-----END CERTIFICATE-----/) { printf "%s", rep; skip = 0; done = 1 }; next }
+        { print }' >"$dst"
+      exit 0
+    fi ;;
+  sig-restore-cp) if [ -z "$fwd" ]; then : >"$WL_MARK"; /bin/sleep 3; fi ;;
+esac
+exec /usr/bin/tee "$@"
+SHIM
 chmod +x "$r2/curl" "$r2/openssl" "$shims"/*
+# r4: a case that sends the fix a signal needs the fix to start with that signal's default action, as it does from a
+# terminal. A harness started with a signal ignored passes the ignore on (a script's background job ignores INT and
+# QUIT; some parents ignore PIPE), and bash can't trap a signal that was ignored when it started, so until r4 such a case
+# failed and blamed the fix (the round-3 re-read: 'an interrupt' under `( ... & )`, 13 runs of 13). Any such signal is
+# found here, and then each run that is signalled is started through perl, which sets them all back to their defaults.
+reset=()
+for s in HUP INT QUIT TERM ABRT PIPE ALRM XCPU XFSZ VTALRM PROF USR1 USR2; do
+  [ "$(/bin/bash -c "trap 'echo y' $s; kill -$s \$\$" 2>/dev/null)" != y ] || continue
+  [ -x /usr/bin/perl ] || fail "this harness was started with SIG$s ignored, which the signal cases need not to be, and there is no /usr/bin/perl to set it back: run it in the foreground"
+  # shellcheck disable=SC2016
+  reset=(/usr/bin/perl -e '$SIG{$_} = "DEFAULT" for qw(HUP INT QUIT TERM ABRT PIPE ALRM XCPU XFSZ VTALRM PROF USR1 USR2); exec @ARGV or die "exec: $!\n"' --)
+  echo "NOTE: this harness was started with SIG$s ignored, so each run it signals is started with every signal's default set back."
+  break
+done
 # Runs $1 on bundle $2 in the background, in its own process group, with the VAR=value arguments after them; waits
 # for a stand-in to touch $WL_MARK, then sends INT to the script itself, as a Ctrl-C would reach it (another signal
 # when $sigrun_sig names one). Sets $code and $out, and checks what run() checks: nothing on stderr but the
@@ -398,7 +509,7 @@ sigrun() {
   shift 2
   rm -rf "$work/tmp"; mkdir "$work/tmp"; rm -f "$r2/mark"
   set -m
-  env "$@" WL_MARK="$r2/mark" TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$f" bash "$s" >"$r2/sig.out" 2>"$r2/sig.err" &
+  ${reset[@]+"${reset[@]}"} env "$@" WL_MARK="$r2/mark" TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$f" bash "$s" >"$r2/sig.out" 2>"$r2/sig.err" &
   pid=$!
   set +m
   for i in $(seq 1 300); do [ -e "$r2/mark" ] && break; /bin/sleep 0.1; done
@@ -901,12 +1012,16 @@ if [ "$found" -gt 0 ]; then
   [ "$(backups "$work/backupfails.pem")" -eq 0 ] || fail "a failed backup: it left a backup behind"
   [ -z "$(beside "$work/backupfails.pem")" ] || fail "a failed backup: it left $(beside "$work/backupfails.pem") beside the bundle"
   # Proof both discriminate: with the checks taken off those two writes, the run exits 1 with nothing printed. (The
-  # backup copy in either shape: as a bare command, or, since r3, with its words kept for the line that reports it.)
+  # backup copy in either shape: as a bare command, or, since r3, with its words kept for the line that reports it.
+  # And, since r4, with the exit-code guard at exit -- `ended "$r"` in the EXIT trap, which turns any exit 1 that no
+  # EXPOSED line asked for into 2 -- taken out too: it catches the same failure, so a test of either check has to take
+  # out both, or it shows only that the other one caught it.)
   for t in writefails backupfails; do
     case "$t" in
-      writefails) base=$work/$t.sh; sed 's#^replace "\$tmp" || .*$#replace "$tmp"#' "$base" >"$work/$t-nocheck.sh" ;;
+      writefails) base=$work/$t.sh; sed -e 's#^replace "\$tmp" || .*$#replace "$tmp"#' -e "s#; ended \"\\\$r\"' EXIT\$#' EXIT#" "$base" >"$work/$t-nocheck.sh" ;;
       backupfails) base=$fix; sed -e 's#^\(\$SUDO cp -p "\$FILE" "\$b[a-z]*"\) ||.*$#\1#' \
-                                  -e 's#^\(why=\$(\$SUDO cp -p "\$FILE" "\$b[a-z]*" 2>&1)\) ||.*$#\1#' "$base" >"$work/$t-nocheck.sh" ;;
+                                  -e 's#^\(why=\$(\$SUDO cp -p "\$FILE" "\$b[a-z]*" 2>&1)\) ||.*$#\1#' \
+                                  -e "s#; ended \"\\\$r\"' EXIT\$#' EXIT#" "$base" >"$work/$t-nocheck.sh" ;;
     esac
     cmp -s "$base" "$work/$t-nocheck.sh" && fail "a failed write: the check on $t was not found, so this case proves nothing"
     cp "$work/original.pem" "$work/$t-nocheck.pem"
@@ -1009,7 +1124,7 @@ if [ "$found" -gt 0 ]; then
     rm -rf "$work/tmp"; mkdir "$work/tmp"
     rm -f "$work/at-the-write"
     set -m
-    env TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$2" WL_AT_THE_WRITE="$work/at-the-write" \
+    ${reset[@]+"${reset[@]}"} env TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$2" WL_AT_THE_WRITE="$work/at-the-write" \
       bash "$1" >"$work/interrupt.out" 2>&1 &
     pid=$!
     set +m
@@ -1062,7 +1177,7 @@ if [ "$found" -gt 0 ]; then
     rm -rf "$work/tmp"; mkdir "$work/tmp"
     rm -f "$work/at-the-write"
     set -m
-    env TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$2" WL_AT_THE_WRITE="$work/at-the-write" \
+    ${reset[@]+"${reset[@]}"} env TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$2" WL_AT_THE_WRITE="$work/at-the-write" \
       bash "$1" >"$work/interrupt.out" 2>&1 &
     pid=$!
     set +m
@@ -1862,7 +1977,7 @@ ok "an empty file is reported as holding no certificates and neither root"
 # file and fails without printing its name. Added after a mutant that took out replace()'s own removal survived
 # because this cleanup removes the same file at exit, and no case reached the cleanup itself.
 d=$r2/orphan; mkdir "$d"
-for which in new backup; do
+for which in new backup tmp; do
   cp "$work/original.pem" "$d/cert.pem"
   run "$d/cert.pem" PATH="$shims:$PATH" WL_MKTEMP_ORPHAN="$which" "$offline" "$OFFLINE"
   [ "$code" -eq 2 ] || fail "a $which file whose name never reached the script: expected UNKNOWN, exit 2, got $code"
@@ -2000,14 +2115,24 @@ ok "a copy of a withdrawn root with a bit changed (same key, another fingerprint
 # ---- r3 end case
 
 # ---- r3 case: key-constants
-# The public keys the fix matches are the withdrawn roots' own: each is the key of the certificate in
-# lib/incidents/ (the incident's roots, which test/incidents.test.mjs ties to its distrusted fingerprints), and the
-# SHA-256 the script's comment gives for each is the SHA-256 of that key's SubjectPublicKeyInfo.
-for r in aaa:AAA_KEY emsign:EMS_KEY; do
+# The key bytes the fix matches are the withdrawn roots' own: AAA_N is the first 48 bytes of the modulus of AAA
+# Certificate Services in lib/incidents/, EMS_X the X coordinate of emSign ECC Root CA - G3's point there (the incident's
+# roots, which test/incidents.test.mjs ties to its distrusted fingerprints); and the SHA-256 the script's comment gives
+# for each is the SHA-256 of that root's SubjectPublicKeyInfo. (Until r4 the fix matched the base64 of the whole
+# SubjectPublicKeyInfo, AAA_KEY and EMS_KEY, which missed the same key in another encoding: the r4 case samekey-enc.)
+for r in aaa:AAA_N emsign:EMS_X; do
   pem=$root/lib/incidents/emudhra-2026-10-root-${r%%:*}.pem
   [ -s "$pem" ] || fail "the keys: $pem is not there"
-  real=$(/usr/bin/openssl x509 -in "$pem" -noout -pubkey | sed '1d;$d' | tr -d '\n')
-  inscript=$(sed -n "s/^${r#*:}='\\([A-Za-z0-9+/=]*\\)'\$/\\1/p" "$fix")
+  if [ "${r%%:*}" = aaa ]; then
+    real=$(/usr/bin/openssl x509 -in "$pem" -noout -modulus | sed 's/^Modulus=//' | tr 'A-F' 'a-f'); real=${real:0:96}
+  else
+    real=$(/usr/bin/openssl x509 -in "$pem" -noout -pubkey | /usr/bin/openssl pkey -pubin -outform DER | xxd -p | tr -d '\n')
+    # P-384, named curve, uncompressed point: the X coordinate is the 48 bytes after this header
+    [ "${real:0:48}" = 3076301006072a8648ce3d020106052b8104002203620004 ] || fail "the keys: $pem is not the P-384 key this expects"
+    real=${real:48:96}
+  fi
+  [ "${#real}" -eq 96 ] || fail "the keys: could not read 48 bytes of the key of $pem"
+  inscript=$(sed -n "s/^${r#*:}='\\([0-9a-f]*\\)'\$/\\1/p" "$fix")
   [ -n "$inscript" ] || fail "the keys: ${r#*:} was not found in $fix"
   [ "$inscript" = "$real" ] || fail "the keys: ${r#*:} in the script is not the key of $pem"
   spki=$(/usr/bin/openssl x509 -in "$pem" -noout -pubkey | /usr/bin/openssl pkey -pubin -outform DER | /usr/bin/openssl dgst -sha256 | sed 's/.* //')
@@ -2279,6 +2404,497 @@ cmp -s "$d/cert.pem" "$work/original.pem" || fail "the cleaned file changed afte
 rm -f "$d"/cert.pem.wardlatch-*.bak
 ok "the new file's SHA-256 comes from the rebuild, so a cleaned file changed after it was written never lands"
 # ---- r3 end case
+
+# ---- r4 cases
+# Added on 31 Oct 2026 after the round-3 re-reads. Like the r2 and r3 cases, each stands on the setup above alone.
+
+# ---- r4 case: samekey-enc
+# A copy of a withdrawn root that carries its key in another valid encoding: emSign ECC Root CA - G3's EC point
+# compressed or hybrid, or its curve given by explicit parameters instead of by name (and both at once); AAA Certificate
+# Services' RSA key labelled RSA-PSS. Each copy keeps the root's own signature bytes. LibreSSL trusts a root re-encoded
+# in each of these ways (shown below on throwaway roots of the same kinds, each with a leaf it signed; and measured with
+# /usr/bin/curl on 31 Oct 2026), and `openssl x509 -pubkey` prints each in its own encoding, so the round-3 comparison
+# of that text with the root's missed every one: the copy stayed in the file under SAFE, exit 0. The key is now compared
+# by its own bytes as openssl decodes them, so each copy must be found, removed, and named as a certificate with that
+# root's key.
+d=$work/r4/samekeyenc; mkdir -p "$d"
+libre() { /usr/bin/openssl crl2pkcs7 -nocrl -certfile "$1" 2>/dev/null | /usr/bin/openssl pkcs7 -print_certs 2>/dev/null | grep -c '^-----BEGIN CERTIFICATE-----' || true; }
+spkihex() { /usr/bin/openssl x509 -in "$1" -noout -pubkey | /usr/bin/openssl pkey -pubin -outform DER 2>/dev/null | xxd -p | tr -d '\n'; }
+derlen() { if [ "$1" -lt 128 ]; then printf '%02x' "$1"; elif [ "$1" -lt 256 ]; then printf '81%02x' "$1"; else printf '82%04x' "$1"; fi; }
+derhdr() {   # $1 = hex starting at a SEQUENCE: prints the header's length in hex digits and the content's in bytes
+  local b=$((0x${1:2:2}))
+  if [ "$b" -lt 128 ]; then echo "4 $b"; elif [ "$b" -eq 129 ]; then echo "6 $((0x${1:4:2}))"; elif [ "$b" -eq 130 ]; then echo "8 $((0x${1:4:4}))"; else echo "0 0"; fi
+}
+respki() {   # $1 = certificate, $2 = SubjectPublicKeyInfo (DER hex), $3 = out: the certificate with that key, its signature kept
+  local h old oh ol t th tl tbs after inner
+  h=$(/usr/bin/openssl x509 -in "$1" -outform DER | xxd -p | tr -d '\n'); old=$(spkihex "$1")
+  read -r oh ol <<<"$(derhdr "$h")"; t=${h:$oh}; read -r th tl <<<"$(derhdr "$t")"
+  { [ "$oh" -gt 0 ] && [ "$th" -gt 0 ]; } || fail "a key in another encoding: $1 is not a certificate this can rebuild"
+  tbs=${t:$th:$((tl * 2))}; after=${t:$((th + tl * 2))}
+  case "$tbs" in *"$old"*"$old"*) fail "a key in another encoding: the key is in $1 twice" ;; *"$old"*) ;; *) fail "a key in another encoding: the key was not found in $1" ;; esac
+  tbs=${tbs/"$old"/"$2"}
+  inner="30$(derlen $(( ${#tbs} / 2 )))$tbs$after"
+  printf '%s' "30$(derlen $(( ${#inner} / 2 )))$inner" | xxd -r -p | /usr/bin/openssl x509 -inform DER -out "$3" ||
+    fail "a key in another encoding: openssl could not read the rebuilt $3"
+}
+reenc() {    # $1 = certificate, $2 = how, $3 = out
+  local k bits
+  case "$2" in
+    compressed|hybrid) k=$(/usr/bin/openssl x509 -in "$1" -noout -pubkey | /usr/bin/openssl ec -pubin -conv_form "$2" -outform DER 2>/dev/null | xxd -p | tr -d '\n') ;;
+    explicit) k=$(/usr/bin/openssl x509 -in "$1" -noout -pubkey | /usr/bin/openssl ec -pubin -param_enc explicit -outform DER 2>/dev/null | xxd -p | tr -d '\n') ;;
+    explicit-compressed) k=$(/usr/bin/openssl x509 -in "$1" -noout -pubkey | /usr/bin/openssl ec -pubin -param_enc explicit -conv_form compressed -outform DER 2>/dev/null | xxd -p | tr -d '\n') ;;
+    pss) k=$(spkihex "$1"); bits=${k#30820122300d06092a864886f70d0101010500}
+         [ "$bits" != "$k" ] || fail "a key in another encoding: $1 is not a 2048-bit RSA key in the usual encoding"
+         k=30820120300b06092a864886f70d01010a$bits ;;
+  esac
+  [ -n "$k" ] || fail "a key in another encoding: openssl could not re-encode the key of $1 ($2)"
+  respki "$1" "$k" "$3"
+}
+# LibreSSL trusts each encoding: a throwaway root of the same kind, re-encoded the same way, still verifies a leaf it
+# signed (for RSA-PSS, a leaf signed with PSS, which the key labelled that way is for).
+{ /usr/bin/openssl ecparam -name secp384r1 -genkey -noout -out "$d/ec.key" 2>/dev/null &&
+  /usr/bin/openssl req -x509 -new -key "$d/ec.key" -sha384 -days 30 -subj /CN=Throwaway-P384 -out "$d/ec.pem" 2>/dev/null &&
+  /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -keyout "$d/rsa.key" -sha256 -days 30 -subj /CN=Throwaway-RSA -out "$d/rsa.pem" 2>/dev/null &&
+  /usr/bin/openssl req -newkey rsa:2048 -nodes -keyout "$d/leaf.key" -subj /CN=leaf.example -out "$d/leaf.csr" 2>/dev/null &&
+  /usr/bin/openssl x509 -req -in "$d/leaf.csr" -CA "$d/ec.pem" -CAkey "$d/ec.key" -set_serial 2 -days 30 -sha384 -out "$d/ec-leaf.pem" 2>/dev/null &&
+  /usr/bin/openssl x509 -req -in "$d/leaf.csr" -CA "$d/rsa.pem" -CAkey "$d/rsa.key" -set_serial 3 -days 30 -sha256 \
+    -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:32 -out "$d/rsa-leaf.pem" 2>/dev/null; } ||
+  fail "a key in another encoding: openssl could not make the throwaway roots"
+for how in compressed hybrid explicit explicit-compressed pss; do
+  if [ "$how" = pss ]; then t=rsa; else t=ec; fi
+  reenc "$d/$t.pem" "$how" "$d/$t-$how.pem"
+  [ "$(/usr/bin/openssl verify -purpose sslserver -CAfile "$d/$t-$how.pem" "$d/$t-leaf.pem" 2>&1)" = "$d/$t-leaf.pem: OK" ] ||
+    fail "a key in another encoding ($how): LibreSSL does not trust a root re-encoded this way, so this case would measure nothing"
+done
+for shape in ems:compressed ems:hybrid ems:explicit ems:explicit-compressed aaa:pss both:compressed emsplus:pss; do
+  r=${shape%%:*}; how=${shape#*:}; copy=$d/$r-$how.pem
+  case "$r" in aaa|emsplus) src=$r2/aaa.pem ;; *) src=$r2/ems.pem ;; esac
+  reenc "$src" "$how" "$copy"
+  [ "$(/usr/bin/openssl x509 -in "$copy" -noout -pubkey)" != "$(/usr/bin/openssl x509 -in "$src" -noout -pubkey)" ] ||
+    fail "a key in another encoding ($shape): openssl prints the copy's key as the root's, so this case would measure nothing"
+  case "$r" in
+    ems) cat "$r2/P.pem" "$copy" >"$d/cert.pem"
+         want='removed a certificate with the key of emSign ECC Root CA - G3 (this file did not hold the other withdrawn root, AAA Certificate Services)' ;;
+    aaa) cat "$r2/P.pem" "$copy" >"$d/cert.pem"
+         want='removed a certificate with the key of AAA Certificate Services (this file did not hold the other withdrawn root, emSign ECC Root CA - G3)' ;;
+    both) cat "$work/original.pem" "$copy" >"$d/cert.pem"
+          want='removed both withdrawn roots (AAA Certificate Services and emSign ECC Root CA - G3 and 1 other certificate with its key)' ;;
+    # (r4, the round-3 mutant M14: emSign itself and only a key copy of AAA. "removed both withdrawn roots" alone would
+    # say AAA itself was there.)
+    emsplus) cat "$r2/emsonly.pem" "$copy" >"$d/cert.pem"
+             want='removed both withdrawn roots (a certificate with the key of AAA Certificate Services and emSign ECC Root CA - G3)' ;;
+  esac
+  [ "$(libre "$d/cert.pem")" -eq "$(certs_in "$d/cert.pem")" ] || fail "a key in another encoding ($shape): LibreSSL does not read every certificate, so this case would measure nothing"
+  run "$d/cert.pem" "$offline" "$OFFLINE"
+  [ "$code" -eq 0 ] || fail "a key in another encoding ($shape): expected the file fixed, exit 0, got $code"
+  cmp -s "$d/cert.pem" "$r2/P.pem" || fail "a key in another encoding ($shape): the file is not the advisory's removal ($(certs_in "$d/cert.pem") certificates): the copy carrying a withdrawn root's key is still in it"
+  grep -qF -- "$want" <<<"$out" || fail "a key in another encoding ($shape): it did not say \"$want\""
+  rm -f "$d"/cert.pem.wardlatch-*.bak
+done
+ok "a withdrawn root's key in another encoding (EC point compressed or hybrid, explicit curve, RSA-PSS) is found and removed"
+# ---- r4 end case
+
+# ---- r4 case: root-reads
+# Root never opens a path in the invoking user's temporary folder. Until r4 the fix had root copy the cleaned file there
+# into a file beside the bundle (`sudo cp $tmp <new>`), which follows a symbolic link, and make that file world-readable
+# before its digest was checked: a process running as the user that turned the cleaned file into a link to a root-only
+# file, while the run waited for the password, got root to copy that file beside the bundle as mode 644 (round-3
+# re-read 0, with a stand-in sudo). The sudo stand-in grants every call as this user and records it; the bundle is
+# read-only to this user, so the fix uses sudo. First, an ordinary run: fixed, and no privileged command names a path in
+# TMPDIR. Then the attack: the cleaned file becomes a link to a mode-000 secret at `sudo -v`; the secret must never reach
+# a file beside the bundle, and the run must change nothing.
+if [ "$(id -u)" -eq 0 ]; then
+  echo "NOTE: running as root, so the fix never calls sudo and no file is unreadable to it; root-reads did not run."
+  notrun="$notrun root-reads"
+else
+  d=$work/r4/rootreads; mkdir -p "$d"
+  rm -f "$d"/cert.pem "$d/state" "$d/log"
+  cp "$work/original.pem" "$d/cert.pem"; chmod 444 "$d/cert.pem"
+  run "$d/cert.pem" PATH="$shims:$PATH" WL_SUDO=grant WL_SUDO_STATE="$d/state" WL_SUDO_LOG="$d/log" "$offline" "$OFFLINE"
+  [ "$code" -eq 0 ] || fail "root reads: an ordinary run through sudo: expected the bundle fixed, exit 0, got $code"
+  cmp -s "$d/cert.pem" "$r2/P.pem" || fail "root reads: an ordinary run through sudo: the bundle is not the advisory's removal"
+  [ -s "$d/log" ] || fail "root reads: the sudo stand-in recorded no command, so this case would measure nothing"
+  inuser=$(grep -F -- "$work/tmp/" "$d/log" || true)
+  [ -z "$inuser" ] || fail "root reads: root was given a path in the user's temporary folder: $inuser"
+  rm -f "$d"/cert.pem "$d"/cert.pem.wardlatch-*.bak "$d/state" "$d/leak"
+  printf '%s\n' 'root-only secret' >"$d/secret"; chmod 000 "$d/secret"
+  cp "$work/original.pem" "$d/cert.pem"; chmod 444 "$d/cert.pem"
+  stderr_ok=1
+  run "$d/cert.pem" PATH="$shims:$PATH" WL_SUDO=grant WL_SUDO_STATE="$d/state" WL_SUDO_SECRET="$d/secret" WL_SUDO_LEAK="$d/leak" "$offline" "$OFFLINE"
+  stderr_ok=''
+  chmod 600 "$d/secret"
+  [ "$(cat "$d/state")" -ge 2 ] || fail "root reads: the run made only $(cat "$d/state") sudo calls, so this case would measure nothing"
+  [ ! -s "$d/leak" ] || fail "root reads: a root-only file reached the bundle's folder: $(sort -u "$d/leak" | tr '\n' ' ')"
+  [ "$code" -eq 2 ] || fail "root reads: the cleaned file swapped for a link: expected UNKNOWN, exit 2, got $code"
+  cmp -s "$d/cert.pem" "$work/original.pem" || fail "root reads: the cleaned file swapped for a link: the bundle changed"
+  [ -z "$(beside "$d/cert.pem")" ] || fail "root reads: it left $(beside "$d/cert.pem") beside the bundle"
+  chmod 644 "$d/cert.pem"; rm -f "$d"/cert.pem.wardlatch-*.bak
+  ok "root never opens a path in the user's temporary folder: a link put there never brings a root-only file beside the bundle"
+fi
+# ---- r4 end case
+
+# ---- r4 case: hide-root
+# A withdrawn root hidden from what the fix reads in the user's temporary folder. A same-user process swaps the snapshot,
+# while it is read, for a copy with AAA Certificate Services' certificate replaced by another root, and puts it back
+# before the cleaned file is built from it; and swaps the cleaned file, while it is checked, for one built from that
+# copy, and puts it back before the backup. So the removal list names emSign alone, every check made in the temporary
+# folder passes, and the cleaned file holds AAA. Until r4 the backup was checked only for each certificate on that list,
+# not for being the whole list, and the one thing left to stop AAA landing was built() on the new file (the round-3
+# re-read: with built() taken out, SAFE "removed emSign ECC Root CA - G3", with AAA left). The backup, which only the
+# bundle's owner can change, must now read exactly as the snapshot did: the same withdrawn roots and copies, at the same
+# places, and nothing else uncheckable. The run must stop there, with nothing built beside the bundle.
+d=$work/r4/hide; mkdir -p "$d"
+awk -v t="$r2/corp.pem" -v l="$aaa_line" 'BEGIN { while ((getline x < t) > 0) rep = rep x "\n" }
+  /^-----BEGIN CERTIFICATE-----/ { held = $0; next }
+  held != "" { if ($0 == l) { skip = 1; printf "%s", rep } else print held; held = "" }
+  skip { if ($0 ~ /^-----END CERTIFICATE-----/) skip = 0; next }
+  { print }' "$work/original.pem" >"$d/hidden.pem"
+awk '/^(###|===) /{skip=0} /^=== .*\/CN=emSign ECC Root CA - G3$/{skip=1} !skip' "$d/hidden.pem" >"$d/hidden-clean.pem"
+{ [ "$(bad "$d/hidden.pem")" -eq 1 ] && [ "$(certs_in "$d/hidden.pem")" -eq "$total" ] && [ "$(bad "$d/hidden-clean.pem")" -eq 0 ] &&
+  [ "$(certs_in "$d/hidden-clean.pem")" -eq $((total - 1)) ]; } || fail "a hidden root: the copies were not built as described"
+cp "$work/original.pem" "$d/cert.pem"; rm -f "$d"/state* "$d"/stash*
+run "$d/cert.pem" PATH="$shims:$PATH" WL_CP=swap-late WL_GREP=swap WL_SWAP_STATE="$d/state" WL_VARIANT="$d/hidden.pem" WL_AWK=restore-snap \
+  WL_GREP_TMP="$d/hidden-clean.pem" WL_STASH="$d/stash" "$offline" "$OFFLINE"
+{ [ -e "$d/state.done" ] && [ -e "$d/state.back" ] && [ -e "$d/stash.path" ] && [ -e "$d/stash.back" ]; } ||
+  fail "a hidden root: a stand-in did not do its part ($(cd "$d" && ls state* stash* 2>/dev/null | tr '\n' ' ')), so this case would measure nothing"
+[ "$code" -eq 2 ] || fail "a hidden root: expected UNKNOWN, exit 2, got $code"
+cmp -s "$d/cert.pem" "$work/original.pem" || fail "a hidden root: the bundle changed ($(certs_in "$d/cert.pem") certificates, $(bad "$d/cert.pem") withdrawn roots)"
+grep -q "^UNKNOWN  The backup of $d/cert.pem doesn't bear out" <<<"$out" || fail "a hidden root: it was not stopped by the backup's check, before anything was built beside the bundle"
+[ -z "$(beside "$d/cert.pem")" ] || fail "a hidden root: it left $(beside "$d/cert.pem") beside the bundle"
+rm -f "$d"/cert.pem.wardlatch-*.bak
+ok "a withdrawn root hidden from the reads in the temporary folder is caught by the backup's own reading, before anything is built"
+# ---- r4 end case
+
+# ---- r4 case: built-last
+# built() is the check made on the very file renamed into place, beside the bundle, where only its owner can change it:
+# the right number of certificates and no withdrawn root. Every other check of the cleaned file is made in the user's
+# temporary folder, or on what strip() makes of the backup, so a regression in strip() that left a withdrawn root in,
+# met with a same-user process feeding the temporary-folder checks a correct file, is stopped by built() alone. No case
+# held it until r4: with built() a no-op every case passed (the round-3 re-read's BUILT). A copy of the script whose
+# strip() keeps AAA Certificate Services stands for the regression; the grep stand-in swaps the cleaned file for the
+# advisory's removal while it is checked and the date stand-in puts it back. The run must stop at built(), UNKNOWN,
+# exit 2, with the bundle as it was.
+d=$work/r4/builtlast; mkdir -p "$d"
+sed 's/drop\[p\[1\] + 0\] = p\[2\] }/if (p[2] != "AAA") drop[p[1] + 0] = p[2] }/' "$fix" >"$d/keeps-aaa.sh"
+cmp -s "$fix" "$d/keeps-aaa.sh" && fail "built() last: strip()'s removal list was not found in $fix, so this case proves nothing"
+cp "$work/original.pem" "$d/cert.pem"; rm -f "$d"/stash*
+script=$d/keeps-aaa.sh
+run "$d/cert.pem" PATH="$shims:$PATH" WL_GREP_TMP="$r2/P.pem" WL_STASH="$d/stash" "$offline" "$OFFLINE"
+script=$fix
+{ [ -e "$d/stash.path" ] && [ -e "$d/stash.back" ]; } || fail "built() last: the stand-ins did not swap the cleaned file and put it back, so this case would measure nothing"
+[ "$(bad "$d/stash")" -eq 1 ] || fail "built() last: the cleaned file the copy built holds $(bad "$d/stash") withdrawn roots, not 1, so this case would measure nothing"
+[ "$code" -eq 2 ] || fail "built() last: a cleaned file still holding a withdrawn root: expected UNKNOWN, exit 2, got $code"
+cmp -s "$d/cert.pem" "$work/original.pem" || fail "built() last: the bundle changed ($(certs_in "$d/cert.pem") certificates, $(bad "$d/cert.pem") withdrawn roots)"
+grep -q "^UNKNOWN  The file built beside $d/cert.pem isn't the cleaned file this checked" <<<"$out" || fail "built() last: it was not stopped by the check on the file beside the bundle"
+[ -z "$(beside "$d/cert.pem")" ] || fail "built() last: it left $(beside "$d/cert.pem") beside the bundle"
+rm -f "$d"/cert.pem.wardlatch-*.bak
+ok "a cleaned file that still holds a withdrawn root is stopped by the check on the file beside the bundle, whatever the earlier checks read"
+# ---- r4 end case
+
+# ---- r4 case: sig-in-strip
+# A signal while the cleaned file is being written. The fix writes it with `strip ... >"$tmp"`, and until r4 a signal
+# then ran stopped() with its standard output still sent into $tmp: its line went into the file that clean() deletes,
+# and the run ended exit 2 with no line at all (round-3 re-read 0: TERM, INT, QUIT and HUP at all four calls there).
+# The awk stand-in holds strip()'s own awk; each signal must give exit 2, the line, and nothing left.
+d=$work/r4/sigstrip; mkdir -p "$d"
+for sig in TERM INT HUP QUIT; do
+  cp "$work/original.pem" "$d/cert.pem"; rm -f "$d/state"
+  sigrun_sig=$sig
+  sigrun "$fix" "$d/cert.pem" PATH="$shims:$PATH" WL_AWK=hold-strip WL_AWK_STATE="$d/state" "$offline" "$OFFLINE"
+  sigrun_sig=INT
+  [ "$code" -eq 2 ] || fail "$sig while the cleaned file is written: expected exit 2, got $code"
+  grep -q '^UNKNOWN  Stopped before this changed anything' <<<"$out" || fail "$sig while the cleaned file is written: it did not say it stopped before changing anything"
+  cmp -s "$d/cert.pem" "$work/original.pem" || fail "$sig while the cleaned file is written: the bundle changed"
+  { [ -z "$(beside "$d/cert.pem")" ] && [ "$(baks "$d/cert.pem")" -eq 0 ]; } || fail "$sig while the cleaned file is written: it left something beside the bundle"
+done
+ok "a signal while the cleaned file is written prints its line, not into the file being written"
+# ---- r4 end case
+
+# ---- r4 case: link-name
+# The symbolic-link refusal prints a command to run, with the link's target in it. Until r4 the target went in raw,
+# inside single quotes: a target holding a single quote broke out of them, so the printed command ran a command of the
+# link maker's choosing and then the fix without WARDLATCH_CERT_FILE (round-3 re-read 0, ATTACK-WILD W1's class); and a
+# target holding U+202E or U+2028 reached the terminal raw. A name with anything but plain characters is now never
+# printed, in the command or in the line; a plain one still is (the r2 case symlink-advice runs that command).
+d=$work/r4/linkname; mkdir -p "$d"
+for how in quote bidi; do
+  rm -f "$d/cert.pem"
+  if [ "$how" = quote ]; then tgt="real.pem'; touch $d/PWNED; X='"; else tgt=$(printf 'real\342\200\256mep.pem\342\200\250next'); fi
+  ln -s "$tgt" "$d/cert.pem"
+  run "$d/cert.pem" "$offline" "$OFFLINE"
+  [ "$code" -eq 2 ] || fail "a link whose target's name is not plain ($how): expected UNKNOWN, exit 2, got $code"
+  grep -q '^UNKNOWN.*is a symbolic link' <<<"$out" || fail "a link whose target's name is not plain ($how): it did not say the file is a symbolic link"
+  grep -qF "touch $d/PWNED" <<<"$out" && fail "a link whose target's name is not plain ($how): the line holds the command hidden in the name"
+  LC_ALL=C grep -q $'\342\200[\256\250]' <<<"$out" && fail "a link whose target's name is not plain ($how): U+202E or U+2028 reached the output raw"
+  grep -qF -- "$tgt" <<<"$out" && fail "a link whose target's name is not plain ($how): the name was printed raw"
+  [ -L "$d/cert.pem" ] || fail "a link whose target's name is not plain ($how): the link itself was replaced"
+done
+[ ! -e "$d/PWNED" ] || fail "a link whose target's name is not plain: something ran the command hidden in the name"
+ok "a link whose target's name is not plain is refused without printing the name, in the command or the line"
+# ---- r4 end case
+
+# ---- r4 case: stdout-fails
+# Standard output that can't be written. The verdict line was an echo under `set -e`, so a write that failed ended the
+# run with echo's status, 1 -- the published table's EXPOSED -- after the file was fixed (round-3 re-read 0: a closed
+# stdout, and a log file on a full volume). The line can't be read, so the run ends UNKNOWN's code, 2. Here the run's
+# standard output is a pipe whose reader has gone, with SIGPIPE ignored, as a parent process can leave it: each write
+# fails with EPIPE (the same failed echo as on a full volume). And a run started with standard output closed ends 2,
+# before it reads or writes anything.
+d=$work/r4/stdout; mkdir -p "$d"
+cp "$work/original.pem" "$d/cert.pem"; rm -rf "$work/tmp"; mkdir "$work/tmp"
+set +e
+env TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$d/cert.pem" "$offline" "$OFFLINE" \
+  /bin/bash -c 'trap "" PIPE; exec /bin/bash "$0"' "$fix" 2>"$d/stderr" | true
+code=${PIPESTATUS[0]}
+set -e
+grep -q 'write error' "$d/stderr" || fail "standard output that can't be written: no write failed ($(head -2 "$d/stderr")), so this case would measure nothing"
+[ "$code" -eq 2 ] || fail "standard output that can't be written: expected exit 2, got $code"
+[ -z "$(find "$work/tmp" -mindepth 1 -print -quit)" ] || fail "standard output that can't be written: it left temporary files behind"
+rm -f "$d"/cert.pem.wardlatch-*.bak
+cp "$work/original.pem" "$d/cert.pem"
+code=0; env TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$d/cert.pem" "$offline" "$OFFLINE" /bin/bash "$fix" >&- 2>"$d/stderr" || code=$?
+[ "$code" -eq 2 ] || fail "standard output closed: expected exit 2, got $code"
+{ cmp -s "$d/cert.pem" "$work/original.pem" && [ "$(baks "$d/cert.pem")" -eq 0 ]; } || fail "standard output closed: the run changed something it could not report"
+ok "standard output that can't be written ends the run with 2, never the EXPOSED code"
+# ---- r4 end case
+
+# ---- r4 case: floor-swap
+# The 50-certificate floor, judged from the snapshot in the user's temporary folder alone until r4: a same-user process
+# that swapped the snapshot for a small bundle holding neither root made the run say "It holds neither withdrawn root,
+# so this fix has nothing to remove" about a file holding both (round-3 re-read 0). Still UNKNOWN, exit 2, nothing
+# changed -- but the line was untrue. What the floor says about the file is now read again from the file itself, and
+# when the two readings differ the line says so instead.
+d=$work/r4/floorswap; mkdir -p "$d"
+awk '/^-----BEGIN CERTIFICATE-----/{k++} k <= 12 { print }' "$r2/P.pem" >"$d/small.pem"
+{ [ "$(certs_in "$d/small.pem")" -eq 12 ] && [ "$(bad "$d/small.pem")" -eq 0 ]; } || fail "a swapped floor: the small bundle was not built as described"
+cp "$work/original.pem" "$d/cert.pem"; rm -f "$d"/state*
+run "$d/cert.pem" PATH="$shims:$PATH" WL_CP=swap-late WL_GREP=swap WL_SWAP_STATE="$d/state" WL_VARIANT="$d/small.pem" "$offline" "$OFFLINE"
+[ -e "$d/state.done" ] || fail "a swapped floor: the stand-in never swapped the snapshot, so this case would measure nothing"
+[ "$code" -eq 2 ] || fail "a swapped floor: expected UNKNOWN, exit 2, got $code"
+cmp -s "$d/cert.pem" "$work/original.pem" || fail "a swapped floor: the bundle changed"
+grep -q 'holds neither' <<<"$out" && fail "a swapped floor: it said a file holding both withdrawn roots holds neither"
+grep -q 'fewer than the 50' <<<"$out" && fail "a swapped floor: it described the swapped copy's size as the file's"
+grep -q "doesn't read the same way now" <<<"$out" || fail "a swapped floor: it did not say the file reads differently from the copy"
+ok "the floor's line about the file is read from the file itself, never from a copy another process changed"
+# ---- r4 end case
+
+# ---- r4 case: every-signal
+# Every signal a process can catch whose default action ends it, other than the fault signals the header names, must
+# end the run with a line and exit 2. Until r4 only HUP, INT, QUIT and TERM were trapped: USR1, ALRM and XCPU (and the
+# rest) ended the run with 158, 142 or 152 and no line, after the rename too (round-3 re-read 2), though the published
+# contract says a signal it can catch exits 2. ALRM is what the usual timeout wrapper sends, and XCPU what a CPU limit
+# sends. Each signal at the first command (the uname stand-in holds it), and USR1, ALRM and PIPE just after the rename.
+d=$work/r4/everysig; mkdir -p "$d"
+for sig in HUP INT QUIT TERM ABRT PIPE ALRM XCPU XFSZ VTALRM PROF USR1 USR2; do
+  cp "$work/original.pem" "$d/cert.pem"
+  sigrun_sig=$sig
+  sigrun "$fix" "$d/cert.pem" PATH="$shims:$PATH" WL_UNAME=hold WL_HOLD=1 "$offline" "$OFFLINE"
+  sigrun_sig=INT
+  [ "$code" -eq 2 ] || fail "$sig at the first command: expected exit 2, got $code"
+  grep -q '^UNKNOWN  Stopped before this changed anything' <<<"$out" || fail "$sig at the first command: it did not say it stopped before changing anything"
+  cmp -s "$d/cert.pem" "$work/original.pem" || fail "$sig at the first command: the bundle changed"
+done
+for sig in USR1 ALRM PIPE; do
+  cp "$work/original.pem" "$d/cert.pem"
+  sigrun_sig=$sig
+  sigrun "$fix" "$d/cert.pem" PATH="$shims:$PATH" WL_MV=sig-forward "$offline" "$OFFLINE"
+  sigrun_sig=INT
+  [ "$code" -eq 2 ] || fail "$sig just after the rename: expected exit 2, got $code"
+  grep -q 'had already been replaced with the cleaned file' <<<"$out" || fail "$sig just after the rename: it did not say the file had been replaced"
+  cmp -s "$d/cert.pem" "$r2/P.pem" || fail "$sig just after the rename: the bundle is not the cleaned file"
+  [ -z "$(beside "$d/cert.pem")" ] || fail "$sig just after the rename: it left $(beside "$d/cert.pem") beside the bundle"
+  rm -f "$d"/cert.pem.wardlatch-*.bak
+done
+ok "every signal that ends a process and is not a fault ends the run with a line and exit 2, before the change and after it"
+# ---- r4 end case
+
+# ---- r4 case: locale
+# The fix reads the bundle in bytes (LC_ALL=C, exported), because in a UTF-8 locale macOS's grep does not match a line
+# holding a byte that is not UTF-8 at all, and a BEGIN marker after such bytes then went uncounted (round 3, NEW-1). The
+# round-3 cases ran that shape with LC_ALL=en_US.UTF-8, which bash imports as exported, so `LC_ALL=C` without `export`
+# still reached grep and every case passed (round-3 re-read 2's M01); in Terminal's default, LANG=en_US.UTF-8 and
+# LC_ALL unset, that one word makes a hidden root read SAFE. And a pad ending in "-" before the marker: the inline
+# pattern '.-----BEGIN' must count it, where '[^-]-----BEGIN' would not (M02). Each shape is first shown to hide a
+# certificate LibreSSL reads.
+d=$work/r4/locale; mkdir -p "$d"
+libre() { /usr/bin/openssl crl2pkcs7 -nocrl -certfile "$1" 2>/dev/null | /usr/bin/openssl pkcs7 -print_certs 2>/dev/null | grep -c '^-----BEGIN CERTIFICATE-----' || true; }
+for shape in ff dash; do
+  if [ "$shape" = ff ]; then p=$(printf '%*s' 253 '' | LC_ALL=C tr ' ' '\377'); else p="$(printf '%*s' 252 '' | tr ' ' '#')-"; fi
+  { cat "$r2/P.pem"; printf '%s%s\n' "$p" "$(cat "$r2/aaa.pem")"; } >"$d/$shape.pem"
+  cp "$d/$shape.pem" "$d/$shape.before"
+  [ "$(libre "$d/$shape.pem")" -eq $(($(libre "$r2/P.pem") + 1)) ] || fail "a marker after other text ($shape): LibreSSL does not read the hidden certificate, so this case would measure nothing"
+  if [ "$shape" = ff ]; then
+    [ "$(env -u LC_ALL LANG=en_US.UTF-8 /usr/bin/grep -c -- '.-----BEGIN' "$d/$shape.pem" || true)" -eq 0 ] ||
+      fail "a marker after other text ($shape): grep matches it in en_US.UTF-8 after all, so this case would measure nothing"
+    run "$d/$shape.pem" -u LC_ALL LANG=en_US.UTF-8 "$offline" "$OFFLINE"
+  else
+    run "$d/$shape.pem" "$offline" "$OFFLINE"
+  fi
+  [ "$code" -eq 2 ] || fail "a marker after other text ($shape): expected UNKNOWN, exit 2, got $code"
+  grep -q '^UNKNOWN.*BEGIN comes after other text' <<<"$out" || fail "a marker after other text ($shape): it did not say a line holds the marker after other text"
+  cmp -s "$d/$shape.pem" "$d/$shape.before" || fail "a marker after other text ($shape): the bundle changed"
+done
+ok "a marker after bytes that aren't UTF-8 is found in Terminal's own locale, and after a pad that ends in -"
+# ---- r4 end case
+
+# ---- r4 case: exit-signals
+# A signal while the cleanup at exit runs, after an UNKNOWN line: the cleanup ignores every signal the run traps, so the
+# line stays the only one and the code stays 2. The r3 case signal-at-exit sends TERM alone, and with QUIT dropped from
+# the cleanup's list every case passed (round-3 re-read 2's M04): a QUIT there then ran stopped() and printed a second line.
+d=$work/r4/exitsig; mkdir -p "$d"
+for sig in HUP INT QUIT TERM ABRT PIPE ALRM XCPU XFSZ VTALRM PROF USR1 USR2; do
+  : >"$d/cert.pem"; rm -f "$d/rmstate"
+  sigrun_sig=$sig
+  sigrun "$fix" "$d/cert.pem" PATH="$shims:$PATH" WL_RM=hold WL_HOLD=1 WL_RM_STATE="$d/rmstate" "$offline" "$OFFLINE"
+  sigrun_sig=INT
+  [ -e "$d/rmstate" ] || fail "$sig during the cleanup at exit: the rm stand-in never held the cleanup, so this case would measure nothing"
+  [ "$code" -eq 2 ] || fail "$sig during the cleanup at exit: expected exit 2, got $code"
+  [ "$(grep -cE '^(SAFE|EXPOSED|UNKNOWN) ' <<<"$out")" -eq 1 ] || fail "$sig during the cleanup at exit: it printed more than one verdict line"
+  grep -q 'Stopped' <<<"$out" && fail "$sig during the cleanup at exit: it said it was stopped after it had finished"
+done
+ok "any signal the run traps, arriving while the cleanup at exit runs, leaves the one line and the code as they were"
+# ---- r4 end case
+
+# ---- r4 case: changed-in-built
+# The bundle changes while built() checks the new file beside it, which takes as long as fingerprinting every certificate.
+# The comparison with the bundle must come after built() and immediately before the rename: the r3 case changed-in-replace
+# makes its change at the chmod, before built(), so with the comparison moved above built() it still passed, and a
+# change made during built() was lost under SAFE (round-3 re-read 2's M05). Here the grep stand-in appends an
+# administrator's root when built() first reads the new file.
+d=$work/r4/inbuilt; mkdir -p "$d"
+cp "$work/original.pem" "$d/cert.pem"; cat "$work/original.pem" "$r2/corp.pem" >"$d/expected.pem"; rm -f "$d/state"
+run "$d/cert.pem" PATH="$shims:$PATH" WL_GREP_NEW=race WL_GREP_NEW_STATE="$d/state" WL_CORP="$r2/corp.pem" "$offline" "$OFFLINE"
+[ -e "$d/state" ] || fail "a change while built() checks the new file: the stand-in never made it, so this case would measure nothing"
+[ "$code" -eq 2 ] || fail "a change while built() checks the new file: expected UNKNOWN, exit 2, got $code"
+grep -q '^UNKNOWN.*changed while this ran' <<<"$out" || fail "a change while built() checks the new file: it did not say the file changed while it ran"
+cmp -s "$d/cert.pem" "$d/expected.pem" || fail "a change while built() checks the new file: the change was thrown away ($(certs_in "$d/cert.pem") certificates left)"
+[ -z "$(beside "$d/cert.pem")" ] || fail "a change while built() checks the new file: it left $(beside "$d/cert.pem") beside the bundle"
+rm -f "$d"/cert.pem.wardlatch-*.bak
+ok "a change made while the new file is checked is caught at the rename, and kept"
+# ---- r4 end case
+
+# ---- r4 case: clean-reads-file
+# A bundle already clean: what it says is read from the bundle itself, the network through it too (--cacert the bundle,
+# not the copy in the temporary folder, which another process can change). With the control and the re-test sent
+# through the copy instead, every case passed (round-3 re-read 2's M06). The curl stub answers 77 to any call whose
+# --cacert is not the bundle.
+d=$work/r4/cleanfile; mkdir -p "$d"
+cp "$r2/P.pem" "$d/cert.pem"
+script=$r2/net.sh
+run "$d/cert.pem" WARDLATCH_CURL="$r2/curl" STUB_ONLY_FILE=1 STUB_CONTROL=0 STUB_TEST=60
+script=$fix
+[ "$code" -eq 0 ] || fail "already clean, read through the bundle: expected SAFE, exit 0, got $code"
+grep -q '^SAFE.*already refuses the compromised keys' <<<"$out" || fail "already clean, read through the bundle: the control or the re-test did not go through the bundle itself"
+cmp -s "$d/cert.pem" "$r2/P.pem" || fail "already clean, read through the bundle: the bundle changed"
+ok "a bundle found clean is re-tested through itself, not through the copy in the temporary folder"
+# ---- r4 end case
+
+# ---- r4 case: disk-advice
+# "Check the disk has room (df -h /)" is printed when the failing command's own words are about a full disk, and only
+# then. The r3 case sudo-refused-later holds the "only then"; nothing held the first half, and with room() emptied every
+# case passed (round-3 re-read 2's M07). The tee stand-in fails the new file's copy part-way in tee's own words: no
+# space left. And, failing with no words at all, no advice about the disk.
+d=$work/r4/disk; mkdir -p "$d"
+for how in full-new partial-new; do
+  cp "$work/original.pem" "$d/cert.pem"
+  run "$d/cert.pem" PATH="$shims:$PATH" WL_CP=$how "$offline" "$OFFLINE"
+  [ "$code" -eq 2 ] || fail "a write that fails ($how): expected UNKNOWN, exit 2, got $code"
+  cmp -s "$d/cert.pem" "$work/original.pem" || fail "a write that fails ($how): the bundle changed"
+  if [ "$how" = full-new ]; then
+    grep -q 'No space left on device' <<<"$out" || fail "a full disk: the line did not give the command's own words"
+    grep -q 'Check the disk has room (df -h /)' <<<"$out" || fail "a full disk: it gave no advice about the disk"
+  else
+    grep -q 'Check the disk' <<<"$out" && fail "a write that failed without a word about the disk: it advised checking the disk"
+  fi
+  rm -f "$d"/cert.pem.wardlatch-*.bak
+done
+ok "a full disk gets the advice about disk space, and a failure that says nothing about the disk does not"
+# ---- r4 end case
+
+# ---- r4 case: reswap-after-link
+# The backup bears out what was read only if it is compared as itself: checkbackup() cleans the BACKUP and compares the
+# digest. With the snapshot cleaned there instead, every case passed (round-3 re-read 2's M15), because the r3 case
+# snapshot-swap swaps the snapshot once. Here it is swapped while it is read (one ordinary certificate for an attacker's
+# root), put back for the backup copy, and swapped again just after the backup gets its name (the link stand-in).
+d=$work/r4/reswap; mkdir -p "$d"
+awk -v t="$r2/corp.pem" 'BEGIN { while ((getline x < t) > 0) rep = rep x "\n" }
+  /^-----BEGIN CERTIFICATE-----/ { n++; if (n == 10) skip = 1 }
+  skip { if ($0 ~ /^-----END CERTIFICATE-----/) { printf "%s", rep; skip = 0 }; next }
+  { print }' "$work/original.pem" >"$d/evil.pem"
+{ [ "$(certs_in "$d/evil.pem")" -eq "$total" ] && grep -qF -- "$(sed -n 2p "$r2/corp.pem")" "$d/evil.pem"; } || fail "a second swap: the attacker's copy was not built as described"
+cp "$work/original.pem" "$d/cert.pem"; rm -f "$d"/state*
+run "$d/cert.pem" PATH="$shims:$PATH" WL_CP=swap-late WL_GREP=swap WL_LINK=reswap WL_SWAP_STATE="$d/state" WL_VARIANT="$d/evil.pem" "$offline" "$OFFLINE"
+[ -e "$d/state.done" ] || fail "a second swap: the stand-in never swapped the snapshot, so this case would measure nothing"
+[ "$code" -eq 2 ] || fail "a second swap: expected UNKNOWN, exit 2, got $code"
+cmp -s "$d/cert.pem" "$work/original.pem" || fail "a second swap: the bundle changed ($(grep -cF -- "$(sed -n 2p "$r2/corp.pem")" "$d/cert.pem") copies of the attacker's root in it)"
+rm -f "$d"/cert.pem.wardlatch-*.bak
+ok "a snapshot swapped again after the backup is named still never lands: the backup itself is what is cleaned and compared"
+# ---- r4 end case
+
+# ---- r4 case: other-runs-files
+# The cleanup removes this run's own temporary files and no one else's: each name carries the run's process id, and
+# strays() looks only for that. With strays() matching every wardlatch.* in TMPDIR every case passed (round-3 re-read 2's
+# M17), and a run would delete a concurrent run's snapshot. A file named as another run's is put in TMPDIR first.
+d=$work/r4/others; mkdir -p "$d"
+: >"$d/cert.pem"; rm -rf "$work/tmp"; mkdir "$work/tmp"; : >"$work/tmp/wardlatch.1.AbCdEf"
+code=0; out=$(env TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$d/cert.pem" "$offline" "$OFFLINE" bash "$fix" 2>"$d/stderr") || code=$?
+[ "$code" -eq 2 ] || fail "another run's file in TMPDIR: expected UNKNOWN, exit 2, got $code"
+[ -e "$work/tmp/wardlatch.1.AbCdEf" ] || fail "another run's file in TMPDIR: this run's cleanup deleted it"
+[ "$(find "$work/tmp" -mindepth 1 | wc -l | tr -d ' ')" -eq 1 ] || fail "another run's file in TMPDIR: this run left its own files behind"
+rm -rf "$work/tmp"; mkdir "$work/tmp"
+ok "the cleanup removes this run's own temporary files and leaves another run's alone"
+# ---- r4 end case
+
+# ---- r4 case: settled
+# Once the last reading is in, the run ignores the signals it traps while it prints its verdict (settled()). With
+# settled() emptied, every case passed (round-3 re-read 2's M18, judged out of reach of a stand-in, since only builtins
+# run there). The verdict's own write can be held: standard output is a FIFO whose buffer is already full, so the echo
+# waits until it is read, and TERM goes to the run while it waits (the curl stub marks the last reading). The run must
+# still print its one verdict and keep its code, 0.
+d=$work/r4/settled; mkdir -p "$d"
+cp "$r2/P.pem" "$d/cert.pem"; rm -f "$d/fifo" "$r2/mark"; mkfifo "$d/fifo"; rm -rf "$work/tmp"; mkdir "$work/tmp"
+exec 7<>"$d/fifo"
+head -c 70000 /dev/zero >&7 &
+filler=$!
+${reset[@]+"${reset[@]}"} env TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$d/cert.pem" WARDLATCH_CURL="$r2/curl" STUB_CONTROL=0 STUB_TEST=60 \
+  STUB_MARK_TEST=1 WL_MARK="$r2/mark" bash "$r2/net.sh" >"$d/fifo" 2>"$d/stderr" &
+pid=$!
+for i in $(seq 1 300); do [ -e "$r2/mark" ] && break; /bin/sleep 0.1; done
+if [ ! -e "$r2/mark" ]; then kill -KILL "$pid" "$filler" 2>/dev/null || true; exec 7>&-; fail "a signal while the verdict is written: the run never reached its last reading"; fi
+/bin/sleep 1
+kill -TERM "$pid" 2>/dev/null || true
+exec 8<"$d/fifo"; exec 7>&-
+cat <&8 >"$d/drained" &
+drain=$!
+exec 8<&-
+code=0; wait "$pid" || code=$?
+wait "$filler" || true; wait "$drain" || true
+out=$(LC_ALL=C tr -d '\000' <"$d/drained")
+printf '%s\n' "$out" | sed 's/^/    | /'
+[ "$code" -eq 0 ] || fail "a signal while the verdict is written: expected SAFE's exit 0, got $code"
+[ "$(grep -cE '^(SAFE|EXPOSED|UNKNOWN) ' <<<"$out")" -eq 1 ] || fail "a signal while the verdict is written: expected one verdict line"
+grep -q '^SAFE.*already refuses the compromised keys' <<<"$out" || fail "a signal while the verdict is written: the verdict is not the one the readings gave"
+[ -z "$(find "$work/tmp" -mindepth 1 -print -quit)" ] || fail "a signal while the verdict is written: it left temporary files behind"
+ok "a signal while the verdict is being written leaves the verdict and its code alone"
+# ---- r4 end case
+
+# ---- r4 case: key-undecoded
+# A certificate whose fingerprint openssl prints, but not its key decoded ("pub" or "Modulus" and the key's bytes), can't
+# be compared with the withdrawn roots' keys, so it is not counted, and the completeness gate makes the run UNKNOWN. The
+# openssl stand-in prints only the right fingerprint line for one ordinary certificate, as an openssl that could not
+# decode its key and said nothing would.
+d=$work/r4/undecoded; mkdir -p "$d"
+cp "$work/original.pem" "$d/cert.pem"
+fp=$(/usr/bin/openssl x509 -in "$r2/other.pem" -noout -fingerprint -sha256)
+case "$fp" in 'SHA256 Fingerprint='??:*) ;; *) fail "a key not decoded: openssl gave no fingerprint for the ordinary certificate" ;; esac
+script=$r2/ossl.sh
+run "$d/cert.pem" WARDLATCH_OPENSSL="$r2/openssl" STUB_MATCH="$other_line" STUB_OUT="$fp" "$offline" "$OFFLINE"
+script=$fix
+[ "$code" -eq 2 ] || fail "a key not decoded: expected UNKNOWN, exit 2, got $code"
+cmp -s "$d/cert.pem" "$work/original.pem" || fail "a key not decoded: the bundle changed"
+[ "$(baks "$d/cert.pem")" -eq 0 ] || fail "a key not decoded: it wrote a backup"
+ok "a certificate whose key openssl does not decode is not counted, so the run is UNKNOWN and nothing changes"
+# ---- r4 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.
 cp "$work/original.pem" "$work/unreadable.pem"
