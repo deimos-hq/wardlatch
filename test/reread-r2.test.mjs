@@ -486,3 +486,40 @@ test('R2-N8 a folder past the depth cap holding only names the walk never enters
   mkdirSync(join(deep6(v), 'proj'), { recursive: true });
   assert.ok(unknowns(json([...LITELLM, '--paths', v])).some((x) => x.what === 'depth limit'));
 });
+
+// ---- R2-N9: a walker's gap lists were opt-in, so a caller that left one out got silence ---------------------------------
+// `deep` was opt-in in all four walkers, `denied`, `found`, `untested`, `coreOnly` and `loose` in some, and places()
+// (lib/headers.mjs) defaulted `links` to a list nobody read: a caller that forgot one got a walk that said nothing about
+// what it did not search, the pattern lib/wordpress.mjs's AUDIT-3 comment says must not be opt-in. No live caller left
+// one out at 03d95c9 (the re-read checked each); the next one could. A walk now throws when it has a gap to report and
+// no list to put it in: a crash is could-not-be-tested (lib/crash.mjs), never SAFE.
+test('R2-N9 a walker given no list for a gap it found throws, rather than say nothing', async () => {
+  const { discover } = await import('../lib/discover.mjs');
+  const { sitePackagesDirs } = await import('../lib/installs.mjs');
+  const { wordpressUnder } = await import('../lib/wordpress.mjs');
+  const { reposUnder } = await import('../lib/workflows.mjs');
+  const { places } = await import('../lib/headers.mjs');
+  // a folder past every walker's cap, and a link to a folder
+  const root = fresh('n9');
+  mkdirSync(join(root, '1', '2', '3', '4', '5', '6', '7', 'x'), { recursive: true });
+  const far = fresh('n9-far');
+  symlinkSync(far, join(root, 'shortcut'));
+  const noise = /no list to report/;
+  assert.throws(() => discover({ roots: [root], pathEnv: fresh('n9-no-programs'), links: [], untested: [], denied: [] }), noise, 'discover() without deep');
+  assert.throws(() => discover({ roots: [root], pathEnv: fresh('n9-no-programs'), deep: [], untested: [], denied: [] }), noise, 'discover() without links');
+  assert.throws(() => sitePackagesDirs({ roots: [root], patterns: [], home: '', denied: [] }), noise, 'sitePackagesDirs() without deep');
+  assert.throws(() => sitePackagesDirs({ roots: [root], patterns: [], home: '', deep: [] }), noise, 'sitePackagesDirs() without links (or denied)');
+  assert.throws(() => wordpressUnder([root], 5, [], [], [], [], {}), noise, 'wordpressUnder() without deep');
+  assert.throws(() => reposUnder([root], 4, [], []), noise, 'reposUnder() without deep');
+  assert.throws(() => places(home, {}, [root], [], []), noise, 'places() without links');
+  // given every list, the same walks report into them and do not throw
+  const deep = [], links = [];
+  discover({ roots: [root], pathEnv: fresh('n9-no-programs'), deep, links, untested: [], denied: [], found: [], notRun: [] });
+  assert.ok(deep.length && links.length, JSON.stringify({ deep, links }));
+  // a folder that can't be opened, with no `denied`
+  if (!AS_ROOT) {
+    const shut = fresh('n9-shut/locked');
+    chmodSync(shut, 0o000); locked.push(shut);
+    assert.throws(() => reposUnder([dirname(shut)], 4, undefined, [], { deep: [] }), noise, 'reposUnder() without denied');
+  }
+});
