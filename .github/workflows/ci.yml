@@ -52,8 +52,9 @@ jobs:
         with: { persist-credentials: false }
       - name: The Mac fix is the published file
         # www.deimoscore.com serves fix/fix-macos.sh as a download and prints this SHA-256 on the page and in the
-        # site's public changelog (CL-51; each earlier digest is in an earlier entry, back to CL-18). Any edit, even a
-        # comment, breaks that published checksum. A deliberate change to the script must update the site's download,
+        # site's public changelog (CL-52; each earlier digest is in an earlier entry, back to CL-18, except one that
+        # CL-47 named only until it was rewritten, which CL-52 records). Any edit, even a comment, breaks that
+        # published checksum. A deliberate change to the script must update the site's download,
         # the page's hash and the changelog record together, and this hash with them.
         run: echo "98f8d58cadcdde8802451f3993e3030c5dad24a65d25777956593220b572bc39  fix/fix-macos.sh" | shasum -a 256 -c -
       - name: The Mac fix on copies of the vendored macOS 27.2 bundle, test/support/fixtures/macos-27.2-cert.pem (off macOS, that it refuses to run)

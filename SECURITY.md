@@ -111,5 +111,5 @@ GitHub release; 0.1.3 and every release since went through it. How to check one:
 [docs/RELEASING.md](docs/RELEASING.md#verifying-a-release).
 
 `fix/fix-macos.sh` in this repository is byte-identical to the download on www.deimoscore.com, whose page prints its
-SHA-256 (`7d0640b49b63b5964cb96aecca474446d4cac5884cb10f147eb627beb7f66cd1`). CI pins that hash, so a change to the
+SHA-256 (`98f8d58cadcdde8802451f3993e3030c5dad24a65d25777956593220b572bc39`). CI pins that hash, so a change to the
 script fails CI until the pin, the download and the printed checksum change together.

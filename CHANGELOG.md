@@ -541,8 +541,9 @@ These were found by the same independent read of 31 Oct 2026, and each fix has a
   network: it never did, and every case passes with none. (67741a7, 37ef37e)
 - **`test/support/mojave-shapes.sh` runs in CI**, in the mac-fix job on macOS, offline, and fails if any shape
   misbehaves; it writes under `TMPDIR`, not a fixed `/tmp`, and shapes B and C assert the root removed by name instead
-  of "the other was already absent". CI pins the Mac fix's new SHA-256,
-  `7d0640b49b63b5964cb96aecca474446d4cac5884cb10f147eb627beb7f66cd1`. (67741a7, 2f060fc)
+  of "the other was already absent". CI pinned the Mac fix's SHA-256 after this round,
+  `7d0640b49b63b5964cb96aecca474446d4cac5884cb10f147eb627beb7f66cd1`, and pins
+  `98f8d58cadcdde8802451f3993e3030c5dad24a65d25777956593220b572bc39` since the third read (below). (67741a7, 2f060fc)
 - **`test/support/errno-mechanisms.mjs` exited 0 without measuring, and counted a failed setup as a claim that
   holds.** Its exit code is its verdict, and a run that found no folder macOS protects said the half of the rule about
   them was unverified and still exited 0. A claim whose setup could not be applied is now UNMEASURED, counted apart,
