@@ -18,9 +18,9 @@
 #     is the one it cannot see);
 #   - and because that snapshot is in your temporary folder, where anything running as you can change it, nothing
 #     read from it is taken on trust: before replacing anything, the backup (beside the file, where only the file's
-#     owner can change it) must have the snapshot's SHA-256, hold each certificate to be removed as what it was found
-#     to be, and give byte for byte the cleaned file when cleaned the same way; a file found clean is read again
-#     from the file itself;
+#     owner can change it) must have the snapshot's SHA-256, read exactly as the snapshot did -- every certificate
+#     readable, the same withdrawn roots and copies at the same places and no others -- and give byte for byte the
+#     cleaned file when cleaned the same way; a file found clean is read again from the file itself;
 #   - changes nothing if the file is already clean;
 #   - refuses a bundle too small to be a trust store, and never advises putting back a copy that holds a withdrawn
 #     root: the only way back it ever names is its own backup, in the Undo line under a SAFE result or under a run
@@ -464,17 +464,16 @@ built() { local n l; n=$(certs "$1") && [ "$n" -eq "$after" ] && l=$(roots "$1")
 # a same-user process that swapped one certificate of the snapshot while it was read, and put the snapshot back before
 # the backup was compared with it, landed its own root in $FILE under SAFE, exit 0 (the F1 class; measured by the third
 # read, 4 runs of 4). Fails if any of the three doesn't hold.
+# The second is the whole reading, made again on the backup: every certificate read, no marker after other text, no
+# other kind of block, and exactly the withdrawn roots and copies the snapshot showed, at the same places. Until r4 it
+# was each certificate on the removal list, so a root hidden from the reads of the snapshot was never on the list, the
+# backup bore the list out, and the one thing left to stop it landing was built() on the new file (the round-3 re-read:
+# with built() taken out, SAFE with AAA Certificate Services left in $FILE).
 checkbackup() {
-  local p t
+  local s=$spec b=$before
   [ "$(sha "$backup")" = "$orig" ] || return 1
-  # Split on purpose: $drop is "position:kind" pairs, digits, colons, AAA, EMS and -KEY only.
-  # shellcheck disable=SC2086
-  set -f; set -- $drop; set +f
-  for p in "$@"; do
-    t=$(block "$backup" "${p%%:*}") || return 1
-    classify "$t" || return 1
-    [ "$kind" = "${p#*:}" ] || return 1
-  done
+  inspect "$backup" || return 1
+  [ "$spec" = "$s" ] && [ "$before" -eq "$b" ] || return 1
   [ "$(strip "$backup" "$drop" | sha -)" = "$want" ]
 }
 # The backup copy failed or isn't the file this run checked: the partial copy is removed and the dated name is never

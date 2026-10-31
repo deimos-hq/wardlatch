@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=78
+expect_cases=79
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -364,6 +364,19 @@ if [ "${WL_GREP:-}" = swap ] && [ -s "${WL_SWAP_STATE:-}" ] && [ ! -e "$WL_SWAP_
   for a in "$@"; do last=$a; done
   if [ "$last" = "$s" ]; then : >"$WL_SWAP_STATE.done"; /bin/cp "$WL_VARIANT" "$s"; fi
 fi
+# r4: WL_GREP_TMP=<file>: the first grep that reads the cleaned file (a wardlatch.* file in TMPDIR holding something,
+# not the snapshot and not a copy of the bundle) first keeps its contents in $WL_STASH, and its name in $WL_STASH.path,
+# and puts <file>'s contents in its place: the checks on the cleaned file then read what a same-user process chose.
+if [ -n "${WL_GREP_TMP:-}" ] && [ ! -e "$WL_STASH.path" ]; then
+  last=''
+  for a in "$@"; do last=$a; done
+  case "$last" in
+    "${TMPDIR:-/tmp}"/wardlatch.*)
+      if [ -s "$last" ] && [ "$last" != "$(cat "${WL_SWAP_STATE:-/dev/null}" 2>/dev/null)" ] && ! cmp -s "$last" "$WARDLATCH_CERT_FILE"; then
+        /bin/cp "$last" "$WL_STASH"; printf '%s' "$last" >"$WL_STASH.path"; /bin/cp "$WL_GREP_TMP" "$last"
+      fi ;;
+  esac
+fi
 exec /usr/bin/grep "$@"
 SHIM
 cat >"$shims/rm" <<'SHIM'
@@ -385,6 +398,11 @@ cat >"$shims/date" <<'SHIM'
 #!/bin/bash
 # WL_DATE pins the stamp the fix puts in its backup's name.
 if [ -n "${WL_DATE:-}" ] && [ "${1:-}" = +%Y%m%d-%H%M%S ]; then echo "$WL_DATE"; exit 0; fi
+# r4: WL_STASH: the first date call (the backup's name, after the checks on the cleaned file) puts back what the grep
+# stand-in kept, so the cleaned file is again the one the fix built.
+if [ -n "${WL_STASH:-}" ] && [ -e "$WL_STASH.path" ] && [ ! -e "$WL_STASH.back" ]; then
+  : >"$WL_STASH.back"; /bin/cp "$WL_STASH" "$(cat "$WL_STASH.path")"
+fi
 exec /bin/date "$@"
 SHIM
 cat >"$shims/awk" <<'SHIM'
@@ -392,6 +410,11 @@ cat >"$shims/awk" <<'SHIM'
 # WL_AWK=tamper-tmp: once, right after the first awk that leaves a temporary file of the fix's (a wardlatch.* file in
 # $TMPDIR that is not a copy of the bundle) holding something -- that is, as soon as the cleaned file is written --
 # one certificate of that file is swapped for $WL_TAMPER, as a same-user process could, before its SHA-256 is taken.
+# r4: WL_AWK=restore-snap: the first awk after the grep stand-in swapped the snapshot (the cleaned file being built) first
+# puts the bundle's bytes back in it, so what was read and what is built from differ, as a same-user process can make them.
+if [ "${WL_AWK:-}" = restore-snap ] && [ -e "$WL_SWAP_STATE.done" ] && [ ! -e "$WL_SWAP_STATE.back" ]; then
+  : >"$WL_SWAP_STATE.back"; /bin/cp "$WARDLATCH_CERT_FILE" "$(cat "$WL_SWAP_STATE")"
+fi
 /usr/bin/awk "$@"; r=$?
 if [ "${WL_AWK:-}" = tamper-tmp ] && [ ! -e "$WL_AWK_STATE" ]; then
   for t in "${TMPDIR:-/tmp}"/wardlatch.*; do
@@ -2455,6 +2478,38 @@ else
   chmod 644 "$d/cert.pem"; rm -f "$d"/cert.pem.wardlatch-*.bak
   ok "root never opens a path in the user's temporary folder: a link put there never brings a root-only file beside the bundle"
 fi
+# ---- r4 end case
+
+# ---- r4 case: hide-root
+# A withdrawn root hidden from what the fix reads in the user's temporary folder. A same-user process swaps the snapshot,
+# while it is read, for a copy with AAA Certificate Services' certificate replaced by another root, and puts it back
+# before the cleaned file is built from it; and swaps the cleaned file, while it is checked, for one built from that
+# copy, and puts it back before the backup. So the removal list names emSign alone, every check made in the temporary
+# folder passes, and the cleaned file holds AAA. Until r4 the backup was checked only for each certificate on that list,
+# not for being the whole list, and the one thing left to stop AAA landing was built() on the new file (the round-3
+# re-read: with built() taken out, SAFE "removed emSign ECC Root CA - G3", with AAA left). The backup, which only the
+# bundle's owner can change, must now read exactly as the snapshot did: the same withdrawn roots and copies, at the same
+# places, and nothing else uncheckable. The run must stop there, with nothing built beside the bundle.
+d=$work/r4/hide; mkdir -p "$d"
+awk -v t="$r2/corp.pem" -v l="$aaa_line" 'BEGIN { while ((getline x < t) > 0) rep = rep x "\n" }
+  /^-----BEGIN CERTIFICATE-----/ { held = $0; next }
+  held != "" { if ($0 == l) { skip = 1; printf "%s", rep } else print held; held = "" }
+  skip { if ($0 ~ /^-----END CERTIFICATE-----/) skip = 0; next }
+  { print }' "$work/original.pem" >"$d/hidden.pem"
+awk '/^(###|===) /{skip=0} /^=== .*\/CN=emSign ECC Root CA - G3$/{skip=1} !skip' "$d/hidden.pem" >"$d/hidden-clean.pem"
+{ [ "$(bad "$d/hidden.pem")" -eq 1 ] && [ "$(certs_in "$d/hidden.pem")" -eq "$total" ] && [ "$(bad "$d/hidden-clean.pem")" -eq 0 ] &&
+  [ "$(certs_in "$d/hidden-clean.pem")" -eq $((total - 1)) ]; } || fail "a hidden root: the copies were not built as described"
+cp "$work/original.pem" "$d/cert.pem"; rm -f "$d"/state* "$d"/stash*
+run "$d/cert.pem" PATH="$shims:$PATH" WL_CP=swap-late WL_GREP=swap WL_SWAP_STATE="$d/state" WL_VARIANT="$d/hidden.pem" WL_AWK=restore-snap \
+  WL_GREP_TMP="$d/hidden-clean.pem" WL_STASH="$d/stash" "$offline" "$OFFLINE"
+{ [ -e "$d/state.done" ] && [ -e "$d/state.back" ] && [ -e "$d/stash.path" ] && [ -e "$d/stash.back" ]; } ||
+  fail "a hidden root: a stand-in did not do its part ($(cd "$d" && ls state* stash* 2>/dev/null | tr '\n' ' ')), so this case would measure nothing"
+[ "$code" -eq 2 ] || fail "a hidden root: expected UNKNOWN, exit 2, got $code"
+cmp -s "$d/cert.pem" "$work/original.pem" || fail "a hidden root: the bundle changed ($(certs_in "$d/cert.pem") certificates, $(bad "$d/cert.pem") withdrawn roots)"
+grep -q "^UNKNOWN  The backup of $d/cert.pem doesn't bear out" <<<"$out" || fail "a hidden root: it was not stopped by the backup's check, before anything was built beside the bundle"
+[ -z "$(beside "$d/cert.pem")" ] || fail "a hidden root: it left $(beside "$d/cert.pem") beside the bundle"
+rm -f "$d"/cert.pem.wardlatch-*.bak
+ok "a withdrawn root hidden from the reads in the temporary folder is caught by the backup's own reading, before anything is built"
 # ---- r4 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.
