@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=62
+expect_cases=63
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -1903,6 +1903,31 @@ for shape in 253-cert 506-cert 253-trusted 253-x509 253-ff 60-cert plus-253; do
   [ "$(baks "$d/$shape.pem")" -eq 0 ] || fail "a marker after other text ($shape): it wrote a backup"
 done
 ok "a BEGIN marker after other text on its line stops the run, in every label LibreSSL trusts and after any bytes"
+# ---- r3 end case
+
+# ---- r3 case: labels
+# A withdrawn root at the start of a line under another label LibreSSL trusts as a certificate: X509 CERTIFICATE, and
+# TRUSTED CERTIFICATE (which LibreSSL 3.3.6 trusts even when its trust settings reject serverAuth; measured 31 Oct
+# 2026). The fix reads only the CERTIFICATE label, so a file holding any other block is UNKNOWN, exit 2, unchanged:
+# it cannot be checked, so it is never called clean. The TRUSTED CERTIFICATE case above uses emSign on the cleaned file;
+# this one uses AAA, each label, and shows LibreSSL reads the block first.
+d=$work/r3/labels; mkdir -p "$d"
+libre() { /usr/bin/openssl crl2pkcs7 -nocrl -certfile "$1" 2>/dev/null | /usr/bin/openssl pkcs7 -print_certs 2>/dev/null | grep -c '^-----BEGIN CERTIFICATE-----' || true; }
+for label in x509 trusted trusted-reject; do
+  case "$label" in
+    x509) { cat "$r2/P.pem"; printf -- '-----BEGIN X509 CERTIFICATE-----\n%s\n-----END X509 CERTIFICATE-----\n' "$(sed '1d;$d' "$r2/aaa.pem")"; } >"$d/$label.pem" ;;
+    trusted) { cat "$r2/P.pem"; /usr/bin/openssl x509 -in "$r2/aaa.pem" -trustout -addtrust serverAuth; } >"$d/$label.pem" ;;
+    trusted-reject) { cat "$r2/P.pem"; /usr/bin/openssl x509 -in "$r2/aaa.pem" -trustout -addreject serverAuth; } >"$d/$label.pem" ;;
+  esac
+  [ "$(libre "$d/$label.pem")" -eq $(($(libre "$r2/P.pem") + 1)) ] || fail "another label ($label): LibreSSL does not read the block, so this case would measure nothing"
+  cp "$d/$label.pem" "$d/$label.before"
+  run "$d/$label.pem" "$offline" "$OFFLINE"
+  [ "$code" -eq 2 ] || fail "another label ($label): expected UNKNOWN, exit 2, got $code"
+  grep -q "^UNKNOWN.*aren't plain certificates" <<<"$out" || fail "another label ($label): it did not say the file holds blocks that aren't plain certificates"
+  cmp -s "$d/$label.pem" "$d/$label.before" || fail "another label ($label): the bundle changed"
+  [ "$(baks "$d/$label.pem")" -eq 0 ] || fail "another label ($label): it wrote a backup"
+done
+ok "a withdrawn root under another label LibreSSL trusts (X509 CERTIFICATE, TRUSTED CERTIFICATE) is UNKNOWN, unchanged"
 # ---- r3 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.
