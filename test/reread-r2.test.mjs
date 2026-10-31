@@ -7,7 +7,7 @@
 import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, realpathSync, symlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, realpathSync, symlinkSync, chmodSync } from 'node:fs';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -15,9 +15,12 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
+const EPERM = join(ROOT, 'test', 'support', 'eperm-places.cjs');
+const AS_ROOT = process.getuid?.() === 0;
 let dir, home;
+const locked = [];
 before(() => { dir = mkdtempSync(join(realpathSync(tmpdir()), 'wardlatch-reread-r2-')); home = join(dir, 'home'); mkdirSync(home); });
-after(() => { rmSync(dir, { recursive: true, force: true }); });
+after(() => { for (const p of locked) { try { chmodSync(p, 0o755); } catch { /* gone */ } } rmSync(dir, { recursive: true, force: true }); });
 
 const fresh = (n) => { const d = join(dir, n); mkdirSync(d, { recursive: true }); return d; };
 const put = (p, text) => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, text); return p; };
@@ -192,4 +195,62 @@ test('W1 the escaper: every code point of Cc, Cf, Cs, Co, Cn, Zl, Zp and the tag
   const out = escapeJsonHidden(JSON.stringify({ v }));
   assert.deepEqual(rawHidden(out), []);
   assert.equal(JSON.parse(out).v, v);
+});
+
+// ---- R2-N5: rows outside gaps() said "run Wardlatch with sudo" of an EPERM -----------------------------------------------
+// gaps() words an EPERM truly since decision #32 (a sandbox around the run, or a security tool, refuses the same way, and
+// sudo may not lift it). Four row producers outside it did not: the LiteLLM check's site-packages row and its version-file
+// rows (lib/installs.mjs DENIED), and the WordPress check's plugin, indicator-search and plugins-folder rows and its
+// config-file doubt (lib/wordpress.mjs). Measured by the re-read with a real sandbox profile; built here with
+// test/support/eperm-places.cjs, which refuses exactly as that profile does.
+/** A WordPress core with Rank Math PRO at `version` in its plugins folder. */
+function wpSite(root, version = '3.0.123') {
+  put(join(root, 'wp-includes', 'version.php'), '<?php $wp_version = "6.7";\n');
+  put(join(root, 'wp-config.php'), '<?php // nothing that moves the content folder\n');
+  put(join(root, 'wp-content', 'plugins', 'seo-by-rank-math-pro', 'rank-math-pro.php'), `<?php\n/*\nPlugin Name: Rank Math PRO\nVersion: ${version}\n*/\n`);
+  return root;
+}
+/** The CLI with `paths` refused with EPERM, stat still answering. */
+const refused = (args, paths, env = {}) => json(args, { ...env, WARDLATCH_TEST_EPERM: JSON.stringify(paths) }, ['--require', EPERM]);
+const SUDO = /run Wardlatch with sudo/;
+
+test('R2-N5 a site-packages folder, a plugin\'s folder, a plugins folder or a config file refused with EPERM never says to run Wardlatch with sudo', () => {
+  const v = fresh('n5-venv');
+  const sp = litellmVenv(join(v, 'proj', '.venv'));
+  const r = refused([...LITELLM, '--paths', v], [sp]);
+  const row = r.rows.find((x) => x.dir === sp && x.status === 'UNKNOWN');
+  assert.ok(row, JSON.stringify(r.rows));
+  assert.doesNotMatch(row.reason, SUDO, row.reason);
+  assert.match(row.reason, /EPERM/, row.reason);
+  assert.match(row.reason, /sudo may not lift it/, row.reason);
+  assert.equal(r.code, 2);
+  // a clean release, so each refusal is what decides the exit code
+  const site = wpSite(fresh('n5-wp/site'), '3.0.124');
+  const plugin = join(site, 'wp-content', 'plugins', 'seo-by-rank-math-pro');
+  put(join(plugin, 'inc', 'loader.php'), '<?php\n');
+  for (const p of [join(plugin, 'inc'), plugin, join(site, 'wp-content', 'plugins'), join(site, 'wp-config.php')]) {
+    const w = refused(['--incident', 'wordpress-plugins-2026-10', '--paths', dirname(site)], [p]);
+    assert.ok(unknowns(w).some((u) => /EPERM/.test(u.reason)), `${p}: ${JSON.stringify(w.rows).slice(0, 2000)}`);
+    for (const u of unknowns(w)) assert.doesNotMatch(u.reason, SUDO, `${p}: ${u.reason}`);
+    assert.equal(w.code, 2, p);
+  }
+});
+
+test('R2-N5 a version file\'s folder refused with EPERM never says to run Wardlatch with sudo; one shut by its mode still does', () => {
+  const base = fresh('n5-gitlab');
+  put(join(base, 'embedded', 'service', 'gitlab-rails', 'VERSION'), '18.4.1\n');
+  const script = put(join(dir, 'n5-version.mjs'), `import { checkVersionFiles } from ${JSON.stringify(join(ROOT, 'lib', 'installs.mjs'))};
+console.log(JSON.stringify(checkVersionFiles({ product: 'GitLab', fixedIn: '18.4.2', files: [{ path: ${JSON.stringify(`${base}/*/service/gitlab-rails/VERSION`)}, re: '^(\\\\S+)' }] })));`);
+  const r = spawnSync(process.execPath, ['--require', EPERM, script], { encoding: 'utf8', env: { HOME: home, PATH: '/usr/bin:/bin', WARDLATCH_TEST_EPERM: JSON.stringify([base]) }, cwd: dir });
+  const rows = JSON.parse(r.stdout || 'null');
+  assert.ok(rows?.length, `${r.stdout}${r.stderr}`);
+  for (const x of rows) { assert.equal(x.status, 'UNKNOWN'); assert.doesNotMatch(x.reason, SUDO, x.reason); assert.match(x.reason, /EPERM/, x.reason); }
+  // the control: a folder shut by its own mode (EACCES) is one sudo opens, and the row still says so
+  if (AS_ROOT) return;
+  const v = fresh('n5-eacces');
+  const sp = litellmVenv(join(v, 'proj', '.venv'));
+  chmodSync(sp, 0o000); locked.push(sp);
+  const e = json([...LITELLM, '--paths', v]);
+  const row = e.rows.find((x) => x.dir === sp && x.status === 'UNKNOWN');
+  assert.match(row?.reason ?? '', SUDO, JSON.stringify(e.rows));
 });

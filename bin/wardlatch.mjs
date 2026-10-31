@@ -19,7 +19,7 @@ import { reposUnder, workflowsAddedSince, windowStart, NOT_WALKED as REPO_NOT_WA
 import { scanRepo } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite, checkPluginsFolder, NOT_WALKED as WP_NOT_WALKED } from '../lib/wordpress.mjs';
 import { scanHeaders } from '../lib/headers.mjs';
-import { pathState, readText, listDir, denialCode, mandatoryRefusal, statBits } from '../lib/files.mjs';
+import { pathState, readText, listDir, denialCode, mandatoryRefusal, statBits, epermCauses } from '../lib/files.mjs';
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
 import { safe, saw, withdrawUnreceipted } from '../lib/report.mjs';
 import { escapeHidden, escapeJsonHidden } from '../lib/escape.mjs';
@@ -225,10 +225,9 @@ function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, revi
   };
   // An EPERM is UNKNOWN whoever owns the folder (owner decision #32). What the row says is true on every platform: the
   // system refused, with the basis; on macOS privacy protection is a common cause and Full Disk Access may lift it,
-  // but a sandbox around this run refuses the same way, so the row never says which it was.
-  const MAYBE = platform() === 'darwin'
-    ? 'On macOS this is often its privacy protection, which allowing your terminal Full Disk Access (System Settings → Privacy & Security) may lift; a sandbox this run is inside, or a security tool, refuses the same way, and sudo may not lift it'
-    : 'A sandbox this run is inside, a security module (SELinux, AppArmor) or a file system such as a FUSE mount refuses this way, and sudo may not lift it';
+  // but a sandbox around this run refuses the same way, so the row never says which it was. The same words as every
+  // other row about an EPERM (lib/files.mjs epermCauses()).
+  const MAYBE = epermCauses();
   // → { reason, extra } for the errnos that are UNKNOWN whoever owns the folder, with what is true of each; else null.
   // EPERM: owner decision #32. ENAMETOOLONG: the folder is there (the walk listed its name) and its full path is longer
   // than the system takes, so no one opens it by that path; up to this fix it read as "not there" (WV-6).
