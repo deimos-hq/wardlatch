@@ -35,7 +35,10 @@ notrun=''
 
 fail() { echo "FAIL: $*"; exit 1; }
 cases=0
-ok() { cases=$((cases + 1)); echo "ok: $*"; }
+# oks counts the "ok:" lines printed; only ok() adds to either count, and the end of the run checks they agree, so a
+# case cannot be counted as run without saying ok (the third read's M7: a skipped case did exactly that, under root).
+oks=0
+ok() { cases=$((cases + 1)); oks=$((oks + 1)); echo "ok: $*"; }
 count() { grep -c 'BEGIN CERTIFICATE' "$1" || true; }
 # How many of the two roots a file holds, by SHA-256 fingerprint (name lines or not).
 bad() {
@@ -2287,9 +2290,12 @@ if [ ! -r "$work/unreadable.pem" ]; then
   cmp -s "$work/unreadable.pem" "$work/original.pem" || fail "unreadable file: it changed"
   ok "unreadable file refused, unchanged"
 else
+  # Not run, and named as not run. Until 31 Oct 2026 this branch counted the case as run ("counted, so the total
+  # below still means every case was reached"), so a run as root printed "N cases ran" with one in the N that had
+  # not run, the silence this count exists to catch (the third read, M7).
   chmod 644 "$work/unreadable.pem"
-  echo "NOTE: running as root, so a file can't be made unreadable; skipped."
-  cases=$((cases + 1))   # counted, so the total below still means every case was reached
+  echo "NOTE: this run can read a file of mode 000 (as root can), so no file can be made unreadable to it; unreadable did not run."
+  notrun="$notrun unreadable"
 fi
 
 # The count, printed and checked. Showing it is the point: a case that silently stopped running is what made this
@@ -2298,3 +2304,4 @@ echo "$cases cases ran against $source ($total certificates, $found of the two r
 skipped=$(echo "$notrun" | wc -w | tr -d ' ')
 [ "$skipped" -eq 0 ] || echo "NOT RUN on this machine ($skipped):$notrun -- each has a NOTE above saying why."
 [ $((cases + skipped)) -eq "$expect_cases" ] || fail "$cases cases ran and $skipped could not, expected $expect_cases. If you added or removed a case, set expect_cases; otherwise a case stopped running."
+[ "$cases" -eq "$oks" ] || fail "$cases cases are counted as run but $oks said ok: a case was counted without running"
