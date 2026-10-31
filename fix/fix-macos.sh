@@ -184,7 +184,16 @@ replace() {
   return 1
 }
 
-snap=$(mktemp -t wardlatch); tmp=$(mktemp -t wardlatch)
+snap=$(mktemp -t wardlatch 2>/dev/null) || {
+  echo "UNKNOWN  Couldn't make a temporary file (mktemp failed), so $FILE wasn't read. Nothing changed."
+  exit 2
+}
+tmp=$(mktemp -t wardlatch 2>/dev/null) || {
+  rm -f "$snap" || true
+  echo "UNKNOWN  Couldn't make a temporary file (mktemp failed), so $FILE wasn't read. Nothing changed."
+  exit 2
+}
+# Both are checked: unchecked, `set -e` ended the run with mktemp's own status, 1 -- the published table's EXPOSED.
 trap clean EXIT
 trap stopped HUP INT TERM
 cp "$FILE" "$snap" 2>/dev/null || { echo "UNKNOWN  Can't read $FILE. Nothing changed."; exit 2; }
