@@ -132,7 +132,7 @@ const all = [];
 // safe() withdraws a receipt that does not hold and says which entry failed, so the reason it hands back is printed,
 // not the all-clear's own words: an UNKNOWN line must never read like a clean one (lib/report.mjs).
 // Stated gaps recorded for the incident being checked: folders the run could not open that do NOT change the exit code
-// (macOS's own protection, a service account's). An all-clear that sits beside them says how many, so the receipt
+// (a service account's, by the owner's rule of 22 Oct 2026). An all-clear that sits beside them says how many, so the receipt
 // reads "I opened these, could not open 3, here they are and here is what would open them" — the only form in which
 // exit 0 is honest. Reset per incident; gaps() adds to it.
 let statedGaps = 0;
@@ -181,9 +181,12 @@ function notRunRow(results, inc, what, paths) {
 //     REVIEW line per check listing them, which doesn't change the exit code (lib/owners.mjs says which is which).
 //   - `review`: folders a check knows to be private by their place (a locked dot-folder under a web root: www-data's
 //     .ssh), listed in the REVIEW line whoever owns them.
-//   - a folder whose refusal is MANDATORY — macOS's own privacy protection, which sudo cannot lift (lib/files.mjs
-//     mandatoryRefusal(), measured 29 Oct 2026): a stated gap in the same REVIEW line, with the remedy that can
-//     actually work and the basis a reader can check with one `ls -ld`.
+//   - a folder that refuses with EPERM, whoever owns it: UNKNOWN, always (owner decision #32, 31 Oct 2026: "Yes,
+//     UNKNOWN"). From 6bf0555 to this fix it was a "stated gap" in the REVIEW line beside SAFE, exit 0, on the claim
+//     that EPERM was macOS's privacy protection and could not be forged without root. An unprivileged sandbox
+//     (sandbox-exec, the kind coding agents run tools in) gives exactly that EPERM, and a venv holding the LiteLLM
+//     stealer inside such a folder read SAFE, exit 0, where it is EXPOSED ×2, exit 1. Its row says the errno, the mode
+//     and the owner, and never claims to know which mechanism refused (lib/files.mjs mandatoryRefusal()).
 // Up to e0e1c35 every locked folder was UNKNOWN, and any server with docker or certbot exited 2.
 // `searchesRoots`: whether this check searches the --paths folders at all (Plex's and GitLab's look only in their own
 // install places: a --paths folder that isn't there is nothing to them)
@@ -196,9 +199,31 @@ function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, revi
   }
   // on macOS a folder can be closed by privacy protection (Desktop, Documents, Downloads, iCloud), which sudo doesn't open
   const how = platform() === 'darwin' ? 'run Wardlatch with sudo if it belongs to another user, or allow your terminal Full Disk Access (System Settings → Privacy & Security) if macOS is protecting it' : 'run Wardlatch with sudo to include it';
-  const unknown = (d, reason) => { results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason }); print('UNKNOWN', short(d)); note('33', reason); };
+  const unknown = (d, reason, extra = {}) => { results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, ...extra, reason }); print('UNKNOWN', short(d)); note('33', reason); };
+  // BASIS, per folder: the errno and the mode, so a reader can check the claim with one `ls -ld`
+  const basisOf = (d, code) => {
+    const st = statBits(d);
+    const mode = st ? `mode 0${st.mode.toString(8).padStart(3, '0')}` : 'mode unknown';
+    const owner = st && st.uid === process.getuid?.() ? 'owner you' : `owner ${ownerName(d)}`;
+    return { code: code ?? 'readable now', basis: `${code ?? 'readable now'}, ${mode}, ${owner}` };
+  };
+  // An EPERM is UNKNOWN whoever owns the folder (owner decision #32). What the row says is true on every platform: the
+  // system refused, with the basis; on macOS privacy protection is a common cause and Full Disk Access may lift it,
+  // but a sandbox around this run refuses the same way, so the row never says which it was.
+  const MAYBE = platform() === 'darwin'
+    ? 'On macOS this is often its privacy protection, which allowing your terminal Full Disk Access (System Settings → Privacy & Security) may lift; a sandbox this run is inside, or a security tool, refuses the same way, and sudo may not lift it'
+    : 'A sandbox this run is inside, a security module (SELinux, AppArmor) or a file system such as a FUSE mount refuses this way, and sudo may not lift it';
+  const refusal = (d, code, lead) => {
+    const b = basisOf(d, code);
+    return { extra: { code: b.code, basis: b.basis }, reason: `${lead}: the system refused it (${b.basis})${mandatoryRefusal(d, code) ? ', although its permission bits would let this run in' : ''}. ${MAYBE}` };
+  };
+  const cannot = (d, lead) => {
+    const code = denialCode(d);
+    if (code === 'EPERM') { const r = refusal(d, code, lead); unknown(d, r.reason, r.extra); return; }
+    unknown(d, `${lead}: ${how}`);
+  };
   const skipped = [], why = new Map();   // the stated gaps, and the errno each was judged on
-  for (const d of [...new Set(found)]) unknown(d, `found, but could not be read, so it was not checked: ${how}`);
+  for (const d of [...new Set(found)]) cannot(d, 'found, but could not be read, so it was not checked');
   // A link to a folder somewhere else is not followed: a link can point into a loop, or outside what was asked for. Up
   // to this fix a walker stepped over one in silence, so a site, a virtual environment or a repository behind a link
   // was never looked at and the run still read SAFE — the receipt named the folders it did open, and every one of them
@@ -211,38 +236,28 @@ function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, revi
   for (const d of [...new Set(dirs)].filter((x) => !found.includes(x))) {
     // A root is NEVER a stated gap, whatever the errno: the person asked about it by name, and the only honest answer
     // to "is this folder clean?" that could not be opened is "I do not know" (test/release-0.1.9.test.mjs:260).
-    if (lockedRoots.includes(d) || roots.includes(d)) { unknown(d, `could not be opened, so it was not searched: ${how}`); continue; }
     // the errno is read ONCE per folder and carried: reading it again for the basis below could disagree with the
     // channel it decided, and a row whose stated basis contradicts its own placement is worse than no basis at all
     const code = denialCode(d);
-    // macOS's own refusal: sudo cannot lift it, and no unprivileged attacker can produce it, so saying "I could not
-    // look, run with sudo" was false twice over. A stated gap instead, with the remedy that works.
-    if (mandatoryRefusal(d, code)) { skipped.push(d); why.set(d, code); continue; }
+    // EPERM, whoever owns the folder and whether or not it was asked for by name: UNKNOWN (owner decision #32)
+    if (code === 'EPERM') { const r = refusal(d, code, 'could not be opened, so it was not searched'); unknown(d, r.reason, r.extra); continue; }
+    if (lockedRoots.includes(d) || roots.includes(d)) { unknown(d, `could not be opened, so it was not searched: ${how}`); continue; }
     if (ownedByPerson(d, kind)) { unknown(d, `could not be opened, so it was not searched: ${how}`); continue; }
     skipped.push(d); why.set(d, code);
   }
-  for (const d of review) if (!skipped.includes(d)) { skipped.push(d); why.set(d, denialCode(d)); }
+  for (const d of review) {
+    if (skipped.includes(d)) continue;
+    const code = denialCode(d);
+    if (code === 'EPERM') { const r = refusal(d, code, 'could not be opened, so it was not searched'); unknown(d, r.reason, r.extra); continue; }
+    skipped.push(d); why.set(d, code);
+  }
   if (skipped.length) {
-    // BASIS, per folder: the errno and the mode, so a reader can check the claim with one `ls -ld`. The iron law says a
-    // SAFE needs a receipt a reader can check; a gap riding beside a SAFE and keeping the exit code at 0 needs one too.
-    const basisOf = (d) => {
-      const code = why.get(d) ?? null;
-      const st = statBits(d);
-      const mode = st ? `mode 0${st.mode.toString(8).padStart(3, '0')}` : 'mode unknown';
-      const owner = st && st.uid === process.getuid?.() ? 'owner you' : `owner ${ownerName(d)}`;
-      return { code: code ?? 'readable now', basis: `${code ?? 'readable now'}, ${mode}, ${owner}`, protected: mandatoryRefusal(d, code) };
-    };
-    // TWO REMEDIES, NEVER IN ONE BREATH. Up to this fix every folder in this line got "Run Wardlatch with sudo to
-    // include them", and for a TCC-protected folder that instruction cannot work at all.
-    const TCC = 'macOS is protecting it; grant your terminal Full Disk Access in System Settings → Privacy & Security and run again — sudo cannot open this';
+    // The iron law says a SAFE needs a receipt a reader can check; a gap riding beside a SAFE and keeping the exit code
+    // at 0 needs one too: the basis per folder. Only a service's folders reach here (never an EPERM: decision #32).
     const SUDO = 'run with `sudo` to include it';
-    const folders = skipped.map((d) => { const b = basisOf(d); return { path: d, code: b.code, basis: b.basis, remedy: b.protected ? TCC : SUDO }; });
+    const folders = skipped.map((d) => { const b = basisOf(d, why.get(d) ?? null); return { path: d, code: b.code, basis: b.basis, remedy: SUDO }; });
     const say = (list) => list.slice(0, 8).map((f) => `${short(f.path)} (${f.basis})`).join(', ') + (list.length > 8 ? `, and ${list.length - 8} more` : '');
-    const prot = folders.filter((f) => f.remedy === TCC), svc = folders.filter((f) => f.remedy === SUDO);
-    const parts = [];
-    if (prot.length) parts.push(`${prot.length} folder${prot.length === 1 ? '' : 's'} macOS is protecting ${prot.length === 1 ? 'was' : 'were'} not searched: ${say(prot)}. Grant your terminal Full Disk Access (System Settings → Privacy & Security) and run again — sudo cannot open ${prot.length === 1 ? 'it' : 'these'}`);
-    if (svc.length) parts.push(`${svc.length} folder${svc.length === 1 ? '' : 's'} owned by service accounts, or private by ${svc.length === 1 ? 'its' : 'their'} place, could not be opened and ${svc.length === 1 ? 'was' : 'were'} not searched: ${say(svc)}. Run Wardlatch with sudo to include ${svc.length === 1 ? 'it' : 'them'}`);
-    const reason = parts.join('. ');
+    const reason = `${folders.length} folder${folders.length === 1 ? '' : 's'} owned by service accounts, or private by ${folders.length === 1 ? 'its' : 'their'} place, could not be opened and ${folders.length === 1 ? 'was' : 'were'} not searched: ${say(folders)}. Run Wardlatch with sudo to include ${folders.length === 1 ? 'it' : 'them'}`;
     results.push({ incident: inc.id, kind: 'skipped', status: 'REVIEW', paths: skipped, folders, reason });
     print('REVIEW', 'folders not searched'); note('2', reason);
   }
