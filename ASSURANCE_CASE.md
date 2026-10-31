@@ -35,7 +35,7 @@ integrity of `/etc/ssl/cert.pem` when the Mac fix runs.
 
 **Adversaries considered:**
 
-- **Whoever holds the leaked keys** (the incident's attacker). The reason the tool exists. They would prefer the
+- **Whoever holds the compromised keys** (the incident's attacker). The reason the tool exists. They would prefer the
   machine to stay exposed and to be reported SAFE.
 - **Hostile content in the places Wardlatch looks**: a cloned repository from a stranger, a compromised WordPress
   site with planted plugins, a container running somebody else's image. Wardlatch reads all of these, and some of

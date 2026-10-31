@@ -16,7 +16,7 @@
 
 When a certificate authority's keys leak, browsers update within hours. The rest of your machine doesn't. curl, Node,
 Python and every project's own certificate bundle each keep their own list of who to trust, and each has to be fixed
-on its own. Wardlatch tells you which ones still trust the leaked keys, and checks this week's other leaks too.
+on its own. Wardlatch tells you which ones still trust the compromised keys, and checks this week's other leaks too.
 
 ```
 npx wardlatch@latest
@@ -75,7 +75,7 @@ rebuild them with. Check your browser on the advisory's own page.
 
 ## The Mac fix
 
-`fix/fix-macos.sh` removes the two roots tied to the leaked eMudhra keys from `/etc/ssl/cert.pem` (the advisory's
+`fix/fix-macos.sh` removes the two roots tied to the compromised eMudhra keys from `/etc/ssl/cert.pem` (the advisory's
 change) with checks around it: no change on a fixed Mac, a dated backup it never overwrites, a check of the new file
 before it replaces the old one, a check that what landed in the file is what it built — the one thing that makes it
 put the original back — and a re-test it only reads when an ordinary website loads as a control, which reports and

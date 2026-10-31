@@ -3,7 +3,7 @@
 What Wardlatch intends to do, and not do, over the next year. Written 21 October 2026, the day after the first
 incident it covers, and reviewed when it stops being true rather than on a schedule.
 
-Wardlatch answers one question for the machine it runs on: does a key that leaked this week still open anything here?
+Wardlatch answers one question for the machine it runs on: does a key compromised this week still open anything here?
 Everything below is judged against whether the answer stays honest (never SAFE without a control), local (nothing
 sent, nothing changed) and quick to act on (a fix on every line).
 
