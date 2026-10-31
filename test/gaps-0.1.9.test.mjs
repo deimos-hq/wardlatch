@@ -366,11 +366,13 @@ test('a folder where a tracked file was is not a gap: SAFE, exit 0', () => {
 
 // ---- discovery of runtimes ---------------------------------------------------------------------------------------------
 const curlDir = () => { const d = fresh('disc-curl'); exe(join(d, 'curl'), 'echo "curl 8.0.0"'); return d; };
-// the virtual environments discover() found under `roots`, tested (env rows) or not (untested)
+// the virtual environments discover() found under `roots`, tested (env rows) or not (untested), and the folders past its
+// depth cap (`deep`, shown only when there are any). Every gap list is passed: since R2-N9 a walk given no list for a gap
+// it found throws, and this helper used to leave `deep` out, which the walk then had to stay silent about.
 const discovered = (name, roots) => lib(name, `const { discover } = await import(L + '/discover.mjs');
-const untested = [];
-const out = discover({ roots: ${JSON.stringify(roots)}, pathEnv: ${JSON.stringify(curlDir())}, untested });
-console.log(JSON.stringify({ envs: out.filter((r) => r.env).map((r) => r.env).sort(), untested: untested.map((u) => u.fields?.env ?? u.env ?? null) }));`);
+const untested = [], deep = [], links = [], denied = [], found = [], notRun = [];
+const out = discover({ roots: ${JSON.stringify(roots)}, pathEnv: ${JSON.stringify(curlDir())}, untested, deep, links, denied, found, notRun });
+console.log(JSON.stringify({ envs: out.filter((r) => r.env).map((r) => r.env).sort(), untested: untested.map((u) => u.fields?.env ?? u.env ?? null), ...(deep.length ? { deep } : {}) }));`);
 
 test('a virtual environment without certifi gives no row; one with certifi does', () => {
   // lib/discover.mjs:28 (no certifi bundle, no row)
@@ -397,27 +399,39 @@ test('discovery doesn\'t follow links or go into node_modules, and says so for t
 test('the search depths: a virtual environment six folders down, a repository four down, a site five down', () => {
   // lib/discover.mjs:75, lib/workflows.mjs:16 and lib/wordpress.mjs:16 (each walk lists the folder at depth 0)
   const v = fresh('d75-root');
+  // each one past the cap is not found, and is reported as past it (WV-7); the walks are given their gap lists, which
+  // they have had since WV-7 and which a caller may no longer leave out (R2-N9)
   venv(join(v, '1', '2', '3', '4', '5', 'v6')); venv(join(v, '1', '2', '3', '4', '5', '6', 'v7'));
-  assert.deepEqual(discovered('d75', [v]), { envs: [join(v, '1', '2', '3', '4', '5', 'v6')], untested: [] });
+  assert.deepEqual(discovered('d75', [v]), { envs: [join(v, '1', '2', '3', '4', '5', 'v6')], untested: [], deep: [join(v, '1', '2', '3', '4', '5', '6')] });
   const g = fresh('w16-root');
   mkdirSync(join(g, '1', '2', '3', '4', '.git'), { recursive: true }); mkdirSync(join(g, '1', '2', '3', 'x', '5', '.git'), { recursive: true });
-  assert.deepEqual(reposUnder([g], 4), [join(g, '1', '2', '3', '4')]);
+  const gDeep = [];
+  assert.deepEqual(reposUnder([g], 4, [], [], { deep: gDeep }), [join(g, '1', '2', '3', '4')]);
+  assert.deepEqual(gDeep, [join(g, '1', '2', '3', 'x', '5')]);
   const w = fresh('wp16-root');
   const site = (p) => { put(join(p, 'wp-includes', 'version.php'), '<?php\n'); mkdirSync(join(p, 'wp-content'), { recursive: true }); };
   site(join(w, '1', '2', '3', '4', '5')); site(join(w, '1', '2', '3', '4', 'x', '6'));
-  assert.deepEqual(wordpressUnder([w], 5), [join(w, '1', '2', '3', '4', '5')]);
+  const wDeep = [];
+  assert.deepEqual(wordpressUnder([w], 5, [], [], [], [], { deep: wDeep, loose: [] }), [join(w, '1', '2', '3', '4', '5')]);
+  assert.deepEqual(wDeep, [join(w, '1', '2', '3', '4', 'x', '6')]);
 });
 
 test('the OS\'s own trust: the macOS system row, and the Linux store row only with a bundle and a curl', () => {
   // lib/discover.mjs:66 to :72 (the macos-system row on macOS; the Linux bundle, curl and row)
   const nscurl = exe(join(fresh('os-nscurl'), 'nscurl'), 'exit 0'), bundle = put(join(fresh('os-bundle'), 'ca.crt'), '-----BEGIN CERTIFICATE-----\n');
   const map = { '/usr/bin/nscurl': nscurl, '/etc/ssl/certs/ca-certificates.crt': bundle };
+  // `untested` is passed (since R2-N9 a walk given no list for an entry it has throws): with a bundle and no curl, the
+  // bundle goes there unless a python3 tests it, and this test used to leave it out, so that entry went nowhere
   const system = (name, platform, pathEnv) => lib(name, `const { discover } = await import(L + '/discover.mjs');
-console.log(JSON.stringify(discover({ roots: [], pathEnv: ${JSON.stringify(pathEnv)} }).filter((r) => r.kind === 'macos-system' || r.system).map((r) => [r.kind, r.bin ?? null, r.args ?? null])));`, { platform, map: platform === 'darwin' ? { '/usr/bin/nscurl': nscurl } : map });
-  assert.deepEqual(system('os-mac', 'darwin', ''), [['macos-system', '/usr/bin/nscurl', null]]);
+const untested = [];
+const out = discover({ roots: [], pathEnv: ${JSON.stringify(pathEnv)}, untested });
+console.log(JSON.stringify({ rows: out.filter((r) => r.kind === 'macos-system' || r.system).map((r) => [r.kind, r.bin ?? null, r.args ?? null]), python: out.some((r) => r.kind === 'python'), untested: untested.map((u) => u.fields?.bundle ?? null) }));`, { platform, map: platform === 'darwin' ? { '/usr/bin/nscurl': nscurl } : map });
+  assert.deepEqual(system('os-mac', 'darwin', '').rows, [['macos-system', '/usr/bin/nscurl', null]]);
   const curl = curlDir();
-  assert.deepEqual(system('os-linux', 'linux', curl), [['curl', join(curl, 'curl'), ['--cacert', '/etc/ssl/certs/ca-certificates.crt']]]);
-  assert.deepEqual(system('os-linux', 'linux', fresh('os-no-curl')), [], 'no curl, no row');
+  assert.deepEqual(system('os-linux', 'linux', curl).rows, [['curl', join(curl, 'curl'), ['--cacert', '/etc/ssl/certs/ca-certificates.crt']]]);
+  const noCurl = system('os-linux', 'linux', fresh('os-no-curl'));
+  assert.deepEqual(noCurl.rows, [], 'no curl, no row');
+  assert.ok(noCurl.python || noCurl.untested.includes('/etc/ssl/certs/ca-certificates.crt'), `and the bundle is not dropped: ${JSON.stringify(noCurl)}`);
 });
 
 // ---- program checks ----------------------------------------------------------------------------------------------------

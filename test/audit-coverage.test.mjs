@@ -64,7 +64,11 @@ test('M70 a repository is found four levels under a searched folder, and not fiv
   };
   for (const n of [1, 2, 3, 4]) { const { root, repo } = at(n); assert.deepEqual(reposUnder([root], 4, []), [repo], `${n} level(s) under the root`); }
   const five = at(5);
-  assert.deepEqual(reposUnder([five.root], 4, []), [], 'five levels under the root is past the cap (the CHANGELOG\'s known limits)');
+  // past the cap, and reported as past it (WV-7): the walk is given its `deep` list, which a caller may no longer leave
+  // out (R2-N9: a walk given no list for a gap it found throws; this used to leave it out and get silence)
+  const deep = [];
+  assert.deepEqual(reposUnder([five.root], 4, [], [], { deep }), [], 'five levels under the root is past the cap (the CHANGELOG\'s known limits)');
+  assert.deepEqual(deep, [five.repo], 'and the repository past it is reported as past it');
 });
 
 test('M76 the header check reads a repository\'s own settings four levels under a searched folder', () => {
