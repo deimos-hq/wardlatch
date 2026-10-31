@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=60
+expect_cases=61
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -1772,6 +1772,21 @@ grep -qF 'so an interruption leaves the old file or the new one' <<<"$hdr" || fa
 grep -qF 'never tells you to restore a backup' <<<"$hdr" && fail "the header: it still says the script never tells you to restore a backup"
 ok "the header's sentences about interruption and backups say what the script does"
 # ---- r2 end case
+
+# ---- r3 cases
+# Added on 31 Oct 2026 after a third independent read. Like the r2 cases, each stands on the setup above alone.
+
+# ---- r3 case: mode
+# The fix is executable, as the site serves it: `./fix/fix-macos.sh` in a clone must run. fbed337 (31 Oct 2026) took the
+# bit away (100755 to 100644) without saying so, and nothing here could see it. In a git checkout the mode git records
+# is what a clone gets, so that is what is checked; elsewhere, the file's own bit.
+if m=$(git -C "$root" ls-files -s -- fix/fix-macos.sh 2>/dev/null) && [ -n "$m" ]; then
+  [ "${m%% *}" = 100755 ] || fail "the fix is mode ${m%% *} in git, not 100755, so ./fix/fix-macos.sh in a clone says Permission denied"
+else
+  [ -x "$fix" ] || fail "the fix is not executable"
+fi
+ok "fix/fix-macos.sh is executable (100755)"
+# ---- r3 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.
 cp "$work/original.pem" "$work/unreadable.pem"
