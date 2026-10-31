@@ -253,8 +253,12 @@ test('site-packages: a name nothing legitimate installs is EXPOSED by name alone
   writeFileSync(join(sp, 'cook.pth'), 'import cook  # a variant\n');
   const away = join(dir, 'sp2-away', 'env'); mkdirSync(join(away, 'lib', 'python3.12', 'site-packages'), { recursive: true }); writeFileSync(join(away, 'pyvenv.cfg'), 'x\n');
   symlinkSync(away, join(root, '.venv-link')); symlinkSync('.', join(root, 'loop'));
-  const dirs = sitePackagesDirs({ roots: [root], patterns: [], home: '' });
+  // (Round 4: the linked venv is a link not followed, reported in `links`, which this call left out and so relied on the
+  // link staying silent: since R2-N9 a walk given no list for an entry it has throws. The list is passed, and read.)
+  const links = [];
+  const dirs = sitePackagesDirs({ roots: [root], patterns: [], home: '', denied: [], links });
   assert.equal(dirs.length, 2, 'lib64 -> lib is one folder; the linked venv is found; the loop is not followed');
+  assert.deepEqual(links, [join(root, '.venv-link')], 'the linked venv is reported as a link not followed; the loop, into a folder walked, is not');
   const r = checkSitePackages({ iocFiles: [{ name: 'cook.pth', sha256: ['0'.repeat(64), '1'.repeat(64)], nameAlone: 'EXPOSED' }] }, dirs);
   assert.equal(r.length, 1); assert.equal(r[0].status, 'EXPOSED'); assert.match(r[0].reason, /variant/);
 });

@@ -193,6 +193,36 @@ test('a venv\'s own folders: the line under the all-clear names only what is not
   assert.doesNotMatch(under, /\b(bin|share|etc)\b/, under);
 });
 
+// Round 3's re-read 2, finding 7 (MEASURED there and here): a link to a venv was checked (its site-packages, through the
+// link) but not walked, and got no row: the walk marked the link's target as walked whole, so a venv inside the linked
+// venv was never looked for, and the run read SAFE, exit 0.
+test('a link to a venv: its packages are checked through it, and it is a link not followed, UNKNOWN, unless its target was walked', () => {
+  const h = fresh('venv-link');
+  const real = join(h, 'real');
+  const own = litellmVenv(real);                                       // the linked venv's own packages: the stealer
+  const inner = litellmVenv(join(real, 'src', 'sub', '.venv'));        // and a venv inside it
+  mkdirSync(join(h, 'root', 'proj'), { recursive: true });
+  symlinkSync(real, join(h, 'root', 'proj', '.venv'));
+  const r = json([...LITELLM, '--paths', join(h, 'root')]);
+  const through = join(h, 'root', 'proj', '.venv', 'lib', 'python3.12', 'site-packages');
+  assert.deepEqual(exposedIn(r, through).length ? exposedIn(r, through) : exposedIn(r, own), ['cook.pth', 'litellm-1.107.0.dist-info'], `its packages, through the link: ${JSON.stringify(r.rows).slice(0, 1500)}`);
+  const row = unknowns(r).find((x) => x.path === join(h, 'root', 'proj', '.venv'));
+  assert.ok(row, `the link is a gap: ${JSON.stringify(r.rows).slice(0, 1500)}`);
+  assert.match(row.reason, /link to a virtual environment/, row.reason);
+  assert.match(row.reason, /packages were checked/, row.reason);
+  assert.ok(!r.rows.some((x) => x.status === 'SAFE'), JSON.stringify(r.rows).slice(0, 1500));
+  // clean, the link alone keeps the run at could-not-be-tested
+  for (const sp of [own, inner]) { rmSync(join(sp, 'cook.pth')); rmSync(join(sp, 'litellm-1.107.0.dist-info'), { recursive: true }); }
+  const c = json([...LITELLM, '--paths', join(h, 'root')]);
+  assert.equal(c.code, 2, JSON.stringify(c.rows).slice(0, 1500));
+  // and given with its target, which is then walked, the link is no gap (WV-9), and the venv inside is found
+  litellmVenv(join(real, 'src', 'sub', '.venv'));
+  const both = json([...LITELLM, '--paths', join(h, 'root'), '--paths', real]);
+  assert.deepEqual(exposedIn(both, inner), ['cook.pth', 'litellm-1.107.0.dist-info'], JSON.stringify(both.rows).slice(0, 1500));
+  assert.ok(!unknowns(both).some((x) => x.path === join(h, 'root', 'proj', '.venv')), JSON.stringify(both.rows).slice(0, 1500));
+  assert.equal(both.code, 1);
+});
+
 test('a venv\'s own folders: a venv at the depth floor whose only folders are bin and lib makes no depth-limit row', async () => {
   // root (5) a (4) b (3) c (2) d (1) .venv (0): its lib is listed at the floor, python3.12 is past it and holds only the
   // venv's own site-packages, which was checked; bin holds only files. Nothing there is unsearched.
