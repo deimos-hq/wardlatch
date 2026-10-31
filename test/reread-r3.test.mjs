@@ -8,7 +8,7 @@
 import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, mkdirSync, mkdtempSync, rmSync, realpathSync, readdirSync, statSync } from 'node:fs';
+import { writeFileSync, mkdirSync, mkdtempSync, rmSync, realpathSync, readdirSync, statSync, symlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -146,4 +146,65 @@ test('venv layouts: the trust walk probes the certifi of a PyPy venv, and of one
       assert.ok(r.envs.includes(env), `${name}, --paths ${given}: ${JSON.stringify(r)}`);
     }
   }
+});
+
+// ---- a venv's own folders: walked, and the line under the all-clear says exactly what is not -----------------------------
+// Round 3's re-read 2, finding 2, and re-read 3, finding 7 (MEASURED): a project made with `python3 -m venv .` (pyvenv.cfg
+// and bin/python at its root) holding a stealer's venv in its own lib/, share/, bin/ or etc/ read SAFE, exit 0, at
+// f62f9ba (EXPOSED at 03d95c9), with the line under the all-clear saying those folders "are checked with it", while
+// nothing in bin, share or etc was read, and lib only for its site-packages.
+const OWN = ['lib/tools', 'share/demo', 'bin/x', 'etc/y', 'include/z', 'Scripts/w', 'lib/python3.12/vendored'];
+test('a venv\'s own folders: a venv inside a project-venv\'s lib/, share/, bin/, etc/, include/ or Scripts/ is found', async () => {
+  const parent = fresh('own-folders');
+  const proj = join(parent, 'proj');
+  put(join(proj, 'pyvenv.cfg'), 'home = /usr/bin\n');
+  put(join(proj, 'bin', 'python'), 'not run by Wardlatch\n');
+  mkdirSync(join(proj, 'lib', 'python3.12', 'site-packages'), { recursive: true });
+  const inner = OWN.map((o) => litellmVenv(join(proj, ...o.split('/'), '.venv')));
+  for (const given of [proj, parent]) {
+    const r = json([...LITELLM, '--paths', given]);
+    for (const sp of inner) assert.deepEqual(exposedIn(r, sp), ['cook.pth', 'litellm-1.107.0.dist-info'], `--paths ${given}, ${sp}: ${JSON.stringify(r.rows).slice(0, 1500)}`);
+    assert.equal(r.code, 1, `--paths ${given}`);
+  }
+  // the trust walk, likewise
+  const t = fresh('own-folders-trust');
+  const tproj = certifiVenv(join(t, 'proj'));
+  const tinner = OWN.map((o) => certifiVenv(join(tproj, ...o.split('/'), '.venv')));
+  for (const given of [tproj, t]) {
+    const r = await discovered([given]);
+    for (const env of tinner) assert.ok(r.envs.includes(env), `trust, --paths ${given}: ${env}: ${JSON.stringify(r.envs)}`);
+  }
+});
+
+test('a venv\'s own folders: the line under the all-clear names only what is not searched, its own package folders', () => {
+  const root = fresh('own-said');
+  const sp = litellmVenv(join(root, '.venv'));
+  rmSync(join(sp, 'cook.pth')); rmSync(join(sp, 'litellm-1.107.0.dist-info'), { recursive: true });
+  const r = json([...LITELLM, '--paths', root]);
+  const safe = r.rows.find((x) => x.status === 'SAFE');
+  const said = safe?.notSearched?.find((n) => /virtual environment/.test(n)) ?? '';
+  assert.match(said, /package folders/, JSON.stringify(safe));
+  assert.match(said, /site-packages/, said);
+  // never a folder this walk reads past (it walks bin, share, etc and the rest of lib), as one "checked with it"
+  assert.doesNotMatch(said, /\b(bin|share|etc|include|Scripts)\b/, said);
+  const t = text([...LITELLM, '--paths', root]).out.split('\n');
+  const under = t[t.findIndex((l) => l.startsWith('SAFE')) + 1] ?? '';
+  assert.match(under, /are checked with the environment, not searched for other environments/, under);
+  assert.doesNotMatch(under, /\b(bin|share|etc)\b/, under);
+});
+
+test('a venv\'s own folders: a venv at the depth floor whose only folders are bin and lib makes no depth-limit row', async () => {
+  // root (5) a (4) b (3) c (2) d (1) .venv (0): its lib is listed at the floor, python3.12 is past it and holds only the
+  // venv's own site-packages, which was checked; bin holds only files. Nothing there is unsearched.
+  const root = fresh('own-floor');
+  const env = certifiVenv(join(root, 'a', 'b', 'c', 'd', '.venv'));
+  put(join(env, 'lib', 'python3.12', 'site-packages', 'pip', '_internal', 'cli', 'x.py'), '');
+  const { sitePackagesDirs } = await import('../lib/installs.mjs');
+  const deep = [], links = [];
+  const dirs = sitePackagesDirs({ roots: [root], patterns: [], home: '', denied: [], deep, links });
+  assert.ok(dirs.includes(join(env, 'lib', 'python3.12', 'site-packages')), JSON.stringify(dirs));
+  assert.deepEqual(deep, [], 'installs');
+  const r = await discovered([root]);
+  assert.ok(r.envs.includes(env), JSON.stringify(r.envs));
+  assert.deepEqual(r.deep, [], 'trust');
 });
