@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=70
+expect_cases=71
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -2123,6 +2123,32 @@ cmp -s "$d/cert.pem" "$r2/P.pem" || fail "QUIT just after the rename: the bundle
 rm -f "$d"/cert.pem.wardlatch-*.bak
 sigrun_sig=INT
 ok "a Ctrl-\\ (QUIT) stops the run with a true line and exit 2, and leaves nothing behind"
+# ---- r3 end case
+
+# ---- r3 case: signal-at-exit
+# A signal while the cleanup at exit runs, after the verdict line was printed. Until 31 Oct 2026 it ran stopped(), which
+# printed a second line under the verdict ("SAFE  Fixed ..." then "UNKNOWN  Stopped before this could re-test") and
+# turned the exit code into 2 (the third read). The rm stand-in holds the cleanup's removal of the temporary files once;
+# TERM goes to the script then. After a SAFE that fixed the file, a SAFE about a file already clean, and an UNKNOWN
+# refusal, the run must print exactly one line starting SAFE, EXPOSED or UNKNOWN, keep its exit code, and say nothing
+# about being stopped.
+d=$work/r3/atexit; mkdir -p "$d"
+sigrun_sig=TERM
+for how in fixed:0 clean:0 empty:2; do
+  case "${how%%:*}" in
+    fixed) cp "$work/original.pem" "$d/cert.pem" ;;
+    clean) cp "$r2/P.pem" "$d/cert.pem" ;;
+    empty) : >"$d/cert.pem" ;;
+  esac
+  rm -f "$d/rmstate"
+  sigrun "$r2/net.sh" "$d/cert.pem" PATH="$shims:$PATH" WL_RM=hold WL_RM_STATE="$d/rmstate" WARDLATCH_CURL="$r2/curl" STUB_CONTROL=0 STUB_TEST=60
+  [ "$code" -eq "${how#*:}" ] || fail "a signal during the cleanup at exit (${how%%:*}): expected exit ${how#*:}, got $code"
+  [ "$(grep -cE '^(SAFE|EXPOSED|UNKNOWN) ' <<<"$out")" -eq 1 ] || fail "a signal during the cleanup at exit (${how%%:*}): it printed more than one verdict line"
+  grep -q 'Stopped' <<<"$out" && fail "a signal during the cleanup at exit (${how%%:*}): it said it was stopped after it had finished"
+  rm -f "$d"/cert.pem.wardlatch-*.bak
+done
+sigrun_sig=INT
+ok "a signal during the cleanup at exit leaves the verdict alone: one line, its own exit code"
 # ---- r3 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.

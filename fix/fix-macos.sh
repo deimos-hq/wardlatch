@@ -305,6 +305,10 @@ stopped() {
   fi
   exit 2
 }
+# Called once the last reading is in, just before the verdict is printed: from here the run has its answer, and a
+# signal is ignored rather than stop it half-way through saying so. Until 31 Oct 2026 a signal here, or during the
+# cleanup at exit, ran stopped(), which printed "UNKNOWN  Stopped ..." under the verdict and turned exit 0 or 1 into 2.
+settled() { trap '' HUP INT QUIT TERM; }
 # What this file held of one withdrawn root: $1 copies of the root itself and $2 other certificates with its key, $3
 # its name. A certificate found by the key alone is named as that, not as the root: it is not byte for byte the root.
 one() {
@@ -439,7 +443,10 @@ nobackup() {
 # Until 31 Oct 2026 they were set after all of those, so a signal in that time -- milliseconds in a real run -- ended
 # the run with 130, 143 or 129 and no line, and left the snapshot in TMPDIR (the third read). Between bash starting and
 # this line only assignments and function definitions run.
-trap clean EXIT
+# The cleanup at exit ignores the signals first: it runs after the verdict line, and a signal during it ran stopped(),
+# which printed a second line contradicting the first and turned exit 0 or 1 into 2 (the third read). settled() does
+# the same from the moment the last reading is in, for the lines of the verdict itself.
+trap 'trap "" HUP INT QUIT TERM; clean' EXIT
 trap stopped HUP INT TERM
 # And QUIT, which Ctrl-\ sends: untrapped, it ended the run with 131 and no line, and left a .wardlatch-new.<pid>.*
 # file beside $FILE -- root's, in a real run -- that a later run's strays() never removes (the third read).
@@ -552,10 +559,12 @@ if [ "$found" -eq 0 ]; then
   fi
   c=$(control "$FILE")
   if [ "$c" -ne 0 ]; then
+    settled
     echo "SAFE     $FILE no longer holds the two roots. Nothing changed."
     echo "         (An ordinary website didn't load either (curl $c), so nothing was re-tested online.)"
   else
     r=$(trust "$FILE")
+    settled
     case "$r" in
       60) echo "SAFE     $FILE already refuses the compromised keys. Nothing changed." ;;
       0)  echo "EXPOSED  $FILE holds neither root but still trusts the test site. Nothing changed; please report this."; exit 1 ;;
@@ -652,6 +661,7 @@ if [ "$landed" != "$want" ]; then
   # The declaration goes immediately above the call, and the harness checks that it is there.
   # wardlatch:revert-reason=content-mismatch
   if replace "$backup"; then
+    settled
     echo "EXPOSED  What was written to $FILE isn't the file this built and checked, so the original was put back and this"
     echo "         Mac still trusts the compromised keys. Nothing else was changed. Run it again; please report this."
     echo "         Backup: $backup"
@@ -672,6 +682,7 @@ if [ "$c" -eq 0 ]; then
   # The control loads through the new file: this network answers, and the new file still validates ordinary
   # certificates. So the test host's answer is about the test host, and there is a verdict to be had.
   r=$(trust "$FILE")
+  settled
   case "$r" in
     60) echo "SAFE     Fixed. $FILE now refuses the compromised keys: $(removed_phrase), kept $after." ;;
     0)  echo "EXPOSED  Fixed in the file ($(removed_phrase), kept $after), but the advisory's test site is"
@@ -689,12 +700,14 @@ if [ "$c" -eq 0 ]; then
         echo "         (curl $r), though an ordinary website loaded, so this wasn't re-tested online.)" ;;
   esac
 elif [ "$c0" -ne 0 ]; then
+  settled
   # Nothing loaded before the change either, so this reading is about the network and not about the file. Report,
   # keep the fix, claim nothing online.
   echo "SAFE     Fixed in the file: $(removed_phrase), kept $after."
   echo "         (An ordinary website didn't load before this change (curl $c0) or after it (curl $c), so nothing"
   echo "         was re-tested online.)"
 else
+  settled
   case "$c" in
     6|7|28)
       # A name that didn't resolve, a connection that wasn't made, or no answer in time: the network stopped
