@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=61
+expect_cases=62
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -1866,6 +1866,43 @@ else
   [ -x "$fix" ] || fail "the fix is not executable"
 fi
 ok "fix/fix-macos.sh is executable (100755)"
+# ---- r3 end case
+
+# ---- r3 case: begin-mid-line
+# A withdrawn root whose BEGIN marker is not at the start of its line. LibreSSL reads the file 253 bytes at a time, so a
+# marker at byte 253, 506, ... of a long line starts a certificate it trusts; until 31 Oct 2026 the fix counted only
+# markers at the start of a line, and a root hidden that way stayed in the file under SAFE, exit 0. A marker after other
+# text anywhere now stops the run: UNKNOWN, exit 2, nothing changed. Each shape that LibreSSL reads is first shown to be
+# read by it (otherwise the case would measure nothing): in each of the three labels it trusts, after ASCII padding and
+# after bytes that are not UTF-8, which macOS's grep does not match at all in a UTF-8 locale, so that shape runs in one.
+d=$work/r3/midline; mkdir -p "$d"
+libre() { /usr/bin/openssl crl2pkcs7 -nocrl -certfile "$1" 2>/dev/null | /usr/bin/openssl pkcs7 -print_certs 2>/dev/null | grep -c '^-----BEGIN CERTIFICATE-----' || true; }
+aaa_body=$(sed '1d;$d' "$r2/aaa.pem")
+for shape in 253-cert 506-cert 253-trusted 253-x509 253-ff 60-cert plus-253; do
+  pad=${shape%%-*}; label=${shape#*-}; base=$r2/P.pem
+  case "$label" in
+    cert|ff) blk=$(cat "$r2/aaa.pem") ;;
+    trusted) blk=$(/usr/bin/openssl x509 -in "$r2/aaa.pem" -trustout -addtrust serverAuth) ;;
+    x509) blk=$(printf -- '-----BEGIN X509 CERTIFICATE-----\n%s\n-----END X509 CERTIFICATE-----' "$aaa_body") ;;
+    253) pad=253; base=$work/original.pem; blk=$(cat "$r2/aaa.pem") ;;   # plus-253: the whole file, plus a hidden copy
+  esac
+  if [ "$label" = ff ]; then fill='\377'; else fill='#'; fi
+  p=$(printf '%*s' "$pad" '' | LC_ALL=C tr ' ' "$fill")
+  { cat "$base"; printf '%s%s\n' "$p" "$blk"; } >"$d/$shape.pem"
+  cp "$d/$shape.pem" "$d/$shape.before"
+  seen=$(libre "$d/$shape.pem"); plain=$(libre "$base")
+  if [ "$pad" = 60 ]; then
+    [ "$seen" -eq "$plain" ] || fail "a marker after other text ($shape): LibreSSL read the hidden block after all, so this shape is not the one it describes"
+  else
+    [ "$seen" -eq $((plain + 1)) ] || fail "a marker after other text ($shape): LibreSSL reads $seen certificates, not $((plain + 1)), so this case would measure nothing"
+  fi
+  run "$d/$shape.pem" LC_ALL=en_US.UTF-8 "$offline" "$OFFLINE"
+  [ "$code" -eq 2 ] || fail "a marker after other text ($shape): expected UNKNOWN, exit 2, got $code"
+  grep -q '^UNKNOWN.*BEGIN comes after other text' <<<"$out" || fail "a marker after other text ($shape): it did not say a line holds the marker after other text"
+  cmp -s "$d/$shape.pem" "$d/$shape.before" || fail "a marker after other text ($shape): the bundle changed"
+  [ "$(baks "$d/$shape.pem")" -eq 0 ] || fail "a marker after other text ($shape): it wrote a backup"
+done
+ok "a BEGIN marker after other text on its line stops the run, in every label LibreSSL trusts and after any bytes"
 # ---- r3 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.

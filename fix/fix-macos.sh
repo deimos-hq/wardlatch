@@ -7,7 +7,7 @@
 # The removal is the advisory's (emudhra.we-have-a-problem.com); this script adds the safety around it:
 #   - finds the two roots by their SHA-256 fingerprints, not by the name lines some copies of the file don't have,
 #     and refuses a file it can't fully check: a certificate it can't read, a block that isn't a plain certificate,
-#     or fewer fingerprints read than certificates counted;
+#     a -----BEGIN marker anywhere but at the start of a line, or fewer fingerprints read than certificates counted;
 #   - refuses a $FILE that is a symbolic link: replacing it would put a file of this script's own where the link is,
 #     so $FILE would stop following the file the link points to, and that file would be left as it is;
 #   - works on a snapshot of the file and refuses to replace it if it changed meanwhile: the backup it takes is
@@ -35,6 +35,9 @@
 # Safe to run twice. Run it in Terminal (it asks for your Mac's password) or as root from Jamf, Kandji or Intune.
 # Copy it from the Wardlatch page in Safari. Don't fetch it with the Mac's own curl: that curl is what's exposed.
 set -euo pipefail
+# Bytes, not characters, as LibreSSL reads the file. In a UTF-8 locale macOS's grep does not match a line holding a
+# byte that isn't valid UTF-8 at all, so a marker after such bytes went uncounted (measured 31 Oct 2026).
+export LC_ALL=C
 
 FILE="${WARDLATCH_CERT_FILE:-/etc/ssl/cert.pem}"   # the override exists for testing on a copy, and for a linked bundle
 TEST_URL="https://dv-g3b-emudhra.we-have-a-problem.com/"
@@ -81,9 +84,11 @@ control() { local r=0; /usr/bin/curl -q -s -o /dev/null --max-time 15 --cacert "
 # How many lines of $2 match $1. Fails, rather than print a number, if grep could not read the file: a count that
 # came back empty was compared as if it were one, and `[` reading "" as a number is an error, not a no.
 count() { local n r=0; n=$(grep -c -- "$1" "$2" 2>/dev/null) || r=$?; if [ "$r" -gt 1 ] || [ -z "$n" ]; then return 1; fi; echo "$n"; }
-# Certificates are lines that START with the BEGIN marker, which is all LibreSSL reads as one. Until 31 Oct 2026 the
-# marker counted anywhere in a line, so a comment that mentioned it ("paste each certificate from its -----BEGIN
-# CERTIFICATE----- line ...") made a bundle LibreSSL reads without complaint unfixable, as "a certificate can't be read".
+# Certificates are the lines that START with the BEGIN marker. A marker anywhere else in a line stops the run before
+# anything is read out of the file (see the checks after the snapshot): LibreSSL reads the file 253 bytes at a time, so
+# a marker at byte 253, 506, ... of a longer line starts a certificate it trusts (OpenSSL 3.6.4: byte 254), and this
+# script would not see it. Measured 31 Oct 2026, after an earlier change that day (6a36187) counted only markers at the
+# start of a line on the model that LibreSSL reads nothing else: a root hidden that way stayed trusted, under SAFE.
 certs() { count '^-----BEGIN CERTIFICATE-----' "$1"; }
 # The SHA-256 of the file $1, or of stdin when $1 is "-": 64 hex digits, or a failure, never anything else.
 # (LibreSSL prints "(stdin)= <digest>" in some versions and "<digest>" in others; the last word is the digest in both.)
@@ -341,8 +346,18 @@ orig=$(sha "$snap") || { echo "UNKNOWN  Couldn't take the SHA-256 of $FILE (open
 # This is read before the floor below, and the fingerprints after it, because the floor now has to say whether the
 # file holds a withdrawn root: a block this fix cannot read could hold one, so "it holds neither" would otherwise be
 # a claim about bytes nobody checked.
-if ! blocks=$(count '^-----BEGIN ' "$snap") || ! before=$(certs "$snap"); then
+if ! blocks=$(count '^-----BEGIN ' "$snap") || ! before=$(certs "$snap") || ! inline=$(count '.-----BEGIN' "$snap"); then
   echo "UNKNOWN  Couldn't read the copy of $FILE this run took, so it wasn't checked. Nothing changed."
+  exit 2
+fi
+# A marker after other text on its line. LibreSSL (curl, git, python3, openssl) starts a certificate there when the
+# marker falls at byte 253, 506, ... of the line, OpenSSL 3.6.4 at byte 254, and other readers may differ again, so
+# this fails closed on the marker anywhere but at the start of a line rather than guess which readers see it.
+if [ "$inline" -ne 0 ]; then
+  echo "UNKNOWN  $FILE has $inline line(s) where -----BEGIN comes after other text. curl, git, python3 and openssl can"
+  echo "         read a certificate from such a line, depending on where the marker falls in it, and this fix can't"
+  echo "         check it. Nothing changed. Edit those lines so that -----BEGIN only ever starts a line, then run"
+  echo "         this again; or run npx wardlatch@latest to test what this Mac's tools trust."
   exit 2
 fi
 if [ "$blocks" -ne "$before" ]; then
