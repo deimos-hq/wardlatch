@@ -466,6 +466,18 @@ nobackup() {
   fi
   exit 2
 }
+# The snapshot copy failed. Whether the reading or the writing failed is measured rather than guessed: if $FILE reads
+# in full into nothing, the copy failed writing into TMPDIR -- a full or unwritable temporary folder. Until 31 Oct 2026
+# every failure here said "Can't read $FILE", a TMPDIR with no room included (the third read, on a 2 MB disk image).
+nosnap() {
+  if sha "$FILE" >/dev/null; then
+    echo "UNKNOWN  Couldn't write a copy of $FILE into ${TMPDIR:-/tmp} ($FILE itself reads in full), so it wasn't"
+    echo "         checked. That folder may be full, or not writable by this run. Nothing changed."
+  else
+    echo "UNKNOWN  Can't read $FILE. Nothing changed."
+  fi
+  exit 2
+}
 
 # The traps, before any command runs: before uname, readlink, id and dirname, and before either temporary file is made.
 # Until 31 Oct 2026 they were set after all of those, so a signal in that time -- milliseconds in a real run -- ended
@@ -501,7 +513,7 @@ tmp=$(mktemp "${TMPDIR:-/tmp}/wardlatch.$$.XXXXXX" 2>/dev/null) || {
   echo "UNKNOWN  Couldn't make a temporary file in ${TMPDIR:-/tmp} (mktemp failed), so $FILE wasn't read. Nothing changed."
   exit 2
 }
-cp "$FILE" "$snap" 2>/dev/null || { echo "UNKNOWN  Can't read $FILE. Nothing changed."; exit 2; }
+cp "$FILE" "$snap" 2>/dev/null || nosnap
 orig=$(sha "$snap") || { echo "UNKNOWN  Couldn't take the SHA-256 of $FILE (openssl failed), so it wasn't checked. Nothing changed."; exit 2; }
 
 # curl also trusts other PEM blocks (BEGIN TRUSTED CERTIFICATE, BEGIN X509 CERTIFICATE), which this fix doesn't read.

@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=73
+expect_cases=74
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -2195,6 +2195,21 @@ if ! cmp -s "$d/cert.pem" "$d/expected.pem"; then
 fi
 rm -f "$d"/cert.pem.wardlatch-*.bak
 ok "an administrator's own heading above a withdrawn root's dump stays, with the dump; only the certificate goes"
+# ---- r3 end case
+
+# ---- r3 case: tmpdir-full
+# The snapshot copy into TMPDIR failing because the folder is full. The bundle is readable, so "Can't read" is the
+# wrong reason; until 31 Oct 2026 that is what the run said (the third read, on a 2 MB disk image). The cp stand-in
+# writes 1000 bytes and fails with ENOSPC. UNKNOWN, exit 2, the true reason, nothing changed and nothing left behind.
+d=$work/r3/tmpfull; mkdir -p "$d"
+cp "$work/original.pem" "$d/cert.pem"
+run "$d/cert.pem" PATH="$shims:$PATH" WL_CP=full-snap "$offline" "$OFFLINE"
+[ "$code" -eq 2 ] || fail "a full TMPDIR: expected UNKNOWN, exit 2, got $code"
+grep -q "Can't read" <<<"$out" && fail "a full TMPDIR: it said the bundle can't be read"
+grep -q "^UNKNOWN  Couldn't write a copy of $d/cert.pem into $work/tmp" <<<"$out" || fail "a full TMPDIR: it did not say the copy into the temporary folder failed"
+cmp -s "$d/cert.pem" "$work/original.pem" || fail "a full TMPDIR: the bundle changed"
+[ -z "$(beside "$d/cert.pem")" ] && [ "$(baks "$d/cert.pem")" -eq 0 ] || fail "a full TMPDIR: it left something beside the bundle"
+ok "a temporary folder with no room is reported as that, not as a bundle that can't be read"
 # ---- r3 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.
