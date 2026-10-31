@@ -106,6 +106,10 @@ const unknowns = (r) => r.rows.filter((x) => x.status === 'UNKNOWN');
 // user can't chown a test folder to another account): picked at run time, or the test is skipped.
 let isPersonUid;
 before(async () => { ({ isPersonUid } = await import('../lib/owners.mjs')); });
+// (Changed 31 Oct 2026, owner decision #32: a folder that refuses with EPERM is UNKNOWN whoever owns it, so a root
+// with one below it is no longer the fixture this test means. On this Mac the finder had picked
+// /private/var/db/KernelExtensionManagement, whose Staging folder System Integrity Protection refuses with EPERM; it
+// now counts only a service's lock, EACCES, and passes over a root with an EPERM anywhere below it.)
 const serviceLockedRoot = () => {
   const isPerson = (uid) => isPersonUid(uid, 'workflow');
   const ok = (d, depth) => {   // the number of service-owned locked folders below d, or -1 if anything else is locked
@@ -113,7 +117,7 @@ const serviceLockedRoot = () => {
     let n = 0;
     for (const e of ents) {
       const p = join(d, e.name); let st; try { st = statSync(p); } catch { return -1; }
-      try { readdirSync(p); } catch { if (isPerson(st.uid)) return -1; n++; continue; }
+      try { readdirSync(p); } catch (err) { if (isPerson(st.uid) || err.code === 'EPERM') return -1; n++; continue; }
       if (depth > 0) { const k = ok(p, depth - 1); if (k < 0) return -1; n += k; }
     }
     return n;

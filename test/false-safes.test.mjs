@@ -74,8 +74,10 @@ test('a chmod 000 folder the person owns is could-not-be-tested and exits 2, und
 // ---- 2. a deny ACL is not macOS's refusal ----------------------------------------------------------------------------
 // The subtle forgery, and the reason the rule cannot be read off the mode bits alone: a deny ACL shuts a folder while
 // leaving its mode looking open, so `ls -ld` shows 0755 and the read still fails. Measured on this machine (see
-// test/support/errno-mechanisms.mjs): it gives EACCES, not EPERM. If it gave EPERM the whole rule would be unsound,
-// because then an attacker could put their own folder into the channel that does not change the exit code.
+// test/support/errno-mechanisms.mjs): it gives EACCES, not EPERM. (This comment used to say that if anything
+// unprivileged gave EPERM the stated-gap rule would be unsound. Something does: an unprivileged sandbox-exec profile,
+// measured 31 Oct 2026, and owner decision #32 then made every EPERM could-not-be-tested. The ACL's EACCES still must
+// be, and this test still holds that.)
 // FAILS ON THE OLD SHAPE for the same reason as test 1: under the name `.Trash` the workflow check never looked.
 test('a folder shut with a deny ACL (mode still 0755) is could-not-be-tested and exits 2',
   { skip: (process.platform !== 'darwin' || AS_ROOT) && 'macOS, as a user' }, (t) => {
@@ -89,7 +91,7 @@ test('a folder shut with a deny ACL (mode still 0755) is could-not-be-tested and
     acls.push(shut); locked.push(shut);
     let code = null; try { readdirSync(shut); } catch (e) { code = e.code; }
     if (code === null) return t.skip('the ACL did not deny the read on this file system');
-    // the premise, stated: the mode bits look open, and the errno is NOT the one that cannot be forged
+    // the premise, stated: the mode bits look open, and the errno is EACCES, not EPERM
     assert.equal(statSync(shut).mode & 0o777, 0o755, 'premise: the mode still looks open');
     assert.equal(code, 'EACCES', 'premise: an ACL denial is EACCES, not EPERM');
     assert.equal(mandatoryRefusal(shut, code), false, 'an ACL anyone can set is not macOS protecting a folder');
@@ -99,20 +101,16 @@ test('a folder shut with a deny ACL (mode still 0755) is could-not-be-tested and
     assert.equal(r.code, 2);
   });
 
-// ---- 3. the real article: a mandatory refusal is a stated gap beside the all-clear -----------------------------------
-// A REAL folder on this machine that macOS refuses, found at run time and skipped when there is none — the style of
-// serviceLockedRoot() in test/release-0.1.9.test.mjs, and for the same reason: an unprivileged test cannot build one,
-// and the fabricated stand-in is a different thing. The old test this replaces (test/review4-0.1.9.test.mjs:154) built
-// a fake bundle with chmod 000, which is EACCES and must stay UNKNOWN, and passed only because `.Trash` was swallowed
-// by a name list.
-//
-// Not the real ~/Pictures/*.photoslibrary, which is what macOS protects on a Mac with photos on it: the tests' safety
-// net (support/no-real-home.cjs) refuses to let a test read the real home, correctly. Those four folders are measured
-// by test/support/errno-mechanisms.mjs instead, which is run by hand and is read-only.
-//
-// FAILS ON THE OLD SHAPE: before the fix this folder landed in the same REVIEW line, but the line said "Run Wardlatch
-// with sudo to include them" — advice that cannot work on a folder macOS is protecting — and carried no errno, no mode
-// and no owner, so a reader had nothing to check the claim against.
+// ---- 3. the real article: a refusal from above the permission bits is could-not-be-tested ----------------------------
+// REVERSED 31 Oct 2026 by owner decision #32 ("Yes, UNKNOWN"): any folder Wardlatch could not open, EPERM included, is
+// UNKNOWN with exit 2, never SAFE. This test demanded the opposite — a stated gap in the REVIEW line beside the
+// all-clear, exit 0 — on the claim that EPERM cannot be forged without root. The independent read of da8f5c2 built
+// that EPERM with an unprivileged sandbox-exec profile and turned a real EXPOSED ×2, exit 1 into SAFE, exit 0 with it.
+// The fixture is kept: a REAL folder on this machine that the system refuses with EPERM (on this Mac, one System
+// Integrity Protection guards under /private/var/db), found at run time and skipped when there is none, in the style
+// of serviceLockedRoot() in test/release-0.1.9.test.mjs. Not the real ~/Pictures/*.photoslibrary: the tests' safety
+// net (support/no-real-home.cjs) refuses to let a test read the real home, correctly. test/independent-read.test.mjs
+// builds the same refusal with a sandbox profile, the way the independent read did.
 const mandatoryRefusalRoot = () => {
   // mirrors reposUnder(root, 4): a parent whose subtree holds at least one mandatory refusal, no person-owned denial
   // (which would be UNKNOWN and exit 2) and no link leaving what the walk listed (likewise UNKNOWN)
@@ -152,40 +150,28 @@ const mandatoryRefusalRoot = () => {
   return null;
 };
 
-test('a folder macOS is protecting is one stated gap naming EPERM and Full Disk Access, with the all-clear beside it, exit 0',
+test('a folder the system refuses with EPERM is could-not-be-tested with its basis, exit 2, never a stated gap beside an all-clear',
   { skip: (process.platform !== 'darwin' || AS_ROOT) && 'macOS, as a user (root is never refused by DAC)' }, (t) => {
     const found = mandatoryRefusalRoot();
     if (!found) return t.skip('no folder macOS refuses, without a person-owned denial beside it, on this machine');
     const { root, gap } = found;
     const r = run(['--incident', 'github-actions-2026-10', '--paths', root]);
 
-    // one stated gap, in the channel that does not change the exit code, naming the folder
-    const skipped = skippedRow(r);
-    assert.ok(skipped && skipped.status === 'REVIEW', `expected a REVIEW line for ${gap}: ${JSON.stringify(r.rows)}`);
-    assert.ok(skipped.paths.includes(gap), `${gap} is missing from the stated gaps: ${JSON.stringify(skipped)}`);
+    // its own UNKNOWN row, never the channel that keeps the exit code at 0
+    const row = unknowns(r).find((x) => x.path === gap);
+    assert.ok(row, `expected an UNKNOWN row for ${gap}: ${JSON.stringify(r.rows)}`);
+    assert.ok(!skippedRow(r)?.paths?.includes(gap), `${gap} must not ride in the stated-gap line: ${JSON.stringify(skippedRow(r))}`);
 
-    // THE REMEDY A READER CAN ACT ON, and not the one that cannot work. Before the fix this row carried `paths` and one
-    // sentence ending "Run Wardlatch with sudo to include them", with no per-folder detail at all.
-    assert.ok(Array.isArray(skipped.folders), `the row states no per-folder basis or remedy: ${JSON.stringify(skipped)}`);
-    const row = skipped.folders.find((f) => f.path === gap);
-    assert.ok(row, `no per-folder detail for ${gap}: ${JSON.stringify(skipped.folders)}`);
-    assert.match(row.remedy, /Full Disk Access/, 'the remedy for macOS protecting a folder');
-    assert.match(row.remedy, /sudo cannot open this/, 'and it says so about sudo, instead of advising it');
-    assert.match(skipped.reason, /Full Disk Access/, 'the sentence a reader is given says it too');
-    assert.doesNotMatch(row.remedy, /^run with `sudo`/, 'advice that cannot work on a protected folder');
-
-    // THE BASIS: the errno and the mode, which a reader checks with one `ls -ld`
+    // THE BASIS: the errno and the mode, which a reader checks with one `ls -ld`, in --json and in the sentence
     assert.equal(row.code, 'EPERM');
     assert.match(row.basis, /^EPERM, mode 0[0-7]{3}, owner /, `the basis must be checkable: ${row.basis}`);
-    assert.match(skipped.reason, /EPERM, mode 0[0-7]{3}, owner /, 'and it is in the reason, not only in --json');
+    assert.match(row.reason, /EPERM, mode 0[0-7]{3}, owner /, 'and it is in the reason, not only in --json');
+    // and it never claims to know what refused: a sandbox around the run gives the same EPERM
+    assert.doesNotMatch(row.reason, /macOS is protecting|sudo cannot open/, row.reason);
 
-    // the all-clear is still there beside it, it records the gap, and the exit code is 0
-    const safe = r.rows.find((x) => x.status === 'SAFE');
-    assert.ok(safe, `the all-clear must survive beside a stated gap: ${JSON.stringify(r.rows)}`);
-    assert.ok(safe.searched.includes(root), `the receipt names what was opened: ${JSON.stringify(safe.searched)}`);
-    assert.ok(safe.gaps >= 1, `the receipt records what was not: ${JSON.stringify(safe)}`);
-    assert.equal(unknowns(r).length, 0, `nothing here is a gap of the kind that should exit 2: ${JSON.stringify(unknowns(r))}`);
-    assert.equal(r.code, 0);
+    // no all-clear beside a folder that was not searched, and exit 2
+    assert.deepEqual(r.rows.filter((x) => x.status === 'SAFE'), [], `no all-clear: ${JSON.stringify(r.rows)}`);
+    assert.equal(r.code, 2);
 
     // and a root given with --paths is NEVER a stated gap, whatever its errno: the person asked about it by name
     const direct = run(['--incident', 'github-actions-2026-10', '--paths', gap]);
