@@ -7,7 +7,7 @@
 import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, realpathSync, symlinkSync, chmodSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, realpathSync, symlinkSync, chmodSync, existsSync } from 'node:fs';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -355,4 +355,61 @@ test('R2-N4 the installs walk goes into a venv found below a searched folder, pa
   assert.ok(safe?.notSearched?.some((n) => /virtual environment/.test(n) && /\blib\b/.test(n)), JSON.stringify(clean.rows));
   const t = text([...LITELLM, '--paths', root]).out;
   assert.match(t.split('\n')[t.split('\n').findIndex((x) => x.startsWith('SAFE')) + 1] ?? '', /inside a virtual environment/, t);
+});
+
+// ---- R2-N3: a BER PKCS #12 store, and DER keys with a trailing byte, were skipped with no row ---------------------------
+// derKind() refused an indefinite length (0x80: BER, never DER) and allowed nothing but line ends after the element, so
+// a key store re-encoded with an indefinite outer length, or a DER key with one trailing NUL or space, was "not a DER
+// key or certificate", and under a name that is not a text file's it was skipped with no row: the repository read
+// "SAFE no committed keys found". MEASURED, 31 Oct 2026, with LibreSSL 3.3.6 and OpenSSL 4.0.3: both read the BER store
+// (`openssl pkcs12 -in … -nodes` prints its private key) and load both trailing-byte keys (`openssl pkey -inform DER`).
+const OPENSSL = ['/opt/homebrew/bin/openssl', '/usr/local/bin/openssl', '/usr/bin/openssl'].find(existsSync);
+const KEYS = ['--incident', 'committed-keys-2026-10'];
+/** A key store, a key, and their BER and trailing-byte forms, made with openssl in `d`. */
+function keyFixtures(d) {
+  mkdirSync(d, { recursive: true });
+  const o = (...a) => execFileSync(OPENSSL, a, { cwd: d, stdio: 'pipe' });
+  o('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', 'k.pem', '-out', 'c.pem', '-subj', '/CN=wardlatch-test', '-days', '1');
+  o('pkcs12', '-export', '-inkey', 'k.pem', '-in', 'c.pem', '-passout', 'pass:not-a-real-password', '-out', 'store.p12');
+  o('pkcs8', '-topk8', '-nocrypt', '-in', 'k.pem', '-outform', 'DER', '-out', 'k8.der');
+  o('x509', '-in', 'c.pem', '-outform', 'DER', '-out', 'c.der');
+  const p12 = readFileSync(join(d, 'store.p12')), k8 = readFileSync(join(d, 'k8.der'));
+  assert.ok(p12[0] === 0x30 && p12[1] >= 0x81 && p12[1] <= 0x84, 'a long-form outer SEQUENCE');
+  const ber = Buffer.concat([Buffer.from([0x30, 0x80]), p12.subarray(2 + (p12[1] & 0x7f)), Buffer.from([0, 0])]);
+  writeFileSync(join(d, 'store-ber.p12'), ber);
+  // the control: openssl reads the BER store
+  assert.match(String(o('pkcs12', '-in', 'store-ber.p12', '-passin', 'pass:not-a-real-password', '-nodes', '-nocerts')), /BEGIN PRIVATE KEY/);
+  const cert = readFileSync(join(d, 'c.der'));
+  return { ber, cert, nul: Buffer.concat([k8, Buffer.from([0])]), space: Buffer.concat([k8, Buffer.from(' ')]), certAndKey: Buffer.concat([cert, k8]) };
+}
+
+test('R2-N3 a BER (indefinite-length) PKCS #12 store, and a DER key with one trailing byte, are found whatever their names', { skip: !OPENSSL && 'no openssl to make the fixtures with' }, () => {
+  const f = keyFixtures(join(dir, 'n3-make'));
+  const root = fresh('n3');
+  // and a certificate with its key after it in one file; a certificate alone is still no finding
+  const files = { 'certs/store.bin': f.ber, 'deploy-key.bin': f.nul, 'ci/signing': f.space, 'tls/server.der': f.certAndKey, 'tls/ca.der': f.cert, 'README.md': '# app\n' };
+  repoWith(join(root, 'app'), files);
+  const r = json([...KEYS, '--paths', root]);
+  const found = r.rows.filter((x) => x.status === 'REVIEW').map((x) => x.file).sort();
+  assert.deepEqual(found, ['certs/store.bin', 'ci/signing', 'deploy-key.bin', 'tls/server.der'], JSON.stringify(r.rows).slice(0, 2000));
+  assert.match(r.rows.find((x) => x.file === 'certs/store.bin').type, /PKCS #12/);
+  assert.deepEqual(r.rows.filter((x) => x.status === 'SAFE'), []);
+});
+
+// ---- RR-2: no test reached the DER key check for a tracked file deleted from the working tree ---------------------------
+// lib/secrets.mjs scanIndexed() reads a tracked file deleted in the working tree from git's store, and checks it for a
+// DER key. The re-read removed that check (mutant DERIDX) and the whole suite stayed green, while the run turned REVIEW
+// into "SAFE no committed keys found". This holds it, for a DER key and (since R2-N3) a BER store.
+test('RR-2 a DER key, or a BER key store, tracked and deleted from the working tree is found from git\'s copy', { skip: !OPENSSL && 'no openssl to make the fixtures with' }, async () => {
+  const { generateKeyPairSync } = await import('node:crypto');
+  const der = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ type: 'pkcs8', format: 'der' });
+  const f = keyFixtures(join(dir, 'rr2-make'));
+  const root = fresh('rr2');
+  const { path, g } = repoWith(join(root, 'app'), { 'deploy-key.bin': der, 'keystore': f.ber, 'README.md': '# app\n' });
+  rmSync(join(path, 'deploy-key.bin')); rmSync(join(path, 'keystore'));
+  assert.match(String(g('status', '--porcelain')), /D deploy-key\.bin/);
+  const r = json([...KEYS, '--paths', root]);
+  const found = r.rows.filter((x) => x.status === 'REVIEW').map((x) => x.file).sort();
+  assert.deepEqual(found, ['deploy-key.bin', 'keystore'], JSON.stringify(r.rows).slice(0, 2000));
+  assert.deepEqual(r.rows.filter((x) => x.status === 'SAFE'), []);
 });
