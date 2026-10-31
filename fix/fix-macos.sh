@@ -393,10 +393,11 @@ if ! cmp -s "$tmp" "$FILE"; then
     echo "         Backup: $backup"
     exit 1
   fi
+  # No command to put the backup back by hand: it holds the withdrawn roots, and this says what each file holds
+  # rather than advise a revert. Until 31 Oct 2026 it printed "Put it back yourself, now: sudo cp -p ...".
   echo "UNKNOWN  What was written to $FILE isn't the file this built and checked, AND the original couldn't be put"
-  echo "         back, so $FILE now holds bytes nothing has checked. Put it back yourself, now:"
-  echo "         sudo cp -p '$backup' '$FILE'"
-  echo "         Then run this again; please report this."
+  echo "         back, so $FILE now holds bytes nothing has checked. Backup: $backup (the file as this run read it; it"
+  echo "         holds $(held)). Find what else is writing to $FILE, then run this again; please report this."
   exit 2
 fi
 
@@ -418,8 +419,7 @@ if [ "$c" -eq 0 ]; then
         echo "         before you go looking for something else on this Mac that trusts the compromised keys. The"
         echo "         fix was kept either way: putting the original back would put"
         echo "         $(held) back. Please report this."
-        echo "         Backup: $backup"
-        echo "         Undo:   sudo cp -p '$backup' '$FILE'"
+        echo "         Backup: $backup (the file as it was; it holds $(held))"
         exit 1 ;;
     *)  echo "SAFE     Fixed in the file: $(removed_phrase), kept $after. (The test site didn't answer"
         echo "         (curl $r), though an ordinary website loaded, so this wasn't re-tested online.)" ;;
@@ -448,20 +448,17 @@ else
       # website's certificate verified through the file as it was and is refused through the file this wrote, and
       # the certificates in those two files differ only by the withdrawn roots removed. So either that site's chain
       # needs one of them, or something on this network answered the two requests differently -- and that second
-      # reading is what an attack on this Mac looks like. Both say the same thing about what to do, which is why
-      # there is no revert here and no revert-reason for one: eMudhra's private keys are computable from
-      # certificates eMudhra published, so putting one of those roots back to make a page load is not a repair, and
-      # on the second reading it would hand it back to a Mac already under attack.
+      # reading is what an attack on this Mac looks like. Both say the same thing about what to do, which is why there
+      # is no revert here, no revert-reason for one, and no Undo line: putting a withdrawn root back to make a page
+      # load is not a repair, and on the second reading it would hand it back to a Mac already under attack. Until
+      # 31 Oct 2026 this printed the Undo command under "Decide it yourself from the two lines below".
       echo "UNKNOWN  Fixed in the file ($(removed_phrase), kept $after), but an ordinary website that"
       echo "         loaded through the old file (curl 0) doesn't load through the new one (curl 60), which means its"
       echo "         certificate was refused. The certificates in the two files differ only by $(held), so"
       echo "         either that website's certificate chain needs what was removed, or this network answered the two"
       echo "         requests differently -- and the second is what an attack on this Mac would look like. The fix was"
-      echo "         kept either way: those private keys can be computed from published certificates, so trusting that"
-      echo "         root again to make a page load would not be a repair. Decide it yourself from the two lines below."
-      echo "         Please report this."
-      echo "         Backup: $backup"
-      echo "         Undo:   sudo cp -p '$backup' '$FILE'"
+      echo "         kept either way: this does not put a withdrawn root back on a network reading. Please report this."
+      echo "         Backup: $backup (the file as it was; it holds $(held))"
       exit 2 ;;
     *)
       echo "UNKNOWN  Fixed in the file ($(removed_phrase), kept $after), but an ordinary website that"
