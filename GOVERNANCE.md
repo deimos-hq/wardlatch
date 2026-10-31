@@ -1,7 +1,7 @@
 # Governance
 
-Who decides, and what happens if they stop. Everything here is true as of 21 October 2026, evening; where something is only
-planned, it says so.
+Who decides, and what happens if they stop. Everything here is true as of 21 October 2026, evening, except "Review",
+which was measured again on 31 October 2026; where something is only planned, it says so.
 
 ## Model
 
@@ -22,11 +22,16 @@ why on the thread.
 
 ## Review
 
-Today the maintainer commits to `main` directly and there is no second reviewer. CI runs on every push and pull
-request (tests on Node 18, 20 and 22 on Linux and macOS, ShellCheck, the Mac fix's checksum and a run on copies of
-the certificate file, licence and sign-off checks, CodeQL, OpenSSF Scorecard). Requiring an approving review from
-someone other than the author, as Deimos's Crimp and Ratchet do, needs a second person with access first; it is on
-the [roadmap](ROADMAP.md).
+Since 24 October 2026 (19:00 US Pacific; 25 October, 02:00 UTC) a repository ruleset, "main: changes come through
+pull requests that pass CI", has covered `main`, with nobody allowed to bypass it, the admins included. A change
+reaches `main` only through a pull request, and only after 13 checks pass: the tests on Node 18, 20 and 22 on Linux
+and macOS (six), the Mac fix job on macOS and on Linux (its checksum; on macOS its harness on copies of a vendored
+macOS `cert.pem` and the one-root shapes, on Linux that it refuses to run), coverage, ShellCheck, REUSE licence and
+DCO sign-off checks, and CodeQL's analysis. `main` can't be deleted or force-pushed. The ruleset requires 0 approving reviews, so there is
+still no second reviewer: an author can merge their own pull request once the checks pass. A second ruleset lets only
+admins create, move or delete release tags (`v*`). OpenSSF Scorecard runs on pushes to `main` and weekly, and is not
+a required check. Requiring an approving review from someone other than the author, as Deimos's Crimp and Ratchet
+do, is on the [roadmap](ROADMAP.md).
 
 ## Continuity
 
