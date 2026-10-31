@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=82
+expect_cases=83
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -2587,6 +2587,31 @@ for how in quote bidi; do
 done
 [ ! -e "$d/PWNED" ] || fail "a link whose target's name is not plain: something ran the command hidden in the name"
 ok "a link whose target's name is not plain is refused without printing the name, in the command or the line"
+# ---- r4 end case
+
+# ---- r4 case: stdout-fails
+# Standard output that can't be written. The verdict line was an echo under `set -e`, so a write that failed ended the
+# run with echo's status, 1 -- the published table's EXPOSED -- after the file was fixed (round-3 re-read 0: a closed
+# stdout, and a log file on a full volume). The line can't be read, so the run ends UNKNOWN's code, 2. Here the run's
+# standard output is a pipe whose reader has gone, with SIGPIPE ignored, as a parent process can leave it: each write
+# fails with EPIPE (the same failed echo as on a full volume). And a run started with standard output closed ends 2,
+# before it reads or writes anything.
+d=$work/r4/stdout; mkdir -p "$d"
+cp "$work/original.pem" "$d/cert.pem"; rm -rf "$work/tmp"; mkdir "$work/tmp"
+set +e
+env TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$d/cert.pem" "$offline" "$OFFLINE" \
+  /bin/bash -c 'trap "" PIPE; exec /bin/bash "$0"' "$fix" 2>"$d/stderr" | true
+code=${PIPESTATUS[0]}
+set -e
+grep -q 'write error' "$d/stderr" || fail "standard output that can't be written: no write failed ($(head -2 "$d/stderr")), so this case would measure nothing"
+[ "$code" -eq 2 ] || fail "standard output that can't be written: expected exit 2, got $code"
+[ -z "$(find "$work/tmp" -mindepth 1 -print -quit)" ] || fail "standard output that can't be written: it left temporary files behind"
+rm -f "$d"/cert.pem.wardlatch-*.bak
+cp "$work/original.pem" "$d/cert.pem"
+code=0; env TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$d/cert.pem" "$offline" "$OFFLINE" /bin/bash "$fix" >&- 2>"$d/stderr" || code=$?
+[ "$code" -eq 2 ] || fail "standard output closed: expected exit 2, got $code"
+{ cmp -s "$d/cert.pem" "$work/original.pem" && [ "$(baks "$d/cert.pem")" -eq 0 ]; } || fail "standard output closed: the run changed something it could not report"
+ok "standard output that can't be written ends the run with 2, never the EXPOSED code"
 # ---- r4 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.

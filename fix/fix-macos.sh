@@ -310,7 +310,7 @@ bnew=''       # the file beside $FILE the backup is copied into, until it has it
 writing=''    # set just BEFORE the first file is made beside $FILE: until then this run has written nothing there
 published=''  # set once the backup has its dated name
 replaced=''   # set once the cleaned file has been renamed over $FILE
-orig='' want='' after='' backup='' naaa=0 nems=0 kaaa=0 kems=0 found=0 kind='' why='' step=''
+orig='' want='' after='' backup='' naaa=0 nems=0 kaaa=0 kems=0 found=0 kind='' why='' step='' meant=''
 snap='' tmp=''  # the two temporary files, once mktemp has named them
 SUDO='' DIR=''  # set once $FILE is known to be a file
 # Every command here ends in `|| true`, and that is load-bearing rather than tidy. Measured on /bin/bash 3.2.57:
@@ -371,6 +371,12 @@ stopped() {
 # signal is ignored rather than stop it half-way through saying so. Until 31 Oct 2026 a signal here, or during the
 # cleanup at exit, ran stopped(), which printed "UNKNOWN  Stopped ..." under the verdict and turned exit 0 or 1 into 2.
 settled() { trap '' HUP INT QUIT TERM; }
+# The last thing the EXIT trap does, with the status the run was ending with: 0 comes only from a SAFE line and 1 only
+# from an EXPOSED one, which sets $meant just before its `exit 1`; every other status is 2. Until r4 a verdict line that
+# could not be written (standard output closed, a log file on a full volume) failed under `set -e` and ended the run
+# with echo's status, 1, which the published table reads as EXPOSED, after the file was fixed (the round-3 re-read);
+# now the line that could not be read ends it with 2, and so does any other command that fails unchecked.
+ended() { if { [ "$1" -eq 1 ] && [ "$meant" != 1 ]; } || [ "$1" -gt 2 ]; then exit 2; fi; }
 # What this file held of one withdrawn root: $1 copies of the root itself and $2 other certificates with its key, $3
 # its name. A certificate found by the key alone is named as that, not as the root: it is not byte for byte the root.
 one() {
@@ -531,7 +537,7 @@ nosnap() {
 # >"$tmp"`), and until r4 the line went into that file, which clean() then deletes, and the run ended with no line (the
 # round-3 re-read). A run whose standard output is closed has nowhere to print a line, and ends here, changing nothing.
 exec 3>&1 || exit 2
-trap 'trap "" HUP INT QUIT TERM; clean' EXIT
+trap 'r=$?; trap "" HUP INT QUIT TERM; clean; ended "$r"' EXIT
 trap stopped HUP INT TERM
 # And QUIT, which Ctrl-\ sends: untrapped, it ended the run with 131 and no line, and left a .wardlatch-new.<pid>.*
 # file beside $FILE -- root's, in a real run -- that a later run's strays() never removes (the third read).
@@ -652,7 +658,7 @@ if [ "$found" -eq 0 ]; then
     settled
     case "$r" in
       60) echo "SAFE     $FILE already refuses the compromised keys. Nothing changed." ;;
-      0)  echo "EXPOSED  $FILE holds neither root but still trusts the test site. Nothing changed; please report this."; exit 1 ;;
+      0)  echo "EXPOSED  $FILE holds neither root but still trusts the test site. Nothing changed; please report this."; meant=1; exit 1 ;;
       *)  echo "SAFE     $FILE no longer holds the two roots. Nothing changed. (An ordinary website loaded but the test site"
           echo "         didn't answer (curl $r), so this wasn't re-tested online.)" ;;
     esac
@@ -750,7 +756,7 @@ if [ "$landed" != "$want" ]; then
     echo "EXPOSED  What was written to $FILE isn't the file this built and checked, so the original was put back and this"
     echo "         Mac still trusts the compromised keys. Nothing else was changed. Run it again; please report this."
     echo "         Backup: $backup"
-    exit 1
+    meant=1; exit 1
   fi
   # No command to put the backup back by hand: it holds the withdrawn roots, and this says what each file holds
   # rather than advise a revert. Until 31 Oct 2026 it printed "Put it back yourself, now: sudo cp -p ...".
@@ -780,7 +786,7 @@ if [ "$c" -eq 0 ]; then
         echo "         fix was kept either way: putting the original back would put"
         echo "         $(held) back. Please report this."
         echo "         Backup: $backup (the file as it was; it holds $(held))"
-        exit 1 ;;
+        meant=1; exit 1 ;;
     *)  echo "SAFE     Fixed in the file: $(removed_phrase), kept $after. (The test site didn't answer"
         echo "         (curl $r), though an ordinary website loaded, so this wasn't re-tested online.)" ;;
   esac
