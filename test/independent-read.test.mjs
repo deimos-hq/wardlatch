@@ -8,7 +8,7 @@ import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, chmodSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, chmodSync, symlinkSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -344,4 +344,38 @@ test('WV-5 the trust check reports a link to a folder holding environments, as i
   const links = [], untested = [];
   discover({ roots: [er], pathEnv: fresh('wv5-no-programs'), links, untested });
   assert.deepEqual([untested.map((x) => x.fields.env), links], [[join(er, '.venv')], []]);
+});
+
+// ---- a committed DER private key under any name was skipped with no row --------------------------------------------------
+// Every binary file was skipped, and only a binary file whose name says text was reported. A repository holding
+// deploy-key.der (`openssl rsa -outform der`) read "SAFE no committed keys found ... in 1 local repository".
+/** A git repository at `path` with `files` ({ name: Buffer|string }) committed. */
+function repoWith(path, files) {
+  mkdirSync(path, { recursive: true });
+  const g = (...a) => execFileSync('git', ['-C', path, '-c', 'commit.gpgsign=false', ...a], { stdio: 'pipe', env: { PATH: '/usr/bin:/bin', HOME: home, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.invalid' } });
+  g('init', '-q', '-b', 'main');
+  for (const [name, body] of Object.entries(files)) put(join(path, name), body);
+  g('add', '-A'); g('commit', '-qm', 'add');
+  return path;
+}
+const KEYS = '--incident committed-keys-2026-10'.split(' ');
+
+test('a committed private key in DER is found whatever its name: PKCS #1, PKCS #8, encrypted PKCS #8, SEC1 EC', async () => {
+  const { generateKeyPairSync } = await import('node:crypto');
+  const rsa = generateKeyPairSync('rsa', { modulusLength: 1024 }).privateKey;
+  const ec = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey;
+  const files = {
+    'deploy-key.der': rsa.export({ type: 'pkcs1', format: 'der' }),
+    'ci/signing.bin': rsa.export({ type: 'pkcs8', format: 'der' }),
+    'secrets/vault': rsa.export({ type: 'pkcs8', format: 'der', cipher: 'aes-256-cbc', passphrase: 'not-a-real-passphrase' }),
+    'certs/ec.key': ec.export({ type: 'sec1', format: 'der' }),
+    'README.md': '# app\n',
+  };
+  const root = fresh('der-keys');
+  repoWith(join(root, 'app'), files);
+  const r = run([...KEYS, '--paths', root]);
+  const found = r.rows.filter((x) => x.status === 'REVIEW').map((x) => x.file).sort();
+  assert.deepEqual(found, Object.keys(files).filter((f) => f !== 'README.md').sort(), JSON.stringify(r.rows).slice(0, 2000));
+  assert.ok(r.rows.filter((x) => x.status === 'REVIEW').every((x) => /private key/.test(x.type) && !x.masked.includes('MII')), 'a type, never the key');
+  assert.deepEqual(r.rows.filter((x) => x.status === 'SAFE'), []);
 });
