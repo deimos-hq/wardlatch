@@ -8,7 +8,7 @@ import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, chmodSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -170,3 +170,60 @@ test('WV-6 a WordPress site in a folder whose path is too long is could-not-be-t
       assert.equal(r.code, 2);
     } finally { rmTree(base); }
   });
+
+// ---- WV-1: a venv, site-packages or plugins folder given directly with --paths was never examined ----------------------
+// Each walker tested only the ENTRIES of a folder it walked, never the folder itself: `--paths <the venv>` read SAFE, exit
+// 0, with the venv named in the receipt and litellm-1.107.0.dist-info inside it. That is also what the trust check's own
+// advice for a linked venv ("Give it to --paths directly") led to.
+/** A WordPress core with Rank Math PRO at `version` (3.0.123 is the backdoored release). */
+function wpSite(root, version = '3.0.123') {
+  put(join(root, 'wp-includes', 'version.php'), '<?php $wp_version = "6.7";\n');
+  put(join(root, 'wp-config.php'), '<?php // nothing that moves the content folder\n');
+  put(join(root, 'wp-content', 'plugins', 'seo-by-rank-math-pro', 'rank-math-pro.php'), `<?php\n/*\nPlugin Name: Rank Math PRO\nVersion: ${version}\n*/\n`);
+  return root;
+}
+/** A venv with certifi, for the trust walk (lib/discover.mjs). */
+function certifiVenv(root) {
+  const sp = join(root, 'lib', 'python3.12', 'site-packages');
+  put(join(root, 'bin', 'python'), 'not run by Wardlatch\n');
+  put(join(root, 'pyvenv.cfg'), 'home = /usr\n');
+  put(join(sp, 'certifi', 'cacert.pem'), '-----BEGIN CERT' + 'IFICATE-----\nQUFB\n-----END CERT' + 'IFICATE-----\n');
+  put(join(sp, 'certifi-2026.06.17.dist-info', 'METADATA'), 'Version: 2026.06.17\n');
+  return root;
+}
+
+test('WV-1 a venv, its lib or its site-packages given with --paths is examined: the stealer is EXPOSED, exit 1', () => {
+  const venv = join(fresh('wv1-proj'), '.venv');
+  const sp = litellmVenv(venv);
+  for (const given of [venv, join(venv, 'lib'), sp]) {
+    const r = run([...LITELLM, '--paths', given]);
+    assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && x.dir === sp), `--paths ${given}: ${JSON.stringify(r.rows).slice(0, 1500)}`);
+    assert.equal(r.code, 1, given);
+  }
+});
+
+test('WV-1 the trust walk probes a venv given with --paths, or a link to one, rather than finding nothing', async () => {
+  const { discover } = await import('../lib/discover.mjs');
+  const env = certifiVenv(join(fresh('wv1-trust'), 'realenv'));
+  const link = join(fresh('wv1-trust-link'), '.venv'); symlinkSync(env, link);
+  for (const root of [env, link]) {
+    const untested = [], links = [];
+    const rts = discover({ roots: [root], pathEnv: fresh('wv1-no-programs'), untested, links });
+    const mentioned = rts.some((x) => x.env === root) || untested.some((x) => x.fields?.env === root);
+    assert.ok(mentioned, `--paths ${root}: the environment is neither probed nor reported: ${JSON.stringify({ rts, untested, links })}`);
+  }
+});
+
+test('WV-1 a WordPress plugins folder, a wp-content folder or a plugin\'s own folder given with --paths is checked', () => {
+  const site = wpSite(fresh('wv1-site'));
+  const plugins = join(site, 'wp-content', 'plugins');
+  for (const given of [plugins, join(site, 'wp-content'), join(plugins, 'seo-by-rank-math-pro')]) {
+    const r = run(['--incident', 'wordpress-plugins-2026-10', '--paths', given]);
+    assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && /seo-by-rank-math-pro 3\.0\.123/.test(x.what)), `--paths ${given}: ${JSON.stringify(r.rows).slice(0, 1500)}`);
+    assert.equal(r.code, 1, given);
+  }
+  // and a clean one says what it checked, rather than "no WordPress installs found" alone
+  const clean = wpSite(fresh('wv1-clean'), '3.0.124');
+  const r = run(['--incident', 'wordpress-plugins-2026-10', '--paths', join(clean, 'wp-content', 'plugins')]);
+  assert.ok(r.rows.some((x) => x.status === 'SAFE' && /seo-by-rank-math-pro 3\.0\.124/.test(x.what)), JSON.stringify(r.rows));
+});

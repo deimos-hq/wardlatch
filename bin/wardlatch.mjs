@@ -6,7 +6,7 @@
 // Runs locally. Sends nothing anywhere except TLS connections to those test hosts and two control sites. Changes nothing.
 // A free tool from Deimos AI LLC · Apache-2.0
 import '../lib/crash.mjs';
-import { join, dirname, delimiter, isAbsolute, resolve } from 'node:path';
+import { join, dirname, basename, delimiter, isAbsolute, resolve } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { discover } from '../lib/discover.mjs';
@@ -17,7 +17,7 @@ import { checkVersionFiles, sitePackagesDirs, checkSitePackages, localImageDiges
 import { listContainers, checkContainer, engineHost } from '../lib/containers.mjs';
 import { reposUnder, workflowsAddedSince, windowStart } from '../lib/workflows.mjs';
 import { scanRepo } from '../lib/secrets.mjs';
-import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
+import { wordpressUnder, checkSite, checkPluginsFolder } from '../lib/wordpress.mjs';
 import { scanHeaders } from '../lib/headers.mjs';
 import { pathState, readText, listDir, denialCode, mandatoryRefusal, statBits } from '../lib/files.mjs';
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
@@ -564,21 +564,30 @@ for (const inc of chosen) {
   }
   if (inc.type === 'wordpress') {
     const denied = [...lockedRoots];
-    const privateDot = [], coreOnly = [], links = [];
-    const sites = wordpressUnder(searchable, 5, denied, privateDot, coreOnly, links);
+    const privateDot = [], coreOnly = [], links = [], loose = [];
+    const sites = wordpressUnder(searchable, 5, denied, privateDot, coreOnly, links, { loose });
     for (const core of coreOnly) {
       const reason = 'WordPress core is here, but no plugins folder is where WordPress, a moved wp-content, Bedrock or its wp-config.php puts one, so its plugins were not checked: pass --paths for the folder that holds them';
       results.push({ incident: inc.id, kind: 'wordpress', site: core, status: 'UNKNOWN', what: 'plugins folder', reason });
       print('UNKNOWN', `${short(core)} · plugins folder`); note('33', reason);
     }
-    for (const site of sites) for (const f of checkSite(site, inc.rules, inc.addedSince)) {
+    const show = (where, f) => {
       results.push({ incident: inc.id, kind: 'wordpress', ...f, fix: f.fix ?? (f.status === 'REVIEW' ? inc.reviewFix : undefined) });
-      print(f.status, `${short(site)} · ${f.what}`, f.reason ? c('2', `  ${f.reason}`) : '');
+      print(f.status, `${short(where)} · ${f.what}`, f.reason ? c('2', `  ${f.reason}`) : '');
       if (f.status === 'EXPOSED') note('2', `fix: ${f.fix}`);
+    };
+    for (const site of sites) for (const f of checkSite(site, inc.rules, inc.addedSince)) show(site, f);
+    // a plugins folder with no core found to use it (given with --paths, or a copy of a content folder), and a folder
+    // given with --paths that is one listed plugin's own folder: checked, never passed over (WV-1)
+    for (const p of loose) for (const f of checkPluginsFolder(p, inc.rules, inc.addedSince)) show(p, f);
+    for (const r of searchable) {
+      const own = inc.rules.filter((x) => basename(r) === x.plugin && pathState(join(r, x.mainFile)) === 'file');
+      if (own.length && !loose.includes(dirname(r))) for (const f of checkPluginsFolder(dirname(r), own)) show(r, f);
     }
     gaps(results, inc, 'wordpress', denied, { review: privateDot, links });
     // sites found with none of the listed plugins are named as found (up to b03e7be this said "no WordPress installs found")
-    if (!counted(results).length) allClear(results, inc, 'wordpress', sites.length ? `${sites.length} WordPress install${sites.length === 1 ? '' : 's'} found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched; none has any of the listed plugins` : `no WordPress installs found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched (run it on the server, or pass --paths)`, searchable);
+    const looseSaid = loose.length ? `; ${loose.length} plugins folder${loose.length === 1 ? '' : 's'} with no WordPress core beside ${loose.length === 1 ? 'it' : 'them'} checked, with none of the listed plugins` : '';
+    if (!counted(results).length) allClear(results, inc, 'wordpress', `${sites.length ? `${sites.length} WordPress install${sites.length === 1 ? '' : 's'} found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched; none has any of the listed plugins` : `no WordPress installs found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched (run it on the server, or pass --paths)`}${looseSaid}`, [...searchable, ...loose]);
     else if (counted(results).some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.reviewFix}`);
   }
   if (inc.type === 'headers') {
