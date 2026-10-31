@@ -164,11 +164,13 @@ exit 1`);
 // the real article at run time and skips when there is none, in the style of serviceLockedRoot() in
 // test/release-0.1.9.test.mjs. The real ~/Pictures/*.photoslibrary is measured by test/support/errno-mechanisms.mjs,
 // which is run by hand: support/no-real-home.cjs rightly refuses to let a test read the person's own home.
-// What the outcome now is: a folder macOS protects does not end the run in UNKNOWN, the all-clear still fires and the
-// exit code is 0 — the thing this test was written to protect — but it is STATED, in a REVIEW line that names the
-// errno, the mode, the owner and the remedy that can actually work. Silence is what it used to buy.
+// REVERSED 31 Oct 2026 by owner decision #32 ("Yes, UNKNOWN"): any folder Wardlatch could not open, EPERM included, is
+// UNKNOWN with exit 2, never SAFE. Up to then this demanded an all-clear and exit 0 beside a stated gap, because EPERM
+// was taken to be macOS's privacy protection, which nobody could forge; the independent read of da8f5c2 forged it with
+// an unprivileged sandbox-exec profile and hid a LiteLLM stealer behind it (EXPOSED ×2, exit 1 became SAFE, exit 0).
+// What the outcome now is: the folder is its own UNKNOWN row with the errno, mode and owner, and the run exits 2.
 // test/false-safes.test.mjs holds the full contract; this keeps the outcome pinned where it was first demanded.
-test('8 a folder macOS is protecting does not end --paths in UNKNOWN: the all-clear fires, exit 0, and the gap is stated',
+test('8 a folder the system refuses with EPERM ends --paths in UNKNOWN with its basis, exit 2 (owner decision #32)',
   { skip: (process.platform !== 'darwin' || AS_ROOT) && 'macOS, as a user (root is never refused by DAC)' }, async (t) => {
     const { mandatoryRefusal } = await import('../lib/files.mjs');
     // a real folder macOS refuses, with nothing person-owned locked beside it (that would be UNKNOWN, correctly)
@@ -195,12 +197,11 @@ test('8 a folder macOS is protecting does not end --paths in UNKNOWN: the all-cl
     if (!found) return t.skip('no folder macOS refuses, cleanly, on this machine');
     for (const id of ['github-actions-2026-10', 'committed-keys-2026-10', 'wordpress-plugins-2026-10']) {
       const r = run(['--incident', id, '--paths', found.root], { HOME: fresh(`m8-home-${id}`), PATH: '/usr/bin:/bin' });
-      assert.ok(!r.rows.some((x) => x.status === 'UNKNOWN'), `${id}: macOS's own refusal must not end the run in UNKNOWN: ${JSON.stringify(r.rows)}`);
-      assert.equal(r.code, 0, id);
-      // and it is said, not passed over in silence as the name lists used to do
-      const skipped = r.rows.find((x) => x.kind === 'skipped');
-      assert.ok(skipped?.paths?.includes(found.gap), `${id}: the gap must be stated, not skipped by name: ${JSON.stringify(r.rows)}`);
-      assert.match(skipped.reason, /EPERM.*Full Disk Access/s, `${id}: with the basis and the remedy that works: ${skipped.reason}`);
+      const row = r.rows.find((x) => x.status === 'UNKNOWN' && x.path === found.gap);
+      assert.ok(row, `${id}: a folder the system refuses must be its own UNKNOWN row: ${JSON.stringify(r.rows)}`);
+      assert.match(row.reason, /EPERM, mode 0[0-7]{3}, owner /, `${id}: with the basis a reader can check: ${row.reason}`);
+      assert.ok(!r.rows.find((x) => x.kind === 'skipped')?.paths?.includes(found.gap), `${id}: never a stated gap beside an all-clear`);
+      assert.equal(r.code, 2, id);
     }
   });
 
