@@ -90,3 +90,60 @@ test('#33 the folders a service owns that could not be opened are UNKNOWN, in on
   assert.match(t2.out, /0 safe · 0 exposed · 1 could not be tested\n/, t2.out);
   assert.equal(t2.code, 2);
 });
+
+// ---- a virtual environment's packages where CPython on Linux and macOS does not put them --------------------------------
+/** A virtual environment at `path` whose package folder is `pkgs` (relative to it), holding the LiteLLM 1.107.0 install
+ *  record and its dropped cook.pth. → that folder */
+function litellmVenv(path, pkgs = 'lib/python3.12/site-packages') {
+  const sp = join(path, ...pkgs.split('/'));
+  put(join(path, 'pyvenv.cfg'), 'home = /usr/bin\n');
+  put(join(sp, 'litellm-1.107.0.dist-info', 'METADATA'), 'Metadata-Version: 2.1\nName: litellm\nVersion: 1.107.0\n');
+  put(join(sp, 'cook.pth'), 'import os\n');
+  return sp;
+}
+const LITELLM = ['--incident', 'litellm-2026-10', '--no-containers'];
+const exposedIn = (r, sp) => r.rows.filter((x) => x.status === 'EXPOSED' && x.dir === sp).map((x) => x.what).sort();
+/** A venv for the trust walk: bin/python, pyvenv.cfg and a certifi bundle in `pkgs`. */
+function certifiVenv(root, pkgs = 'lib/python3.12/site-packages') {
+  const sp = join(root, ...pkgs.split('/'));
+  put(join(root, 'bin', 'python'), 'not run by Wardlatch\n');
+  put(join(root, 'pyvenv.cfg'), 'home = /usr\n');
+  put(join(sp, 'certifi', 'cacert.pem'), '-----BEGIN CERT' + 'IFICATE-----\nQUFB\n-----END CERT' + 'IFICATE-----\n');
+  put(join(sp, 'certifi-2026.06.17.dist-info', 'METADATA'), 'Version: 2026.06.17\n');
+  return root;
+}
+const discovered = async (roots) => {
+  const { discover } = await import('../lib/discover.mjs');
+  const untested = [], links = [], deep = [], denied = [], found = [];
+  const rts = discover({ roots, pathEnv: fresh('no-programs'), untested, links, deep, denied, found });
+  const envs = [...rts.map((x) => x.env), ...untested.map((x) => x.fields?.env)].filter(Boolean);
+  return { envs, deep, links, untested, found, denied, rts };
+};
+
+// Round 3's re-read 2, finding 1 (MEASURED there and here): 471a4ea stopped walking a venv's lib and Lib, and found its
+// packages only at lib*/python3*/site-packages, case-sensitively. PyPy puts them at lib/pypy3.X/site-packages, a
+// Windows-layout venv at Lib/site-packages (and an older PyPy virtualenv beside pyvenv.cfg): `--paths <the venv>` read
+// SAFE, exit 0, with the line under it saying lib and Lib "are checked with it". At 03d95c9 it was EXPOSED. The same
+// venv below the folder given read SAFE at both. The trust walk never probed a PyPy venv's certifi (no row at all).
+const LAYOUTS = { pypy: 'lib/pypy3.10/site-packages', windows: 'Lib/site-packages', oldPypy: 'site-packages', lib64: 'lib64/python3.12/site-packages' };
+test('venv layouts: a venv\'s packages at lib/pypy3.X, Lib or beside pyvenv.cfg are checked, given with --paths or found below it', () => {
+  for (const [name, pkgs] of Object.entries(LAYOUTS)) {
+    const parent = fresh(`layout-${name}`);
+    const sp = litellmVenv(join(parent, '.venv'), pkgs);
+    for (const given of [join(parent, '.venv'), parent]) {
+      const r = json([...LITELLM, '--paths', given]);
+      assert.deepEqual(exposedIn(r, sp), ['cook.pth', 'litellm-1.107.0.dist-info'], `${name}, --paths ${given}: ${JSON.stringify(r.rows).slice(0, 1500)}`);
+      assert.equal(r.code, 1, `${name}, --paths ${given}`);
+    }
+  }
+});
+
+test('venv layouts: the trust walk probes the certifi of a PyPy venv, and of one with its packages in lib64', async () => {
+  for (const name of ['pypy', 'lib64']) {
+    const env = certifiVenv(join(fresh(`trust-${name}`), '.venv'), LAYOUTS[name]);
+    for (const given of [env, dirname(env)]) {
+      const r = await discovered([given]);
+      assert.ok(r.envs.includes(env), `${name}, --paths ${given}: ${JSON.stringify(r)}`);
+    }
+  }
+});
