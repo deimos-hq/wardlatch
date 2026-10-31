@@ -213,7 +213,8 @@ SECURITY.md promises for them are not open yet; the release that ships them stat
   wording satisfied while telling the reader a file holding neither root looked damaged and sending them to a backup
   holding both. It now also asserts the count is named, that the file holds neither root, and that the output does
   not say "looks damaged", does not name a backup, and does not print SAFE. That took the harness from 27 cases to
-  29; it runs 60 on 31 Oct 2026 (below). *Found and fixed 30 Oct 2026 (ab95c59).*
+  29; it ran 60 at 03d95c9 (31 Oct 2026), and runs 76 after the third read of that day (below). *Found and fixed 30
+  Oct 2026 (ab95c59).*
 
 The rest of this section was found by an independent read of this release as it stood on 30 Oct (da8f5c2): five
 readers with different lenses, then a refuter for each, who reproduced every finding in a scratch copy before it
@@ -441,8 +442,8 @@ counted. Each fix below has a test that fails on da8f5c2 and passes after it.
   exited 0. It now defaults to the vendored unfixed fixture `test/support/fixtures/macos-27.2-cert.pem`, which
   `test/support/mojave-shapes.sh` was moved to in this same release for the same reason; a bundle holding neither
   withdrawn root is a failure rather than a NOTE, every case counts itself, and the run prints and checks the
-  total, so a case that stops running cannot pass as silence. It counted 20 cases when this landed, and 60 on 31 Oct
-  2026 (below).
+  total, so a case that stops running cannot pass as silence. It counted 20 cases when this landed, 60 at 03d95c9 (31
+  Oct 2026), and 76 after the third read of that day (below).
 - **"Something other than this file is trusting the compromised keys" misdiagnosed the two likeliest causes.** When
   the fix has removed both roots and the advisory's test host is still trusted, two ordinary things look exactly
   like that: a TLS-inspecting proxy's own root added to the certificate file, which makes the proxy sign everything
@@ -527,11 +528,12 @@ These were found by the same independent read of 31 Oct 2026, and each fix has a
   "Put it back yourself, now", gave the old reason for refusing a link, said it refuses to replace a file that changed
   meanwhile on a path where it did not, and promised two network readings that curl 6, 7 and 28 merged. It now says
   what the script does, including that every exit on macOS prints a SAFE, EXPOSED or UNKNOWN line (which held from
-  the script's first command on only after the third read of 31 Oct set the traps first: below). (e9036f8)
+  the script's first command on only once the fixes for the third read of 31 Oct set the traps first: below). (e9036f8)
 
 ### Development (no code in the package changes)
 
-- **`test/fix-macos.check.sh` runs 60 cases on 31 Oct 2026, where it ran 29.** Thirty new cases for what the
+- **`test/fix-macos.check.sh` ran 60 cases at 03d95c9 (31 Oct 2026), where it ran 29** (76 after the third read of
+  that day: below). Thirty new cases for what the
   independent read found in the Mac fix, and one for `strays()`; stand-ins for `cp`, `mv`, `mktemp`, `chmod` and
   `sudo` on `PATH` make a copy fail part-way, a rename pause or a file change in mid run (the real `sudo` never runs).
   Every run on macOS must now print a line starting SAFE, EXPOSED or UNKNOWN. Assertions that were wrong were
