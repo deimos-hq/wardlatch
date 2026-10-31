@@ -103,3 +103,27 @@ test('decision #32: the refuter\'s LiteLLM case under a real unprivileged sandbo
     assert.deepEqual(r.rows.filter((x) => x.status === 'SAFE'), []);
     assert.equal(r.code, 2);
   });
+
+// ---- MUT-12: mandatoryRefusal()'s mode test could be deleted with no test failing --------------------------------------
+// The refuter replaced its last line with `return true` and the whole suite stayed green: every test handed it EACCES,
+// which returns before the mode is read. The mode test is what makes "its permission bits would let this run in" true
+// when a row says it, so it is held here directly, class by class, and through the command. It also had a defect of
+// its own: the others' bits counted for the folder's owner, whom DAC judges by the owner's bits alone, so a folder of
+// mode 0005 its owner cannot list was said to be open to them (that case fails at da8f5c2).
+test('MUT-12 mandatoryRefusal() reads the permission bits that apply to this user, and only for EPERM', { skip: AS_ROOT && 'root is never refused by DAC' }, async () => {
+  const { mandatoryRefusal } = await import('../lib/files.mjs');
+  const at = (name, mode) => { const d = fresh(`m12-${name}`); chmodSync(d, mode); locked.push(d); return d; };
+  assert.equal(mandatoryRefusal(at('open', 0o755), 'EPERM'), true, 'owner r-x: the bits let this user in, so the EPERM came from above them');
+  assert.equal(mandatoryRefusal(at('ownerrx', 0o500), 'EPERM'), true, 'owner r-x only');
+  assert.equal(mandatoryRefusal(at('shut', 0o000), 'EPERM'), false, 'mode 0000: the bits alone shut it');
+  assert.equal(mandatoryRefusal(at('noexec', 0o600), 'EPERM'), false, 'owner rw-: no search bit');
+  assert.equal(mandatoryRefusal(at('others', 0o005), 'EPERM'), false, 'mode 0005: the others\' bits do not apply to the owner');
+  assert.equal(mandatoryRefusal(at('eacces', 0o755), 'EACCES'), false, 'only EPERM is a refusal from above the bits');
+  // and through the command: the clause is said only when it is true
+  const root = fresh('m12-root'), shut = fresh('m12-root/shut'), open = fresh('m12-root/open');
+  chmodSync(shut, 0o000); locked.push(shut);
+  const r = refused(['--incident', 'github-actions-2026-10', '--paths', root], [shut, open]);
+  assert.match(r.rows.find((x) => x.path === open)?.reason ?? '', /permission bits would let this run in/, JSON.stringify(r.rows));
+  assert.doesNotMatch(r.rows.find((x) => x.path === shut)?.reason ?? 'missing', /permission bits would let this run in/, JSON.stringify(r.rows));
+  assert.equal(r.rows.find((x) => x.path === shut)?.status, 'UNKNOWN');
+});
