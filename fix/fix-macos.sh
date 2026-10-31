@@ -400,7 +400,8 @@ if ! cmp -s "$tmp" "$FILE"; then
   exit 2
 fi
 
-# Three readings, not two, because there is now a baseline to compare with.
+# Four readings, because there is a baseline to compare with, and a failure after the change is either a certificate
+# refused (60: about the change, or about the network) or a network that stopped answering (6, 7, 28: about neither).
 c=$(control "$FILE")
 if [ "$c" -eq 0 ]; then
   # The control loads through the new file: this network answers, and the new file still validates ordinary
@@ -430,27 +431,46 @@ elif [ "$c0" -ne 0 ]; then
   echo "         (An ordinary website didn't load before this change (curl $c0) or after it (curl $c), so nothing"
   echo "         was re-tested online.)"
 else
-  # The one reading here that is about the change and not about the network: an ordinary website loaded through the
-  # file as it was and does not load through the file this wrote. The certificates in those two files differ by
-  # exactly the withdrawn roots removed -- by name, whatever this file held, not "the two" and not AAA by default --
-  # so either that site's certificate chain needs one of them, or something on this network answered the two
-  # requests differently -- and that second reading is what an attack on this Mac looks like.
-  # Both say the same thing about what to do, which is why there is no revert here and no revert-reason for one:
-  # eMudhra's private keys are computable from certificates eMudhra published, so putting one of those roots back
-  # to make a page load is not a repair, and on the second reading it would hand both withdrawn roots to a Mac
-  # already under attack -- the door this script closed on 29 Oct 2026, which a before/after revert would reopen
-  # from the side. UNKNOWN and exit 2, because this is a thing to look at, not an all-clear.
-  echo "UNKNOWN  Fixed in the file ($(removed_phrase), kept $after), but an ordinary website that"
-  echo "         loaded through the old file (curl $c0) doesn't load through the new one (curl $c). The certificates"
-  echo "         in the two files differ only by $(held), so"
-  echo "         either that website's certificate chain needs what was removed, or this network answered the two"
-  echo "         requests differently -- and the second is what an attack on this Mac would look like. The fix was"
-  echo "         kept either way: those private keys can be"
-  echo "         computed from published certificates, so trusting that root again to make a page load would not be"
-  echo "         a repair. Decide it yourself from the two lines below. Please report this."
-  echo "         Backup: $backup"
-  echo "         Undo:   sudo cp -p '$backup' '$FILE'"
-  exit 2
+  case "$c" in
+    6|7|28)
+      # A name that didn't resolve, a connection that wasn't made, or no answer in time: the network stopped
+      # answering between the two reads. None of those is a certificate refused, so there is nothing here about the
+      # change and no attack to diagnose. Until 31 Oct 2026 this got the certificate reading below, attack and all.
+      case "$c" in 6) why="the name didn't resolve" ;; 7) why="no connection was made" ;; *) why="no answer in time" ;; esac
+      echo "UNKNOWN  Fixed in the file ($(removed_phrase), kept $after), but this network stopped answering:"
+      echo "         an ordinary website loaded through the old file (curl 0), then not through the new one (curl $c:"
+      echo "         $why). That is not a certificate being refused, so it says nothing about the change, and nothing"
+      echo "         was re-tested online. Run this again to re-test."
+      echo "         Backup: $backup"
+      exit 2 ;;
+    60)
+      # The one reading here that is about the change or about the network, and cannot tell which: an ordinary
+      # website's certificate verified through the file as it was and is refused through the file this wrote, and
+      # the certificates in those two files differ only by the withdrawn roots removed. So either that site's chain
+      # needs one of them, or something on this network answered the two requests differently -- and that second
+      # reading is what an attack on this Mac looks like. Both say the same thing about what to do, which is why
+      # there is no revert here and no revert-reason for one: eMudhra's private keys are computable from
+      # certificates eMudhra published, so putting one of those roots back to make a page load is not a repair, and
+      # on the second reading it would hand it back to a Mac already under attack.
+      echo "UNKNOWN  Fixed in the file ($(removed_phrase), kept $after), but an ordinary website that"
+      echo "         loaded through the old file (curl 0) doesn't load through the new one (curl 60), which means its"
+      echo "         certificate was refused. The certificates in the two files differ only by $(held), so"
+      echo "         either that website's certificate chain needs what was removed, or this network answered the two"
+      echo "         requests differently -- and the second is what an attack on this Mac would look like. The fix was"
+      echo "         kept either way: those private keys can be computed from published certificates, so trusting that"
+      echo "         root again to make a page load would not be a repair. Decide it yourself from the two lines below."
+      echo "         Please report this."
+      echo "         Backup: $backup"
+      echo "         Undo:   sudo cp -p '$backup' '$FILE'"
+      exit 2 ;;
+    *)
+      echo "UNKNOWN  Fixed in the file ($(removed_phrase), kept $after), but an ordinary website that"
+      echo "         loaded through the old file (curl 0) failed through the new one with curl $c, which is neither a"
+      echo "         certificate refused (60) nor a network that stopped answering (6, 7, 28). This run"
+      echo "         reads nothing into it, and re-tested nothing online. Please report this."
+      echo "         Backup: $backup"
+      exit 2 ;;
+  esac
 fi
 echo "         Backup: $backup"
 echo "         Undo:   sudo cp -p '$backup' '$FILE'"
