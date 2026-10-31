@@ -55,9 +55,12 @@ jobs:
         # site's public changelog (CL-18). Any edit, even a comment, breaks that published checksum. A deliberate
         # change to the script must update the site's download, the page's hash and the changelog record together,
         # and this hash with them.
-        run: echo "c587e97403d0c69f54f926b0542814d81ae5705283e8ea75f0d7bd20b0e2a959  fix/fix-macos.sh" | shasum -a 256 -c -
+        run: echo "7d0640b49b63b5964cb96aecca474446d4cac5884cb10f147eb627beb7f66cd1  fix/fix-macos.sh" | shasum -a 256 -c -
       - name: The Mac fix on copies of this runner's /etc/ssl/cert.pem (refuses to run off macOS)
         run: bash test/fix-macos.check.sh
+      - name: The Mac fix on the Mojave-era one-root shapes (offline, a stub for every probe)
+        if: runner.os == 'macOS'
+        run: bash test/support/mojave-shapes.sh
 
   shellcheck:
     runs-on: ubuntu-latest
