@@ -973,12 +973,16 @@ if [ "$found" -gt 0 ]; then
   [ "$(backups "$work/backupfails.pem")" -eq 0 ] || fail "a failed backup: it left a backup behind"
   [ -z "$(beside "$work/backupfails.pem")" ] || fail "a failed backup: it left $(beside "$work/backupfails.pem") beside the bundle"
   # Proof both discriminate: with the checks taken off those two writes, the run exits 1 with nothing printed. (The
-  # backup copy in either shape: as a bare command, or, since r3, with its words kept for the line that reports it.)
+  # backup copy in either shape: as a bare command, or, since r3, with its words kept for the line that reports it.
+  # And, since r4, with the exit-code guard at exit -- `ended "$r"` in the EXIT trap, which turns any exit 1 that no
+  # EXPOSED line asked for into 2 -- taken out too: it catches the same failure, so a test of either check has to take
+  # out both, or it shows only that the other one caught it.)
   for t in writefails backupfails; do
     case "$t" in
-      writefails) base=$work/$t.sh; sed 's#^replace "\$tmp" || .*$#replace "$tmp"#' "$base" >"$work/$t-nocheck.sh" ;;
+      writefails) base=$work/$t.sh; sed -e 's#^replace "\$tmp" || .*$#replace "$tmp"#' -e "s#; ended \"\\\$r\"' EXIT\$#' EXIT#" "$base" >"$work/$t-nocheck.sh" ;;
       backupfails) base=$fix; sed -e 's#^\(\$SUDO cp -p "\$FILE" "\$b[a-z]*"\) ||.*$#\1#' \
-                                  -e 's#^\(why=\$(\$SUDO cp -p "\$FILE" "\$b[a-z]*" 2>&1)\) ||.*$#\1#' "$base" >"$work/$t-nocheck.sh" ;;
+                                  -e 's#^\(why=\$(\$SUDO cp -p "\$FILE" "\$b[a-z]*" 2>&1)\) ||.*$#\1#' \
+                                  -e "s#; ended \"\\\$r\"' EXIT\$#' EXIT#" "$base" >"$work/$t-nocheck.sh" ;;
     esac
     cmp -s "$base" "$work/$t-nocheck.sh" && fail "a failed write: the check on $t was not found, so this case proves nothing"
     cp "$work/original.pem" "$work/$t-nocheck.pem"
