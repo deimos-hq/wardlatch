@@ -242,6 +242,33 @@ case "${WL_CP:-}" in
       exec /bin/cp "$@"
     fi ;;
   sig-restore-cp) if [ -n "$rs" ]; then : >"$WL_MARK"; /bin/sleep 3; exec /bin/cp "$@"; fi ;;
+  # r3: the snapshot copy (cp FILE <TMPDIR file>, no -p) failing on a full temporary folder.
+  full-snap) if [ -z "$bk" ] && [ "$src" = "$file" ]; then head -c 1000 "$src" >"$dst"; echo "cp: $dst: No space left on device" >&2; exit 1; fi ;;
+  # r3: the snapshot in the invoking user's temporary folder swapped for $WL_VARIANT by a same-user process -- at the
+  # copy itself (swap-early), or at the first grep that reads it (swap-late, done by the grep stand-in) -- and put back
+  # just before the backup copy, so the backup and the snapshot compare equal again.
+  swap-early|swap-late)
+    if [ -z "$bk" ] && [ "$src" = "$file" ]; then
+      printf '%s' "$dst" >"$WL_SWAP_STATE"
+      [ "$WL_CP" = swap-late ] || exec /bin/cp "$WL_VARIANT" "$dst"
+      exec /bin/cp "$@"
+    fi
+    if [ -n "$bk" ] && [ -s "$WL_SWAP_STATE" ]; then /bin/cp "$file" "$(cat "$WL_SWAP_STATE")"; exec /bin/cp "$@"; fi ;;
+  # r3: the cleaned file in the temporary folder has one certificate swapped for $WL_TAMPER while the backup is copied
+  # (after the cleaned file was built and its SHA-256 taken, before it is copied beside the bundle).
+  tamper-tmp-at-backup)
+    if [ -n "$bk" ]; then
+      for t in "${TMPDIR:-/tmp}"/wardlatch.*; do
+        cmp -s "$t" "$file" && continue
+        awk -v t="$WL_TAMPER" 'BEGIN { while ((getline l < t) > 0) rep = rep l "\n" }
+          /^-----BEGIN CERTIFICATE-----/ && !done { skip = 1 }
+          skip { if ($0 ~ /^-----END CERTIFICATE-----/) { printf "%s", rep; skip = 0; done = 1 }; next }
+          { print }' "$t" >"$t.swap" && /bin/mv "$t.swap" "$t"
+      done
+      exec /bin/cp "$@"
+    fi ;;
+  # r3: another backup appears under the dated name between the script's check that the name is free and its link.
+  take-bak-name) if [ -n "$bk" ]; then /bin/cp "$@" || exit; echo 'an earlier backup' >"$file.wardlatch-$WL_DATE.bak"; exit 0; fi ;;
 esac
 exec /bin/cp "$@"
 SHIM
@@ -275,6 +302,9 @@ cat >"$shims/mktemp" <<'SHIM'
 n=$(cat "${WL_MKTEMP_STATE:-/dev/null}" 2>/dev/null); n=$(( ${n:-0} + 1 ))
 [ -z "${WL_MKTEMP_STATE:-}" ] || printf '%s' "$n" >"$WL_MKTEMP_STATE"
 if [ "$n" = "${WL_MKTEMP_FAIL:-0}" ]; then echo "mktemp: mkstemp failed on $*: No space left on device" >&2; exit 1; fi
+# r3: WL_MKTEMP_HOLD=1 makes the first file, then touches $WL_MARK and waits before printing its name, so a case can
+# send a signal while the name has not yet reached the script.
+if [ "${WL_MKTEMP_HOLD:-}" = 1 ] && [ "$n" = 1 ]; then p=$(/usr/bin/mktemp "$@") || exit; : >"$WL_MARK"; /bin/sleep 3; echo "$p"; exit 0; fi
 if [ -n "${WL_MKTEMP_ORPHAN:-}" ]; then
   for a in "$@"; do case "$a" in */.wardlatch-"$WL_MKTEMP_ORPHAN".*) /usr/bin/mktemp "$@" >/dev/null; exit 1 ;; esac; done
 fi
@@ -285,17 +315,62 @@ SHIM
 cat >"$shims/chmod" <<'SHIM'
 #!/bin/bash
 if [ "${WL_CHMOD:-}" = fail-new ]; then for a in "$@"; do case "$a" in */.wardlatch-new.*) exit 1 ;; esac; done; fi
+# r3: race-new appends $WL_CORP to the bundle while the new file is being made beside it, after the backup was taken.
+if [ "${WL_CHMOD:-}" = race-new ]; then for a in "$@"; do case "$a" in */.wardlatch-new.*) cat "$WL_CORP" >>"$WARDLATCH_CERT_FILE" ;; esac; done; fi
 exec /bin/chmod "$@"
 SHIM
 cat >"$shims/sudo" <<'SHIM'
 #!/bin/bash
-# A refused password, three times, or no answer in time. Never the real sudo.
+# A refused password, three times, or no answer in time. Never the real sudo. r3: with WL_SUDO=grant it grants every
+# call (runs the command as this user; `-v` succeeds) except the WL_SUDO_REFUSE-th, counted in WL_SUDO_STATE, which it
+# refuses in sudo's own words.
+if [ "${WL_SUDO:-}" = grant ]; then
+  n=$(cat "$WL_SUDO_STATE" 2>/dev/null); n=$(( ${n:-0} + 1 )); printf '%s' "$n" >"$WL_SUDO_STATE"
+  if [ "$n" = "${WL_SUDO_REFUSE:-0}" ]; then echo 'sudo: 3 incorrect password attempts' >&2; exit 1; fi
+  [ "$1" != -v ] || exit 0
+  exec "$@"
+fi
 exit 1
+SHIM
+# r3: stand-ins for grep, rm, uname and date. With no WL_ variable set, each is the real command.
+cat >"$shims/grep" <<'SHIM'
+#!/bin/bash
+# WL_GREP=swap: the first grep that reads the snapshot (its name is in $WL_SWAP_STATE, written by the cp stand-in)
+# first replaces the snapshot's contents with $WL_VARIANT, as a same-user process could at any moment.
+if [ "${WL_GREP:-}" = swap ] && [ -s "${WL_SWAP_STATE:-}" ] && [ ! -e "$WL_SWAP_STATE.done" ]; then
+  s=$(cat "$WL_SWAP_STATE"); last=''
+  for a in "$@"; do last=$a; done
+  if [ "$last" = "$s" ]; then : >"$WL_SWAP_STATE.done"; /bin/cp "$WL_VARIANT" "$s"; fi
+fi
+exec /usr/bin/grep "$@"
+SHIM
+cat >"$shims/rm" <<'SHIM'
+#!/bin/bash
+# WL_RM=hold: the first rm that names a file in $TMPDIR (the cleanup when the script exits) touches $WL_MARK and waits,
+# so a case can send a signal while the cleanup runs. Once only: $WL_RM_STATE records it.
+if [ "${WL_RM:-}" = hold ] && [ ! -e "$WL_RM_STATE" ]; then
+  for a in "$@"; do case "$a" in "${TMPDIR:-/tmp}"/wardlatch.*) : >"$WL_RM_STATE"; : >"$WL_MARK"; /bin/sleep 3; break ;; esac; done
+fi
+exec /bin/rm "$@"
+SHIM
+cat >"$shims/uname" <<'SHIM'
+#!/bin/bash
+# WL_UNAME=hold: touches $WL_MARK and waits, so a case can send a signal at the very start of the script.
+if [ "${WL_UNAME:-}" = hold ]; then : >"$WL_MARK"; /bin/sleep 3; fi
+exec /usr/bin/uname "$@"
+SHIM
+cat >"$shims/date" <<'SHIM'
+#!/bin/bash
+# WL_DATE pins the stamp the fix puts in its backup's name.
+if [ -n "${WL_DATE:-}" ] && [ "${1:-}" = +%Y%m%d-%H%M%S ]; then echo "$WL_DATE"; exit 0; fi
+exec /bin/date "$@"
 SHIM
 chmod +x "$r2/curl" "$r2/openssl" "$shims"/*
 # Runs $1 on bundle $2 in the background, in its own process group, with the VAR=value arguments after them; waits
-# for a stand-in to touch $WL_MARK, then sends INT to the script itself, as a Ctrl-C would reach it. Sets $code and
-# $out, and checks what run() checks: nothing on stderr but the stand-in's, nothing left in TMPDIR, a line to read.
+# for a stand-in to touch $WL_MARK, then sends INT to the script itself, as a Ctrl-C would reach it (another signal
+# when $sigrun_sig names one). Sets $code and $out, and checks what run() checks: nothing on stderr but the
+# stand-in's, nothing left in TMPDIR, a line to read.
+sigrun_sig=INT
 sigrun() {
   local s=$1 f=$2 pid i
   shift 2
@@ -306,7 +381,7 @@ sigrun() {
   set +m
   for i in $(seq 1 300); do [ -e "$r2/mark" ] && break; /bin/sleep 0.1; done
   if [ ! -e "$r2/mark" ]; then kill -KILL "$pid" 2>/dev/null || true; fail "a stopped run: the run never reached the point it is stopped at"; fi
-  kill -INT "$pid" 2>/dev/null || true
+  kill -"$sigrun_sig" "$pid" 2>/dev/null || true
   code=0; wait "$pid" || code=$?
   out=$(cat "$r2/sig.out")
   printf '%s\n' "$out" | sed 's/^/    | /'
