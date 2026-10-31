@@ -17,7 +17,7 @@ These are its security requirements: what a user can rely on.
 | # | Requirement | Why it matters |
 |---|---|---|
 | **R1** | **Never SAFE without evidence.** A line says SAFE only after a control has shown the check could have seen exposure; otherwise it says "could not be tested" (UNKNOWN), and the exit code is 2, not 0. | A security check that says SAFE when it couldn't know is worse than no check: people stop looking. |
-| **R2** | **Sends nothing about the user.** The only network traffic is TLS connections to the incident's public test hosts and two control sites (the advisory's page, and a self-signed test site for containers), and the person's own container engine (`--no-containers` skips it); a curl probe's request also carries what the person's curl start-up file adds to it (section 3). | People run it on work machines and servers. It must not become a leak while looking for one. |
+| **R2** | **Sends nothing about the user.** The only network traffic is TLS connections to the incident's public test hosts and two control sites (the advisory's page, and a self-signed test site for containers), and the person's own container engine (`--no-containers` skips it), through the person's proxy when they use one, as their own programs go; a curl probe's request also carries what the person's curl start-up file adds to it (section 3). | People run it on work machines and servers. It must not become a leak while looking for one. |
 | **R3** | **The command changes nothing.** No file, setting, package or container is written, moved or deleted. | A diagnostic must be safe to run anywhere, including in CI and on production servers. |
 | **R4** | **Never prints a secret it finds.** A committed key is reported by type, file, line and a mask. | Output is pasted into tickets and chats. |
 | **R5** | **What it reads can't forge what it prints.** Names from the disk, git and containers can't hide or rewrite a line. | The things being checked may be under an attacker's control (a compromised WordPress site, a cloned repository). |
@@ -91,8 +91,13 @@ file (`~/.curlrc`, or the one `CURL_HOME` or `XDG_CONFIG_HOME` points to) adds t
 because it reads that file as their own curl does: a line in it can change what curl trusts (`insecure`, `cacert`), and
 a probe that skipped it could read SAFE for a curl that accepts anything (`test/review4-0.1.9.test.mjs`, test 2, holds
 it to reading the file). Responses are discarded (`-o /dev/null`, `r.resume()`), and only
-success or failure is read. The reachability handshake sends no request at all. There is no telemetry code. *Evidence:* `test/conventions.test.mjs`
-fails if any other shipped module imports a network module or calls `fetch`.
+success or failure is read. The reachability handshake sends no request at all. The probes are given the person's
+proxy settings (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY`, in either case: `lib/run.mjs`), and the curl
+probe uses a proxy its start-up file names, on purpose: a runtime behind a proxy reaches the test hosts through it, as
+the person's programs do, so with a proxy in use a probe's connection goes to the proxy, not to the test host. There is
+no telemetry code. *Evidence:* `test/conventions.test.mjs`
+fails if any other shipped module imports a network module or calls `fetch`; `test/review2-0.1.9.test.mjs` holds that
+a probe keeps `HTTPS_PROXY` and `no_proxy`.
 
 **R3, changes nothing.** The shipped code imports no file-writing function, opens files only read-only, and the
 container probe only runs a request. *Evidence:* `test/conventions.test.mjs` fails on any import of a write, delete,

@@ -23,7 +23,7 @@ reported, and what was actually true.
   result turning into "could not be tested".
 - **Anything that sends data about the user.** Wardlatch's only network traffic is TLS connections to the incident's
   public test hosts and its two control sites (and what your own container engine sends, wherever the current docker
-  context points, or a local socket `DOCKER_HOST` names; a remote `DOCKER_HOST` is not followed; `--no-containers` skips it), carrying nothing beyond what any request from the runtime being tested
+  context points, or a local socket `DOCKER_HOST` names; a remote `DOCKER_HOST` is not followed; `--no-containers` skips it), made through your proxy when you use one (the probes are given `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY`, in either case, as your own programs are, and the curl probe uses a proxy your curl start-up file names, so a runtime that uses one connects to the proxy, not to the test host), carrying nothing beyond what any request from the runtime being tested
   carries: the machine's address, the runtime's default User-Agent and, for curl, whatever your curl start-up file
   adds to every request. The curl probe reads that file (`~/.curlrc`, or the one `CURL_HOME` or `XDG_CONFIG_HOME`
   points to) as your own curl does, on purpose: a line in it can change what curl trusts (`insecure`, `cacert`), and a
