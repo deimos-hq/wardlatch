@@ -379,3 +379,25 @@ test('a committed private key in DER is found whatever its name: PKCS #1, PKCS #
   assert.ok(r.rows.filter((x) => x.status === 'REVIEW').every((x) => /private key/.test(x.type) && !x.masked.includes('MII')), 'a type, never the key');
   assert.deepEqual(r.rows.filter((x) => x.status === 'SAFE'), []);
 });
+
+// ---- WV-12: a DER certificate was UNKNOWN, "named as a text file but reads as binary" -----------------------------------
+// DER is a standard encoding for a .crt or a .pem; a repository with a DER fixture exited 2 for ever, and the sentence was
+// untrue. A certificate is no secret: no row. A binary file under a text name that is not a DER key or certificate stays
+// UNKNOWN, with a sentence that is true.
+test('WV-12 a DER certificate named .crt or .pem is not a gap; other binary under a text name still is, truly worded', () => {
+  const pem = readFileSync(join(ROOT, 'lib', 'incidents', 'emudhra-2026-10-root-aaa.pem'), 'utf8');
+  const der = Buffer.from(pem.replace(/-----[^-]+-----/g, '').replace(/\s+/g, ''), 'base64');
+  const root = fresh('wv12');
+  repoWith(join(root, 'app'), { 'certs/root-ca.crt': der, 'certs/root-ca.pem': der, 'README.md': '# app\n' });
+  const r = run([...KEYS, '--paths', root]);
+  assert.deepEqual(unknowns(r), [], `a DER certificate is neither a secret nor a gap: ${JSON.stringify(r.rows).slice(0, 1500)}`);
+  assert.equal(r.code, 0);
+  // the guard: a binary file under a text name that is no DER key or certificate is still could-not-be-tested
+  const other = fresh('wv12-other');
+  repoWith(join(other, 'app'), { 'config.yml': Buffer.from('#\0hidden: below a NUL\n') });
+  const o = run([...KEYS, '--paths', other]);
+  const row = unknowns(o).find((x) => x.file === 'config.yml');
+  assert.ok(row, JSON.stringify(o.rows));
+  assert.doesNotMatch(row.reason, /named as a text file/, row.reason);
+  assert.equal(o.code, 2);
+});
