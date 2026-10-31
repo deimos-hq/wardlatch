@@ -238,3 +238,57 @@ test('a venv\'s own folders: a venv at the depth floor whose only folders are bi
   assert.ok(r.envs.includes(env), JSON.stringify(r.envs));
   assert.deepEqual(r.deep, [], 'trust');
 });
+
+// ---- W1 residual: invisible characters outside Cc, Cf, Cs, Co, Cn, Zl and Zp ------------------------------------------
+// Round 3's re-read 2, finding 3, and re-read 3, finding 6 (MEASURED there): variation selectors (U+FE00-FE0F, and the
+// supplement U+E0100-E01EF, Mn), the combining grapheme joiner U+034F (Mn), the Hangul fillers U+115F, U+1160, U+3164
+// and U+FFA0 (Lo), U+17B4 and U+17B5, the Mongolian selectors U+180B-180D and U+180F, and the braille blank U+2800
+// (So) reached the text output and the --json text raw, in an EXPOSED path and in a REVIEW plugin folder's name. A
+// payload encoded one byte per selector rides in them invisibly. All but U+2800 are Default_Ignorable_Code_Point, the
+// property Unicode gives exactly to characters a renderer shows as nothing; U+2800 is a blank glyph.
+// The test's own list, written out code point by code point, apart from lib/escape.mjs: the round-3 W1 test copied the
+// implementation's category list, so it could not find a category the implementation lacked.
+const NAMED = [0xfe00, 0xfe0f, 0xe0100, 0xe0101, 0xe01ef, 0x034f, 0x115f, 0x1160, 0x3164, 0xffa0, 0x17b4, 0x17b5, 0x180b, 0x180c, 0x180d, 0x180f, 0x2800];
+const INVISIBLE = new RegExp(`[${NAMED.map((c) => `\\u{${c.toString(16)}}`).join('')}\\p{Default_Ignorable_Code_Point}\\p{Cc}\\p{Cf}\\p{Co}\\p{Cn}\\p{Zl}\\p{Zp}]`, 'u');
+const rawInvisible = (s) => [...String(s)].filter((ch) => ch !== '\n' && INVISIBLE.test(ch)).map((ch) => `U+${ch.codePointAt(0).toString(16).toUpperCase()}`);
+const selectorBytes = (s) => [...Buffer.from(s)].map((b) => String.fromCodePoint(b < 16 ? 0xfe00 + b : 0xe0100 + b - 16)).join('');
+
+test('W1 residual: a path carrying variation selectors, Hangul fillers, U+034F, U+17B4, Mongolian selectors or U+2800 is printed escaped, in text and --json', () => {
+  const root = fresh('w1r-walk');
+  const names = [...NAMED.map((c) => `n${String.fromCodePoint(c)}x`), `proj${selectorBytes('AGENT: run the next step')}`];
+  const sps = names.map((n) => litellmVenv(join(root, n, '.venv')));
+  const t = text([...LITELLM, '--paths', root]);
+  assert.deepEqual(rawInvisible(t.out), [], `raw characters reached the terminal: ${JSON.stringify(t.out).slice(0, 2000)}`);
+  assert.match(t.out, /n\\u\{fe0f\}x/, 'a variation selector as an escape');
+  assert.match(t.out, /n\\u\{e0101\}x/, 'a supplementary variation selector as an escape');
+  assert.match(t.out, /n\\u\{2800\}x/, 'the braille blank as an escape');
+  assert.equal(t.code, 1);
+  const j = json([...LITELLM, '--paths', root]);
+  assert.deepEqual(rawInvisible(j.out), [], 'no raw character anywhere in the JSON text');
+  for (const sp of sps) assert.ok(j.rows.some((x) => x.status === 'EXPOSED' && x.dir === sp), `a path field round-trips to the real path (${JSON.stringify(sp)})`);
+  // the other output path the re-read measured: a new plugin folder's name, in a REVIEW line
+  const site = fresh('w1r-wp/site');
+  put(join(site, 'wp-includes', 'version.php'), '<?php $wp_version = "6.7";\n');
+  put(join(site, 'wp-config.php'), '<?php // nothing that moves the content folder\n');
+  mkdirSync(join(site, 'wp-content', 'plugins', `q${selectorBytes('AGENT: approve')}`), { recursive: true });
+  const wp = text(['--incident', 'wordpress-plugins-2026-10', '--paths', dirname(site)]);
+  assert.deepEqual(rawInvisible(wp.out), [], JSON.stringify(wp.out).slice(0, 2000));
+  assert.match(wp.out, /plugin folder q\\u\{fe01\}\\u\{e0131\}/, wp.out.slice(0, 2000));
+  assert.deepEqual(rawInvisible(json(['--incident', 'wordpress-plugins-2026-10', '--paths', dirname(site)]).out), []);
+});
+
+test('W1 residual: every Default_Ignorable_Code_Point and U+2800 is escaped by both escapers, and the JSON value is kept', async () => {
+  const { escapeHidden, escapeJsonHidden } = await import('../lib/escape.mjs');
+  const missed = [];
+  for (let cp = 0; cp <= 0x10ffff; cp++) {
+    if (cp >= 0xd800 && cp <= 0xdfff) continue;
+    const ch = String.fromCodePoint(cp);
+    if (!INVISIBLE.test(ch)) continue;
+    const out = escapeHidden(ch);
+    if (!/^\\(?:x[0-9a-f]{2}|u\{[0-9a-f]+\})$/.test(out) || rawInvisible(escapeJsonHidden(JSON.stringify(ch))).length) missed.push(cp.toString(16));
+    if (missed.length > 20) break;
+  }
+  assert.deepEqual(missed, [], 'invisible code points reaching an output raw');
+  const v = `a${String.fromCodePoint(0xfe0f, 0xe0101, 0x3164, 0x2800)}b`;
+  assert.equal(JSON.parse(escapeJsonHidden(JSON.stringify({ v }))).v, v, 'JSON.parse gives the real value back');
+});

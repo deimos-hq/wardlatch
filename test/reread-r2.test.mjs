@@ -178,9 +178,13 @@ test('W1 the trust check\'s environment label and a link it did not follow are p
   for (const r of reasons(j.rows)) assert.deepEqual(rawHidden(r), [], r);
 });
 
-test('W1 the escaper: every code point of Cc, Cf, Cs, Co, Cn, Zl, Zp and the tag block is escaped; every other is kept', async () => {
+// (Round 4: the set grew. Round 3's re-reads measured invisible characters outside these categories reaching both
+// outputs raw (variation selectors, U+034F, the Hangul fillers, U+2800), so every Default_Ignorable_Code_Point and
+// U+2800 are escaped too, and this test's "every other is kept" half would now call them wrongly escaped. Its set is
+// widened to match; test/reread-r3.test.mjs lists the re-reads' characters one by one, apart from any category.)
+test('W1 the escaper: every code point of Cc, Cf, Cs, Co, Cn, Zl, Zp, the tag block, Default_Ignorable_Code_Point and U+2800 is escaped; every other is kept', async () => {
   const { escapeHidden, escapeJsonHidden } = await import('../lib/escape.mjs');
-  const must = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\u{E0000}-\u{E007F}]/u;
+  const must = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}⠀\u{E0000}-\u{E007F}]/u;
   const bad = [];
   for (let cp = 0; cp <= 0x10ffff; cp++) {
     if (cp >= 0xd800 && cp <= 0xdfff) continue;   // lone surrogates: below
