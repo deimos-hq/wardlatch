@@ -36,8 +36,8 @@ TEST_URL="https://dv-g3b-emudhra.we-have-a-problem.com/"
 # one-line test on the page uses, so the two tests answer about the same network.
 CONTROL_URL="https://www.apple.com/"
 # SHA-256 fingerprints: AAA Certificate Services, emSign ECC Root CA - G3
-ROOTS='D7:A7:A0:FB:5D:7E:27:31:D7:71:E9:48:4E:BC:DE:F7:1D:5F:0C:3E:0A:29:48:78:2B:C8:3E:E0:EA:69:9E:F4
-86:A1:EC:BA:08:9C:4A:8D:3B:BE:27:34:C6:12:BA:34:1D:81:3E:04:3C:F9:E8:A8:62:CD:5C:57:A3:6B:BE:6B'
+AAA='D7:A7:A0:FB:5D:7E:27:31:D7:71:E9:48:4E:BC:DE:F7:1D:5F:0C:3E:0A:29:48:78:2B:C8:3E:E0:EA:69:9E:F4'
+EMS='86:A1:EC:BA:08:9C:4A:8D:3B:BE:27:34:C6:12:BA:34:1D:81:3E:04:3C:F9:E8:A8:62:CD:5C:57:A3:6B:BE:6B'
 
 [ "$(uname -s)" = Darwin ] || { echo "This fix is for macOS. On Linux, update the ca-certificates package."; exit 2; }
 # Before anything else, and before the -f test, which is true for a symbolic link to a regular file: this fix
@@ -55,30 +55,49 @@ trust() { local r=0; /usr/bin/curl -q -s -o /dev/null --max-time 15 --cacert "$1
 # verdict to be had here -- without this, "the test site refused" and "nothing on this network answered" are the
 # same reading, and the Mac that most needs this fix is the one whose network is under someone else's control.
 control() { local r=0; /usr/bin/curl -q -s -o /dev/null --max-time 15 --cacert "$1" "$CONTROL_URL" || r=$?; echo "$r"; }
+# How many lines of $2 match $1. Fails, rather than print a number, if grep could not read the file: a count that
+# came back empty was compared as if it were one, and `[` reading "" as a number is an error, not a no.
+count() { local n r=0; n=$(grep -c -- "$1" "$2" 2>/dev/null) || r=$?; if [ "$r" -gt 1 ] || [ -z "$n" ]; then return 1; fi; echo "$n"; }
 # Certificates are lines that START with the BEGIN marker, which is all LibreSSL reads as one. Until 31 Oct 2026 the
 # marker counted anywhere in a line, so a comment that mentioned it ("paste each certificate from its -----BEGIN
 # CERTIFICATE----- line ...") made a bundle LibreSSL reads without complaint unfixable, as "a certificate can't be read".
-certs() { grep -c '^-----BEGIN CERTIFICATE-----' "$1" || true; }
-# Prints the position (1, 2, ...) of each certificate in the file whose fingerprint is one of ROOTS, one per line.
-# Fails if any certificate can't be read, so a file we can't fully check is never called clean.
-# It runs in $( ), so its EXIT trap removes the temporary folder however it ends. The trap names the folder itself,
-# because it runs after the function's locals are gone.
+certs() { count '^-----BEGIN CERTIFICATE-----' "$1"; }
+# Prints one line for each certificate in $1 that is a withdrawn root: its position (1, 2, ...) and which root it is,
+# AAA or EMS. Fails -- so the caller says UNKNOWN and changes nothing -- if any certificate can't be read, if anything
+# openssl printed isn't a fingerprint, or if the number of fingerprints read isn't the number of certificates
+# counted: a file this can't fully check is never called clean. That last test is the completeness gate, and it is
+# what makes a failure that says nothing count as a failure.
+# It reads the file itself, line by line, and hands each certificate to openssl through a pipe: no temporary files and
+# no here-strings. Until 31 Oct 2026 the comparison was `grep -qxF <fingerprint> <<<"$ROOTS"`, and macOS's
+# /bin/bash 3.2 writes a here-string to a file in /private/var/tmp whatever TMPDIR says. When it couldn't (a sandbox,
+# an endpoint agent, a full disk), the grep failed, its failure read as "no match", and every certificate was "not a
+# withdrawn root": measured, the run printed SAFE and exited 0 with both roots still in the file.
 roots() {
-  local d c fp
-  d=$(mktemp -d -t wardlatch) || return 1
-  # shellcheck disable=SC2064
-  trap "rm -rf '$d'" EXIT
-  awk -v d="$d" '/^-----BEGIN CERTIFICATE-----/{k++; f=sprintf("%s/%05d.pem", d, k)} f{print > f} /^-----END CERTIFICATE-----/{close(f); f=""}' "$1" || return 1
-  [ "$(find "$d" -name '*.pem' | wc -l | tr -d ' ')" -eq "$(certs "$1")" ] || return 1
-  for c in "$d"/*.pem; do
-    # A file with no certificates at all splits into no files, and an unmatched glob is the pattern itself, which
-    # openssl then fails to read: without this, a bundle of 0 certificates reported "a certificate couldn't be
-    # read" rather than that it holds none. It can skip nothing real -- if any .pem exists the glob expands to
-    # real files only, and the find/certs() comparison above has already proved there is one per BEGIN line.
-    [ -e "$c" ] || continue
-    fp=$(/usr/bin/openssl x509 -in "$c" -noout -fingerprint -sha256 2>/dev/null) || return 1
-    if grep -qxF "${fp#*=}" <<<"$ROOTS"; then c=${c##*/}; c=${c%.pem}; echo $((10#$c)); fi
-  done
+  local n l blk='' inblk='' k=0 nfp=0 fp
+  n=$(certs "$1") || return 1
+  while IFS= read -r l || [ -n "$l" ]; do
+    case "$l" in
+      -----BEGIN\ CERTIFICATE-----*)
+        [ -z "$inblk" ] || return 1                     # a certificate with no END before the next one
+        inblk=1; k=$((k + 1)); blk=$l ;;
+      -----END\ CERTIFICATE-----*)
+        [ -n "$inblk" ] || continue
+        blk="$blk
+$l"
+        inblk=''
+        fp=$(printf '%s\n' "$blk" | /usr/bin/openssl x509 -noout -fingerprint -sha256 2>/dev/null) || return 1
+        fp=${fp#*=}
+        # Not a fingerprint: not counted, so the gate below fails. 32 pairs of hex digits joined by colons.
+        case "$fp" in *[!0-9A-F:]*|'') continue ;; esac
+        [ "${#fp}" -eq 95 ] || continue
+        nfp=$((nfp + 1))
+        if [ "$fp" = "$AAA" ]; then echo "$k AAA"; elif [ "$fp" = "$EMS" ]; then echo "$k EMS"; fi ;;
+      *)
+        [ -z "$inblk" ] || blk="$blk
+$l" ;;
+    esac
+  done <"$1" || return 1
+  [ -z "$inblk" ] && [ "$k" -eq "$n" ] && [ "$nfp" -eq "$n" ]
 }
 # Writes $1 without the certificates listed in $2. A certificate's block starts at its "=== " name line when it has
 # one (the advisory's removal, byte for byte) and at its BEGIN line when it doesn't, and it ENDS at its
@@ -174,14 +193,35 @@ cp "$FILE" "$snap" 2>/dev/null || { echo "UNKNOWN  Can't read $FILE. Nothing cha
 # This is read before the floor below, and the fingerprints after it, because the floor now has to say whether the
 # file holds a withdrawn root: a block this fix cannot read could hold one, so "it holds neither" would otherwise be
 # a claim about bytes nobody checked.
-if [ "$(grep -c -- '^-----BEGIN ' "$snap" || true)" -ne "$(grep -c -- '^-----BEGIN CERTIFICATE-----' "$snap" || true)" ]; then
+if ! blocks=$(count '^-----BEGIN ' "$snap") || ! before=$(certs "$snap"); then
+  echo "UNKNOWN  Couldn't read the copy of $FILE this run took, so it wasn't checked. Nothing changed."
+  exit 2
+fi
+if [ "$blocks" -ne "$before" ]; then
   echo "UNKNOWN  $FILE holds blocks that aren't plain certificates (such as BEGIN TRUSTED CERTIFICATE), which curl also"
   echo "         trusts and this fix can't check. Nothing changed. Run npx wardlatch@latest to test the Mac's tools."
   exit 2
 fi
-list=$(roots "$snap") || { echo "UNKNOWN  A certificate in $FILE couldn't be read, so it wasn't checked. Nothing changed."; exit 2; }
-found=$(grep -c . <<<"$list" || true)
-before=$(certs "$snap")
+spec=$(roots "$snap") || {
+  echo "UNKNOWN  A certificate in $FILE couldn't be read and fingerprinted, so the file wasn't fully checked."
+  echo "         Nothing changed."
+  exit 2
+}
+drop='' naaa=0 nems=0
+# Split on purpose: roots() prints "position root" pairs, digits and AAA or EMS only.
+# shellcheck disable=SC2086
+set -f; set -- $spec; set +f
+while [ "$#" -ge 2 ]; do
+  case "$2" in
+    AAA) naaa=$((naaa + 1)) ;;
+    EMS) nems=$((nems + 1)) ;;
+    *) echo "UNKNOWN  The fingerprint check returned something this doesn't recognise. Nothing changed; please report this."; exit 2 ;;
+  esac
+  drop="${drop:+$drop }$1:$2"
+  shift 2
+done
+[ "$#" -eq 0 ] || { echo "UNKNOWN  The fingerprint check returned something this doesn't recognise. Nothing changed; please report this."; exit 2; }
+found=$((naaa + nems))
 
 # The one floor in this script, and the only place a number like this belongs: a judgement about the file as it was
 # found, made before anything is written into it. It names the number, because "it looks damaged" on its own tells
@@ -244,8 +284,8 @@ removed_phrase() {
   fi
 }
 
-strip "$snap" "$(tr '\n' ' ' <<<"$list")" > "$tmp"
-after=$(certs "$tmp")
+strip "$snap" "$drop" >"$tmp" || { echo "UNKNOWN  Couldn't build the cleaned file, so nothing was changed. Please report this."; exit 2; }
+after=$(certs "$tmp") || after=-1
 left=$(roots "$tmp") || left=unreadable
 # Three separate reasons the cleaned file may not be used, each saying which one it is. Until 30 Oct 2026 they were
 # one condition and one line that reported all three as arithmetic ("didn't come out as expected (N before, M
