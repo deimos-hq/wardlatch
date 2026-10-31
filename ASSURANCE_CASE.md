@@ -110,23 +110,42 @@ checked against an allowlist before anything runs. `package.json` declares no de
 `test/conventions.test.mjs` (only `execFile`/`execFileSync`, no `shell: true`, no `eval`, imports only `node:`
 built-ins and the project's files, no `dependencies`); `test/cli.test.mjs` (unknown options refused).
 
-**R7, the Mac fix: boundary B6.** The script refuses a file that looks damaged (fewer than 50 certificates), writes
-the cleaned copy to a fresh `mktemp` file and checks it before using it (the two roots gone, every other certificate
-still there, at least 50 left), makes a dated backup and refuses to overwrite an existing one, copies the clean file
-in and sets 644, then compares the file it wrote with the file it built and restores the backup if the two differ.
-That comparison of two local files is the **only** thing that makes it put the original back. It then re-tests with
-`/usr/bin/curl`, and reads that re-test only after an ordinary website has loaded through the same file as a control:
-without the control, "the test host refused" and "nothing on this network answered" are one reading. A wrong re-test
-is reported (EXPOSED, exit 1) with the fix left in place, because restoring would put both withdrawn roots back on a
-Mac whose network is already answering for someone else — the one Mac that could then never be fixed.
-It changes nothing on a Mac that is already clean, so running it twice is safe. *Evidence:* CI runs
-`test/fix-macos.check.sh` on macOS against copies of the runner's real `/etc/ssl/cert.pem`: the original, a second
-run, undo from the backup, an empty file, a truncated file and a missing file, plus the refusal on Linux. Two cases
-drive a copy of the script whose network command is a stub: a network that accepts everything must leave the fix in
-place (exit 1, EXPOSED), and a network where nothing answers must not be read as a refusal. Both fail on the script
-as it shipped on 27 Oct 2026 — the first puts both roots back, the second claims a re-test nothing performed. CI also
-fails if the script stops matching the SHA-256 published with the download, so the file people run is the file that
-was tested.
+**R7, the Mac fix: boundary B6.** The script works on a snapshot of the file. It finds the two roots by their SHA-256
+fingerprints and refuses a file it can't fully check: a certificate it can't read, a block that isn't a plain
+certificate, or fewer fingerprints read than certificates counted (the completeness gate, so a check that fails
+without saying so counts as a failure). It refuses a symbolic link, printing the command that fixes the file the link
+points to. It won't rebuild a file of fewer than 50 certificates: one holding neither withdrawn root is reported with
+its count and nothing to remove, one still holding a root is refused, and neither is told to restore anything. It
+builds the cleaned file, removing only each withdrawn root's own lines, and checks it: no withdrawn root left, and
+exactly the count before less the roots removed. It reads an ordinary website through the file as it is (the
+control), asks `sudo` for the privilege on its own, copies the file to a new name beside it, compares that copy with
+the snapshot, and only then links it to a dated backup name that nothing may already hold. It compares the file with
+the snapshot once more immediately before the replacement, so a change made while it ran stops it. Every write to the
+file goes through `replace()`: a new file made by `mktemp` beside `/etc/ssl/cert.pem`, checked there (its SHA-256 the
+cleaned file's, and the count and fingerprint checks again), set to 644 and renamed over the old one in one step, so
+an interruption leaves the old file or the new one and never half of either. It then compares the file's SHA-256 with
+the cleaned file's and restores the backup, through `replace()` too, if the two differ. That comparison of two local
+files is the **only** thing that makes it put the original back. It then reads the control again, and re-tests with
+`/usr/bin/curl` only if the control loads: without the control, "the test host refused" and "nothing on this network
+answered" are one reading. A control that loaded before the change and fails after it is reported by its curl code (a
+certificate refused, a network that stopped answering, or anything else) and changes nothing. A wrong re-test is
+reported (EXPOSED, exit 1) with the fix left in place and no command to restore the backup, because restoring would
+put the withdrawn roots back on a Mac whose network is already answering for someone else — the one Mac that could
+then never be fixed. On macOS every exit prints a line starting SAFE, EXPOSED or UNKNOWN; a run stopped by a signal
+exits 2 with a line that says what the file holds, read from the file's SHA-256. It changes nothing on a Mac that is
+already clean, so running it twice is safe.
+*Evidence:* `test/fix-macos.check.sh` runs the script on copies of a vendored, unfixed macOS 27.2 bundle
+(`test/support/fixtures/macos-27.2-cert.pem`), so its result doesn't depend on whether the machine running it is fixed.
+It runs 60 cases, and prints and checks the count, so a case that stops running can't pass as silence; one of them,
+`heredoc-trigger`, applies a sandbox profile of its own and, when the harness itself runs inside a sandbox
+(`WL_NESTED_SANDBOX=1`), is named as not run instead of being counted. The cases cover the first run, a second run,
+undo from the backup, empty, truncated, small, unreadable and missing files, a symbolic link and the refusal off
+macOS; copies of the script whose one network command is a stub (a network that accepts everything, one where nothing
+answers, a control that loads before the change but not after, a network that stops answering after it, a silent test
+site); interrupts and failed writes at each step; the file changing while the script runs; and what the script
+prints. `test/support/mojave-shapes.sh` runs five bundle shapes offline, the one-root shapes of Mojave-era Macs among them. CI runs both on macOS,
+and fails if the script stops matching the SHA-256 published with the download, so the file people run is the file
+that was tested.
 
 ### Secure design principles
 
@@ -137,8 +156,8 @@ was tested.
 | Complete mediation | Every trust result passes through the controls in `check()` / `checkContainer()`; there is no path from a probe to SAFE that skips them. |
 | Open design | All of it is public, including the test hosts; nothing depends on an attacker not knowing how it works. There are no secrets in it. |
 | Separation of privilege | Looking and changing are separate programs: the command can't change the system, and the Mac fix must be run on purpose, with the user's password. |
-| Least privilege | The command runs as the user and never asks for root. The Mac fix uses `sudo` only for the commands that write, and not at all on a writable copy. |
-| Least common mechanism | Nothing shared between users or runs: no cache, no state, no daemon. The Mac fix's temporary file comes from `mktemp` and is removed on exit. |
+| Least privilege | The command runs as the user and never asks for root. The Mac fix uses `sudo` only to ask for the privilege and for the commands that write beside or to the file, and not at all on a writable copy. |
+| Least common mechanism | Nothing shared between users or runs: no cache, no state, no daemon. The Mac fix's temporary files come from `mktemp` and are removed when it exits, after a Ctrl-C, a hangup or a termination too. |
 | Psychological acceptability | Four plain statuses, a fix under every problem, exit codes for CI, and the README's privacy promise in one paragraph. |
 | Limited attack surface | No listening socket, no network input beyond connection results, no dependencies, nothing written. |
 | Input validation with allowlists | Options against a fixed list; `--incident` against the shipped ids; versions only as digits and dots from a known pattern; the container tool name as a single word; incident data checked by tests. |
@@ -152,10 +171,10 @@ was tested.
 | Improper certificate validation (CWE-295) | The probes and Wardlatch's own TLS | Verification on everywhere except the reachability handshake, which sends nothing and decides only "up or not"; enforced by test |
 | Exposure of sensitive information (CWE-200, CWE-532) | Key findings, output, network | Keys masked; nothing sent; tests on text and JSON output |
 | Improper neutralization of escape sequences (CWE-150) | Names printed to a terminal | One escaping function for every printed name; test with a planted name |
-| Uncontrolled resource consumption (CWE-400) | Huge trees, huge files, pipes, hung programs | Depth limits (4 to 5 levels), file-size caps (512 MB for the key scan, read in pieces past 8 MB; 2 MB for plugin files; what a cap leaves unread is UNKNOWN), only regular files read and pipes opened non-blocking, a 4,000-file cap per plugin, a timeout on every child process and connection |
+| Uncontrolled resource consumption (CWE-400) | Huge trees, huge files, pipes, hung programs | Depth limits (4 to 5 levels; a folder at a limit that holds more to walk is reported as could-not-be-tested, not passed over), file-size caps (512 MB for the key scan, read in pieces past 8 MB; 2 MB for plugin files; what a cap leaves unread is UNKNOWN), only regular files read and pipes opened non-blocking, a 4,000-file cap per plugin, a timeout on every child process and connection |
 | Path traversal and symlink attacks (CWE-22, CWE-59) | Writing outside a folder | Nothing is written. Directory walks don't follow symlinked folders |
 | Untrusted search path (CWE-426) | Running programs by name | By design for `PATH` (it checks what the user runs); see section 4 for virtual environments |
-| Race conditions (CWE-367) | A scanned file swapped between its size check and its read; the Mac fix's temporary and backup files | The command checks and reads a file through one read-only, non-blocking descriptor (`lib/files.mjs`). The Mac fix uses `mktemp`, checks the backup name is free first, and writes the file in place with one `cp` after its checks |
+| Race conditions (CWE-367) | A scanned file swapped between its size check and its read; the Mac fix's temporary and backup files | The command checks and reads a file through one read-only, non-blocking descriptor (`lib/files.mjs`). The Mac fix makes each file beside `/etc/ssl/cert.pem` with `mktemp`, which refuses a name anything already holds, a symbolic link included; gives the backup its dated name with `link`, which refuses a taken name; compares the backup, and then the file again immediately before the replacement, with the snapshot it checked; checks the new file where it will be renamed from, in the bundle's own folder; and replaces the file by a rename, in one step |
 | Supply chain (CWE-1357) | Dependencies, CI | No dependencies; every GitHub Action pinned by full commit SHA; Dependabot proposes updates through review |
 
 ### Three rules the tests enforce (0.1.9)
