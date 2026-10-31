@@ -95,22 +95,31 @@ Probes per runtime:
 ## The Mac fix
 
 `fix/fix-macos.sh` makes the advisory's change to `/etc/ssl/cert.pem` (removing the two roots, identified by their
-SHA-256 fingerprints, since 0.1.10) and adds checks around it:
+SHA-256 fingerprints since 0.1.10, and since 31 Oct 2026 any other certificate carrying either root's public key) and
+adds checks around it:
 
 ```
+set the traps (EXIT; HUP, INT, QUIT, TERM) before any command runs
 refuse if not macOS, a symbolic link (printing the command for the file it points to), or missing  ──> exit 2
-snapshot the file (mktemp in $TMPDIR); every check below reads the snapshot
-refuse a block that isn't a plain certificate, a certificate that can't be fingerprinted, or fewer
-  fingerprints read than certificates counted (the completeness gate)          ──> exit 2, nothing changed
+snapshot the file (mktemp in $TMPDIR, cp): a copy that can't be written is told apart from a file that can't be read
+refuse a line where -----BEGIN comes after other text, a block that isn't a plain certificate, a certificate that
+  can't be read for its fingerprint and its key, or fewer read than certificates counted (the completeness gate)
+                                                                                ──> exit 2, nothing changed
+find each withdrawn root by its fingerprint, and any other certificate carrying one's key
 < 50 certificates?  ──> the count, and whether a withdrawn root is in it, exit 2, nothing changed
-no withdrawn root?  ──> control, then re-test online ──> SAFE (or EXPOSED if it still trusts) ──> nothing changed
-build the cleaned file (each root's own lines only); its SHA-256 taken from the rebuild itself
+no withdrawn root?  ──> read the file itself again ──> control, then re-test online ──> SAFE (or EXPOSED if it still
+  trusts) ──> nothing changed
+build the cleaned file (each one's block and the empty line after it; a root's name lines only when they are exactly
+  what this Mac's openssl prints for it); its SHA-256 taken from the rebuild itself
   check: no withdrawn root left, count = before − removed        else exit 2, nothing changed
 control: /usr/bin/curl against an ordinary website ($CONTROL_URL, www.apple.com), through the file as it is
 sudo -v, on its own (where the interactive run asks for the password)
 backup: mktemp beside the file ──> cp ──> compare with the snapshot ──> link to the dated name (never overwrites one)
-compare the file with the snapshot again                                       else exit 2, nothing replaced
-replace(): mktemp beside the file ──> cp ──> chmod 644 ──> check it there (SHA-256, count, fingerprints) ──> rename
+checkbackup: the backup has the snapshot's SHA-256, holds each certificate to be removed as it was found, and cleaned
+  the same way gives the cleaned file's SHA-256                                 else exit 2, nothing replaced
+replace(): mktemp beside the file ──> cp ──> chmod 644 ──> check it there (SHA-256, count, fingerprints)
+  ──> compare the file with the snapshot again (else exit 2, nothing replaced) ──> rename
+a privileged step that fails ──> exit 2, and the line gives its own words (sudo's included)
 is the file now byte for byte the file we built (SHA-256)?
   no ──> restore the backup through replace(), EXPOSED, exit 1   <── the ONLY restore: two local files, no probe result
 control again, through the new file:
@@ -119,7 +128,8 @@ control again, through the new file:
   failed before and after ──> fixed in the file, not re-tested, exit 0
   loaded before, not after ──> UNKNOWN, exit 2, FIX KEPT, read by the curl code: 60 a certificate refused;
     6, 7 or 28 the network stopped answering; anything else given as it is
-a signal at any point ──> exit 2, and a line saying what the file holds, read from its SHA-256
+once the last reading is in, and during the cleanup at exit, HUP, INT, QUIT and TERM are ignored
+a signal before that ──> exit 2, and a line saying whether the file was changed and what it holds, read from its SHA-256
 ```
 
 A network result never restores the backup. Restoring returns the withdrawn roots, so a revert a hostile network
