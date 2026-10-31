@@ -15,11 +15,11 @@ import { droppedNodeOptions } from '../lib/run.mjs';
 import { checkBinaryAll, findOnPath, tmpTraces, tempDirs } from '../lib/binaries.mjs';
 import { checkVersionFiles, sitePackagesDirs, checkSitePackages, localImageDigests, checkImages, NOT_WALKED as VENV_NOT_WALKED } from '../lib/installs.mjs';
 import { listContainers, checkContainer, engineHost } from '../lib/containers.mjs';
-import { reposUnder, workflowsAddedSince, windowStart, NOT_WALKED as REPO_NOT_WALKED } from '../lib/workflows.mjs';
+import { reposUnder, workflowsAddedSince, windowStart, NOT_WALKED as REPO_NOT_WALKED, NESTED_SAID } from '../lib/workflows.mjs';
 import { scanRepo } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite, checkPluginsFolder, NOT_WALKED as WP_NOT_WALKED } from '../lib/wordpress.mjs';
 import { scanHeaders } from '../lib/headers.mjs';
-import { pathState, readText, listDir, denialCode, mandatoryRefusal, statBits, epermCauses, VENV_OWN_SAID } from '../lib/files.mjs';
+import { pathState, readText, listDir, denialCode, mandatoryRefusal, statBits, epermCauses, VENV_PACKAGES_SAID } from '../lib/files.mjs';
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
 import { safe, saw, withdrawUnreceipted } from '../lib/report.mjs';
 import { escapeHidden, escapeJsonHidden } from '../lib/escape.mjs';
@@ -102,7 +102,7 @@ const HOME = (() => {
     // a name with a slash or .. can't be a home folder's name (a directory user can be ada@corp.example)
     const h = /^[\w.@-]+$/.test(u) && !u.includes('..') ? (platform() === 'darwin' ? `/Users/${u}` : `/home/${u}`) : '';
     if (h && pathState(h) === 'dir') return h;
-    sudoHomeMissing = `run under sudo by ${clean(u)}, whose home folder was not found${h ? ` at ${h}` : ''}: root's home (${homedir()}) was searched instead. Run Wardlatch without sudo, or pass --paths`;
+    sudoHomeMissing = `run under sudo by ${u}, whose home folder was not found${h ? ` at ${h}` : ''}: root's home (${homedir()}) was searched instead. Run Wardlatch without sudo, or pass --paths`;
   }
   return homedir();
 })();
@@ -134,23 +134,22 @@ const all = [];
 // whether a machine passed depended on whether an empty ~/Development happened to exist).
 // safe() withdraws a receipt that does not hold and says which entry failed, so the reason it hands back is printed,
 // not the all-clear's own words: an UNKNOWN line must never read like a clean one (lib/report.mjs).
-// Stated gaps recorded for the incident being checked: folders the run could not open that do NOT change the exit code
-// (a service account's, by the owner's rule of 22 Oct 2026). An all-clear that sits beside them says how many, so the receipt
-// reads "I opened these, could not open 3, here they are and here is what would open them" — the only form in which
-// exit 0 is honest. Reset per incident; gaps() adds to it.
-let statedGaps = 0;
+// (Up to owner decision #33, 31 Oct 2026, folders a service owns that the run could not open were "stated gaps": a REVIEW
+// line beside the all-clear, which kept the exit code at 0 and carried their count in its receipt. Every folder the run
+// could not open is now UNKNOWN, so an all-clear never sits beside one, and there is no count to carry.)
 // `notSearched`: the folder names the walk behind this all-clear never enters (each walker's NOT_WALKED, and macOS's own
 // Library). They are part of the receipt: up to this fix node_modules, .git, .venv and venv hid whole trees with no
-// word, while docs/ARCHITECTURE.md said no name decides a walk (WV-4).
+// word, while docs/ARCHITECTURE.md said no name decides a walk (WV-4). The two sentences that are not names (a venv's
+// own package folders; a repository inside another, which the repository walk stops before) are said after them.
 const LIBRARY = 'macOS\'s own Library';
 const namesSaid = (names) => {
-  const n = names.filter((x) => x !== LIBRARY && x !== VENV_OWN_SAID);
-  return `folders named ${n.length > 1 ? `${n.slice(0, -1).join(', ')} or ${n.at(-1)}` : n[0]}, and ${LIBRARY} folders, are not searched${names.includes(VENV_OWN_SAID) ? `; ${VENV_OWN_SAID} are checked with it, not searched` : ''}`;
+  const n = names.filter((x) => x !== LIBRARY && x !== VENV_PACKAGES_SAID && x !== NESTED_SAID);
+  return `folders named ${n.length > 1 ? `${n.slice(0, -1).join(', ')} or ${n.at(-1)}` : n[0]}, and ${LIBRARY} folders, are not searched${names.includes(VENV_PACKAGES_SAID) ? `; ${VENV_PACKAGES_SAID} are checked with the environment, not searched for other environments` : ''}${names.includes(NESTED_SAID) ? `; ${NESTED_SAID} is not looked for: pass --paths with it to include it` : ''}`;
 };
 // They are said on the line under the all-clear, so its own sentence stays the one a reader (and a script) knows.
 function allClear(results, inc, kind, text, searched, notSearched) {
   if (searched.length) {
-    const row = { incident: inc.id, kind, ...safe(searched, { reason: text, gaps: statedGaps, ...(notSearched?.length ? { notSearched } : {}) }) };
+    const row = { incident: inc.id, kind, ...safe(searched, { reason: text, ...(notSearched?.length ? { notSearched } : {}) }) };
     results.push(row); print(row.status, row.reason);
     if (row.status === 'SAFE' && notSearched?.length) note('2', namesSaid(notSearched));
     return;
@@ -159,7 +158,7 @@ function allClear(results, inc, kind, text, searched, notSearched) {
     const reason = `none of the usual folders exist here (${roots.map(short).join(', ')}), so there was nothing to search: pass --paths for a folder elsewhere`;
     // nothing was opened, because none of these folders is there: "I looked for it and it was not there" is evidence of
     // absence, which a reader checks by looking for it too — not a place, so it is declared (lib/report.mjs saw())
-    const row = { incident: inc.id, kind, ...safe(roots.map((r) => saw(`looked for ${r}`)), { reason, gaps: statedGaps }) }; results.push(row); print(row.status, row.reason); return;
+    const row = { incident: inc.id, kind, ...safe(roots.map((r) => saw(`looked for ${r}`)), { reason }) }; results.push(row); print(row.status, row.reason); return;
   }
   const reason = `none of the folders given with --paths exist (${roots.map(short).join(', ')}), so nothing was searched`;
   results.push({ incident: inc.id, kind, status: 'UNKNOWN', reason });
@@ -169,7 +168,8 @@ function allClear(results, inc, kind, text, searched, notSearched) {
 // container, must never stand in for them)
 const RUNTIME_KINDS = ['node', 'curl', 'python', 'macos-system'];
 const hostRowsOf = (results) => results.filter((r) => RUNTIME_KINDS.includes(r.kind)).length;
-// rows that count for a summary line: a skipped-folders line is information beside it, never instead of it
+// rows that count for a summary line: a skipped-folders line is information beside it, never instead of it (no row has
+// been 'skipped' since decision #33: the service-folders row that replaced it is UNKNOWN, and counts)
 const counted = (results) => results.filter((r) => r.kind !== 'skipped');
 // Later copies on PATH that are scripts, and so were not run (lib/binaries.mjs copiesToRun): UNKNOWN, in --json too, so
 // a reader can tell a copy went unchecked, and so the exit code says 2 rather than 0.
@@ -194,10 +194,13 @@ function notRunRow(results, inc, what, paths) {
 //   - a searched root (a --paths folder, or a usual folder that exists) that can't be opened: UNKNOWN;
 //   - `found`: something already found whose own folders can't be read (a virtual environment's lib): UNKNOWN;
 //   - a folder below a root, owned by a person (this user, or a login account), could hold that person's projects or
-//     sites: UNKNOWN; owned by a service (root, a database, a container, certbot), it holds that service's data: one
-//     REVIEW line per check listing them, which doesn't change the exit code (lib/owners.mjs says which is which).
+//     sites: UNKNOWN, a row each; owned by a service (root, a database, a container, certbot): UNKNOWN too, grouped in
+//     one row per check that lists them (owner decision #33, 31 Oct 2026, "UNKNOWN too"; lib/owners.mjs says which is
+//     which). From 22 Oct to that decision the service's folders were one REVIEW line beside SAFE, exit 0: measured on
+//     /private/var/spool, 15 folders root and _postfix own read SAFE, exit 0. The person's are a row each because each
+//     may be a project of theirs; the service's are one row because a server has dozens, and one line says it as truly.
 //   - `review`: folders a check knows to be private by their place (a locked dot-folder under a web root: www-data's
-//     .ssh), listed in the REVIEW line whoever owns them.
+//     .ssh), in the same grouped row whoever owns them.
 //   - a folder that refuses with EPERM, whoever owns it: UNKNOWN, always (owner decision #32, 31 Oct 2026: "Yes,
 //     UNKNOWN"). From 6bf0555 to this fix it was a "stated gap" in the REVIEW line beside SAFE, exit 0, on the claim
 //     that EPERM was macOS's privacy protection and could not be forged without root. An unprivileged sandbox
@@ -207,7 +210,6 @@ function notRunRow(results, inc, what, paths) {
 // Up to e0e1c35 every locked folder was UNKNOWN, and any server with docker or certbot exited 2.
 // `searchesRoots`: whether this check searches the --paths folders at all (Plex's and GitLab's look only in their own
 // install places: a --paths folder that isn't there is nothing to them)
-// → the number of stated gaps, for the all-clear's receipt to record beside what it searched (lib/report.mjs).
 // `deep`: the folders the walk's depth cap stopped at with more below them, `levels` that cap: one UNKNOWN row. Up to this
 // fix the caps were silent, and a site one level past one read SAFE with no row (WV-7).
 function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, review = [], links = [], deep = [], levels } = {}) {
@@ -253,7 +255,9 @@ function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, revi
   // was true. "I chose not to look" now lands where "I could not look" already did.
   // (a link whose target the same walk listed never reaches here: lib/files.mjs unwalkedLinks)
   for (const d of [...new Set(links)].filter((x) => !found.includes(x))) {
-    unknown(d, 'is a link to a folder somewhere else, so it was not followed: pass --paths with the folder it points to, to include it');
+    // the installs check reads a linked venv's own package folders through the link (lib/installs.mjs), and says so
+    if (kind === 'install' && pathState(join(d, 'pyvenv.cfg')) === 'file') unknown(d, 'is a link to a virtual environment somewhere else: its own packages were checked through it, and nothing else in it was searched, since links are not followed: pass --paths with the folder it points to, to include it');
+    else unknown(d, 'is a link to a folder somewhere else, so it was not followed: pass --paths with the folder it points to, to include it');
   }
   const past = [...new Set(deep)];
   if (past.length) {
@@ -284,17 +288,18 @@ function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, revi
     skipped.push(d); why.set(d, code);
   }
   if (skipped.length) {
-    // The iron law says a SAFE needs a receipt a reader can check; a gap riding beside a SAFE and keeping the exit code
-    // at 0 needs one too: the basis per folder. Only a service's folders reach here (never an EPERM: decision #32).
+    // Owner decision #33: could-not-be-tested, exit 2, in ONE row for them all, with the basis per folder (the errno, the
+    // mode, the owner) so a reader can check each with one `ls -ld`. Only a service's folders, or ones private by their
+    // place, reach here (never an EPERM: decision #32). The row is the check's own kind, so it counts as a result: an
+    // all-clear is never printed beside it, as it is never printed beside a person's folder that could not be opened.
     const SUDO = 'run with `sudo` to include it';
     const folders = skipped.map((d) => { const b = basisOf(d, why.get(d) ?? null); return { path: d, code: b.code, basis: b.basis, remedy: SUDO }; });
     const say = (list) => list.slice(0, 8).map((f) => `${short(f.path)} (${f.basis})`).join(', ') + (list.length > 8 ? `, and ${list.length - 8} more` : '');
-    const reason = `${folders.length} folder${folders.length === 1 ? '' : 's'} owned by service accounts, or private by ${folders.length === 1 ? 'its' : 'their'} place, could not be opened and ${folders.length === 1 ? 'was' : 'were'} not searched: ${say(folders)}. Run Wardlatch with sudo to include ${folders.length === 1 ? 'it' : 'them'}`;
-    results.push({ incident: inc.id, kind: 'skipped', status: 'REVIEW', paths: skipped, folders, reason });
-    print('REVIEW', 'folders not searched'); note('2', reason);
+    const one = folders.length === 1;
+    const reason = `${folders.length} folder${one ? '' : 's'} owned by service accounts, or private by ${one ? 'its' : 'their'} place, could not be opened, so ${one ? 'it was' : 'they were'} not searched: ${say(folders)}. Run Wardlatch with sudo to include ${one ? 'it' : 'them'}`;
+    results.push({ incident: inc.id, kind, status: 'UNKNOWN', what: 'service folders', paths: skipped, folders, reason });
+    print('UNKNOWN', `${folders.length} folder${one ? '' : 's'} owned by service accounts, not searched`); note('33', reason);
   }
-  statedGaps += skipped.length;
-  return skipped.length;
 }
 
 // NODE_OPTIONS words a probe doesn't need to measure trust, and that change no trust: memory, warnings, traces
@@ -321,7 +326,6 @@ if (!json) {
 for (const inc of chosen) {
   if (!json) console.log(`\n${c('1', inc.title)} ${c('2', `(${inc.date})`)}`);
   const results = [];
-  statedGaps = 0;
   // only where the home folder is read: the trust check (the probes' ~/.curlrc, the go env file, the engine's config),
   // installs and headers always; the folder checks only when their usual folders, in the home, are the ones searched;
   // never the version checks, which read PATH
@@ -427,7 +431,7 @@ for (const inc of chosen) {
     }
     const down = canaries.filter((x) => !x.up).length;
     if (down) note('33', `${down} of ${canaries.length} test hosts did not answer`);
-    if (searchable.length) note('2', `virtual environments were looked for in ${searchable.length} folder${searchable.length === 1 ? '' : 's'}, 5 levels deep; ${namesSaid([...TRUST_NOT_WALKED, LIBRARY, VENV_OWN_SAID])}`);
+    if (searchable.length) note('2', `virtual environments were looked for in ${searchable.length} folder${searchable.length === 1 ? '' : 's'}, 5 levels deep; ${namesSaid([...TRUST_NOT_WALKED, LIBRARY, VENV_PACKAGES_SAID])}`);
   }
   // A trust check that found nothing to test is not an all-clear: possible anywhere, and always so for the machine itself
   // on Windows, whose program names discover() doesn't look for (a container row must not hide that). Up to 0.1.6
@@ -542,7 +546,7 @@ for (const inc of chosen) {
     // couldn't be asked keeps its own UNKNOWN row (and the exit code at 2) beside it, and one that isn't running its
     // REVIEW row; a finding or another gap doesn't.
     const onlyEngineGaps = counted(results).every((r) => r.engine && (r.status === 'UNKNOWN' || r.notRunning));
-    if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked${lookedFor ? ` for ${lookedFor},` : ''} in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean), inc.sitePackages ? [...VENV_NOT_WALKED, LIBRARY, VENV_OWN_SAID] : undefined);
+    if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked${lookedFor ? ` for ${lookedFor},` : ''} in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean), inc.sitePackages ? [...VENV_NOT_WALKED, LIBRARY, VENV_PACKAGES_SAID] : undefined);
   }
 
   // the window's start: an explicit UTC instant, or the review is UNKNOWN (up to 0.1.9 a bare date read SAFE: see
@@ -568,7 +572,7 @@ for (const inc of chosen) {
     // the all-clear names the instant and the date compared: up to 0.1.9 it said "since 2026-09-01", a day git read as
     // 1 Sep at the run's time of day
     if (counted(results).some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.fix}`);
-    else if (!counted(results).length) allClear(results, inc, 'workflow', `no workflow files added in commits dated on or after ${start.label} (committer date) in ${repoCount(repos)}`, searchable, [...REPO_NOT_WALKED, LIBRARY]);
+    else if (!counted(results).length) allClear(results, inc, 'workflow', `no workflow files added in commits dated on or after ${start.label} (committer date) in ${repoCount(repos)}`, searchable, [...REPO_NOT_WALKED, LIBRARY, NESTED_SAID]);
   }
   if (inc.type === 'secrets') {
     let repos = 0;
@@ -586,7 +590,7 @@ for (const inc of chosen) {
     }
     gaps(results, inc, 'secret', denied, { links, deep, levels: 4 });
     if (counted(results).some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.fix}`);
-    else if (!counted(results).length) allClear(results, inc, 'secret', `no committed keys found in the files of ${repoCount(repos)} (current files; history needs gitleaks or trufflehog)`, searchable, [...REPO_NOT_WALKED, LIBRARY]);
+    else if (!counted(results).length) allClear(results, inc, 'secret', `no committed keys found in the files of ${repoCount(repos)} (current files; history needs gitleaks or trufflehog)`, searchable, [...REPO_NOT_WALKED, LIBRARY, NESTED_SAID]);
   }
   if (inc.type === 'wordpress') {
     const denied = [...lockedRoots];
@@ -634,7 +638,7 @@ for (const inc of chosen) {
     // settings — places a reader can open. Up to 0.1.10 it also carried the words "the environment", and on a machine
     // with no settings file that phrase was the whole receipt behind "no name or email in the 0 header settings found
     // in 0 files": nothing to go and check (AUDIT-10). The environment is still read, and the reason still says so.
-    else if (!counted(results).length) allClear(results, inc, 'header', `no name or email in the ${h.settings} header setting${h.settings === 1 ? '' : 's'} found in ${h.read} file${h.read === 1 ? '' : 's'} and the environment`, [...h.files, ...searchable.filter((r) => !h.denied.includes(r))], searchable.length ? [...REPO_NOT_WALKED, LIBRARY] : undefined);
+    else if (!counted(results).length) allClear(results, inc, 'header', `no name or email in the ${h.settings} header setting${h.settings === 1 ? '' : 's'} found in ${h.read} file${h.read === 1 ? '' : 's'} and the environment`, [...h.files, ...searchable.filter((r) => !h.denied.includes(r))], searchable.length ? [...REPO_NOT_WALKED, LIBRARY, NESTED_SAID] : undefined);
     if (h.notUsed.length) note('2', `${h.notUsed.length} settings file${h.notUsed.length === 1 ? '' : 's'} this user can't open (so its tools can't read ${h.notUsed.length === 1 ? 'it' : 'them'} either): ${h.notUsed.slice(0, 4).map(short).join(', ')}${h.notUsed.length > 4 ? ', …' : ''}`);
     if (!h.id.name && !h.id.email) note('2', 'no git name or email is set, so only email-shaped values were looked for');
     note('2', `not covered: ${inc.notCovered}`);

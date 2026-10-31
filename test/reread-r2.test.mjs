@@ -178,9 +178,13 @@ test('W1 the trust check\'s environment label and a link it did not follow are p
   for (const r of reasons(j.rows)) assert.deepEqual(rawHidden(r), [], r);
 });
 
-test('W1 the escaper: every code point of Cc, Cf, Cs, Co, Cn, Zl, Zp and the tag block is escaped; every other is kept', async () => {
+// (Round 4: the set grew. Round 3's re-reads measured invisible characters outside these categories reaching both
+// outputs raw (variation selectors, U+034F, the Hangul fillers, U+2800), so every Default_Ignorable_Code_Point and
+// U+2800 are escaped too, and this test's "every other is kept" half would now call them wrongly escaped. Its set is
+// widened to match; test/reread-r3.test.mjs lists the re-reads' characters one by one, apart from any category.)
+test('W1 the escaper: every code point of Cc, Cf, Cs, Co, Cn, Zl, Zp, the tag block, Default_Ignorable_Code_Point and U+2800 is escaped; every other is kept', async () => {
   const { escapeHidden, escapeJsonHidden } = await import('../lib/escape.mjs');
-  const must = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\u{E0000}-\u{E007F}]/u;
+  const must = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\u2800\u{E0000}-\u{E007F}]/u;
   const bad = [];
   for (let cp = 0; cp <= 0x10ffff; cp++) {
     if (cp >= 0xd800 && cp <= 0xdfff) continue;   // lone surrogates: below
@@ -261,12 +265,13 @@ console.log(JSON.stringify(checkVersionFiles({ product: 'GitLab', fixedIn: '18.4
 // (R2-N2): a project made with `python3 -m venv .` holding services/api/.venv, a folder named site-packages holding a
 // stealer's venv, and a link named site-packages read SAFE, exit 0. Neither walk ever went into a venv found below a
 // searched folder (R2-N4), and the trust walk examined nothing when given a venv's lib or site-packages (RR-5).
-// The rule now: every folder given with --paths is walked; every venv met is checked (its site-packages, or its
-// certifi bundle) AND walked, except the folders it keeps its own files in (bin, include, lib, share, …), which are
-// checked with it and named in the receipt; a site-packages folder that is not a venv's own is walked like any folder,
-// and a link of that name follows the link rule. The venv's own folders are not walked because a real one is deep:
-// MEASURED, a fresh `python3 -m venv` (Python 3.14, pip 26.1.2) has folders 9 levels below its root, so walking it as
-// it is gives a depth-limit row, exit 2, on every `--paths <venv>`, the advice the trust check itself prints.
+// The rule as round 3 left it: every folder given with --paths is walked; every venv met is checked (its site-packages,
+// or its certifi bundle) AND walked, except the folders it keeps its own files in (bin, include, lib, share, …), said
+// to be "checked with it". Round 4 (round 3's re-reads measured that sentence untrue and the exclusion a false SAFE):
+// every venv met is checked and walked, all but its own package folders, which are checked and not walked
+// (lib/files.mjs venvPackages(), VENV_PACKAGES_SAID); a site-packages folder that is not a venv's own is walked like
+// any folder, and a link of that name follows the link rule. A real venv's 9-level folders (pip's tree) are in its
+// site-packages, so `--paths <venv>` still makes no depth-limit row (MEASURED by re-read 2, and in round 4).
 /** A venv for the trust walk: bin/python, pyvenv.cfg and a certifi bundle. */
 function certifiVenv(root) {
   const sp = join(root, 'lib', 'python3.12', 'site-packages');
@@ -311,17 +316,38 @@ test('RR-5 the trust walk given a venv\'s lib or site-packages folder probes tha
   }
 });
 
-test('R2-N1 walking a venv does not walk the folders it keeps its own files in, so --paths <venv> makes no depth-limit row', async () => {
-  // fails on the re-read's candidate fix (probe, then walk the venv as it is)
+// REWRITTEN 31 Oct 2026 (round 4). As first written this asserted that a venv's share/ tree past the depth cap makes NO
+// depth-limit row, which is true only because 471a4ea stopped walking a venv's bin, include, lib, share and etc
+// (VENV_OWN) and said they "are checked with it". Round 3's re-reads measured that sentence untrue (nothing in them was
+// read) and the exclusion a false SAFE: a stealer's venv in a project-venv's lib/, share/, bin/ or etc/ read SAFE, exit
+// 0, where 03d95c9 read EXPOSED. The brief for round 4 orders it fixed, so a venv's folders are walked like any others,
+// and a share/ tree deeper than the cap was not searched past it: an honest depth-limit row, UNKNOWN, never silence.
+// What this test was for still holds and is still asserted: a venv's own package folders, where a real venv's 9-level
+// folders are (pip's tree), are checked and not walked, so they make no depth-limit row (re-read 2 measured exactly this
+// with VENV_OWN emptied: no depth row on a real `python3 -m venv`).
+// (Second round-4 change, before the code it tests: inside a venv the walk met, a folder past the cap with no folder in
+// it cannot hold a venv a walk would check, so jupyter's lab extension tree, whose last folder past the cap holds only
+// files, is no row; a venv planted in share/ past the cap is, since nothing checked its packages. The first cut of this
+// rewrite counted the extension tree's leaf folder, which the iron law does not need: nothing there could be found.)
+test('R2-N1 a venv\'s own package folders are not walked, so pip\'s deep tree makes no depth-limit row; its share/ is walked, and past the cap it says so', async () => {
   const env = certifiVenv(join(fresh('n1-deep'), '.venv'));
   deepInside(env);
-  const r = await discovered([env]);
-  assert.deepEqual(r.deep, [], JSON.stringify(r));
+  const planted = join(env, 'share', 'a', 'b', 'c', 'd', 'e', '.venv');
+  put(join(planted, 'pyvenv.cfg'), 'home = /usr\n');
+  mkdirSync(join(planted, 'lib', 'python3.12', 'site-packages'), { recursive: true });
+  const under = (p, d) => p === d || p.startsWith(`${d}/`);
   const { sitePackagesDirs } = await import('../lib/installs.mjs');
-  for (const given of [env, dirname(env), join(env, 'lib')]) {
-    const deep = [], links = [];
-    sitePackagesDirs({ roots: [given], patterns: [], home: '', denied: [], deep, links });
-    assert.deepEqual(deep, [], `installs, --paths ${given}`);
+  const installsDeep = (given) => { const deep = [], links = []; sitePackagesDirs({ roots: [given], patterns: [], home: '', denied: [], deep, links }); return deep; };
+  // given its lib: only the package folder is below it, and it is the venv's own
+  assert.deepEqual((await discovered([join(env, 'lib')])).deep, [], 'trust, --paths <venv>/lib');
+  assert.deepEqual(installsDeep(join(env, 'lib')), [], 'installs, --paths <venv>/lib');
+  // given the venv, or the folder holding it: the venv planted in share/ is reported past the cap (one row, on its way),
+  // and nothing in lib, nor jupyter's tree, is
+  for (const given of [env, dirname(env)]) {
+    for (const [walk, deep] of [['trust', (await discovered([given])).deep], ['installs', installsDeep(given)]]) {
+      assert.equal(deep.length, 1, `${walk}, --paths ${given}: the planted venv past the cap is one depth-limit row: ${JSON.stringify(deep)}`);
+      assert.ok(under(planted, deep[0]) && under(deep[0], join(env, 'share', 'a')), `${walk}, --paths ${given}: ${JSON.stringify(deep)}`);
+    }
   }
 });
 

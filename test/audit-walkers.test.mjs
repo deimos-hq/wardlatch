@@ -85,9 +85,13 @@ test('AUDIT-1 the trust check never sees a virtual environment reached through a
   const rts = discover({ roots: [root], pathEnv: join(d, 'no-programs-here'), denied, found, notRun, untested });
   const mentioned = JSON.stringify([rts, denied, found, untested]);
   assert.ok(mentioned.includes(join(root, 'app2', '.venv')), 'the plain virtual environment is mentioned somewhere');
-  // the installs check finds the linked one, so the trust check cannot call it absent
-  assert.ok(sitePackagesDirs({ roots: [root], home: '', patterns: [] }).includes(join(root, 'app', '.venv', 'lib', 'python3.12', 'site-packages')),
+  // the installs check finds the linked one, so the trust check cannot call it absent. (Round 4: it is a link not
+  // followed in the installs walk too, so the walk reports it in `links`, which this call left out and so relied on the
+  // link staying silent: since R2-N9 a walk given no list for an entry it has throws. The list is passed, and read.)
+  const links = [];
+  assert.ok(sitePackagesDirs({ roots: [root], home: '', patterns: [], denied: [], links }).includes(join(root, 'app', '.venv', 'lib', 'python3.12', 'site-packages')),
     'the installs check does see the linked virtual environment');
+  assert.deepEqual(links, [join(root, 'app', '.venv')], 'and reports the link it did not follow');
   assert.ok(mentioned.includes(join(root, 'app', '.venv')),
     'the linked virtual environment, whose certifi bundle was not tested, is nowhere in discover()\'s rows or its denied, found and untested lists');
 });
