@@ -122,9 +122,12 @@ control again, through the new file:
 a signal at any point ──> exit 2, and a line saying what the file holds, read from its SHA-256
 ```
 
-A network result never restores the backup, and after one the script prints no command that would. Restoring
-returns the withdrawn roots, so a revert a hostile network could trigger would leave the Mac that most needs the fix
-as the one Mac that can never have it. On macOS every exit prints a line starting SAFE, EXPOSED or UNKNOWN.
+A network result never restores the backup. Restoring returns the withdrawn roots, so a revert a hostile network
+could trigger would leave the Mac that most needs the fix as the one Mac that can never have it. The command that
+restores it by hand (`Undo:   sudo cp -p '<backup>' '<file>'`) is printed under a SAFE result, whichever reading of the
+network that SAFE came from, and under a run stopped after the file was fixed; under EXPOSED, and under every UNKNOWN
+that follows a change, the line names the backup and what it holds and prints no command to restore it. On macOS every
+exit prints a line starting SAFE, EXPOSED or UNKNOWN.
 
 It uses `sudo` to ask for the privilege once (`sudo -v`) and for the commands that make, copy, link, rename or
 remove files beside the file or write it, and not at all when the file and its folder are writable by the user (as
