@@ -446,3 +446,21 @@ test('WV-10 the header check reports a link it did not follow as a link, never a
   assert.deepEqual(r.rows.filter((x) => x.status === 'SAFE'), []);
   assert.equal(r.code, 2);
 });
+
+// ---- WV-11: every clean Rank Math PRO install read UNKNOWN for the indicator search -------------------------------------
+// Ordinary plugin files (readme.txt, a .pot, .json files, LICENSE) were neither CODE nor INERT, so each was "not searched",
+// and every clean site exited 2 for ever. They are read and searched now: more reading, never less.
+test('WV-11 a plugin\'s readme.txt, .pot, .json and LICENSE are searched for the indicator, not reported as unsearched', async () => {
+  const { checkSite } = await import('../lib/wordpress.mjs');
+  const site = wpSite(fresh('wv11-site'), '3.0.124');
+  const plugin = join(site, 'wp-content', 'plugins', 'seo-by-rank-math-pro');
+  put(join(plugin, 'readme.txt'), '=== Rank Math PRO ===\n'); put(join(plugin, 'languages', 'rank-math-pro.pot'), 'msgid ""\n');
+  put(join(plugin, 'assets', 'block.json'), '{"name":"x"}\n'); put(join(plugin, 'LICENSE'), 'GPL\n');
+  const r = run(['--incident', 'wordpress-plugins-2026-10', '--paths', site]);
+  assert.deepEqual(unknowns(r), [], JSON.stringify(r.rows).slice(0, 1500));
+  assert.equal(r.code, 0);
+  // and they are really read: the indicator in one of them is found
+  const rules = [{ plugin: 'seo-by-rank-math-pro', mainFile: 'rank-math-pro.php', bad: ['3.0.123'], indicator: 'rank1cdn', fix: 'x' }];
+  put(join(plugin, 'assets', 'block.json'), '{"src":"https://rank1cdn.example/x.js"}\n');
+  assert.ok(checkSite(site, rules).some((f) => f.status === 'EXPOSED' && /block\.json/.test(f.what)), JSON.stringify(checkSite(site, rules)));
+});
