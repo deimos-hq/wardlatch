@@ -180,17 +180,19 @@ strip() {
     END { if (broken) exit 1 }' "$1" "$1"
 }
 
-# Everything below reads this snapshot, so the checks and the change are about the same bytes. $new is the file
-# beside $FILE that the replacement is built in; it is empty until there is one.
+# Everything below reads this snapshot, so the checks and the change are about the same bytes.
 # HUP, INT and TERM as well as EXIT, which is what the one-line fix on the page traps. An interrupt has to STOP
 # this script, and on EXIT alone it did not: measured on 29 Oct 2026 under macOS's /bin/bash 3.2.57, a SIGINT
 # arriving while bash waits on a plain foreground command is swallowed, and bash carries on to the next line with
 # `set -euo pipefail` in force. Interrupted just before the write, the script went on to replace the file and
 # printed SAFE, exit 0, about a run that had been cancelled. (bash does stop if the signal lands inside a command
 # substitution, so the old shape failed only some of the time, which is worse.)
-new=        # the file beside $FILE, while there is one
+new=''        # the file beside $FILE a replacement is built in, while there is one
 bnew=''       # the file beside $FILE the backup is copied into, until it has its dated name
-replaced=   # set once $FILE has been replaced, so a run stopped after that can say so
+writing=''    # set just BEFORE the first file is made beside $FILE: until then this run has written nothing there
+published=''  # set once the backup has its dated name
+replaced=''   # set once the cleaned file has been renamed over $FILE
+orig='' want='' after='' backup='' naaa=0 nems=0 found=0
 # Every command here ends in `|| true`, and that is load-bearing rather than tidy. Measured on /bin/bash 3.2.57:
 # with `set -e` in force, a failing command inside the EXIT trap ends the trap AND overrides the script's exit
 # status, so one failed `rm` turned `exit 2` ("couldn't tell") into `exit 1`, which the published exit-code table
@@ -206,18 +208,60 @@ strays() {
 # A signal. Exit 2, not the conventional 130: 2 is this script's "couldn't tell, read the printed line", and an
 # interrupted run reached no verdict, which is the same thing to a fleet tool. The page publishes an exit-code
 # table that Jamf, Kandji and Intune policies are built on, and a fourth code in it would be one no policy has a
-# branch for. If $FILE has already been replaced by then, this says so and names the way back: exit 2 tells the
-# reader to read the printed line, and a stopped run that changed the file and printed nothing left them with
-# neither a line nor a clue.
+# branch for. It ALWAYS prints a line, because exit 2 tells the reader to read one.
+# What it says about $FILE it reads from $FILE, by SHA-256, against the two files this run knows: the file it read
+# and the file it built. Until 31 Oct 2026 it went by a flag set after the rename returned, so a signal between the
+# rename and the flag left the file changed and nothing printed, and a signal during the content-mismatch restore
+# said "replaced with the cleaned file (removed both withdrawn roots)" about a file holding both of them again.
 stopped() {
+  local now
+  trap '' HUP INT TERM
   clean
-  [ -z "$replaced" ] || {
+  if [ -z "$writing" ]; then
+    echo "UNKNOWN  Stopped before this changed anything: nothing was written to $FILE or beside it. Run this again."
+    exit 2
+  fi
+  now=$(sha "$FILE") || now=''
+  if [ -n "$want" ] && [ "$now" = "$want" ]; then
     echo "UNKNOWN  Stopped before this could re-test, and $FILE had already been replaced with the cleaned file"
     echo "         ($(removed_phrase), kept $after). It is whole, not half-written. Run this again."
-    echo "         Backup: $backup"
-    echo "         Undo:   sudo cp -p '$backup' '$FILE'"
-  }
+    if [ -n "$published" ]; then
+      echo "         Backup: $backup"
+      echo "         Undo:   sudo cp -p '$backup' '$FILE'"
+    fi
+  elif [ -n "$orig" ] && [ "$now" = "$orig" ]; then
+    echo "UNKNOWN  Stopped. $FILE is the file this run read, and still holds $(held). Run this again."
+    [ -z "$replaced" ] || echo "         This run had replaced it; it holds the original again."
+    [ -z "$published" ] || echo "         Backup: $backup (the same file)"
+  else
+    echo "UNKNOWN  Stopped, and $FILE holds bytes this run didn't build or check: it is neither the file this run read"
+    echo "         nor the cleaned file. Find what else wrote to it, then run this again; please report this."
+    [ -z "$published" ] || echo "         Backup: $backup (the file as this run read it; it holds $(held))"
+  fi
   exit 2
+}
+# The names of the withdrawn roots this file held, from what roots() found in it. Copies are counted.
+held() {
+  local a=$AAA_NAME e=$EMS_NAME
+  [ "$naaa" -le 1 ] || a="$naaa copies of $AAA_NAME"
+  [ "$nems" -le 1 ] || e="$nems copies of $EMS_NAME"
+  if [ "$naaa" -gt 0 ] && [ "$nems" -gt 0 ]; then echo "$a and $e"
+  elif [ "$naaa" -gt 0 ]; then echo "$a"
+  else echo "$e"; fi
+}
+# What this run removed, by name, and nothing it did not establish. Apple added emSign ECC Root CA - G3 after Mojave,
+# so every Mac of that era holds ONE of the two, and this says which one was removed and that this FILE did not hold
+# the other. Until 31 Oct 2026 it said "removed both withdrawn roots" whenever it removed two certificates -- two
+# copies of AAA Certificate Services included -- and "the other was already absent from this Mac", which is a claim
+# about a Mac drawn from one file.
+removed_phrase() {
+  if [ "$naaa" -gt 0 ] && [ "$nems" -gt 0 ]; then
+    if [ "$found" -eq 2 ]; then echo "removed both withdrawn roots"; else echo "removed both withdrawn roots ($(held))"; fi
+  elif [ "$naaa" -gt 0 ]; then
+    echo "removed $(held) (this file did not hold the other withdrawn root, $EMS_NAME)"
+  else
+    echo "removed $(held) (this file did not hold the other withdrawn root, $AAA_NAME)"
+  fi
 }
 # Puts the bytes of $1 into $FILE in one step, and the ONLY thing in this script that writes to $FILE: a copy into
 # a file beside it, then a rename over it. A rename within one directory is one step the kernel either did or
@@ -305,7 +349,7 @@ spec=$(roots "$snap") || {
   echo "         Nothing changed."
   exit 2
 }
-drop='' naaa=0 nems=0
+drop=''
 # Split on purpose: roots() prints "position root" pairs, digits and AAA or EMS only.
 # shellcheck disable=SC2086
 set -f; set -- $spec; set +f
@@ -365,30 +409,6 @@ if [ "$found" -eq 0 ]; then
   exit 0
 fi
 
-# The names of the withdrawn roots this file held, from what roots() found in it. Copies are counted.
-held() {
-  local a=$AAA_NAME e=$EMS_NAME
-  [ "$naaa" -le 1 ] || a="$naaa copies of $AAA_NAME"
-  [ "$nems" -le 1 ] || e="$nems copies of $EMS_NAME"
-  if [ "$naaa" -gt 0 ] && [ "$nems" -gt 0 ]; then echo "$a and $e"
-  elif [ "$naaa" -gt 0 ]; then echo "$a"
-  else echo "$e"; fi
-}
-# What this run removed, by name, and nothing it did not establish. Apple added emSign ECC Root CA - G3 after Mojave,
-# so every Mac of that era holds ONE of the two, and this says which one was removed and that this FILE did not hold
-# the other. Until 31 Oct 2026 it said "removed both withdrawn roots" whenever it removed two certificates -- two
-# copies of AAA Certificate Services included -- and "the other was already absent from this Mac", which is a claim
-# about a Mac drawn from one file.
-removed_phrase() {
-  if [ "$naaa" -gt 0 ] && [ "$nems" -gt 0 ]; then
-    if [ "$found" -eq 2 ]; then echo "removed both withdrawn roots"; else echo "removed both withdrawn roots ($(held))"; fi
-  elif [ "$naaa" -gt 0 ]; then
-    echo "removed $(held) (this file did not hold the other withdrawn root, $EMS_NAME)"
-  else
-    echo "removed $(held) (this file did not hold the other withdrawn root, $AAA_NAME)"
-  fi
-}
-
 strip "$snap" "$drop" >"$tmp" || { echo "UNKNOWN  Couldn't build the cleaned file, so nothing was changed. Please report this."; exit 2; }
 # The SHA-256 of the cleaned file, taken from the rebuild itself rather than from the copy in the temporary folder:
 # replace() will rename into place only a file with exactly this digest that passes the checks below again.
@@ -440,12 +460,14 @@ fi
 # was made on -- and only then given its dated name, which link(2) refuses if anything at all is already there.
 # Until 31 Oct 2026 the backup was compared with $FILE, and the "changed while this ran" check came BEFORE the backup
 # step, which is where the interactive run waits for the password: a change made during that wait was in the backup
-# and in $FILE, both comparisons passed, and the cleaned OLD snapshot was renamed over it. Measured: an
+# and in $FILE, both comparisons passed, and the cleaned old snapshot was renamed over it. Measured: an
 # administrator's root appended meanwhile was gone from the file, kept only in the backup, and the run said SAFE.
+writing=1
 bnew=$($SUDO mktemp "$DIR/.wardlatch-backup.$$.XXXXXX" 2>/dev/null) || { bnew=''; nobackup "Couldn't make a file beside $FILE for the backup (mktemp failed). Check the disk has room (df -h /)"; }
 $SUDO cp -p "$FILE" "$bnew" || nobackup "Couldn't copy $FILE to make the backup (cp failed). Check the disk has room (df -h /)"
 cmp -s "$bnew" "$snap" || nobackup "The backup copy isn't the file this run checked: $FILE changed while this ran, or the copy went wrong"
 $SUDO link "$bnew" "$backup" 2>/dev/null || nobackup "Couldn't give the backup its dated name, $backup"
+published=1
 if $SUDO rm -f "$bnew"; then bnew=''; fi
 # And once more, immediately before the replacement: the file must still be the snapshot the cleaned file was built
 # from, or the replacement would throw away whatever changed it.
@@ -532,8 +554,7 @@ else
       # needs one of them, or something on this network answered the two requests differently -- and that second
       # reading is what an attack on this Mac looks like. Both say the same thing about what to do, which is why there
       # is no revert here, no revert-reason for one, and no Undo line: putting a withdrawn root back to make a page
-      # load is not a repair, and on the second reading it would hand it back to a Mac already under attack. Until
-      # 31 Oct 2026 this printed the Undo command under "Decide it yourself from the two lines below".
+      # load is not a repair, and on the second reading it would hand it back to a Mac already under attack.
       echo "UNKNOWN  Fixed in the file ($(removed_phrase), kept $after), but an ordinary website that"
       echo "         loaded through the old file (curl 0) doesn't load through the new one (curl 60), which means its"
       echo "         certificate was refused. The certificates in the two files differ only by $(held), so"
