@@ -2429,7 +2429,7 @@ respki() {   # $1 = certificate, $2 = SubjectPublicKeyInfo (DER hex), $3 = out: 
   local h old oh ol t th tl tbs after inner
   h=$(/usr/bin/openssl x509 -in "$1" -outform DER | xxd -p | tr -d '\n'); old=$(spkihex "$1")
   read -r oh ol <<<"$(derhdr "$h")"; t=${h:$oh}; read -r th tl <<<"$(derhdr "$t")"
-  [ "$oh" -gt 0 ] && [ "$th" -gt 0 ] || fail "a key in another encoding: $1 is not a certificate this can rebuild"
+  { [ "$oh" -gt 0 ] && [ "$th" -gt 0 ]; } || fail "a key in another encoding: $1 is not a certificate this can rebuild"
   tbs=${t:$th:$((tl * 2))}; after=${t:$((th + tl * 2))}
   case "$tbs" in *"$old"*"$old"*) fail "a key in another encoding: the key is in $1 twice" ;; *"$old"*) ;; *) fail "a key in another encoding: the key was not found in $1" ;; esac
   tbs=${tbs/"$old"/"$2"}
@@ -2452,13 +2452,13 @@ reenc() {    # $1 = certificate, $2 = how, $3 = out
 }
 # LibreSSL trusts each encoding: a throwaway root of the same kind, re-encoded the same way, still verifies a leaf it
 # signed (for RSA-PSS, a leaf signed with PSS, which the key labelled that way is for).
-/usr/bin/openssl ecparam -name secp384r1 -genkey -noout -out "$d/ec.key" 2>/dev/null &&
+{ /usr/bin/openssl ecparam -name secp384r1 -genkey -noout -out "$d/ec.key" 2>/dev/null &&
   /usr/bin/openssl req -x509 -new -key "$d/ec.key" -sha384 -days 30 -subj /CN=Throwaway-P384 -out "$d/ec.pem" 2>/dev/null &&
   /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -keyout "$d/rsa.key" -sha256 -days 30 -subj /CN=Throwaway-RSA -out "$d/rsa.pem" 2>/dev/null &&
   /usr/bin/openssl req -newkey rsa:2048 -nodes -keyout "$d/leaf.key" -subj /CN=leaf.example -out "$d/leaf.csr" 2>/dev/null &&
   /usr/bin/openssl x509 -req -in "$d/leaf.csr" -CA "$d/ec.pem" -CAkey "$d/ec.key" -set_serial 2 -days 30 -sha384 -out "$d/ec-leaf.pem" 2>/dev/null &&
   /usr/bin/openssl x509 -req -in "$d/leaf.csr" -CA "$d/rsa.pem" -CAkey "$d/rsa.key" -set_serial 3 -days 30 -sha256 \
-    -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:32 -out "$d/rsa-leaf.pem" 2>/dev/null ||
+    -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:32 -out "$d/rsa-leaf.pem" 2>/dev/null; } ||
   fail "a key in another encoding: openssl could not make the throwaway roots"
 for how in compressed hybrid explicit explicit-compressed pss; do
   if [ "$how" = pss ]; then t=rsa; else t=ec; fi

@@ -505,7 +505,7 @@ checkbackup() {
   local s=$spec b=$before
   [ "$(sha "$backup")" = "$orig" ] || return 1
   inspect "$backup" || return 1
-  [ "$spec" = "$s" ] && [ "$before" -eq "$b" ] || return 1
+  { [ "$spec" = "$s" ] && [ "$before" -eq "$b" ]; } || return 1
   [ "$(strip "$backup" "$drop" | sha -)" = "$want" ]
 }
 # The backup copy failed or isn't the file this run checked: the partial copy is removed and the dated name is never
