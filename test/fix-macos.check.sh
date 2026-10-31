@@ -1341,20 +1341,25 @@ ok "a certificate whose fingerprint isn't one makes the run UNKNOWN, and nothing
 # ---- r2 end case
 
 # ---- r2 case: marker-comment
-# A comment that mentions the BEGIN marker is not a certificate: LibreSSL reads a certificate only from a line that
-# starts with it. Until 31 Oct 2026 the fix counted the marker anywhere in a line, said "a certificate can't be
-# read" about a bundle LibreSSL reads without complaint, and could never fix it.
+# A comment that mentions the BEGIN marker after other text stops the run: UNKNOWN, exit 2, nothing changed, and the
+# line says why. Until the morning of 31 Oct 2026 the fix counted the marker anywhere in a line and called this bundle
+# unreadable ("a certificate can't be read"); r2 then counted only markers at the start of a line, on the model that
+# LibreSSL reads a certificate from nowhere else, and this case expected the bundle fixed. That model is untrue:
+# LibreSSL reads the file 253 bytes at a time, so a marker at byte 253, 506, ... of a long line starts a certificate it
+# trusts (OpenSSL 3.6.4 at byte 254), and a withdrawn root hidden that way stayed in the file under SAFE, exit 0 (the
+# r3 case begin-mid-line). The fix now refuses a marker anywhere but at the start of a line, this comment's included,
+# because it cannot know which reader of the file sees which; refusing is UNKNOWN, never a false SAFE.
 d=$r2/marker; mkdir "$d"
 note='# Corporate additions. Paste each certificate below, from its -----BEGIN CERTIFICATE----- line to its -----END CERTIFICATE----- line.'
 { cat "$work/original.pem"; printf '%s\n' "$note"; cat "$r2/corp.pem"; } >"$d/cert.pem"
+cp "$d/cert.pem" "$d/cert.before"
 run "$d/cert.pem" "$offline" "$OFFLINE"
-[ "$code" -eq 0 ] || fail "a comment naming the marker: expected the bundle fixed, exit 0, got $code"
-[ "$(certs_in "$d/cert.pem")" -eq $((total - 1)) ] || fail "a comment naming the marker: expected $((total - 1)) certificates, got $(certs_in "$d/cert.pem")"
-[ "$(bad "$d/cert.pem")" -eq 0 ] || fail "a comment naming the marker: a withdrawn root is still there"
-grep -qxF -- "$note" "$d/cert.pem" || fail "a comment naming the marker: the comment was deleted"
-grep -qF -- "$(sed -n 2p "$r2/corp.pem")" "$d/cert.pem" || fail "a comment naming the marker: the corporate root was deleted"
-rm -f "$d"/cert.pem.wardlatch-*.bak
-ok "a comment that mentions the BEGIN marker is kept, and the bundle around it is fixed"
+[ "$code" -eq 2 ] || fail "a comment naming the marker: expected UNKNOWN, exit 2, got $code"
+grep -q '^UNKNOWN' <<<"$out" || fail "a comment naming the marker: expected UNKNOWN"
+grep -q 'BEGIN comes after other text' <<<"$out" || fail "a comment naming the marker: it did not say a line holds the marker after other text"
+cmp -s "$d/cert.pem" "$d/cert.before" || fail "a comment naming the marker: the bundle changed"
+[ "$(baks "$d/cert.pem")" -eq 0 ] || fail "a comment naming the marker: it wrote a backup"
+ok "a comment that mentions the BEGIN marker after other text stops the run, and nothing changes"
 # ---- r2 end case
 
 # ---- r2 case: strip-own-lines
