@@ -556,3 +556,17 @@ test('a venv one level past the depth floor makes no depth-limit row for its bin
   assert.ok(r.envs.includes(env), JSON.stringify(r.envs));
   assert.deepEqual(r.deep, [plain], 'trust');
 });
+
+// The other half of that rule: inside a venv, a site-packages folder past the cap that the walk never met is never
+// "nothing to search", folders in it or not, because the installs walk checks one wherever it meets it and the files it
+// looks for (cook.pth) are files. Without this, a stealer's loose site-packages two levels past the floor, inside a venv,
+// left no row.
+test('inside a venv, a site-packages folder past the depth floor that nothing checked is a depth-limit row, folders in it or not', async () => {
+  const root = fresh('own-sp-past-floor');
+  const env = certifiVenv(join(root, 'a', 'b', 'c', 'd', '.venv'));
+  put(join(env, 'vendor', 'site-packages', 'cook.pth'), 'import os\n');
+  const { sitePackagesDirs } = await import('../lib/installs.mjs');
+  const deep = [], links = [];
+  sitePackagesDirs({ roots: [root], patterns: [], home: '', denied: [], deep, links });
+  assert.deepEqual(deep, [join(env, 'vendor')], 'installs');
+});
