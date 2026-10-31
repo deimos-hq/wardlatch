@@ -184,7 +184,7 @@ test('W1 the trust check\'s environment label and a link it did not follow are p
 // widened to match; test/reread-r3.test.mjs lists the re-reads' characters one by one, apart from any category.)
 test('W1 the escaper: every code point of Cc, Cf, Cs, Co, Cn, Zl, Zp, the tag block, Default_Ignorable_Code_Point and U+2800 is escaped; every other is kept', async () => {
   const { escapeHidden, escapeJsonHidden } = await import('../lib/escape.mjs');
-  const must = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}⠀\u{E0000}-\u{E007F}]/u;
+  const must = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\u2800\u{E0000}-\u{E007F}]/u;
   const bad = [];
   for (let cp = 0; cp <= 0x10ffff; cp++) {
     if (cp >= 0xd800 && cp <= 0xdfff) continue;   // lone surrogates: below

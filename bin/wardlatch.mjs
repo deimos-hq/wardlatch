@@ -102,7 +102,7 @@ const HOME = (() => {
     // a name with a slash or .. can't be a home folder's name (a directory user can be ada@corp.example)
     const h = /^[\w.@-]+$/.test(u) && !u.includes('..') ? (platform() === 'darwin' ? `/Users/${u}` : `/home/${u}`) : '';
     if (h && pathState(h) === 'dir') return h;
-    sudoHomeMissing = `run under sudo by ${clean(u)}, whose home folder was not found${h ? ` at ${h}` : ''}: root's home (${homedir()}) was searched instead. Run Wardlatch without sudo, or pass --paths`;
+    sudoHomeMissing = `run under sudo by ${u}, whose home folder was not found${h ? ` at ${h}` : ''}: root's home (${homedir()}) was searched instead. Run Wardlatch without sudo, or pass --paths`;
   }
   return homedir();
 })();

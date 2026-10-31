@@ -293,3 +293,44 @@ test('W1 residual: every Default_Ignorable_Code_Point and U+2800 is escaped by b
   const v = `a${String.fromCodePoint(0xfe0f, 0xe0101, 0x3164, 0x2800)}b`;
   assert.equal(JSON.parse(escapeJsonHidden(JSON.stringify({ v }))).v, v, 'JSON.parse gives the real value back');
 });
+
+// ---- W1 nit: the escaper's text output was ambiguous --------------------------------------------------------------------
+// Round 3's re-read 2, finding 9 (MEASURED there): the escaper wrote a hidden character as \u{202e} or \x85 and left a
+// backslash on the disk as it was, so a folder literally named t\u{202e}t printed exactly like one holding a real
+// U+202E. The text a person or an agent reads must say which it was. The rule this asserts, by decoding: a backslash is
+// written \\ where it would otherwise begin one of the escaper's own forms (before \, x, u, or a hidden character), and
+// left as it is elsewhere, so a command in the incident data such as the eMudhra fix's awk pattern \/CN= prints as
+// written. The decoder below reads \\ as a backslash, \xHH and \u{H…} as the character, and any other \ as itself.
+const decode = (s) => s.replace(/\\(?:\\|x([0-9a-f]{2})|u\{([0-9a-f]+)\})/g, (m, x, u) => (m === '\\\\' ? '\\' : String.fromCodePoint(parseInt(x ?? u, 16))));
+test('W1 nit: the escaper\'s text output is unambiguous: a literal \\u{202e} and a real U+202E print differently, and every string decodes back', async () => {
+  const { escapeHidden } = await import('../lib/escape.mjs');
+  const literal = 't\\u{202e}t', real = 't\u202et';
+  assert.notEqual(escapeHidden(literal), escapeHidden(real), `${escapeHidden(literal)} vs ${escapeHidden(real)}`);
+  // every string built from the pieces that make the forms ambiguous decodes back to itself
+  const parts = ['\\', 'x', 'u', '{', '}', '2', '0', '2e', 'e', 'a', '/', ' ', '\u202e', '\x85', '\u{e0041}', '\ufe0f', '\n'];
+  let seed = 7; const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  for (let i = 0; i < 20000; i++) {
+    const s = Array.from({ length: 1 + rnd(9) }, () => parts[rnd(parts.length)]).join('');
+    const out = escapeHidden(s);
+    assert.equal(decode(out), s, `${JSON.stringify(s)} printed as ${JSON.stringify(out)}`);
+  }
+  // as a person reads it: two folders, one named with the six characters \u{202e}, one holding the real character
+  const root = fresh('w1-backslash');
+  const a = litellmVenv(join(root, literal, '.venv')), b = litellmVenv(join(root, real, '.venv'));
+  const t = text([...LITELLM, '--paths', root]);
+  const shown = t.out.split('\n').filter((l) => l.startsWith('EXPOSED  cook.pth')).map((l) => decode(l.slice('EXPOSED  cook.pth  '.length)));
+  assert.deepEqual(shown.sort(), [a, b].sort(), t.out.slice(0, 1500));
+});
+
+test('W1 nit: what the incident data says is printed as written: no text in it changes under the escaper', async () => {
+  const { escapeHidden } = await import('../lib/escape.mjs');
+  const { readdirSync: ls, readFileSync: read } = await import('node:fs');
+  const strings = (v) => (typeof v === 'string' ? [v] : Array.isArray(v) ? v.flatMap(strings) : v && typeof v === 'object' ? Object.values(v).flatMap(strings) : []);
+  const changed = [];
+  for (const f of ls(join(ROOT, 'lib', 'incidents')).filter((n) => n.endsWith('.json'))) {
+    for (const s of strings(JSON.parse(read(join(ROOT, 'lib', 'incidents', f), 'utf8')))) if (escapeHidden(s) !== s) changed.push(`${f}: ${s.slice(0, 120)}`);
+  }
+  // the eMudhra macOS fix carries an awk pattern with \/ in it, which a person copies and runs
+  assert.ok(strings(JSON.parse(read(join(ROOT, 'lib', 'incidents', 'emudhra-2026-10.json'), 'utf8'))).some((s) => s.includes('\\/CN=')), 'premise');
+  assert.deepEqual(changed, []);
+});
