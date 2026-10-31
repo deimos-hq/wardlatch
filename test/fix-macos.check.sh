@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=67
+expect_cases=68
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -2044,6 +2044,34 @@ b=$(find "$d" -maxdepth 1 -name 'cert.pem.wardlatch-*.bak')
 [ -z "$(beside "$d/cert.pem")" ] || fail "a change while the new file was made: it left $(beside "$d/cert.pem") beside the bundle"
 rm -f "$d"/cert.pem.wardlatch-*.bak
 ok "a change made while the new file is built and checked stops the run at the rename, and the change is kept"
+# ---- r3 end case
+
+# ---- r3 case: sudo-refused-later
+# sudo granting `sudo -v` and refusing a later call -- with `Defaults timestamp_timeout=0`, a hardening setting, every
+# call asks for the password again. The run must say that sudo refused, in sudo's own words, and blame nothing else.
+# Until 31 Oct 2026 a refusal at the backup's mktemp was "Check the disk has room (df -h /)" with sudo's words sent to
+# /dev/null, and the copy and the write said the same (the third read). The sudo stand-in (WL_SUDO=grant) runs every
+# other call as this user; the bundle is read-only to it, so the fix uses sudo, and its folder is writable, so the
+# granted calls work. Calls: 1 -v, 2 the backup's mktemp, 3 its copy, 4 its link, 6 the new file's mktemp, 7 its copy,
+# 8 its chmod, 9 the rename (5, removing the copy after the link, may fail without harm, so it is not one of them).
+d=$work/r3/sudolater; mkdir -p "$d"
+for n in 2 3 4 6 7 8 9; do
+  rm -f "$d"/cert.pem "$d"/cert.pem.wardlatch-*.bak "$d/state"
+  cp "$work/original.pem" "$d/cert.pem"; chmod 444 "$d/cert.pem"
+  stderr_ok=1
+  run "$d/cert.pem" PATH="$shims:$PATH" WL_SUDO=grant WL_SUDO_REFUSE="$n" WL_SUDO_STATE="$d/state" "$offline" "$OFFLINE"
+  stderr_ok=''
+  [ "$(cat "$d/state")" -ge "$n" ] || fail "sudo refused at call $n: the run made only $(cat "$d/state") sudo calls, so this case would measure nothing"
+  [ "$code" -eq 2 ] || fail "sudo refused at call $n: expected UNKNOWN, exit 2, got $code"
+  grep -q '^UNKNOWN' <<<"$out" || fail "sudo refused at call $n: expected UNKNOWN"
+  grep -qF 'sudo: 3 incorrect password attempts' <<<"$out" || fail "sudo refused at call $n: the line did not give sudo's own words"
+  grep -qi 'disk\|df -h' <<<"$out" && fail "sudo refused at call $n: it blamed the disk"
+  [ ! -s "$work/stderr" ] || fail "sudo refused at call $n: sudo's words went to stderr instead of the line: $(cat "$work/stderr")"
+  cmp -s "$d/cert.pem" "$work/original.pem" || fail "sudo refused at call $n: the bundle changed"
+  [ -z "$(beside "$d/cert.pem")" ] || fail "sudo refused at call $n: it left $(beside "$d/cert.pem") beside the bundle"
+done
+chmod 644 "$d/cert.pem"
+ok "sudo refusing a later call is reported in sudo's own words, and nothing is blamed on the disk"
 # ---- r3 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.

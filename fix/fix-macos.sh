@@ -253,7 +253,7 @@ bnew=''       # the file beside $FILE the backup is copied into, until it has it
 writing=''    # set just BEFORE the first file is made beside $FILE: until then this run has written nothing there
 published=''  # set once the backup has its dated name
 replaced=''   # set once the cleaned file has been renamed over $FILE
-orig='' want='' after='' backup='' naaa=0 nems=0 kaaa=0 kems=0 found=0 kind=''
+orig='' want='' after='' backup='' naaa=0 nems=0 kaaa=0 kems=0 found=0 kind='' why='' step=''
 # Every command here ends in `|| true`, and that is load-bearing rather than tidy. Measured on /bin/bash 3.2.57:
 # with `set -e` in force, a failing command inside the EXIT trap ends the trap AND overrides the script's exit
 # status, so one failed `rm` turned `exit 2` ("couldn't tell") into `exit 1`, which the published exit-code table
@@ -354,8 +354,9 @@ removed_phrase() {
 replace() {
   local got expect now
   if [ "$1" = "$tmp" ]; then expect=$want; else expect=$orig; fi
-  new=$($SUDO mktemp "$DIR/.wardlatch-new.$$.XXXXXX" 2>/dev/null) || { new=''; return 1; }
-  if $SUDO cp "$1" "$new" && $SUDO chmod 644 "$new"; then
+  step=mktemp; new=$($SUDO mktemp "$DIR/.wardlatch-new.$$.XXXXXX" 2>&1) || { why=$new; new=''; return 1; }
+  case "$new" in "$DIR"/.wardlatch-new.$$.*) ;; *) why=$new; new=''; return 1 ;; esac
+  if step=cp && why=$($SUDO cp "$1" "$new" 2>&1) && step=chmod && why=$($SUDO chmod 644 "$new" 2>&1); then
     got=$(sha "$new") || got=''
     if [ "$got" != "$expect" ] || { [ "$1" = "$tmp" ] && ! built "$new"; }; then
       $SUDO rm -f "$new" || true
@@ -372,12 +373,23 @@ replace() {
       now=$(sha "$FILE") || now=''
       if [ "$now" != "$orig" ]; then $SUDO rm -f "$new" || true; new=''; return 4; fi
     fi
-    $SUDO mv "$new" "$FILE" && { new=''; return 0; }
+    step=mv; why=$($SUDO mv "$new" "$FILE" 2>&1) && { new=''; return 0; }
   fi
   $SUDO rm -f "$new" || true
   new=''
   return 1
 }
+# What a failed command said, for the line that reports it: its own words from stderr ($why), on one line -- sudo's
+# when it was sudo that refused ("sudo: 3 incorrect password attempts"), the command's own otherwise -- and, from
+# room(), advice about disk space only when those words are about disk space. Until 31 Oct 2026 every failure after
+# `sudo -v` was reported with "Check the disk has room (df -h /)", a password refused at a later prompt included, and
+# the backup mktemp's words, sudo's among them, went to /dev/null (the third read).
+told() {
+  local w
+  w=$(printf '%s' "$why" | tr '\n' ' '); w=${w% }
+  if [ -n "$w" ]; then echo "$1 said: $w"; else echo "$1 failed and said nothing"; fi
+}
+room() { case "$why" in *'No space left on device'*) echo " Check the disk has room (df -h /)." ;; esac; }
 # The checks the cleaned file passed, made again on the file that is about to be renamed into place.
 built() { local n l; n=$(certs "$1") && [ "$n" -eq "$after" ] && l=$(roots "$1") && [ -z "$l" ]; }
 # Everything above the backup step -- the counts, which certificates are withdrawn roots, and the cleaned file and its
@@ -410,7 +422,7 @@ nobackup() {
   if [ -n "$bnew" ]; then
     if $SUDO rm -f "$bnew" 2>/dev/null; then bnew=''; else left=$bnew; fi
   fi
-  echo "UNKNOWN  $1, so nothing was replaced and no backup was kept."
+  echo "UNKNOWN  $1, so nothing was replaced and no backup was kept.$(room)"
   if [ -n "$left" ]; then
     echo "         A partial copy is left at $left: it is not a backup. Delete it."
   else
@@ -587,10 +599,12 @@ fi
 # and in $FILE, both comparisons passed, and the cleaned old snapshot was renamed over it. Measured: an
 # administrator's root appended meanwhile was gone from the file, kept only in the backup, and the run said SAFE.
 writing=1
-bnew=$($SUDO mktemp "$DIR/.wardlatch-backup.$$.XXXXXX" 2>/dev/null) || { bnew=''; nobackup "Couldn't make a file beside $FILE for the backup (mktemp failed). Check the disk has room (df -h /)"; }
-$SUDO cp -p "$FILE" "$bnew" || nobackup "Couldn't copy $FILE to make the backup (cp failed). Check the disk has room (df -h /)"
+# Each privileged step keeps its own words, sudo's among them, for the line that reports it (told(), room()).
+bnew=$($SUDO mktemp "$DIR/.wardlatch-backup.$$.XXXXXX" 2>&1) || { why=$bnew; bnew=''; nobackup "Couldn't make a file beside $FILE for the backup ($(told mktemp))"; }
+case "$bnew" in "$DIR"/.wardlatch-backup.$$.*) ;; *) why=$bnew; bnew=''; nobackup "Couldn't make a file beside $FILE for the backup ($(told mktemp))" ;; esac
+why=$($SUDO cp -p "$FILE" "$bnew" 2>&1) || nobackup "Couldn't copy $FILE to make the backup ($(told cp))"
 cmp -s "$bnew" "$snap" || nobackup "The backup copy isn't the file this run checked: $FILE changed while this ran, or the copy went wrong"
-$SUDO link "$bnew" "$backup" 2>/dev/null || nobackup "Couldn't give the backup its dated name, $backup"
+why=$($SUDO link "$bnew" "$backup" 2>&1) || nobackup "Couldn't give the backup its dated name, $backup ($(told link))"
 published=1
 if $SUDO rm -f "$bnew"; then bnew=''; fi
 checkbackup || {
@@ -601,7 +615,7 @@ checkbackup || {
 }
 # And once more, immediately before the rename, inside replace(): the file must still be the file the cleaned file was
 # built from, or the replacement would throw away whatever changed it (4).
-replace "$tmp" || { r=$?; if [ "$r" -eq 4 ]; then echo "UNKNOWN  $FILE changed while this ran, after the backup was taken, so it was not replaced. Run this again."; echo "         Backup: $backup (the file as this run read it)"; elif [ "$r" -eq 3 ]; then echo "UNKNOWN  The file built beside $FILE isn't the cleaned file this checked, so it was not used and"; echo "         $FILE was not changed. Please report this.  Backup: $backup"; else echo "UNKNOWN  Couldn't replace $FILE, so nothing was changed. Check the disk has room (df -h /)"; echo "         and that this ran with enough privilege.  Backup: $backup"; fi; exit 2; }
+replace "$tmp" || { r=$?; if [ "$r" -eq 4 ]; then echo "UNKNOWN  $FILE changed while this ran, after the backup was taken, so it was not replaced. Run this again."; echo "         Backup: $backup (the file as this run read it)"; elif [ "$r" -eq 3 ]; then echo "UNKNOWN  The file built beside $FILE isn't the cleaned file this checked, so it was not used and"; echo "         $FILE was not changed. Please report this.  Backup: $backup"; else echo "UNKNOWN  Couldn't replace $FILE ($(told "$step")), so nothing was changed.$(room)"; echo "         Backup: $backup"; fi; exit 2; }
 replaced=1
 
 # The only path here that puts the original back, and the only kind of reason there may be for one: the bytes now in
