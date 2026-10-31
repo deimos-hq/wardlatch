@@ -291,3 +291,25 @@ test('WV-7 a folder past the cap that holds only files is not a gap: nothing a d
   assert.equal(unknowns(r).length, 0, JSON.stringify(r.rows));
   assert.equal(r.code, 0);
 });
+
+// ---- WV-4: names hid whole trees, with no row, while the docs said no name decides a walk ------------------------------
+// node_modules, .git, .venv and venv are still not walked (a node_modules tree is no place for a site and is huge), but
+// they are no longer hidden: every all-clear that rests on a walk names them, in its sentence and in --json.
+test('WV-4 every all-clear that rests on a walk names the folder names it never enters', () => {
+  const root = fresh('wv4-root');
+  wpSite(join(root, 'node_modules', 'site'));
+  mkdirSync(join(root, 'venv', 'repo', '.git'), { recursive: true });
+  litellmVenv(join(root, 'node_modules', 'pkg', '.venv'));
+  for (const [id, names] of [['wordpress-plugins-2026-10', ['node_modules', '.git', '.venv']], ['github-actions-2026-10', ['node_modules', '.venv', 'venv']],
+    ['committed-keys-2026-10', ['node_modules', '.venv', 'venv']], ['litellm-2026-10', ['node_modules', '.git']]]) {
+    const r = run(['--incident', id, '--no-containers', '--paths', root]);
+    const safe = r.rows.find((x) => x.status === 'SAFE');
+    assert.ok(safe, `${id}: ${JSON.stringify(r.rows).slice(0, 1500)}`);
+    for (const n of names) assert.ok(safe.notSearched?.includes(n), `${id}: the receipt must name ${n}: ${JSON.stringify(safe)}`);
+    // and the line under the all-clear a reader is given says so
+    const text = spawnSync(process.execPath, [BIN, '--incident', id, '--no-containers', '--paths', root], { encoding: 'utf8', env: { HOME: home, PATH: '/usr/bin:/bin', LANG: 'C' }, cwd: dir, timeout: 180000 }).stdout;
+    const under = text.split('\n')[text.split('\n').findIndex((l) => l.startsWith('SAFE')) + 1] ?? '';
+    for (const n of names) assert.ok(under.includes(n), `${id}: the line under the all-clear must name ${n}: ${JSON.stringify(under)}`);
+    assert.match(under, /are not searched/, under);
+  }
+});
