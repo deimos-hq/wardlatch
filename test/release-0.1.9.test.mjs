@@ -128,15 +128,20 @@ const serviceLockedRoot = () => {
   }
   return null;
 };
-test('a folder a service owns (root\'s, on this Mac) that can\'t be opened is one review line, and a clean run passes', { skip: (process.platform !== 'darwin' || AS_ROOT) && 'macOS, as a user' }, (t) => {
+// CHANGED 31 Oct 2026 by owner decision #33 ("UNKNOWN too"): a folder Wardlatch could not open because a service owns
+// it (EACCES) is could-not-be-tested, exit 2, never a REVIEW line beside SAFE; such folders are grouped in one row. This
+// test pinned the rule #33 supersedes (the 22 Oct one-review-line rule: REVIEW, a SAFE beside it, exit 0), so it was
+// wrong from the moment the owner decided, and now asserts the decision instead, on the same fixture.
+test('a folder a service owns (root\'s, on this Mac) that can\'t be opened is could-not-be-tested, in one grouped row, exit 2', { skip: (process.platform !== 'darwin' || AS_ROOT) && 'macOS, as a user' }, (t) => {
   const root = serviceLockedRoot(); if (!root) return t.skip('no suitable system folder on this machine');
   for (const id of ['wordpress-plugins-2026-10', 'github-actions-2026-10']) {
     const r = sys(['--incident', id, '--paths', root]);
-    const skipped = r.rows.find((x) => x.kind === 'skipped');
-    assert.ok(skipped && skipped.status === 'REVIEW' && skipped.paths.length, `${id} in ${root}: ${JSON.stringify(r.rows)}`);
-    assert.equal(unknowns(r).length, 0, `${id}: ${JSON.stringify(r.rows)}`);
-    assert.ok(r.rows.some((x) => x.status === 'SAFE'), `${id}: the summary line is still there beside the skipped line`);
-    assert.equal(r.code, 0, id);
+    assert.ok(!r.rows.some((x) => x.kind === 'skipped' || (x.status === 'REVIEW' && /could not be opened/.test(x.reason))), `${id}: no REVIEW line for a folder not opened: ${JSON.stringify(r.rows)}`);
+    const grouped = unknowns(r).filter((x) => x.what === 'service folders');
+    assert.equal(grouped.length, 1, `${id} in ${root}: the service-owned folders are one row: ${JSON.stringify(r.rows)}`);
+    assert.ok(grouped[0].paths.length && grouped[0].folders.every((f) => f.code === 'EACCES'), JSON.stringify(grouped[0]));
+    assert.ok(!r.rows.some((x) => x.status === 'SAFE'), `${id}: no all-clear beside a folder not searched: ${JSON.stringify(r.rows)}`);
+    assert.equal(r.code, 2, id);
   }
 });
 
@@ -147,10 +152,11 @@ test('a folder a person owns that can\'t be opened is still could-not-be-tested'
   assert.equal(r.code, 2);
 });
 
-test('a skipped-folders line never stands in for the machine\'s runtimes, and never hides a summary line', { skip: (process.platform !== 'darwin' || AS_ROOT) && 'macOS, as a user' }, () => {
+// (The fixture line changed with decision #33: the service-owned folders are one UNKNOWN row now, not a REVIEW line.)
+test('a service-folders row never stands in for the machine\'s runtimes, and never hides a summary line', { skip: (process.platform !== 'darwin' || AS_ROOT) && 'macOS, as a user' }, () => {
   const root = serviceLockedRoot(); if (!root) return;
   const t = run(['--incident', 'emudhra-2026-10', '--no-containers', '--paths', root], {}, ['--require', preload('o3-online', { online: true })]);
-  assert.ok(t.rows.some((x) => x.kind === 'skipped'), 'the fixture: a skipped line');
+  assert.ok(t.rows.some((x) => x.what === 'service folders' && x.status === 'UNKNOWN'), 'the fixture: a service-folders row');
   assert.ok(t.rows.some((x) => x.kind === 'runtimes' && x.status === 'UNKNOWN'), `no runtime found must still be its own UNKNOWN line: ${JSON.stringify(t.rows)}`);
   assert.equal(t.code, 2);
 });
