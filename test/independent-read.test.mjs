@@ -227,3 +227,30 @@ test('WV-1 a WordPress plugins folder, a wp-content folder or a plugin\'s own fo
   const r = run(['--incident', 'wordpress-plugins-2026-10', '--paths', join(clean, 'wp-content', 'plugins')]);
   assert.ok(r.rows.some((x) => x.status === 'SAFE' && /seo-by-rank-math-pro 3\.0\.124/.test(x.what)), JSON.stringify(r.rows));
 });
+
+// ---- WV-3: a link counted as covered when its target was only LISTED, not walked ----------------------------------------
+// unwalkedLinks() dropped a link whose target any walk had listed: at the depth floor (its subfolders never opened), or
+// in the installs check's two-level quick look round the home folder. Both reopened AUDIT-8 (a LiteLLM venv below a
+// linked folder, SAFE with exit 0), the first in the default run.
+test('WV-3 the default run: ~/Development/x -> ~/clients, with the stealer in ~/clients/client/app/.venv, is not SAFE, exit 0', () => {
+  const h = fresh('wv3-home');
+  mkdirSync(join(h, 'Development'));
+  litellmVenv(join(h, 'clients', 'client', 'app', '.venv'));
+  symlinkSync(join(h, 'clients'), join(h, 'Development', 'x'));
+  const r = run(LITELLM, { HOME: h });
+  assert.deepEqual(r.rows.filter((x) => x.status === 'SAFE'), [], `an all-clear over a link whose target was only listed: ${JSON.stringify(r.rows).slice(0, 1500)}`);
+  assert.ok(unknowns(r).some((x) => x.path === join(h, 'Development', 'x')), `the link is a gap: ${JSON.stringify(r.rows).slice(0, 1500)}`);
+  assert.notEqual(r.code, 0);
+});
+
+test('WV-3 a link to a folder listed only at the walk\'s depth floor is a gap: a site below it is not passed over', () => {
+  const root = fresh('wv3-root');
+  wpSite(join(root, 'a', 'b', 'c', 'd', 'e', 'site'));
+  symlinkSync(join(root, 'a', 'b', 'c', 'd', 'e'), join(root, 'shortcut'));
+  const r = run(['--incident', 'wordpress-plugins-2026-10', '--paths', root]);
+  assert.deepEqual(r.rows.filter((x) => x.status === 'SAFE'), [], `an all-clear with the site one link away: ${JSON.stringify(r.rows).slice(0, 1500)}`);
+  assert.ok(unknowns(r).some((x) => x.path === join(root, 'shortcut')), JSON.stringify(r.rows).slice(0, 1500));
+  assert.notEqual(r.code, 0);
+  // the control the refuter used: through the link itself, it is EXPOSED
+  assert.equal(run(['--incident', 'wordpress-plugins-2026-10', '--paths', join(root, 'shortcut')]).code, 1);
+});
