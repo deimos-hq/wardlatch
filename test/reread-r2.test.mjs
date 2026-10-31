@@ -523,3 +523,21 @@ test('R2-N9 a walker given no list for a gap it found throws, rather than say no
     assert.throws(() => reposUnder([dirname(shut)], 4, undefined, [], { deep: [] }), noise, 'reposUnder() without denied');
   }
 });
+
+// ---- a regression of this round's R2-N3 fix: derKind() took quadratic time after a certificate ---------------------------
+// 5bf562b read the elements after a certificate one by one, and before each one tested whether everything left was
+// line ends by copying all of it: a 33 KB file (a certificate and 16,000 empty SEQUENCEs) took 2.9 s, and a file under
+// the 1 MB DER cap would have held the key scan for about half an hour. MEASURED, 31 Oct 2026. Fails on 5bf562b.
+test('R2-N3 regression: a certificate followed by a flood of tiny elements is read in linear time', async () => {
+  const { derKind } = await import('../lib/secrets.mjs');
+  const pem = readFileSync(join(ROOT, 'lib', 'incidents', 'emudhra-2026-10-root-aaa.pem'), 'utf8');
+  const cert = Buffer.from(pem.replace(/-----[^-]+-----/g, '').replace(/\s+/g, ''), 'base64');
+  const flood = Buffer.concat([cert, Buffer.alloc(400000 * 2).fill(Buffer.from([0x30, 0x00]))]);
+  const t = Date.now();
+  assert.equal(derKind(flood), null, 'a certificate followed by no key claims nothing');
+  assert.ok(Date.now() - t < 5000, `took ${Date.now() - t} ms`);
+  // and a key at the end of the flood is still found
+  const { generateKeyPairSync } = await import('node:crypto');
+  const key = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ type: 'pkcs8', format: 'der' });
+  assert.ok(derKind(Buffer.concat([flood, key]))?.key);
+});
