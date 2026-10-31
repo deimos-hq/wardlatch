@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=79
+expect_cases=80
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -2510,6 +2510,32 @@ grep -q "^UNKNOWN  The backup of $d/cert.pem doesn't bear out" <<<"$out" || fail
 [ -z "$(beside "$d/cert.pem")" ] || fail "a hidden root: it left $(beside "$d/cert.pem") beside the bundle"
 rm -f "$d"/cert.pem.wardlatch-*.bak
 ok "a withdrawn root hidden from the reads in the temporary folder is caught by the backup's own reading, before anything is built"
+# ---- r4 end case
+
+# ---- r4 case: built-last
+# built() is the check made on the very file renamed into place, beside the bundle, where only its owner can change it:
+# the right number of certificates and no withdrawn root. Every other check of the cleaned file is made in the user's
+# temporary folder, or on what strip() makes of the backup, so a regression in strip() that left a withdrawn root in,
+# met with a same-user process feeding the temporary-folder checks a correct file, is stopped by built() alone. No case
+# held it until r4: with built() a no-op every case passed (the round-3 re-read's BUILT). A copy of the script whose
+# strip() keeps AAA Certificate Services stands for the regression; the grep stand-in swaps the cleaned file for the
+# advisory's removal while it is checked and the date stand-in puts it back. The run must stop at built(), UNKNOWN,
+# exit 2, with the bundle as it was.
+d=$work/r4/builtlast; mkdir -p "$d"
+sed 's/drop\[p\[1\] + 0\] = p\[2\] }/if (p[2] != "AAA") drop[p[1] + 0] = p[2] }/' "$fix" >"$d/keeps-aaa.sh"
+cmp -s "$fix" "$d/keeps-aaa.sh" && fail "built() last: strip()'s removal list was not found in $fix, so this case proves nothing"
+cp "$work/original.pem" "$d/cert.pem"; rm -f "$d"/stash*
+script=$d/keeps-aaa.sh
+run "$d/cert.pem" PATH="$shims:$PATH" WL_GREP_TMP="$r2/P.pem" WL_STASH="$d/stash" "$offline" "$OFFLINE"
+script=$fix
+{ [ -e "$d/stash.path" ] && [ -e "$d/stash.back" ]; } || fail "built() last: the stand-ins did not swap the cleaned file and put it back, so this case would measure nothing"
+[ "$(bad "$d/stash")" -eq 1 ] || fail "built() last: the cleaned file the copy built holds $(bad "$d/stash") withdrawn roots, not 1, so this case would measure nothing"
+[ "$code" -eq 2 ] || fail "built() last: a cleaned file still holding a withdrawn root: expected UNKNOWN, exit 2, got $code"
+cmp -s "$d/cert.pem" "$work/original.pem" || fail "built() last: the bundle changed ($(certs_in "$d/cert.pem") certificates, $(bad "$d/cert.pem") withdrawn roots)"
+grep -q "^UNKNOWN  The file built beside $d/cert.pem isn't the cleaned file this checked" <<<"$out" || fail "built() last: it was not stopped by the check on the file beside the bundle"
+[ -z "$(beside "$d/cert.pem")" ] || fail "built() last: it left $(beside "$d/cert.pem") beside the bundle"
+rm -f "$d"/cert.pem.wardlatch-*.bak
+ok "a cleaned file that still holds a withdrawn root is stopped by the check on the file beside the bundle, whatever the earlier checks read"
 # ---- r4 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.
