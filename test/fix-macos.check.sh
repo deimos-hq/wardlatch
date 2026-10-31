@@ -460,6 +460,20 @@ esac
 exec /usr/bin/tee "$@"
 SHIM
 chmod +x "$r2/curl" "$r2/openssl" "$shims"/*
+# r4: a case that sends the fix a signal needs the fix to start with that signal's default action, as it does from a
+# terminal. A harness started with a signal ignored passes the ignore on (a script's background job ignores INT and
+# QUIT; some parents ignore PIPE), and bash can't trap a signal that was ignored when it started, so until r4 such a case
+# failed and blamed the fix (the round-3 re-read: 'an interrupt' under `( ... & )`, 13 runs of 13). Any such signal is
+# found here, and then each run that is signalled is started through perl, which sets them all back to their defaults.
+reset=()
+for s in HUP INT QUIT TERM ABRT PIPE ALRM XCPU XFSZ VTALRM PROF USR1 USR2; do
+  [ "$(/bin/bash -c "trap 'echo y' $s; kill -$s \$\$" 2>/dev/null)" != y ] || continue
+  [ -x /usr/bin/perl ] || fail "this harness was started with SIG$s ignored, which the signal cases need not to be, and there is no /usr/bin/perl to set it back: run it in the foreground"
+  # shellcheck disable=SC2016
+  reset=(/usr/bin/perl -e '$SIG{$_} = "DEFAULT" for qw(HUP INT QUIT TERM ABRT PIPE ALRM XCPU XFSZ VTALRM PROF USR1 USR2); exec @ARGV or die "exec: $!\n"' --)
+  echo "NOTE: this harness was started with SIG$s ignored, so each run it signals is started with every signal's default set back."
+  break
+done
 # Runs $1 on bundle $2 in the background, in its own process group, with the VAR=value arguments after them; waits
 # for a stand-in to touch $WL_MARK, then sends INT to the script itself, as a Ctrl-C would reach it (another signal
 # when $sigrun_sig names one). Sets $code and $out, and checks what run() checks: nothing on stderr but the
@@ -470,7 +484,7 @@ sigrun() {
   shift 2
   rm -rf "$work/tmp"; mkdir "$work/tmp"; rm -f "$r2/mark"
   set -m
-  env "$@" WL_MARK="$r2/mark" TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$f" bash "$s" >"$r2/sig.out" 2>"$r2/sig.err" &
+  ${reset[@]+"${reset[@]}"} env "$@" WL_MARK="$r2/mark" TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$f" bash "$s" >"$r2/sig.out" 2>"$r2/sig.err" &
   pid=$!
   set +m
   for i in $(seq 1 300); do [ -e "$r2/mark" ] && break; /bin/sleep 0.1; done
@@ -1085,7 +1099,7 @@ if [ "$found" -gt 0 ]; then
     rm -rf "$work/tmp"; mkdir "$work/tmp"
     rm -f "$work/at-the-write"
     set -m
-    env TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$2" WL_AT_THE_WRITE="$work/at-the-write" \
+    ${reset[@]+"${reset[@]}"} env TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$2" WL_AT_THE_WRITE="$work/at-the-write" \
       bash "$1" >"$work/interrupt.out" 2>&1 &
     pid=$!
     set +m
@@ -1138,7 +1152,7 @@ if [ "$found" -gt 0 ]; then
     rm -rf "$work/tmp"; mkdir "$work/tmp"
     rm -f "$work/at-the-write"
     set -m
-    env TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$2" WL_AT_THE_WRITE="$work/at-the-write" \
+    ${reset[@]+"${reset[@]}"} env TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$2" WL_AT_THE_WRITE="$work/at-the-write" \
       bash "$1" >"$work/interrupt.out" 2>&1 &
     pid=$!
     set +m
