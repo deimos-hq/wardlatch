@@ -464,3 +464,21 @@ test('WV-11 a plugin\'s readme.txt, .pot, .json and LICENSE are searched for the
   put(join(plugin, 'assets', 'block.json'), '{"src":"https://rank1cdn.example/x.js"}\n');
   assert.ok(checkSite(site, rules).some((f) => f.status === 'EXPOSED' && /block\.json/.test(f.what)), JSON.stringify(checkSite(site, rules)));
 });
+
+// ---- WV-13: the home folder's quick look reported every link it declined ------------------------------------------------
+// The installs check's quick look round the home folder (two levels, best effort) says nothing about a folder it cannot
+// open, by design, but it made every link it declined an UNKNOWN row: ~/OneDrive -> ~/Library/CloudStorage/... made every
+// LiteLLM run exit 2, even one whose --paths named a different folder. The links below the searched folders still are.
+test('WV-13 a link the home folder\'s quick look declines is not a gap; one below a searched folder still is', () => {
+  const h = fresh('wv13-home'), away = fresh('wv13-elsewhere');
+  mkdirSync(join(h, 'Library', 'CloudStorage', 'OneDrive-Personal'), { recursive: true });
+  symlinkSync(join(h, 'Library', 'CloudStorage', 'OneDrive-Personal'), join(h, 'OneDrive'));
+  mkdirSync(join(h, 'proj'));
+  symlinkSync(away, join(h, 'proj', 'shared'));
+  const r = run([...LITELLM, '--paths', fresh('wv13-empty')], { HOME: h });
+  assert.deepEqual(unknowns(r), [], JSON.stringify(r.rows).slice(0, 1500));
+  assert.equal(r.code, 0);
+  // the same link below a folder given with --paths is reported
+  const s = run([...LITELLM, '--paths', join(h, 'proj')], { HOME: h });
+  assert.ok(unknowns(s).some((x) => x.path === join(h, 'proj', 'shared')), JSON.stringify(s.rows).slice(0, 1500));
+});
