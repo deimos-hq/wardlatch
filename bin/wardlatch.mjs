@@ -19,9 +19,10 @@ import { reposUnder, workflowsAddedSince, windowStart, NOT_WALKED as REPO_NOT_WA
 import { scanRepo } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite, checkPluginsFolder, NOT_WALKED as WP_NOT_WALKED } from '../lib/wordpress.mjs';
 import { scanHeaders } from '../lib/headers.mjs';
-import { pathState, readText, listDir, denialCode, mandatoryRefusal, statBits } from '../lib/files.mjs';
+import { pathState, readText, listDir, denialCode, mandatoryRefusal, statBits, epermCauses, VENV_OWN_SAID } from '../lib/files.mjs';
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
 import { safe, saw, withdrawUnreceipted } from '../lib/report.mjs';
+import { escapeHidden, escapeJsonHidden } from '../lib/escape.mjs';
 
 // npx puts the current project's node_modules/.bin, and each parent folder's, first on PATH. Wardlatch finds git,
 // python3, node, curl, php, go and the container engines on PATH and runs some of them, so a project could otherwise
@@ -45,9 +46,11 @@ const LIB = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib');
 const VERSION = JSON.parse(readText(join(LIB, '..', 'package.json'), 1024 * 1024)).version;
 const args = process.argv.slice(2);
 const flag = (f) => args.includes(f);
-// Names shown come from the disk, git and container engines, and can carry terminal control characters (a planted
-// plugin folder could try to erase its own line). They are printed escaped, never interpreted.
-const clean = (s) => String(s).replace(/[\u0000-\u001f\u007f-\u009f]/g, (ch) => `\\x${ch.charCodeAt(0).toString(16).padStart(2, '0')}`);
+// Names shown come from the disk, git, container engines and the incident data, and can carry terminal control
+// characters (a planted plugin folder could try to erase its own line), line separators, bidi overrides, zero-width and
+// tag characters (an instruction an agent reads and a person cannot see). They are printed escaped, never interpreted:
+// lib/escape.mjs says which characters, and why. Up to this fix this escaped C0 and C1 controls only (W1).
+const clean = escapeHidden;
 
 // Every option is a known one, and an option that takes a value has one: a typo is refused, not quietly ignored.
 const FLAGS = ['-h', '--help', '--list', '--json', '--no-containers'];
@@ -79,7 +82,7 @@ a local socket is). Changes nothing.`);
   process.exit(0);
 }
 const incidents = (listDir(join(LIB, 'incidents')).entries ?? []).map((e) => e.name).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readText(join(LIB, 'incidents', f), 4 * 1024 * 1024))).sort((a, b) => b.date.localeCompare(a.date));
-if (flag('--list')) { for (const i of incidents) console.log(`${i.id}  ${i.date}  ${i.title}`); process.exit(0); }
+if (flag('--list')) { for (const i of incidents) console.log(clean(`${i.id}  ${i.date}  ${i.title}`)); process.exit(0); }
 // --incident is repeatable, like --paths: every one named is checked (0.1.8 checked only the first)
 const ids = args.filter((a, i) => args[i - 1] === '--incident');
 const unknownId = ids.find((id) => !incidents.some((i) => i.id === id));
@@ -140,7 +143,10 @@ let statedGaps = 0;
 // Library). They are part of the receipt: up to this fix node_modules, .git, .venv and venv hid whole trees with no
 // word, while docs/ARCHITECTURE.md said no name decides a walk (WV-4).
 const LIBRARY = 'macOS\'s own Library';
-const namesSaid = (names) => { const n = names.filter((x) => x !== LIBRARY); return `folders named ${n.length > 1 ? `${n.slice(0, -1).join(', ')} or ${n.at(-1)}` : n[0]}, and ${LIBRARY} folders, are not searched`; };
+const namesSaid = (names) => {
+  const n = names.filter((x) => x !== LIBRARY && x !== VENV_OWN_SAID);
+  return `folders named ${n.length > 1 ? `${n.slice(0, -1).join(', ')} or ${n.at(-1)}` : n[0]}, and ${LIBRARY} folders, are not searched${names.includes(VENV_OWN_SAID) ? `; ${VENV_OWN_SAID} are checked with it, not searched` : ''}`;
+};
 // They are said on the line under the all-clear, so its own sentence stays the one a reader (and a script) knows.
 function allClear(results, inc, kind, text, searched, notSearched) {
   if (searched.length) {
@@ -222,10 +228,9 @@ function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, revi
   };
   // An EPERM is UNKNOWN whoever owns the folder (owner decision #32). What the row says is true on every platform: the
   // system refused, with the basis; on macOS privacy protection is a common cause and Full Disk Access may lift it,
-  // but a sandbox around this run refuses the same way, so the row never says which it was.
-  const MAYBE = platform() === 'darwin'
-    ? 'On macOS this is often its privacy protection, which allowing your terminal Full Disk Access (System Settings → Privacy & Security) may lift; a sandbox this run is inside, or a security tool, refuses the same way, and sudo may not lift it'
-    : 'A sandbox this run is inside, a security module (SELinux, AppArmor) or a file system such as a FUSE mount refuses this way, and sudo may not lift it';
+  // but a sandbox around this run refuses the same way, so the row never says which it was. The same words as every
+  // other row about an EPERM (lib/files.mjs epermCauses()).
+  const MAYBE = epermCauses();
   // → { reason, extra } for the errnos that are UNKNOWN whoever owns the folder, with what is true of each; else null.
   // EPERM: owner decision #32. ENAMETOOLONG: the folder is there (the walk listed its name) and its full path is longer
   // than the system takes, so no one opens it by that path; up to this fix it read as "not there" (WV-6).
@@ -310,7 +315,7 @@ function hostVarsRow(results, inc, what) {
 }
 
 if (!json) {
-  console.log(`${c('1', 'Wardlatch')} ${VERSION} · ${chosen.length} incident${chosen.length > 1 ? 's' : ''} · runs locally, sends nothing but test connections, changes nothing`);
+  console.log(`${c('1', 'Wardlatch')} ${clean(VERSION)} · ${chosen.length} incident${chosen.length > 1 ? 's' : ''} · runs locally, sends nothing but test connections, changes nothing`);
 }
 
 for (const inc of chosen) {
@@ -422,7 +427,7 @@ for (const inc of chosen) {
     }
     const down = canaries.filter((x) => !x.up).length;
     if (down) note('33', `${down} of ${canaries.length} test hosts did not answer`);
-    if (searchable.length) note('2', `virtual environments were looked for in ${searchable.length} folder${searchable.length === 1 ? '' : 's'}, 5 levels deep; ${namesSaid([...TRUST_NOT_WALKED, LIBRARY])}`);
+    if (searchable.length) note('2', `virtual environments were looked for in ${searchable.length} folder${searchable.length === 1 ? '' : 's'}, 5 levels deep; ${namesSaid([...TRUST_NOT_WALKED, LIBRARY, VENV_OWN_SAID])}`);
   }
   // A trust check that found nothing to test is not an all-clear: possible anywhere, and always so for the machine itself
   // on Windows, whose program names discover() doesn't look for (a container row must not hide that). Up to 0.1.6
@@ -537,7 +542,7 @@ for (const inc of chosen) {
     // couldn't be asked keeps its own UNKNOWN row (and the exit code at 2) beside it, and one that isn't running its
     // REVIEW row; a finding or another gap doesn't.
     const onlyEngineGaps = counted(results).every((r) => r.engine && (r.status === 'UNKNOWN' || r.notRunning));
-    if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked${lookedFor ? ` for ${lookedFor},` : ''} in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean), inc.sitePackages ? [...VENV_NOT_WALKED, LIBRARY] : undefined);
+    if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked${lookedFor ? ` for ${lookedFor},` : ''} in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean), inc.sitePackages ? [...VENV_NOT_WALKED, LIBRARY, VENV_OWN_SAID] : undefined);
   }
 
   // the window's start: an explicit UTC instant, or the review is UNKNOWN (up to 0.1.9 a bare date read SAFE: see
@@ -586,7 +591,7 @@ for (const inc of chosen) {
   if (inc.type === 'wordpress') {
     const denied = [...lockedRoots];
     const privateDot = [], coreOnly = [], links = [], loose = [], deep = [];
-    const sites = wordpressUnder(searchable, 5, denied, privateDot, coreOnly, links, { loose, deep });
+    const sites = wordpressUnder(searchable, 5, denied, privateDot, coreOnly, links, { loose, deep, names: inc.rules.map((x) => x.plugin) });
     for (const core of coreOnly) {
       const reason = 'WordPress core is here, but no plugins folder is where WordPress, a moved wp-content, Bedrock or its wp-config.php puts one, so its plugins were not checked: pass --paths for the folder that holds them';
       results.push({ incident: inc.id, kind: 'wordpress', site: core, status: 'UNKNOWN', what: 'plugins folder', reason });
@@ -599,10 +604,11 @@ for (const inc of chosen) {
     };
     for (const site of sites) for (const f of checkSite(site, inc.rules, inc.addedSince)) show(site, f);
     // a plugins folder with no core found to use it (given with --paths, or a copy of a content folder), and a folder
-    // given with --paths that is one listed plugin's own folder: checked, never passed over (WV-1)
+    // given with --paths that is one listed plugin's own folder: checked, never passed over (WV-1), with or without its
+    // main file (up to this fix only with it, so a backdoored copy missing rank-math-pro.php read SAFE: R2-N7)
     for (const p of loose) for (const f of checkPluginsFolder(p, inc.rules, inc.addedSince)) show(p, f);
     for (const r of searchable) {
-      const own = inc.rules.filter((x) => basename(r) === x.plugin && pathState(join(r, x.mainFile)) === 'file');
+      const own = inc.rules.filter((x) => basename(r) === x.plugin);
       if (own.length && !loose.includes(dirname(r))) for (const f of checkPluginsFolder(dirname(r), own)) show(r, f);
     }
     gaps(results, inc, 'wordpress', denied, { review: privateDot, links, deep, levels: 5 });
@@ -644,10 +650,16 @@ for (const r of withdrawUnreceipted(all)) { print('UNKNOWN', `the SAFE line for 
 const count = { SAFE: 0, EXPOSED: 0, UNKNOWN: 0, REVIEW: 0 };
 for (const r of all) if (r.status in count) count[r.status]++;
 const n = (s) => count[s];
-// JSON.stringify escapes control characters below 0x20 but passes DEL and C1 (0x7f-0x9f) through; names from the disk can
-// carry them, so they are escaped too, as the text output does
-if (json) console.log(JSON.stringify({ tool: 'wardlatch', version: VERSION, incidents: chosen.map((i) => ({ id: i.id, title: i.title, advisory: i.advisory })), results: all }, null, 1)
-  .replace(/[\u007f-\u009f]/g, (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`));
+// JSON.stringify escapes control characters below 0x20 and passes everything else through: DEL and C1, U+2028, bidi
+// overrides, zero-width and tag characters. Two rules, so that --json is as safe to hand an agent as the text is (W1):
+//   - a `reason`, at any depth, is prose a reader is given, and is escaped exactly as the text output is (\u{202e} in the
+//     value itself);
+//   - every other string keeps its real value (a path field must still name the real file), and every hidden character
+//     in it is written as a JSON escape, so the JSON text holds none raw and JSON.parse gives the real value back.
+// lib/escape.mjs says which characters count as hidden. Up to this fix only DEL and C1 were escaped, and only the second way.
+const prose = (v) => (Array.isArray(v) ? v.map(prose) : v && typeof v === 'object'
+  ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, k === 'reason' && typeof x === 'string' ? clean(x) : prose(x)])) : v);
+if (json) console.log(escapeJsonHidden(JSON.stringify(prose({ tool: 'wardlatch', version: VERSION, incidents: chosen.map((i) => ({ id: i.id, title: i.title, advisory: i.advisory })), results: all }), null, 1)));
 else {
   console.log(`\n${count.SAFE} safe · ${n('EXPOSED')} exposed · ${n('UNKNOWN')} could not be tested${n('REVIEW') ? ` · ${n('REVIEW')} to review` : ''}`);
   const trust = chosen.find((i) => i.type === 'trust');
