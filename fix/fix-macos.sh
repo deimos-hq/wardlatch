@@ -42,8 +42,13 @@
 #   - reads a control -- an ordinary website, through this same file -- both before and after the change, and tells
 #     a certificate refused after the change apart from a network that stopped answering; it re-tests against the
 #     advisory's test site only when the control loads, and no network result undoes the fix;
-#   - on macOS, prints a line that starts with SAFE, EXPOSED or UNKNOWN whenever it exits, after a Ctrl-C (INT), a
-#     Ctrl-\ (QUIT), a HUP or a TERM too, from its first command on (before that, bash has only read the script).
+#   - on macOS, prints a line that starts with SAFE, EXPOSED or UNKNOWN whenever it exits, from its first command on
+#     (before that, bash has only read the script), and exits 2 after any signal it can catch whose default is to end
+#     a process: a Ctrl-C (INT), a Ctrl-\ (QUIT), HUP, TERM, ABRT, PIPE, ALRM (a timeout), XCPU (a CPU limit), XFSZ,
+#     VTALRM, PROF, USR1 and USR2. Not the fault signals, ILL, TRAP, EMT, FPE, BUS, SEGV and SYS: when bash itself
+#     raises one, a trap on it would run on top of the fault, so they keep their default, and any of them, or SIGKILL,
+#     ends the run with no line;
+#   - exits 0 only after a SAFE line and 1 only after an EXPOSED one: a line that can't be written ends it with 2.
 # Safe to run twice. Run it in Terminal (it asks for your Mac's password) or as root from Jamf, Kandji or Intune.
 # Copy it from the Wardlatch page in Safari. Don't fetch it with the Mac's own curl: that curl is what's exposed.
 set -euo pipefail
@@ -314,6 +319,10 @@ replaced=''   # set once the cleaned file has been renamed over $FILE
 orig='' want='' after='' backup='' naaa=0 nems=0 kaaa=0 kems=0 found=0 kind='' why='' step='' meant=''
 snap='' tmp=''  # the two temporary files, once mktemp has named them
 SUDO='' DIR=''  # set once $FILE is known to be a file
+# The signals the traps below catch (stopped()), and that the run ignores once its answer is in (settled(), stopped()
+# itself, and the cleanup at exit). Kept in one place: until r4 three lists of four, and the round-3 re-read found the
+# cleanup's list could lose one and no case would see it.
+SIGNALS='HUP INT QUIT TERM ABRT PIPE ALRM XCPU XFSZ VTALRM PROF USR1 USR2'
 # Every command here ends in `|| true`, and that is load-bearing rather than tidy. Measured on /bin/bash 3.2.57:
 # with `set -e` in force, a failing command inside the EXIT trap ends the trap AND overrides the script's exit
 # status, so one failed `rm` turned `exit 2` ("couldn't tell") into `exit 1`, which the published exit-code table
@@ -342,7 +351,8 @@ strays() {
 # said "replaced with the cleaned file (removed both withdrawn roots)" about a file holding both of them again.
 stopped() {
   local now
-  trap '' HUP INT QUIT TERM
+  # shellcheck disable=SC2086
+  trap '' $SIGNALS
   exec >&3
   clean
   if [ -z "$writing" ]; then
@@ -371,7 +381,8 @@ stopped() {
 # Called once the last reading is in, just before the verdict is printed: from here the run has its answer, and a
 # signal is ignored rather than stop it half-way through saying so. Until 31 Oct 2026 a signal here, or during the
 # cleanup at exit, ran stopped(), which printed "UNKNOWN  Stopped ..." under the verdict and turned exit 0 or 1 into 2.
-settled() { trap '' HUP INT QUIT TERM; }
+# shellcheck disable=SC2086
+settled() { trap '' $SIGNALS; }
 # The last thing the EXIT trap does, with the status the run was ending with: 0 comes only from a SAFE line and 1 only
 # from an EXPOSED one, which sets $meant just before its `exit 1`; every other status is 2. Until r4 a verdict line that
 # could not be written (standard output closed, a log file on a full volume) failed under `set -e` and ended the run
@@ -538,11 +549,15 @@ nosnap() {
 # >"$tmp"`), and until r4 the line went into that file, which clean() then deletes, and the run ended with no line (the
 # round-3 re-read). A run whose standard output is closed has nowhere to print a line, and ends here, changing nothing.
 exec 3>&1 || exit 2
-trap 'r=$?; trap "" HUP INT QUIT TERM; clean; ended "$r"' EXIT
+trap 'r=$?; trap "" $SIGNALS; clean; ended "$r"' EXIT
 trap stopped HUP INT TERM
 # And QUIT, which Ctrl-\ sends: untrapped, it ended the run with 131 and no line, and left a .wardlatch-new.<pid>.*
 # file beside $FILE -- root's, in a real run -- that a later run's strays() never removes (the third read).
 trap stopped QUIT
+# And every other signal whose default is to end a process, except the fault signals (see the header): until r4 USR1,
+# ALRM -- what the usual timeout wrapper sends -- and XCPU, among others, ended the run with 158, 142 or 152 and no line,
+# after the rename too (the round-3 re-read).
+trap stopped ABRT PIPE ALRM XCPU XFSZ VTALRM PROF USR1 USR2
 
 [ "$(uname -s)" = Darwin ] || { echo "This fix is for macOS. On Linux, update the ca-certificates package."; exit 2; }
 # The symbolic-link check comes before the -f test, which is true for a link to a file (see linked()).

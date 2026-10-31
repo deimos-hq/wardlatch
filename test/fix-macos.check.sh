@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=84
+expect_cases=85
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -390,8 +390,8 @@ exec /bin/rm "$@"
 SHIM
 cat >"$shims/uname" <<'SHIM'
 #!/bin/bash
-# WL_UNAME=hold: touches $WL_MARK and waits, so a case can send a signal at the very start of the script.
-if [ "${WL_UNAME:-}" = hold ]; then : >"$WL_MARK"; /bin/sleep 3; fi
+# WL_UNAME=hold: touches $WL_MARK and waits (r4: WL_HOLD seconds, 3 if unset), so a case can send a signal at the very start.
+if [ "${WL_UNAME:-}" = hold ]; then : >"$WL_MARK"; /bin/sleep "${WL_HOLD:-3}"; fi
 exec /usr/bin/uname "$@"
 SHIM
 cat >"$shims/date" <<'SHIM'
@@ -2632,6 +2632,36 @@ grep -q 'holds neither' <<<"$out" && fail "a swapped floor: it said a file holdi
 grep -q 'fewer than the 50' <<<"$out" && fail "a swapped floor: it described the swapped copy's size as the file's"
 grep -q "doesn't read the same way now" <<<"$out" || fail "a swapped floor: it did not say the file reads differently from the copy"
 ok "the floor's line about the file is read from the file itself, never from a copy another process changed"
+# ---- r4 end case
+
+# ---- r4 case: every-signal
+# Every signal a process can catch whose default action ends it, other than the fault signals the header names, must
+# end the run with a line and exit 2. Until r4 only HUP, INT, QUIT and TERM were trapped: USR1, ALRM and XCPU (and the
+# rest) ended the run with 158, 142 or 152 and no line, after the rename too (round-3 re-read 2), though the published
+# contract says a signal it can catch exits 2. ALRM is what the usual timeout wrapper sends, and XCPU what a CPU limit
+# sends. Each signal at the first command (the uname stand-in holds it), and USR1, ALRM and PIPE just after the rename.
+d=$work/r4/everysig; mkdir -p "$d"
+for sig in HUP INT QUIT TERM ABRT PIPE ALRM XCPU XFSZ VTALRM PROF USR1 USR2; do
+  cp "$work/original.pem" "$d/cert.pem"
+  sigrun_sig=$sig
+  sigrun "$fix" "$d/cert.pem" PATH="$shims:$PATH" WL_UNAME=hold WL_HOLD=1 "$offline" "$OFFLINE"
+  sigrun_sig=INT
+  [ "$code" -eq 2 ] || fail "$sig at the first command: expected exit 2, got $code"
+  grep -q '^UNKNOWN  Stopped before this changed anything' <<<"$out" || fail "$sig at the first command: it did not say it stopped before changing anything"
+  cmp -s "$d/cert.pem" "$work/original.pem" || fail "$sig at the first command: the bundle changed"
+done
+for sig in USR1 ALRM PIPE; do
+  cp "$work/original.pem" "$d/cert.pem"
+  sigrun_sig=$sig
+  sigrun "$fix" "$d/cert.pem" PATH="$shims:$PATH" WL_MV=sig-forward "$offline" "$OFFLINE"
+  sigrun_sig=INT
+  [ "$code" -eq 2 ] || fail "$sig just after the rename: expected exit 2, got $code"
+  grep -q 'had already been replaced with the cleaned file' <<<"$out" || fail "$sig just after the rename: it did not say the file had been replaced"
+  cmp -s "$d/cert.pem" "$r2/P.pem" || fail "$sig just after the rename: the bundle is not the cleaned file"
+  [ -z "$(beside "$d/cert.pem")" ] || fail "$sig just after the rename: it left $(beside "$d/cert.pem") beside the bundle"
+  rm -f "$d"/cert.pem.wardlatch-*.bak
+done
+ok "every signal that ends a process and is not a fault ends the run with a line and exit 2, before the change and after it"
 # ---- r4 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.
