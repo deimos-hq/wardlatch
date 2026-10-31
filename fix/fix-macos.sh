@@ -20,7 +20,8 @@
 #     read from it is taken on trust: before replacing anything, the backup (beside the file, where only the file's
 #     owner can change it) must have the snapshot's SHA-256, read exactly as the snapshot did -- every certificate
 #     readable, the same withdrawn roots and copies at the same places and no others -- and give byte for byte the
-#     cleaned file when cleaned the same way; a file found clean is read again from the file itself;
+#     cleaned file when cleaned the same way; a file found clean, or too small to fix, is read again from the file
+#     itself;
 #   - changes nothing if the file is already clean;
 #   - refuses a bundle too small to be a trust store, and never advises putting back a copy that holds a withdrawn
 #     root: the only way back it ever names is its own backup, in the Undo line under a SAFE result or under a run
@@ -623,6 +624,15 @@ found=$((naaa + nems))
 # revert this branch removed on 29 Oct 2026, in a script people run as root. So that case is now UNKNOWN with the
 # facts, no claim that the Mac is safe, and no advice to restore anything.
 if [ "$before" -lt 50 ]; then
+  # What this says about $FILE is read from $FILE: the snapshot is in the invoking user's temporary folder, and until r4 a
+  # same-user process that swapped it for a small clean bundle made this say "It holds neither withdrawn root" about a
+  # file that held both (the round-3 re-read). Still UNKNOWN then, but the line was untrue.
+  sb=$before; ss=$spec; r=0; inspect "$FILE" || r=$?
+  if [ "$r" -ne 0 ] || [ "$spec" != "$ss" ] || [ "$before" -ne "$sb" ]; then
+    echo "UNKNOWN  The copy of $FILE this run read has $sb certificates, but $FILE itself doesn't read the same way now:"
+    echo "         it changed while this ran, or something changed the copy in ${TMPDIR:-/tmp}. Nothing changed. Run this again."
+    exit 2
+  fi
   if [ "$found" -eq 0 ]; then
     echo "UNKNOWN  $FILE has $before certificates, fewer than the 50 this expects of a trust store. It holds neither"
     echo "         withdrawn root, so this fix has nothing to remove. Something else may be wrong with it; nothing"

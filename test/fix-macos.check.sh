@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=83
+expect_cases=84
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -2612,6 +2612,26 @@ code=0; env TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$d/cert.pem" "$offline" "$OF
 [ "$code" -eq 2 ] || fail "standard output closed: expected exit 2, got $code"
 { cmp -s "$d/cert.pem" "$work/original.pem" && [ "$(baks "$d/cert.pem")" -eq 0 ]; } || fail "standard output closed: the run changed something it could not report"
 ok "standard output that can't be written ends the run with 2, never the EXPOSED code"
+# ---- r4 end case
+
+# ---- r4 case: floor-swap
+# The 50-certificate floor, judged from the snapshot in the user's temporary folder alone until r4: a same-user process
+# that swapped the snapshot for a small bundle holding neither root made the run say "It holds neither withdrawn root,
+# so this fix has nothing to remove" about a file holding both (round-3 re-read 0). Still UNKNOWN, exit 2, nothing
+# changed -- but the line was untrue. What the floor says about the file is now read again from the file itself, and
+# when the two readings differ the line says so instead.
+d=$work/r4/floorswap; mkdir -p "$d"
+awk '/^-----BEGIN CERTIFICATE-----/{k++} k <= 12 { print }' "$r2/P.pem" >"$d/small.pem"
+{ [ "$(certs_in "$d/small.pem")" -eq 12 ] && [ "$(bad "$d/small.pem")" -eq 0 ]; } || fail "a swapped floor: the small bundle was not built as described"
+cp "$work/original.pem" "$d/cert.pem"; rm -f "$d"/state*
+run "$d/cert.pem" PATH="$shims:$PATH" WL_CP=swap-late WL_GREP=swap WL_SWAP_STATE="$d/state" WL_VARIANT="$d/small.pem" "$offline" "$OFFLINE"
+[ -e "$d/state.done" ] || fail "a swapped floor: the stand-in never swapped the snapshot, so this case would measure nothing"
+[ "$code" -eq 2 ] || fail "a swapped floor: expected UNKNOWN, exit 2, got $code"
+cmp -s "$d/cert.pem" "$work/original.pem" || fail "a swapped floor: the bundle changed"
+grep -q 'holds neither' <<<"$out" && fail "a swapped floor: it said a file holding both withdrawn roots holds neither"
+grep -q 'fewer than the 50' <<<"$out" && fail "a swapped floor: it described the swapped copy's size as the file's"
+grep -q "doesn't read the same way now" <<<"$out" || fail "a swapped floor: it did not say the file reads differently from the copy"
+ok "the floor's line about the file is read from the file itself, never from a copy another process changed"
 # ---- r4 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.
