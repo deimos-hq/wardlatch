@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=74
+expect_cases=75
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -2210,6 +2210,35 @@ grep -q "^UNKNOWN  Couldn't write a copy of $d/cert.pem into $work/tmp" <<<"$out
 cmp -s "$d/cert.pem" "$work/original.pem" || fail "a full TMPDIR: the bundle changed"
 [ -z "$(beside "$d/cert.pem")" ] && [ "$(baks "$d/cert.pem")" -eq 0 ] || fail "a full TMPDIR: it left something beside the bundle"
 ok "a temporary folder with no room is reported as that, not as a bundle that can't be read"
+# ---- r3 end case
+
+# ---- r3 case: backup-guards
+# "Keeps a dated backup and never overwrites an earlier one." Two guards hold that: the dated name is checked to be free
+# before anything is written, and the backup gets the name by link(2), which refuses if anything is there by then.
+# No case reached either until 31 Oct 2026: with both taken out, every case passed while a run overwrote an earlier
+# backup under SAFE (the third read, BKBOTH). The date stand-in pins the stamp so the name is known. First, a backup is
+# already at the name: the run must stop before writing anything, saying so. Then one appears at the name while the
+# backup is being copied (the cp stand-in puts it there): the link must refuse it. Either way the earlier backup is
+# untouched, the bundle unchanged, and nothing is left beside it.
+d=$work/r3/bak; mkdir -p "$d"
+stamp=20261031-120000
+for how in exists meanwhile; do
+  cp "$work/original.pem" "$d/cert.pem"; rm -f "$d"/cert.pem.wardlatch-*.bak
+  if [ "$how" = exists ]; then
+    echo 'an earlier backup' >"$d/cert.pem.wardlatch-$stamp.bak"
+    run "$d/cert.pem" PATH="$shims:$PATH" WL_DATE="$stamp" "$offline" "$OFFLINE"
+    grep -q "^UNKNOWN  $d/cert.pem.wardlatch-$stamp.bak already exists. Nothing changed" <<<"$out" || fail "an earlier backup at the name: it did not stop, before writing anything, saying the name is taken"
+  else
+    run "$d/cert.pem" PATH="$shims:$PATH" WL_DATE="$stamp" WL_CP=take-bak-name "$offline" "$OFFLINE"
+    grep -q "^UNKNOWN  Couldn't give the backup its dated name, $d/cert.pem.wardlatch-$stamp.bak" <<<"$out" || fail "a backup taking the name meanwhile: it did not say the dated name could not be given"
+  fi
+  [ "$code" -eq 2 ] || fail "a backup at the dated name ($how): expected UNKNOWN, exit 2, got $code"
+  [ "$(cat "$d/cert.pem.wardlatch-$stamp.bak")" = 'an earlier backup' ] || fail "a backup at the dated name ($how): the earlier backup was overwritten"
+  cmp -s "$d/cert.pem" "$work/original.pem" || fail "a backup at the dated name ($how): the bundle changed"
+  [ -z "$(beside "$d/cert.pem")" ] || fail "a backup at the dated name ($how): it left $(beside "$d/cert.pem") beside the bundle"
+done
+rm -f "$d"/cert.pem.wardlatch-*.bak
+ok "an earlier backup at the dated name is never overwritten, whether it was there first or arrived meanwhile"
 # ---- r3 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.
