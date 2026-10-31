@@ -466,3 +466,26 @@ test('WordPress: a plugins folder holding a listed plugin is checked whatever it
   assert.deepEqual(o.rows.map((x) => x.status), ['SAFE'], JSON.stringify(o.rows).slice(0, 1500));
   assert.match(o.rows[0].reason, /no WordPress installs found/, o.rows[0].reason);
 });
+
+// ---- the eMudhra incident's SPKI hashes ------------------------------------------------------------------------------------
+// Round 3's overwatch, item 3: the SHA-256 of each withdrawn root's SubjectPublicKeyInfo never reached
+// lib/incidents/emudhra-2026-10.json (the Mac fix task could not touch lib/, the lib task was not asked). A key carried
+// by another certificate is identified by it, not by the certificate's own fingerprint. Each is derived here from the
+// incident's own PEM files, apart from the values written in the JSON, and each root in the JSON names its PEM's.
+test('eMudhra: each withdrawn root carries the SHA-256 of its SubjectPublicKeyInfo, and it is the one its certificate holds', async () => {
+  const { X509Certificate, createHash } = await import('node:crypto');
+  const { readFileSync: read, readdirSync: ls } = await import('node:fs');
+  const dirI = join(ROOT, 'lib', 'incidents');
+  const inc = JSON.parse(read(join(dirI, 'emudhra-2026-10.json'), 'utf8'));
+  const certs = ls(dirI).filter((f) => f.endsWith('.pem')).flatMap((f) => read(join(dirI, f), 'utf8').match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g) ?? [])
+    .map((pem) => new X509Certificate(pem));
+  assert.equal(inc.distrustedRoots.length, 2);
+  for (const root of inc.distrustedRoots) {
+    const cert = certs.find((c) => c.fingerprint256 === root.sha256);
+    assert.ok(cert, `${root.name}: no PEM in lib/incidents has the certificate fingerprint ${root.sha256}`);
+    const spki = createHash('sha256').update(cert.publicKey.export({ type: 'spki', format: 'der' })).digest('hex');
+    assert.equal(root.spkiSha256, spki, root.name);
+  }
+  // the two the round-4 brief names, re-derived with LibreSSL 3.3.6 and OpenSSL 4.0.3 (the commit says how)
+  assert.deepEqual(inc.distrustedRoots.map((r) => r.spkiSha256), ['bd153ed7b0434f6886b17bce8bbe84ed340c7132d702a8f4fa318f756ecbd6f3', '8d417db2dd8bf5e3084d1e3f196d583849d81bdd4c00c70b9d39369e96b8c782']);
+});
