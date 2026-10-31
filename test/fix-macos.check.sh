@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=69
+expect_cases=70
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -2100,6 +2100,29 @@ for how in uname:TERM uname:INT uname:HUP mktemp:INT mktemp:TERM; do
   [ -z "$(beside "$d/cert.pem")" ] && [ "$(baks "$d/cert.pem")" -eq 0 ] || fail "a signal before the traps ($how): it left something beside the bundle"
 done
 ok "a signal at the very start of a run, or while the snapshot is being made, prints a line and leaves nothing"
+# ---- r3 end case
+
+# ---- r3 case: sigquit
+# Ctrl-\ sends QUIT. Until 31 Oct 2026 it was not trapped: the run ended with 131 and no line, and left what it was
+# making beside the bundle (the third read). During the backup copy and just after the rename, as the INT cases do,
+# a QUIT must give the same: exit 2, a true line, nothing left in TMPDIR or beside the bundle.
+d=$work/r3/quit; mkdir -p "$d"
+sigrun_sig=QUIT
+cp "$work/original.pem" "$d/cert.pem"
+sigrun "$fix" "$d/cert.pem" PATH="$shims:$PATH" WL_CP=sig-backup "$offline" "$OFFLINE"
+[ "$code" -eq 2 ] || fail "QUIT during the backup copy: expected exit 2, got $code"
+grep -q '^UNKNOWN  Stopped' <<<"$out" || fail "QUIT during the backup copy: it did not say it was stopped"
+cmp -s "$d/cert.pem" "$work/original.pem" || fail "QUIT during the backup copy: the bundle changed"
+[ -z "$(beside "$d/cert.pem")" ] && [ "$(baks "$d/cert.pem")" -eq 0 ] || fail "QUIT during the backup copy: it left $(beside "$d/cert.pem") beside the bundle"
+cp "$work/original.pem" "$d/cert.pem"
+sigrun "$fix" "$d/cert.pem" PATH="$shims:$PATH" WL_MV=sig-forward "$offline" "$OFFLINE"
+[ "$code" -eq 2 ] || fail "QUIT just after the rename: expected exit 2, got $code"
+grep -q 'had already been replaced with the cleaned file' <<<"$out" || fail "QUIT just after the rename: it did not say the file had been replaced"
+cmp -s "$d/cert.pem" "$r2/P.pem" || fail "QUIT just after the rename: the bundle is not the cleaned file"
+[ -z "$(beside "$d/cert.pem")" ] || fail "QUIT just after the rename: it left $(beside "$d/cert.pem") beside the bundle"
+rm -f "$d"/cert.pem.wardlatch-*.bak
+sigrun_sig=INT
+ok "a Ctrl-\\ (QUIT) stops the run with a true line and exit 2, and leaves nothing behind"
 # ---- r3 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.

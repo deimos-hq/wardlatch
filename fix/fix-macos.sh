@@ -39,7 +39,7 @@
 #     a certificate refused after the change apart from a network that stopped answering; it re-tests against the
 #     advisory's test site only when the control loads, and no network result undoes the fix;
 #   - on macOS, prints a line that starts with SAFE, EXPOSED or UNKNOWN whenever it exits, after a Ctrl-C (INT), a
-#     HUP or a TERM too, from its first command on (before that, bash has only read the script).
+#     Ctrl-\ (QUIT), a HUP or a TERM too, from its first command on (before that, bash has only read the script).
 # Safe to run twice. Run it in Terminal (it asks for your Mac's password) or as root from Jamf, Kandji or Intune.
 # Copy it from the Wardlatch page in Safari. Don't fetch it with the Mac's own curl: that curl is what's exposed.
 set -euo pipefail
@@ -280,7 +280,7 @@ strays() {
 # said "replaced with the cleaned file (removed both withdrawn roots)" about a file holding both of them again.
 stopped() {
   local now
-  trap '' HUP INT TERM
+  trap '' HUP INT QUIT TERM
   clean
   if [ -z "$writing" ]; then
     echo "UNKNOWN  Stopped before this changed anything: nothing was written to $FILE or beside it. Run this again."
@@ -441,6 +441,9 @@ nobackup() {
 # this line only assignments and function definitions run.
 trap clean EXIT
 trap stopped HUP INT TERM
+# And QUIT, which Ctrl-\ sends: untrapped, it ended the run with 131 and no line, and left a .wardlatch-new.<pid>.*
+# file beside $FILE -- root's, in a real run -- that a later run's strays() never removes (the third read).
+trap stopped QUIT
 
 [ "$(uname -s)" = Darwin ] || { echo "This fix is for macOS. On Linux, update the ca-certificates package."; exit 2; }
 # The symbolic-link check comes before the -f test, which is true for a link to a file (see linked()).
