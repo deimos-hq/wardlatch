@@ -6,12 +6,20 @@
 # and a macOS update puts Apple's original file back (26.7.2 did): run this again after every update.
 # The removal is the advisory's (emudhra.we-have-a-problem.com); this script adds the safety around it:
 #   - finds the two roots by their SHA-256 fingerprints, not by the name lines some copies of the file don't have,
+#     and by their public keys too, so a copy with a bit changed or a root re-issued with the same key is removed;
 #     and refuses a file it can't fully check: a certificate it can't read, a block that isn't a plain certificate,
-#     or fewer fingerprints read than certificates counted;
+#     a -----BEGIN marker anywhere but at the start of a line, or fewer fingerprints read than certificates counted;
 #   - refuses a $FILE that is a symbolic link: replacing it would put a file of this script's own where the link is,
 #     so $FILE would stop following the file the link points to, and that file would be left as it is;
 #   - works on a snapshot of the file and refuses to replace it if it changed meanwhile: the backup it takes is
-#     compared with that snapshot, and the file is compared with it again immediately before the replacement;
+#     compared with that snapshot, and the file is compared with it again, by SHA-256, after the new file has been
+#     built and checked and immediately before the rename (a change in the moment between that test and the rename
+#     is the one it cannot see);
+#   - and because that snapshot is in your temporary folder, where anything running as you can change it, nothing
+#     read from it is taken on trust: before replacing anything, the backup (beside the file, where only the file's
+#     owner can change it) must have the snapshot's SHA-256, hold each certificate to be removed as what it was found
+#     to be, and give byte for byte the cleaned file when cleaned the same way; a file found clean is read again
+#     from the file itself;
 #   - changes nothing if the file is already clean;
 #   - refuses a bundle too small to be a trust store, and never advises putting back a copy that holds a withdrawn
 #     root: the only way back it ever names is its own backup, in the Undo line under a SAFE result or under a run
@@ -19,7 +27,8 @@
 #   - keeps a dated backup and never overwrites an earlier one; the copy is made under a temporary name and compared
 #     with the snapshot first, so the dated name only ever holds a complete copy of the file this run checked;
 #   - removes only each withdrawn root's own lines -- its certificate, the name and description lines directly above
-#     it when they are that root's, and the one empty line after it -- and nothing else in the file;
+#     it when they are that root's exactly as openssl prints them, and the one empty line after it -- and nothing
+#     else in the file;
 #   - writes the new file beside the old one and checks THAT file -- byte for byte the file it built, every other
 #     certificate still there, no withdrawn root left -- before replacing anything;
 #   - makes every change to the file by renaming a finished file over it, in one step, so an interruption leaves the
@@ -31,10 +40,13 @@
 #     a certificate refused after the change apart from a network that stopped answering; it re-tests against the
 #     advisory's test site only when the control loads, and no network result undoes the fix;
 #   - on macOS, prints a line that starts with SAFE, EXPOSED or UNKNOWN whenever it exits, after a Ctrl-C (INT), a
-#     HUP or a TERM too.
+#     Ctrl-\ (QUIT), a HUP or a TERM too, from its first command on (before that, bash has only read the script).
 # Safe to run twice. Run it in Terminal (it asks for your Mac's password) or as root from Jamf, Kandji or Intune.
 # Copy it from the Wardlatch page in Safari. Don't fetch it with the Mac's own curl: that curl is what's exposed.
 set -euo pipefail
+# Bytes, not characters, as LibreSSL reads the file. In a UTF-8 locale macOS's grep does not match a line holding a
+# byte that isn't valid UTF-8 at all, so a marker after such bytes went uncounted (measured 31 Oct 2026).
+export LC_ALL=C
 
 FILE="${WARDLATCH_CERT_FILE:-/etc/ssl/cert.pem}"   # the override exists for testing on a copy, and for a linked bundle
 TEST_URL="https://dv-g3b-emudhra.we-have-a-problem.com/"
@@ -46,9 +58,17 @@ AAA='D7:A7:A0:FB:5D:7E:27:31:D7:71:E9:48:4E:BC:DE:F7:1D:5F:0C:3E:0A:29:48:78:2B:
 EMS='86:A1:EC:BA:08:9C:4A:8D:3B:BE:27:34:C6:12:BA:34:1D:81:3E:04:3C:F9:E8:A8:62:CD:5C:57:A3:6B:BE:6B'
 AAA_NAME='AAA Certificate Services'
 EMS_NAME='emSign ECC Root CA - G3'
+# And their public keys, each the base64 of its SubjectPublicKeyInfo as `openssl x509 -pubkey` prints it, on one line.
+# A certificate carrying one of these keys is trusted to sign for it whatever else it says: a copy with one bit of its
+# signature flipped, or a root re-issued with the same key, has another fingerprint and the same key, and LibreSSL,
+# OpenSSL 3.6.4 and Apple's python3 trust it (measured 31 Oct 2026). SHA-256 of each SubjectPublicKeyInfo:
+#   AAA Certificate Services  bd153ed7b0434f6886b17bce8bbe84ed340c7132d702a8f4fa318f756ecbd6f3
+#   emSign ECC Root CA - G3   8d417db2dd8bf5e3084d1e3f196d583849d81bdd4c00c70b9d39369e96b8c782
+AAA_KEY='MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvkCd9G7h6naHHE1FRI6+RsiDBp3BKv4YH47kAvrzq11QihYxC5oG0MVwIs1JLVRjzLZuaEYLU+rLTCTAvHJO6vEVrvRUmhIKw3qyM2Di2olV8yJY897cz++DhqKMlE+faPKYkEaEJ8d2v+PMNSyLXgdkZYLASLCokflhn3YgUKiRx2a163hiA1bwihoT6jGjHqCZ/Tj29icyWG8H9Wu4+xQrr7eqzNZjX3OM2gWZqDioyxd4NlGs6Z70eDqNzw/ZQuKYDKsvnw4B3u+fmUnxLd+sdE0bmLVHxeUp0fmQGMdinL6DxyZ7Poolx8DdneY1aBAgnY/Y3tLDhJwNXugvyQIDAQAB'
+EMS_KEY='MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEI6UMuC0S9SjzsbLd4gISgJ45X0lNn8klNFl07LsGHOfAcq/ori/hQVSHFKhKsuh8guZbarXcs3XOiwbQhiO/RtWODz8E9Ncckn72pWPC9V+OLk+hGBkCKzIKgmR9FpPR'
+# Nothing below runs a command until the traps are set, after the functions: see "The traps" further down.
 
-[ "$(uname -s)" = Darwin ] || { echo "This fix is for macOS. On Linux, update the ca-certificates package."; exit 2; }
-# Before anything else, and before the -f test, which is true for a symbolic link to a regular file. This fix replaces
+# The symbolic-link check, before the -f test, which is true for a symbolic link to a regular file. This fix replaces
 # the file it is given by renaming a new file over it, and a rename over a link replaces the LINK: $FILE would become
 # a file of this script's own, stop following whatever the link points to (an administrator set that link up for a
 # reason), and the file it points to would be left exactly as it was. Until 31 Oct 2026 the refusal said the Mac
@@ -65,10 +85,6 @@ linked() {
   echo "         WARDLATCH_CERT_FILE='${to:-<the file the link points to>}' bash '$me'"
   exit 2
 }
-[ ! -L "$FILE" ] || linked
-[ -f "$FILE" ] || { echo "UNKNOWN  $FILE not found. Nothing changed."; exit 2; }
-SUDO=sudo; if [ "$(id -u)" -eq 0 ] || { [ -w "$FILE" ] && [ -w "$(dirname "$FILE")" ]; }; then SUDO=; fi
-DIR=$(dirname "$FILE")
 
 # 0 = trusts the compromised keys, 60 = refuses them, anything else = the test site didn't answer
 # (-q: ignore ~/.curlrc, whose settings could change the answer)
@@ -81,9 +97,11 @@ control() { local r=0; /usr/bin/curl -q -s -o /dev/null --max-time 15 --cacert "
 # How many lines of $2 match $1. Fails, rather than print a number, if grep could not read the file: a count that
 # came back empty was compared as if it were one, and `[` reading "" as a number is an error, not a no.
 count() { local n r=0; n=$(grep -c -- "$1" "$2" 2>/dev/null) || r=$?; if [ "$r" -gt 1 ] || [ -z "$n" ]; then return 1; fi; echo "$n"; }
-# Certificates are lines that START with the BEGIN marker, which is all LibreSSL reads as one. Until 31 Oct 2026 the
-# marker counted anywhere in a line, so a comment that mentioned it ("paste each certificate from its -----BEGIN
-# CERTIFICATE----- line ...") made a bundle LibreSSL reads without complaint unfixable, as "a certificate can't be read".
+# Certificates are the lines that START with the BEGIN marker. A marker anywhere else in a line stops the run before
+# anything is read out of the file (see the checks after the snapshot): LibreSSL reads the file 253 bytes at a time, so
+# a marker at byte 253, 506, ... of a longer line starts a certificate it trusts (OpenSSL 3.6.4: byte 254), and this
+# script would not see it. Measured 31 Oct 2026, after an earlier change that day (6a36187) counted only markers at the
+# start of a line on the model that LibreSSL reads nothing else: a root hidden that way stayed trusted, under SAFE.
 certs() { count '^-----BEGIN CERTIFICATE-----' "$1"; }
 # The SHA-256 of the file $1, or of stdin when $1 is "-": 64 hex digits, or a failure, never anything else.
 # (LibreSSL prints "(stdin)= <digest>" in some versions and "<digest>" in others; the last word is the digest in both.)
@@ -96,18 +114,39 @@ sha() {
   [ "${#o}" -eq 64 ] || return 1
   echo "$o"
 }
-# Prints one line for each certificate in $1 that is a withdrawn root: its position (1, 2, ...) and which root it is,
-# AAA or EMS. Fails -- so the caller says UNKNOWN and changes nothing -- if any certificate can't be read, if anything
-# openssl printed isn't a fingerprint, or if the number of fingerprints read isn't the number of certificates
-# counted: a file this can't fully check is never called clean. That last test is the completeness gate, and it is
-# what makes a failure that says nothing count as a failure.
+# Reads one certificate (PEM, in $1) and sets $kind: AAA or EMS when it is that withdrawn root, byte for byte by its
+# SHA-256 fingerprint; AAA-KEY or EMS-KEY when it is another certificate carrying that root's public key; - for any
+# other certificate. One openssl call prints both the fingerprint and the key. Returns 1 when openssl couldn't read
+# the certificate, and 2 when what it printed isn't a fingerprint and a public key, so the caller doesn't count it.
+classify() {
+  local o f k
+  kind=''
+  o=$(printf '%s\n' "$1" | /usr/bin/openssl x509 -noout -fingerprint -sha256 -pubkey 2>/dev/null) || return 1
+  f=${o#*SHA256 Fingerprint=}; f=${f%%$'\n'*}
+  # 32 pairs of hex digits joined by colons
+  case "$f" in *[!0-9A-F:]*|'') return 2 ;; esac
+  [ "${#f}" -eq 95 ] || return 2
+  case "$o" in *$'\n-----BEGIN PUBLIC KEY-----\n'*$'\n-----END PUBLIC KEY-----'*) ;; *) return 2 ;; esac
+  k=${o#*-----BEGIN PUBLIC KEY-----}; k=${k%%-----END PUBLIC KEY-----*}; k=${k//$'\n'/}
+  case "$k" in *[!A-Za-z0-9+/=]*|'') return 2 ;; esac
+  if [ "$f" = "$AAA" ]; then kind=AAA
+  elif [ "$f" = "$EMS" ]; then kind=EMS
+  elif [ "$k" = "$AAA_KEY" ]; then kind=AAA-KEY
+  elif [ "$k" = "$EMS_KEY" ]; then kind=EMS-KEY
+  else kind=-; fi
+}
+# Prints one line for each certificate in $1 that carries a withdrawn root's key: its position (1, 2, ...) and what
+# classify() found it to be, AAA, EMS, AAA-KEY or EMS-KEY. Fails -- so the caller says UNKNOWN and changes nothing --
+# if any certificate can't be read, if anything openssl printed isn't a fingerprint and a public key, or if the number
+# of certificates read that way isn't the number counted: a file this can't fully check is never called clean. That
+# last test is the completeness gate, and it is what makes a failure that says nothing count as a failure.
 # It reads the file itself, line by line, and hands each certificate to openssl through a pipe: no temporary files and
 # no here-strings. Until 31 Oct 2026 the comparison was `grep -qxF <fingerprint> <<<"$ROOTS"`, and macOS's
 # /bin/bash 3.2 writes a here-string to a file in /private/var/tmp whatever TMPDIR says. When it couldn't (a sandbox,
 # an endpoint agent, a full disk), the grep failed, its failure read as "no match", and every certificate was "not a
 # withdrawn root": measured, the run printed SAFE and exited 0 with both roots still in the file.
 roots() {
-  local n l blk='' inblk='' k=0 nfp=0 fp
+  local n l blk='' inblk='' k=0 nfp=0 r
   n=$(certs "$1") || return 1
   while IFS= read -r l || [ -n "$l" ]; do
     case "$l" in
@@ -119,13 +158,12 @@ roots() {
         blk="$blk
 $l"
         inblk=''
-        fp=$(printf '%s\n' "$blk" | /usr/bin/openssl x509 -noout -fingerprint -sha256 2>/dev/null) || return 1
-        fp=${fp#*=}
-        # Not a fingerprint: not counted, so the gate below fails. 32 pairs of hex digits joined by colons.
-        case "$fp" in *[!0-9A-F:]*|'') continue ;; esac
-        [ "${#fp}" -eq 95 ] || continue
+        r=0; classify "$blk" || r=$?
+        [ "$r" -ne 1 ] || return 1
+        # Not a fingerprint and a key: not counted, so the gate below fails.
+        [ "$r" -eq 0 ] || continue
         nfp=$((nfp + 1))
-        if [ "$fp" = "$AAA" ]; then echo "$k AAA"; elif [ "$fp" = "$EMS" ]; then echo "$k EMS"; fi ;;
+        [ "$kind" = - ] || echo "$k $kind" ;;
       *)
         [ -z "$inblk" ] || blk="$blk
 $l" ;;
@@ -133,20 +171,57 @@ $l" ;;
   done <"$1" || return 1
   [ -z "$inblk" ] && [ "$k" -eq "$n" ] && [ "$nfp" -eq "$n" ]
 }
-# Writes $1 without the certificates listed in $2 ("position:root ..." as roots() found them). For each one it
+# Reads $1 as the trust store this run is about, and sets $blocks, $before, $inline and $spec. Returns 0 when it could
+# be fully checked; 1 when it couldn't be read; 2 when a line holds -----BEGIN after other text; 3 when a block isn't
+# a plain certificate; 4 when a certificate couldn't be read with its fingerprint and key.
+inspect() {
+  blocks=$(count '^-----BEGIN ' "$1") && before=$(certs "$1") && inline=$(count '.-----BEGIN' "$1") || return 1
+  [ "$inline" -eq 0 ] || return 2
+  [ "$blocks" -eq "$before" ] || return 3
+  spec=$(roots "$1") || return 4
+}
+# The $2-th certificate of $1, from its BEGIN line to its END line, as roots() hands it to openssl.
+block() { awk -v k="$2" '/^-----BEGIN CERTIFICATE-----/ { n++ } n == k { print } n == k && /^-----END CERTIFICATE-----/ { exit }' "$1"; }
+# Apple's entry for the $2-th certificate of $1 (a withdrawn root; $3 is AAA or EMS) as this Mac's openssl prints it:
+# "=== <subject>", the text dump without the key, the signature or the issuer, then the SHA-1 and SHA-256 fingerprint
+# lines. Measured on 31 Oct 2026: byte for byte the entry above each of the 128 certificates in macOS 27.2's cert.pem
+# (LibreSSL 3.3.6). Where the file's lines are not this -- another openssl's way of printing, or a line someone
+# added -- strip() keeps every line above the certificate.
+entry() {
+  local t r
+  t=$(block "$1" "$2") || return 1
+  r=$(printf '%s\n' "$t" | /usr/bin/openssl x509 -noout -subject -text -certopt no_pubkey,no_sigdump,no_issuer -sha1 -fingerprint 2>/dev/null) || return 1
+  case "$r" in 'subject= '*) ;; *) return 1 ;; esac
+  if [ "$3" = AAA ]; then t=$AAA; else t=$EMS; fi
+  printf '=== %s\nSHA256 Fingerprint=%s' "${r#subject= }" "$t"
+}
+# Writes $1 without the certificates listed in $2 ("position:kind ..." as roots() found them). For each one it
 # removes exactly these lines, and every other line in the file is kept, whatever it says:
 #   - its own block, from its -----BEGIN CERTIFICATE----- line to its own -----END CERTIFICATE----- line;
-#   - its name, when the name is directly above the block and is that root's: Apple's shape ("=== /.../CN=<name>",
-#     then "Certificate:", the openssl text dump of the certificate, and its own "SHA256 Fingerprint=" line directly
-#     above BEGIN -- every line of it indented, empty, or one of those three) or mk-ca-bundle's (the name, then a line
-#     of "=" exactly as long, directly above BEGIN);
+#   - for the root itself (not a certificate found by its key alone),
+#     its name, when the name is directly above the block and is that root's: Apple's shape -- "=== <subject>",
+#     "Certificate:", the openssl text dump, "SHA1 Fingerprint=" and "SHA256 Fingerprint=", directly above BEGIN --
+#     when those lines are, every one of them and nothing else, what this Mac's openssl prints for that certificate
+#     (entry()), or mk-ca-bundle's (the name, then a line of "=" exactly as long, directly above BEGIN);
 #   - the one empty line directly after the block, the separator Apple writes between blocks. That and Apple's name
 #     shape are why this is still byte for byte the advisory's removal on Apple's file.
 # Until 31 Oct 2026 a "=== " line anywhere above a removed root started its block, so an administrator's own "=== "
 # line above a root they had appended, and every line between it and the certificate, went with the root, and the
 # count check could not see it (it counts certificates). Every empty line after a removed root went too, not one.
+# After that, until a third read the same day, any indented line between "Certificate:" and the fingerprint lines
+# counted as the dump, so an administrator's indented note inside a withdrawn root's entry went with it, under SAFE.
 strip() {
-  awk -v list="$2" -v aaa="$AAA" -v ems="$EMS" -v aname="$AAA_NAME" -v ename="$EMS_NAME" '
+  local p e envs
+  envs=(WL_STRIP=1)
+  # Split on purpose: $2 is "position:kind" pairs, digits, colons, AAA, EMS and -KEY only.
+  # shellcheck disable=SC2086
+  set -f; set -- "$1" $2; set +f
+  for p in "${@:2}"; do
+    case "${p#*:}" in AAA|EMS) e=$(entry "$1" "${p%%:*}" "${p#*:}") || e=''; envs+=("WL_ENTRY_${p%%:*}=$e") ;; esac
+  done
+  # The list again, as one word for awk.
+  p="${*:2}"
+  env "${envs[@]}" awk -v list="$p" -v aaa="$AAA" -v ems="$EMS" -v aname="$AAA_NAME" -v ename="$EMS_NAME" '
     BEGIN {
       n = split(list, a, " ")
       for (i = 1; i <= n; i++) { split(a[i], p, ":"); drop[p[1] + 0] = p[2] }
@@ -162,6 +237,8 @@ strip() {
         if (!(c in B) || !(c in E) || ((c + 1) in B && B[c + 1] < E[c])) { broken = 1; exit 1 }
         for (j = B[c]; j <= E[c]; j++) gone[j] = 1
         if (E[c] < last && L[E[c] + 1] == "") gone[E[c] + 1] = 1
+        # A certificate found by its key alone is not that root, so no name or description above it names that root.
+        if (drop[c] != "AAA" && drop[c] != "EMS") continue
         name = (drop[c] == "AAA") ? aname : ename
         fp = (drop[c] == "AAA") ? aaa : ems
         b = B[c]
@@ -169,15 +246,18 @@ strip() {
         if (b > 2 && L[b - 1] ~ /^=+$/ && L[b - 2] == name && length(L[b - 1]) == length(name)) {
           gone[b - 1] = 1; gone[b - 2] = 1
         }
-        # Apple: "=== .../CN=<name>", "Certificate:", the dump, "SHA256 Fingerprint=<this root>", directly above
-        if (b > 1 && L[b - 1] == "SHA256 Fingerprint=" fp) {
+        # Apple: from the nearest "=== " line above to "SHA256 Fingerprint=<this root>" directly above BEGIN, when
+        # those lines are exactly the entry this Mac openssl prints for it (from entry(), in the environment).
+        want = ENVIRON["WL_ENTRY_" c]
+        if (want != "" && b > 1 && L[b - 1] == "SHA256 Fingerprint=" fp) {
           for (s = b - 1; s >= 1; s--) {
             if (L[s] ~ /^=== /) break
-            if (L[s] !~ /^(Certificate:$|SHA1 Fingerprint=|SHA256 Fingerprint=|[ \t]|$)/) { s = 0; break }
+            if (L[s] ~ /^-----(BEGIN|END) /) { s = 0; break }
           }
-          tail = "/CN=" name
-          if (s >= 1 && L[s + 1] == "Certificate:" && length(L[s]) >= length(tail) && substr(L[s], length(L[s]) - length(tail) + 1) == tail) {
-            for (j = s; j < b; j++) gone[j] = 1
+          if (s >= 1) {
+            got = L[s]
+            for (j = s + 1; j < b; j++) got = got "\n" L[j]
+            if (got == want) for (j = s; j < b; j++) gone[j] = 1
           }
         }
       }
@@ -186,7 +266,8 @@ strip() {
     END { if (broken) exit 1 }' "$1" "$1"
 }
 
-# Everything below reads this snapshot, so the checks and the change are about the same bytes.
+# The run's state, and the traps' handlers. The checks and the change are made on a snapshot of $FILE, so that they
+# are about the same bytes, and the backup must bear the snapshot out (checkbackup()) before anything is replaced.
 # HUP, INT and TERM as well as EXIT, which is what the one-line fix on the page traps. An interrupt has to STOP
 # this script, and on EXIT alone it did not: measured on 29 Oct 2026 under macOS's /bin/bash 3.2.57, a SIGINT
 # arriving while bash waits on a plain foreground command is swallowed, and bash carries on to the next line with
@@ -198,15 +279,23 @@ bnew=''       # the file beside $FILE the backup is copied into, until it has it
 writing=''    # set just BEFORE the first file is made beside $FILE: until then this run has written nothing there
 published=''  # set once the backup has its dated name
 replaced=''   # set once the cleaned file has been renamed over $FILE
-orig='' want='' after='' backup='' naaa=0 nems=0 found=0
+orig='' want='' after='' backup='' naaa=0 nems=0 kaaa=0 kems=0 found=0 kind='' why='' step=''
+snap='' tmp=''  # the two temporary files, once mktemp has named them
+SUDO='' DIR=''  # set once $FILE is known to be a file
 # Every command here ends in `|| true`, and that is load-bearing rather than tidy. Measured on /bin/bash 3.2.57:
 # with `set -e` in force, a failing command inside the EXIT trap ends the trap AND overrides the script's exit
 # status, so one failed `rm` turned `exit 2` ("couldn't tell") into `exit 1`, which the published exit-code table
 # reads as EXPOSED. `return 0` at the end does not help -- errexit ends the function before reaching it.
-# strays() is for a file made beside $FILE whose name was not yet known when the signal came: mktemp chooses it.
-clean() { rm -f "$snap" "$tmp" || true; [ -z "$new" ] || $SUDO rm -f "$new" || true; new=''; [ -z "$bnew" ] || $SUDO rm -f "$bnew" || true; bnew=''; strays || true; }
+# strays() is for a file made beside $FILE, or in TMPDIR, whose name was not yet known when the signal came: mktemp
+# chooses it, so each carries this run's process id. The traps are set before either temporary file is made, so
+# clean() can run before they have names.
+clean() { [ -z "$snap" ] || rm -f "$snap" || true; [ -z "$tmp" ] || rm -f "$tmp" || true; [ -z "$new" ] || $SUDO rm -f "$new" || true; new=''; [ -z "$bnew" ] || $SUDO rm -f "$bnew" || true; bnew=''; strays || true; }
 strays() {
   local f
+  for f in "${TMPDIR:-/tmp}"/wardlatch.$$.*; do
+    if [ -e "$f" ] || [ -L "$f" ]; then rm -f "$f" || true; fi
+  done
+  [ -n "$DIR" ] || return 0
   for f in "$DIR"/.wardlatch-new.$$.* "$DIR"/.wardlatch-backup.$$.*; do
     if [ -e "$f" ] || [ -L "$f" ]; then $SUDO rm -f "$f" || true; fi
   done
@@ -221,7 +310,7 @@ strays() {
 # said "replaced with the cleaned file (removed both withdrawn roots)" about a file holding both of them again.
 stopped() {
   local now
-  trap '' HUP INT TERM
+  trap '' HUP INT QUIT TERM
   clean
   if [ -z "$writing" ]; then
     echo "UNKNOWN  Stopped before this changed anything: nothing was written to $FILE or beside it. Run this again."
@@ -246,11 +335,26 @@ stopped() {
   fi
   exit 2
 }
+# Called once the last reading is in, just before the verdict is printed: from here the run has its answer, and a
+# signal is ignored rather than stop it half-way through saying so. Until 31 Oct 2026 a signal here, or during the
+# cleanup at exit, ran stopped(), which printed "UNKNOWN  Stopped ..." under the verdict and turned exit 0 or 1 into 2.
+settled() { trap '' HUP INT QUIT TERM; }
+# What this file held of one withdrawn root: $1 copies of the root itself and $2 other certificates with its key, $3
+# its name. A certificate found by the key alone is named as that, not as the root: it is not byte for byte the root.
+one() {
+  local s=$3
+  if [ "$1" -eq 0 ]; then
+    if [ "$2" -le 1 ]; then echo "a certificate with the key of $3"; else echo "$2 certificates with the key of $3"; fi
+    return 0
+  fi
+  [ "$1" -le 1 ] || s="$1 copies of $3"
+  if [ "$2" -eq 1 ]; then s="$s and 1 other certificate with its key"; elif [ "$2" -gt 1 ]; then s="$s and $2 other certificates with its key"; fi
+  echo "$s"
+}
 # The names of the withdrawn roots this file held, from what roots() found in it. Copies are counted.
 held() {
-  local a=$AAA_NAME e=$EMS_NAME
-  [ "$naaa" -le 1 ] || a="$naaa copies of $AAA_NAME"
-  [ "$nems" -le 1 ] || e="$nems copies of $EMS_NAME"
+  local a e
+  a=$(one $((naaa - kaaa)) "$kaaa" "$AAA_NAME"); e=$(one $((nems - kems)) "$kems" "$EMS_NAME")
   if [ "$naaa" -gt 0 ] && [ "$nems" -gt 0 ]; then echo "$a and $e"
   elif [ "$naaa" -gt 0 ]; then echo "$a"
   else echo "$e"; fi
@@ -262,7 +366,7 @@ held() {
 # about a Mac drawn from one file.
 removed_phrase() {
   if [ "$naaa" -gt 0 ] && [ "$nems" -gt 0 ]; then
-    if [ "$found" -eq 2 ]; then echo "removed both withdrawn roots"; else echo "removed both withdrawn roots ($(held))"; fi
+    if [ "$found" -eq 2 ] && [ "$((kaaa + kems))" -eq 0 ]; then echo "removed both withdrawn roots"; else echo "removed both withdrawn roots ($(held))"; fi
   elif [ "$naaa" -gt 0 ]; then
     echo "removed $(held) (this file did not hold the other withdrawn root, $EMS_NAME)"
   else
@@ -283,26 +387,71 @@ removed_phrase() {
 # byte for byte the file expected (the cleaned file's SHA-256, or the snapshot's for the restore), and the cleaned
 # file must pass the checks again -- the right number of certificates, every one readable, no withdrawn root.
 # Until 31 Oct 2026 the checks were made on the copy in the invoking user's temporary folder, and root copied it
-# later. Returns 1 with $FILE untouched if a step fails, 3 if the copy beside $FILE is not the file expected.
+# later. Returns 1 with $FILE untouched if a step fails, 3 if the copy beside $FILE is not the file expected, 4 if
+# $FILE changed (below).
 replace() {
-  local got expect
+  local got expect now
   if [ "$1" = "$tmp" ]; then expect=$want; else expect=$orig; fi
-  new=$($SUDO mktemp "$DIR/.wardlatch-new.$$.XXXXXX" 2>/dev/null) || { new=''; return 1; }
-  if $SUDO cp "$1" "$new" && $SUDO chmod 644 "$new"; then
+  step=mktemp; new=$($SUDO mktemp "$DIR/.wardlatch-new.$$.XXXXXX" 2>&1) || { why=$new; new=''; return 1; }
+  case "$new" in "$DIR"/.wardlatch-new.$$.*) ;; *) why=$new; new=''; return 1 ;; esac
+  if step=cp && why=$($SUDO cp "$1" "$new" 2>&1) && step=chmod && why=$($SUDO chmod 644 "$new" 2>&1); then
     got=$(sha "$new") || got=''
     if [ "$got" != "$expect" ] || { [ "$1" = "$tmp" ] && ! built "$new"; }; then
       $SUDO rm -f "$new" || true
       new=''
       return 3
     fi
-    $SUDO mv "$new" "$FILE" && { new=''; return 0; }
+    # The forward write replaces only the file this run read: $FILE's SHA-256 must still be the snapshot's (which the
+    # backup has been shown to have), taken here, after the new file is built and checked and immediately before the
+    # rename, so what is left between them is this test and the start of mv. Until 31 Oct 2026 the comparison came
+    # before this function, and built() alone -- every certificate fingerprinted again, 0.6 s -- lay between it and
+    # the rename: a change to $FILE in that time was lost from it and from the backup, under SAFE (the third read).
+    # Returns 4, with $FILE untouched.
+    if [ "$1" = "$tmp" ]; then
+      now=$(sha "$FILE") || now=''
+      if [ "$now" != "$orig" ]; then $SUDO rm -f "$new" || true; new=''; return 4; fi
+    fi
+    step=mv; why=$($SUDO mv "$new" "$FILE" 2>&1) && { new=''; return 0; }
   fi
   $SUDO rm -f "$new" || true
   new=''
   return 1
 }
+# What a failed command said, for the line that reports it: its own words from stderr ($why), on one line -- sudo's
+# when it was sudo that refused ("sudo: 3 incorrect password attempts"), the command's own otherwise -- and, from
+# room(), advice about disk space only when those words are about disk space. Until 31 Oct 2026 every failure after
+# `sudo -v` was reported with "Check the disk has room (df -h /)", a password refused at a later prompt included, and
+# the backup mktemp's words, sudo's among them, went to /dev/null (the third read).
+told() {
+  local w
+  w=$(printf '%s' "$why" | tr '\n' ' '); w=${w% }
+  if [ -n "$w" ]; then echo "$1 said: $w"; else echo "$1 failed and said nothing"; fi
+}
+room() { case "$why" in *'No space left on device'*) echo " Check the disk has room (df -h /)." ;; esac; }
 # The checks the cleaned file passed, made again on the file that is about to be renamed into place.
 built() { local n l; n=$(certs "$1") && [ "$n" -eq "$after" ] && l=$(roots "$1") && [ -z "$l" ]; }
+# Everything above the backup step -- the counts, which certificates are withdrawn roots, and the cleaned file and its
+# SHA-256 -- was read from the snapshot in the invoking user's temporary folder, which anything running as that user
+# can change between one read and the next. The backup is a copy of $FILE beside it, which only the owner of $FILE can
+# change, so before the replacement the backup has to bear all of that out: its SHA-256 is the one the snapshot had
+# when it was taken; each certificate this run is about to remove is, in the backup, what roots() found it to be; and
+# the backup cleaned the same way is byte for byte the file this run built and checked. Until 31 Oct 2026 nothing did:
+# a same-user process that swapped one certificate of the snapshot while it was read, and put the snapshot back before
+# the backup was compared with it, landed its own root in $FILE under SAFE, exit 0 (the F1 class; measured by the third
+# read, 4 runs of 4). Fails if any of the three doesn't hold.
+checkbackup() {
+  local p t
+  [ "$(sha "$backup")" = "$orig" ] || return 1
+  # Split on purpose: $drop is "position:kind" pairs, digits, colons, AAA, EMS and -KEY only.
+  # shellcheck disable=SC2086
+  set -f; set -- $drop; set +f
+  for p in "$@"; do
+    t=$(block "$backup" "${p%%:*}") || return 1
+    classify "$t" || return 1
+    [ "$kind" = "${p#*:}" ] || return 1
+  done
+  [ "$(strip "$backup" "$drop" | sha -)" = "$want" ]
+}
 # The backup copy failed or isn't the file this run checked: the partial copy is removed and the dated name is never
 # used, and the line says which of those happened. Until 31 Oct 2026 the copy was made straight to the dated name,
 # so a copy that failed part-way (a full disk, a Ctrl-C) left a truncated file under exactly the name of a good backup.
@@ -311,7 +460,7 @@ nobackup() {
   if [ -n "$bnew" ]; then
     if $SUDO rm -f "$bnew" 2>/dev/null; then bnew=''; else left=$bnew; fi
   fi
-  echo "UNKNOWN  $1, so nothing was replaced and no backup was kept."
+  echo "UNKNOWN  $1, so nothing was replaced and no backup was kept.$(room)"
   if [ -n "$left" ]; then
     echo "         A partial copy is left at $left: it is not a backup. Delete it."
   else
@@ -319,50 +468,90 @@ nobackup() {
   fi
   exit 2
 }
+# The snapshot copy failed. Whether the reading or the writing failed is measured rather than guessed: if $FILE reads
+# in full into nothing, the copy failed writing into TMPDIR -- a full or unwritable temporary folder. Until 31 Oct 2026
+# every failure here said "Can't read $FILE", a TMPDIR with no room included (the third read, on a 2 MB disk image).
+nosnap() {
+  if sha "$FILE" >/dev/null; then
+    echo "UNKNOWN  Couldn't write a copy of $FILE into ${TMPDIR:-/tmp} ($FILE itself reads in full), so it wasn't"
+    echo "         checked. That folder may be full, or not writable by this run. Nothing changed."
+  else
+    echo "UNKNOWN  Can't read $FILE. Nothing changed."
+  fi
+  exit 2
+}
 
-snap=$(mktemp "${TMPDIR:-/tmp}/wardlatch.XXXXXX" 2>/dev/null) || {
-  echo "UNKNOWN  Couldn't make a temporary file in ${TMPDIR:-/tmp} (mktemp failed), so $FILE wasn't read. Nothing changed."
-  exit 2
-}
-tmp=$(mktemp "${TMPDIR:-/tmp}/wardlatch.XXXXXX" 2>/dev/null) || {
-  rm -f "$snap" || true
-  echo "UNKNOWN  Couldn't make a temporary file in ${TMPDIR:-/tmp} (mktemp failed), so $FILE wasn't read. Nothing changed."
-  exit 2
-}
+# The traps, before any command runs: before uname, readlink, id and dirname, and before either temporary file is made.
+# Until 31 Oct 2026 they were set after all of those, so a signal in that time -- milliseconds in a real run -- ended
+# the run with 130, 143 or 129 and no line, and left the snapshot in TMPDIR (the third read). Between bash starting and
+# this line only assignments and function definitions run.
+# The cleanup at exit ignores the signals first: it runs after the verdict line, and a signal during it ran stopped(),
+# which printed a second line contradicting the first and turned exit 0 or 1 into 2 (the third read). settled() does
+# the same from the moment the last reading is in, for the lines of the verdict itself.
+trap 'trap "" HUP INT QUIT TERM; clean' EXIT
+trap stopped HUP INT TERM
+# And QUIT, which Ctrl-\ sends: untrapped, it ended the run with 131 and no line, and left a .wardlatch-new.<pid>.*
+# file beside $FILE -- root's, in a real run -- that a later run's strays() never removes (the third read).
+trap stopped QUIT
+
+[ "$(uname -s)" = Darwin ] || { echo "This fix is for macOS. On Linux, update the ca-certificates package."; exit 2; }
+# The symbolic-link check comes before the -f test, which is true for a link to a file (see linked()).
+[ ! -L "$FILE" ] || linked
+[ -f "$FILE" ] || { echo "UNKNOWN  $FILE not found. Nothing changed."; exit 2; }
+SUDO=sudo; if [ "$(id -u)" -eq 0 ] || { [ -w "$FILE" ] && [ -w "$(dirname "$FILE")" ]; }; then SUDO=; fi
+DIR=$(dirname "$FILE")
+
 # The temporary files go where TMPDIR says. `mktemp -t` on macOS ignores TMPDIR for the per-user folder, so until
 # 31 Oct 2026 the harness's "no temporary files left behind" check watched a folder this script never wrote to.
 # Both are checked: unchecked, `set -e` ended the run with mktemp's own status, 1 -- the published table's EXPOSED.
-trap clean EXIT
-trap stopped HUP INT TERM
-cp "$FILE" "$snap" 2>/dev/null || { echo "UNKNOWN  Can't read $FILE. Nothing changed."; exit 2; }
+# Each name carries this run's process id, so strays() can remove one whose name never reached the script.
+snap=$(mktemp "${TMPDIR:-/tmp}/wardlatch.$$.XXXXXX" 2>/dev/null) || {
+  snap=''
+  echo "UNKNOWN  Couldn't make a temporary file in ${TMPDIR:-/tmp} (mktemp failed), so $FILE wasn't read. Nothing changed."
+  exit 2
+}
+tmp=$(mktemp "${TMPDIR:-/tmp}/wardlatch.$$.XXXXXX" 2>/dev/null) || {
+  tmp=''
+  echo "UNKNOWN  Couldn't make a temporary file in ${TMPDIR:-/tmp} (mktemp failed), so $FILE wasn't read. Nothing changed."
+  exit 2
+}
+cp "$FILE" "$snap" 2>/dev/null || nosnap
 orig=$(sha "$snap") || { echo "UNKNOWN  Couldn't take the SHA-256 of $FILE (openssl failed), so it wasn't checked. Nothing changed."; exit 2; }
 
 # curl also trusts other PEM blocks (BEGIN TRUSTED CERTIFICATE, BEGIN X509 CERTIFICATE), which this fix doesn't read.
 # This is read before the floor below, and the fingerprints after it, because the floor now has to say whether the
 # file holds a withdrawn root: a block this fix cannot read could hold one, so "it holds neither" would otherwise be
 # a claim about bytes nobody checked.
-if ! blocks=$(count '^-----BEGIN ' "$snap") || ! before=$(certs "$snap"); then
-  echo "UNKNOWN  Couldn't read the copy of $FILE this run took, so it wasn't checked. Nothing changed."
-  exit 2
-fi
-if [ "$blocks" -ne "$before" ]; then
-  echo "UNKNOWN  $FILE holds blocks that aren't plain certificates (such as BEGIN TRUSTED CERTIFICATE), which curl also"
-  echo "         trusts and this fix can't check. Nothing changed. Run npx wardlatch@latest to test the Mac's tools."
-  exit 2
-fi
-spec=$(roots "$snap") || {
-  echo "UNKNOWN  A certificate in $FILE couldn't be read and fingerprinted, so the file wasn't fully checked."
-  echo "         Nothing changed."
-  exit 2
-}
+r=0; inspect "$snap" || r=$?
+case "$r" in
+  0) ;;
+  1) echo "UNKNOWN  Couldn't read the copy of $FILE this run took, so it wasn't checked. Nothing changed."
+     exit 2 ;;
+  # A marker after other text on its line. LibreSSL (curl, git, python3, openssl) starts a certificate there when the
+  # marker falls at byte 253, 506, ... of the line, OpenSSL 3.6.4 at byte 254, and other readers may differ again, so
+  # this fails closed on the marker anywhere but at the start of a line rather than guess which readers see it.
+  2) echo "UNKNOWN  $FILE has $inline line(s) where -----BEGIN comes after other text. curl, git, python3 and openssl can"
+     echo "         read a certificate from such a line, depending on where the marker falls in it, and this fix can't"
+     echo "         check it. Nothing changed. Edit those lines so that -----BEGIN only ever starts a line, then run"
+     echo "         this again; or run npx wardlatch@latest to test what this Mac's tools trust."
+     exit 2 ;;
+  3) echo "UNKNOWN  $FILE holds blocks that aren't plain certificates (such as BEGIN TRUSTED CERTIFICATE), which curl also"
+     echo "         trusts and this fix can't check. Nothing changed. Run npx wardlatch@latest to test the Mac's tools."
+     exit 2 ;;
+  *) echo "UNKNOWN  A certificate in $FILE couldn't be read and fingerprinted, so the file wasn't fully checked."
+     echo "         Nothing changed."
+     exit 2 ;;
+esac
 drop=''
-# Split on purpose: roots() prints "position root" pairs, digits and AAA or EMS only.
+# Split on purpose: roots() prints "position kind" pairs, digits and AAA, EMS, AAA-KEY or EMS-KEY only.
 # shellcheck disable=SC2086
 set -f; set -- $spec; set +f
 while [ "$#" -ge 2 ]; do
   case "$2" in
     AAA) naaa=$((naaa + 1)) ;;
     EMS) nems=$((nems + 1)) ;;
+    AAA-KEY) naaa=$((naaa + 1)); kaaa=$((kaaa + 1)) ;;
+    EMS-KEY) nems=$((nems + 1)); kems=$((kems + 1)) ;;
     *) echo "UNKNOWN  The fingerprint check returned something this doesn't recognise. Nothing changed; please report this."; exit 2 ;;
   esac
   drop="${drop:+$drop }$1:$2"
@@ -399,12 +588,25 @@ if [ "$before" -lt 50 ]; then
   exit 2
 fi
 if [ "$found" -eq 0 ]; then
-  c=$(control "$snap")
+  # That the file holds neither root is read again from $FILE itself, and the network through $FILE, not through the
+  # snapshot: the snapshot is in the invoking user's temporary folder, where anything running as that user can change
+  # it between one read and the next, and $FILE is what this verdict is about. Until 31 Oct 2026 a snapshot swapped
+  # for a clean copy while it was read made a file holding both roots read SAFE, nothing changed (the F1 class).
+  sb=$before; r=0; inspect "$FILE" || r=$?
+  if [ "$r" -ne 0 ] || [ -n "$spec" ] || [ "$before" -ne "$sb" ]; then
+    echo "UNKNOWN  The copy of $FILE this run read held neither withdrawn root, but $FILE itself doesn't read the same"
+    echo "         way now: it changed while this ran, or something changed the copy in ${TMPDIR:-/tmp}. Nothing changed."
+    echo "         Run this again."
+    exit 2
+  fi
+  c=$(control "$FILE")
   if [ "$c" -ne 0 ]; then
+    settled
     echo "SAFE     $FILE no longer holds the two roots. Nothing changed."
     echo "         (An ordinary website didn't load either (curl $c), so nothing was re-tested online.)"
   else
-    r=$(trust "$snap")
+    r=$(trust "$FILE")
+    settled
     case "$r" in
       60) echo "SAFE     $FILE already refuses the compromised keys. Nothing changed." ;;
       0)  echo "EXPOSED  $FILE holds neither root but still trusts the test site. Nothing changed; please report this."; exit 1 ;;
@@ -469,20 +671,23 @@ fi
 # and in $FILE, both comparisons passed, and the cleaned old snapshot was renamed over it. Measured: an
 # administrator's root appended meanwhile was gone from the file, kept only in the backup, and the run said SAFE.
 writing=1
-bnew=$($SUDO mktemp "$DIR/.wardlatch-backup.$$.XXXXXX" 2>/dev/null) || { bnew=''; nobackup "Couldn't make a file beside $FILE for the backup (mktemp failed). Check the disk has room (df -h /)"; }
-$SUDO cp -p "$FILE" "$bnew" || nobackup "Couldn't copy $FILE to make the backup (cp failed). Check the disk has room (df -h /)"
+# Each privileged step keeps its own words, sudo's among them, for the line that reports it (told(), room()).
+bnew=$($SUDO mktemp "$DIR/.wardlatch-backup.$$.XXXXXX" 2>&1) || { why=$bnew; bnew=''; nobackup "Couldn't make a file beside $FILE for the backup ($(told mktemp))"; }
+case "$bnew" in "$DIR"/.wardlatch-backup.$$.*) ;; *) why=$bnew; bnew=''; nobackup "Couldn't make a file beside $FILE for the backup ($(told mktemp))" ;; esac
+why=$($SUDO cp -p "$FILE" "$bnew" 2>&1) || nobackup "Couldn't copy $FILE to make the backup ($(told cp))"
 cmp -s "$bnew" "$snap" || nobackup "The backup copy isn't the file this run checked: $FILE changed while this ran, or the copy went wrong"
-$SUDO link "$bnew" "$backup" 2>/dev/null || nobackup "Couldn't give the backup its dated name, $backup"
+why=$($SUDO link "$bnew" "$backup" 2>&1) || nobackup "Couldn't give the backup its dated name, $backup ($(told link))"
 published=1
 if $SUDO rm -f "$bnew"; then bnew=''; fi
-# And once more, immediately before the replacement: the file must still be the snapshot the cleaned file was built
-# from, or the replacement would throw away whatever changed it.
-cmp -s "$FILE" "$snap" || {
-  echo "UNKNOWN  $FILE changed while this ran, after the backup was taken, so it was not replaced. Run this again."
-  echo "         Backup: $backup (the file as this run read it)"
+checkbackup || {
+  echo "UNKNOWN  The backup of $FILE doesn't bear out what this run read from its copy in ${TMPDIR:-/tmp}: that copy"
+  echo "         changed while it was read, or $FILE changed. Nothing was replaced. Run this again."
+  echo "         Backup: $backup (a copy of $FILE as it was when the backup was taken)"
   exit 2
 }
-replace "$tmp" || { r=$?; if [ "$r" -eq 3 ]; then echo "UNKNOWN  The file built beside $FILE isn't the cleaned file this checked, so it was not used and"; echo "         $FILE was not changed. Please report this.  Backup: $backup"; else echo "UNKNOWN  Couldn't replace $FILE, so nothing was changed. Check the disk has room (df -h /)"; echo "         and that this ran with enough privilege.  Backup: $backup"; fi; exit 2; }
+# And once more, immediately before the rename, inside replace(): the file must still be the file the cleaned file was
+# built from, or the replacement would throw away whatever changed it (4).
+replace "$tmp" || { r=$?; if [ "$r" -eq 4 ]; then echo "UNKNOWN  $FILE changed while this ran, after the backup was taken, so it was not replaced. Run this again."; echo "         Backup: $backup (the file as this run read it)"; elif [ "$r" -eq 3 ]; then echo "UNKNOWN  The file built beside $FILE isn't the cleaned file this checked, so it was not used and"; echo "         $FILE was not changed. Please report this.  Backup: $backup"; else echo "UNKNOWN  Couldn't replace $FILE ($(told "$step")), so nothing was changed.$(room)"; echo "         Backup: $backup"; fi; exit 2; }
 replaced=1
 
 # The only path here that puts the original back, and the only kind of reason there may be for one: the bytes now in
@@ -498,6 +703,7 @@ if [ "$landed" != "$want" ]; then
   # The declaration goes immediately above the call, and the harness checks that it is there.
   # wardlatch:revert-reason=content-mismatch
   if replace "$backup"; then
+    settled
     echo "EXPOSED  What was written to $FILE isn't the file this built and checked, so the original was put back and this"
     echo "         Mac still trusts the compromised keys. Nothing else was changed. Run it again; please report this."
     echo "         Backup: $backup"
@@ -518,6 +724,7 @@ if [ "$c" -eq 0 ]; then
   # The control loads through the new file: this network answers, and the new file still validates ordinary
   # certificates. So the test host's answer is about the test host, and there is a verdict to be had.
   r=$(trust "$FILE")
+  settled
   case "$r" in
     60) echo "SAFE     Fixed. $FILE now refuses the compromised keys: $(removed_phrase), kept $after." ;;
     0)  echo "EXPOSED  Fixed in the file ($(removed_phrase), kept $after), but the advisory's test site is"
@@ -535,12 +742,14 @@ if [ "$c" -eq 0 ]; then
         echo "         (curl $r), though an ordinary website loaded, so this wasn't re-tested online.)" ;;
   esac
 elif [ "$c0" -ne 0 ]; then
+  settled
   # Nothing loaded before the change either, so this reading is about the network and not about the file. Report,
   # keep the fix, claim nothing online.
   echo "SAFE     Fixed in the file: $(removed_phrase), kept $after."
   echo "         (An ordinary website didn't load before this change (curl $c0) or after it (curl $c), so nothing"
   echo "         was re-tested online.)"
 else
+  settled
   case "$c" in
     6|7|28)
       # A name that didn't resolve, a connection that wasn't made, or no answer in time: the network stopped
