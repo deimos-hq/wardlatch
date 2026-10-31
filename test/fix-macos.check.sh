@@ -809,8 +809,10 @@ if [ "$found" -gt 0 ]; then
   cmp -s "$work/badbackup.pem" "$work/original.pem" || fail "a bad backup: the file was replaced anyway"
   # Proof it discriminates: with the comparison taken out, the same run replaces the file and prints an Undo line
   # naming a backup that is not the original. (Either shape of the comparison: the one that compared with $FILE until
-  # 31 Oct 2026, or the one that compares the copy with the snapshot.)
-  awk '/^cmp -s "\$FILE" "\$backup" \|\| \{$/ { drop = 1 } drop { if ($0 == "}") drop = 0; next }
+  # 31 Oct 2026, or the one that compares the copy with the snapshot. And the backup's own check, checkbackup, which
+  # since r3 also refuses a backup that isn't the file the run read: a test of the comparison has to take out every
+  # check that catches the same thing, or it shows only that some other check caught it.)
+  awk '/^(cmp -s "\$FILE" "\$backup"|checkbackup) \|\| \{$/ { drop = 1 } drop { if ($0 == "}") drop = 0; next }
        /^cmp -s "\$bnew" "\$snap" \|\| / { next } { print }' "$fix" >"$work/badbackup-nocheck.sh"
   cmp -s "$fix" "$work/badbackup-nocheck.sh" && fail "a bad backup: the comparison was not found, so this case proves nothing"
   cp "$work/original.pem" "$work/badbackup2.pem"
