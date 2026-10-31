@@ -413,3 +413,45 @@ test('RR-2 a DER key, or a BER key store, tracked and deleted from the working t
   assert.deepEqual(found, ['deploy-key.bin', 'keystore'], JSON.stringify(r.rows).slice(0, 2000));
   assert.deepEqual(r.rows.filter((x) => x.status === 'SAFE'), []);
 });
+
+// ---- R2-N7: a plugin's own folder without its main file, and a Bedrock app/plugins with no core, read SAFE ---------------
+// The WV-1 fix checked a --paths folder named as a listed plugin only when the plugin's main file was in it, and looked
+// for loose plugins folders only at wp-content/plugins. A backdoored Rank Math PRO folder whose rank-math-pro.php is
+// gone (inc/loader.php still carrying the indicator), given with --paths, and a Bedrock checkout before `composer
+// install` (app/plugins holding the compromised release, no WordPress core yet) read "SAFE no WordPress installs found",
+// exit 0. The same folders inside a site were EXPOSED.
+const WP = ['--incident', 'wordpress-plugins-2026-10'];
+test('R2-N7 a listed plugin\'s own folder given with --paths is checked even without its main file', () => {
+  const own = join(fresh('n7-own'), 'seo-by-rank-math-pro');
+  put(join(own, 'inc', 'loader.php'), '<?php $u = "https://rank1cdn.example.invalid/x.js";\n');
+  const r = json([...WP, '--paths', own]);
+  assert.deepEqual(r.rows.filter((x) => x.status === 'SAFE'), [], JSON.stringify(r.rows).slice(0, 2000));
+  assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && /inc\/loader\.php/.test(x.what)), JSON.stringify(r.rows).slice(0, 2000));
+  assert.ok(unknowns(r).some((x) => /version unreadable/.test(x.what)), 'its version could not be read, and the row says so');
+  assert.equal(r.code, 1);
+});
+
+test('R2-N7 a Bedrock checkout with no WordPress core yet has its app/plugins checked', () => {
+  // Bedrock 1.1 and later: config/ beside web/, plugins in web/app/plugins, the core (web/wp) only after composer install
+  const b = fresh('n7-bedrock');
+  put(join(b, 'config', 'application.php'), '<?php\n');
+  put(join(b, 'web', 'app', 'plugins', 'seo-by-rank-math-pro', 'rank-math-pro.php'), '<?php\n/*\nPlugin Name: Rank Math PRO\nVersion: 3.0.123\n*/\n');
+  const r = json([...WP, '--paths', b]);
+  assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && /seo-by-rank-math-pro 3\.0\.123/.test(x.what)), JSON.stringify(r.rows).slice(0, 2000));
+  assert.equal(r.code, 1);
+  // Bedrock 1.0.0: app/ and config/ side by side
+  const b0 = fresh('n7-bedrock100');
+  put(join(b0, 'config', 'application.php'), '<?php\n');
+  put(join(b0, 'app', 'plugins', 'updraftplus', 'updraftplus.php'), '<?php\n/*\nPlugin Name: UpdraftPlus\nVersion: 1.26.12\n*/\n');
+  assert.equal(json([...WP, '--paths', b0]).code, 1);
+  // an app/plugins folder with a listed plugin in it and no Bedrock config near (the re-read's fixture)
+  const loose = fresh('n7-loose');
+  put(join(loose, 'bedrock', 'app', 'plugins', 'seo-by-rank-math-pro', 'rank-math-pro.php'), '<?php\n/*\nPlugin Name: Rank Math PRO\nVersion: 3.0.123\n*/\n');
+  assert.equal(json([...WP, '--paths', loose]).code, 1);
+  // the guard: an app/plugins folder of another program (no listed plugin, no Bedrock config) is not a site's
+  const other = fresh('n7-other');
+  mkdirSync(join(other, 'rails', 'app', 'plugins', 'my-widget'), { recursive: true });
+  const o = json([...WP, '--paths', other]);
+  assert.deepEqual(o.rows.filter((x) => x.status !== 'SAFE'), [], JSON.stringify(o.rows));
+  assert.equal(o.code, 0);
+});

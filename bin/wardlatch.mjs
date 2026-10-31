@@ -591,7 +591,7 @@ for (const inc of chosen) {
   if (inc.type === 'wordpress') {
     const denied = [...lockedRoots];
     const privateDot = [], coreOnly = [], links = [], loose = [], deep = [];
-    const sites = wordpressUnder(searchable, 5, denied, privateDot, coreOnly, links, { loose, deep });
+    const sites = wordpressUnder(searchable, 5, denied, privateDot, coreOnly, links, { loose, deep, names: inc.rules.map((x) => x.plugin) });
     for (const core of coreOnly) {
       const reason = 'WordPress core is here, but no plugins folder is where WordPress, a moved wp-content, Bedrock or its wp-config.php puts one, so its plugins were not checked: pass --paths for the folder that holds them';
       results.push({ incident: inc.id, kind: 'wordpress', site: core, status: 'UNKNOWN', what: 'plugins folder', reason });
@@ -604,10 +604,11 @@ for (const inc of chosen) {
     };
     for (const site of sites) for (const f of checkSite(site, inc.rules, inc.addedSince)) show(site, f);
     // a plugins folder with no core found to use it (given with --paths, or a copy of a content folder), and a folder
-    // given with --paths that is one listed plugin's own folder: checked, never passed over (WV-1)
+    // given with --paths that is one listed plugin's own folder: checked, never passed over (WV-1), with or without its
+    // main file (up to this fix only with it, so a backdoored copy missing rank-math-pro.php read SAFE: R2-N7)
     for (const p of loose) for (const f of checkPluginsFolder(p, inc.rules, inc.addedSince)) show(p, f);
     for (const r of searchable) {
-      const own = inc.rules.filter((x) => basename(r) === x.plugin && pathState(join(r, x.mainFile)) === 'file');
+      const own = inc.rules.filter((x) => basename(r) === x.plugin);
       if (own.length && !loose.includes(dirname(r))) for (const f of checkPluginsFolder(dirname(r), own)) show(r, f);
     }
     gaps(results, inc, 'wordpress', denied, { review: privateDot, links, deep, levels: 5 });
