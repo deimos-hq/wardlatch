@@ -30,7 +30,7 @@
 # Copy it from the Wardlatch page in Safari. Don't fetch it with the Mac's own curl: that curl is what's exposed.
 set -euo pipefail
 
-FILE="${WARDLATCH_CERT_FILE:-/etc/ssl/cert.pem}"   # the override exists for testing on a copy
+FILE="${WARDLATCH_CERT_FILE:-/etc/ssl/cert.pem}"   # the override exists for testing on a copy, and for a linked bundle
 TEST_URL="https://dv-g3b-emudhra.we-have-a-problem.com/"
 # The control host for every online verdict: an ordinary website on no compromised chain. Apple's, the same host the
 # one-line test on the page uses, so the two tests answer about the same network.
@@ -42,10 +42,24 @@ AAA_NAME='AAA Certificate Services'
 EMS_NAME='emSign ECC Root CA - G3'
 
 [ "$(uname -s)" = Darwin ] || { echo "This fix is for macOS. On Linux, update the ca-certificates package."; exit 2; }
-# Before anything else, and before the -f test, which is true for a symbolic link to a regular file: this fix
-# replaces the file it is given, so on a link it would replace the link and leave the bundle the Mac actually
-# reads exactly as it was. The one-line fix on the page has refused a link since CL-42; this script had no test.
-[ ! -L "$FILE" ] || { echo "UNKNOWN  $FILE is a symbolic link. Replacing it would replace the link and leave the file your Mac"; echo "         actually reads as it is. Nothing changed. Run this against that file instead (readlink $FILE)."; exit 2; }
+# Before anything else, and before the -f test, which is true for a symbolic link to a regular file. This fix replaces
+# the file it is given by renaming a new file over it, and a rename over a link replaces the LINK: $FILE would become
+# a file of this script's own, stop following whatever the link points to (an administrator set that link up for a
+# reason), and the file it points to would be left exactly as it was. Until 31 Oct 2026 the refusal said the Mac
+# would go on reading the old bundle, which is not what happens, and told the reader to run this "against that file"
+# without saying how. The way is WARDLATCH_CERT_FILE, so the refusal now prints the command, with the file in it.
+linked() {
+  local to me
+  to=$(readlink "$FILE" 2>/dev/null) || to=
+  case "$to" in /*|'') ;; *) to="$(dirname "$FILE")/$to" ;; esac
+  case "$0" in *.sh) me=$0 ;; *) me='<this script>' ;; esac
+  echo "UNKNOWN  $FILE is a symbolic link${to:+ to $to}. Nothing changed. Replacing it would replace the link with a"
+  echo "         file of this run's own: $FILE would stop following the file it points to, and that file would be left"
+  echo "         as it is. To fix the file it points to, run this again with that file named:"
+  echo "         WARDLATCH_CERT_FILE='${to:-<the file the link points to>}' bash '$me'"
+  exit 2
+}
+[ ! -L "$FILE" ] || linked
 [ -f "$FILE" ] || { echo "UNKNOWN  $FILE not found. Nothing changed."; exit 2; }
 SUDO=sudo; if [ "$(id -u)" -eq 0 ] || { [ -w "$FILE" ] && [ -w "$(dirname "$FILE")" ]; }; then SUDO=; fi
 
