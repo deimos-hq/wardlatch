@@ -184,15 +184,17 @@ replace() {
   return 1
 }
 
-snap=$(mktemp -t wardlatch 2>/dev/null) || {
-  echo "UNKNOWN  Couldn't make a temporary file (mktemp failed), so $FILE wasn't read. Nothing changed."
+snap=$(mktemp "${TMPDIR:-/tmp}/wardlatch.XXXXXX" 2>/dev/null) || {
+  echo "UNKNOWN  Couldn't make a temporary file in ${TMPDIR:-/tmp} (mktemp failed), so $FILE wasn't read. Nothing changed."
   exit 2
 }
-tmp=$(mktemp -t wardlatch 2>/dev/null) || {
+tmp=$(mktemp "${TMPDIR:-/tmp}/wardlatch.XXXXXX" 2>/dev/null) || {
   rm -f "$snap" || true
-  echo "UNKNOWN  Couldn't make a temporary file (mktemp failed), so $FILE wasn't read. Nothing changed."
+  echo "UNKNOWN  Couldn't make a temporary file in ${TMPDIR:-/tmp} (mktemp failed), so $FILE wasn't read. Nothing changed."
   exit 2
 }
+# The temporary files go where TMPDIR says. `mktemp -t` on macOS ignores TMPDIR for the per-user folder, so until
+# 31 Oct 2026 the harness's "no temporary files left behind" check watched a folder this script never wrote to.
 # Both are checked: unchecked, `set -e` ended the run with mktemp's own status, 1 -- the published table's EXPOSED.
 trap clean EXIT
 trap stopped HUP INT TERM
