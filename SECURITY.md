@@ -39,8 +39,8 @@ reported, and what was actually true.
   any certificate carrying one of their keys, readable by
   everyone (644) as macOS ships it, with an earlier backup never overwritten, and the original restored only when
   what landed in the file is not what the script built and checked. **A revert a network can trigger is a
-  vulnerability**: putting the original back puts both withdrawn roots back, so a Mac whose network answers for
-  someone else would be the one Mac that could never be fixed. The re-test may report, never revert.
+  vulnerability**: putting the original back puts back the withdrawn roots it held (both, or on a Mojave-era Mac the
+  one), so a Mac whose network answers for someone else would be the one Mac that could never be fixed. The re-test may report, never revert.
 - **Code execution from what Wardlatch reads**: file contents, file and folder names, git output, plugin headers or
   container output that make Wardlatch run something it did not intend to.
 - **A secret printed.** A committed-key finding shows the type, file, line and a mask, never the key.
