@@ -6,26 +6,32 @@
 # and a macOS update puts Apple's original file back (26.7.2 did): run this again after every update.
 # The removal is the advisory's (emudhra.we-have-a-problem.com); this script adds the safety around it:
 #   - finds the two roots by their SHA-256 fingerprints, not by the name lines some copies of the file don't have,
-#     and refuses a file it can't fully check (a certificate it can't read, or a block that isn't a plain certificate);
-#   - refuses a $FILE that is a symbolic link, because replacing it would replace the link and leave the file the
-#     Mac actually reads untouched and still trusting the compromised keys;
-#   - works on a snapshot of the file and refuses to replace it if it changed meanwhile;
+#     and refuses a file it can't fully check: a certificate it can't read, a block that isn't a plain certificate,
+#     or fewer fingerprints read than certificates counted;
+#   - refuses a $FILE that is a symbolic link: replacing it would put a file of this script's own where the link is,
+#     so $FILE would stop following the file the link points to, and that file would be left as it is;
+#   - works on a snapshot of the file and refuses to replace it if it changed meanwhile: the backup it takes is
+#     compared with that snapshot, and the file is compared with it again immediately before the replacement;
 #   - changes nothing if the file is already clean;
-#   - refuses a bundle too small to be a trust store, and never tells you to restore a backup: the only backup it
-#     could name is the one it writes, which holds the withdrawn roots, so on a small bundle holding neither root it
-#     reports what it found and advises nothing;
-#   - keeps a dated backup, never overwrites an earlier one, and compares that backup with the file it came from
-#     before replacing anything, because the Undo line it prints names that backup;
-#   - writes a new file and checks it (every other certificate still there, only the two removed) before replacing;
-#   - makes every change to the file by renaming a finished file over it, in one step, so an interruption leaves
-#     or the new one and never half of either, and removes its temporary files on a Ctrl-C or a shutdown too;
+#   - refuses a bundle too small to be a trust store, and never advises putting back a copy that holds a withdrawn
+#     root: the only way back it ever names is its own backup, in the Undo line under a SAFE result or under a run
+#     stopped after the file was fixed;
+#   - keeps a dated backup and never overwrites an earlier one; the copy is made under a temporary name and compared
+#     with the snapshot first, so the dated name only ever holds a complete copy of the file this run checked;
+#   - removes only each withdrawn root's own lines -- its certificate, the name and description lines directly above
+#     it when they are that root's, and the one empty line after it -- and nothing else in the file;
+#   - writes the new file beside the old one and checks THAT file -- byte for byte the file it built, every other
+#     certificate still there, no withdrawn root left -- before replacing anything;
+#   - makes every change to the file by renaming a finished file over it, in one step, so an interruption leaves the
+#     old file or the new one and never half of either, and removes its temporary files on a Ctrl-C or a shutdown too;
 #   - keeps the file readable by everyone, as macOS ships it;
-#   - checks that what landed in the file is the file it built, and puts the original back if it isn't -- the one
+#   - checks that what landed in the file is the file it checked, and puts the original back if it isn't -- the one
 #     reason it ever puts the original back, because the original is the file that trusts the compromised keys;
-#   - reads a control -- an ordinary website, through this same file -- both before and after the change, so that
-#     "this network answers nothing" and "this change broke certificate validation on this Mac" are two readings
-#     and not one, and re-tests against the advisory's test site only when the control loads; no network result
-#     undoes the fix.
+#   - reads a control -- an ordinary website, through this same file -- both before and after the change, and tells
+#     a certificate refused after the change apart from a network that stopped answering; it re-tests against the
+#     advisory's test site only when the control loads, and no network result undoes the fix;
+#   - on macOS, prints a line that starts with SAFE, EXPOSED or UNKNOWN whenever it exits, after a Ctrl-C (INT), a
+#     HUP or a TERM too.
 # Safe to run twice. Run it in Terminal (it asks for your Mac's password) or as root from Jamf, Kandji or Intune.
 # Copy it from the Wardlatch page in Safari. Don't fetch it with the Mac's own curl: that curl is what's exposed.
 set -euo pipefail
