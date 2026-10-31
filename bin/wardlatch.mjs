@@ -22,6 +22,7 @@ import { scanHeaders } from '../lib/headers.mjs';
 import { pathState, readText, listDir, denialCode, mandatoryRefusal, statBits } from '../lib/files.mjs';
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
 import { safe, saw, withdrawUnreceipted } from '../lib/report.mjs';
+import { escapeHidden, escapeJsonHidden } from '../lib/escape.mjs';
 
 // npx puts the current project's node_modules/.bin, and each parent folder's, first on PATH. Wardlatch finds git,
 // python3, node, curl, php, go and the container engines on PATH and runs some of them, so a project could otherwise
@@ -45,9 +46,11 @@ const LIB = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib');
 const VERSION = JSON.parse(readText(join(LIB, '..', 'package.json'), 1024 * 1024)).version;
 const args = process.argv.slice(2);
 const flag = (f) => args.includes(f);
-// Names shown come from the disk, git and container engines, and can carry terminal control characters (a planted
-// plugin folder could try to erase its own line). They are printed escaped, never interpreted.
-const clean = (s) => String(s).replace(/[\u0000-\u001f\u007f-\u009f]/g, (ch) => `\\x${ch.charCodeAt(0).toString(16).padStart(2, '0')}`);
+// Names shown come from the disk, git, container engines and the incident data, and can carry terminal control
+// characters (a planted plugin folder could try to erase its own line), line separators, bidi overrides, zero-width and
+// tag characters (an instruction an agent reads and a person cannot see). They are printed escaped, never interpreted:
+// lib/escape.mjs says which characters, and why. Up to this fix this escaped C0 and C1 controls only (W1).
+const clean = escapeHidden;
 
 // Every option is a known one, and an option that takes a value has one: a typo is refused, not quietly ignored.
 const FLAGS = ['-h', '--help', '--list', '--json', '--no-containers'];
@@ -79,7 +82,7 @@ a local socket is). Changes nothing.`);
   process.exit(0);
 }
 const incidents = (listDir(join(LIB, 'incidents')).entries ?? []).map((e) => e.name).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readText(join(LIB, 'incidents', f), 4 * 1024 * 1024))).sort((a, b) => b.date.localeCompare(a.date));
-if (flag('--list')) { for (const i of incidents) console.log(`${i.id}  ${i.date}  ${i.title}`); process.exit(0); }
+if (flag('--list')) { for (const i of incidents) console.log(clean(`${i.id}  ${i.date}  ${i.title}`)); process.exit(0); }
 // --incident is repeatable, like --paths: every one named is checked (0.1.8 checked only the first)
 const ids = args.filter((a, i) => args[i - 1] === '--incident');
 const unknownId = ids.find((id) => !incidents.some((i) => i.id === id));
@@ -310,7 +313,7 @@ function hostVarsRow(results, inc, what) {
 }
 
 if (!json) {
-  console.log(`${c('1', 'Wardlatch')} ${VERSION} · ${chosen.length} incident${chosen.length > 1 ? 's' : ''} · runs locally, sends nothing but test connections, changes nothing`);
+  console.log(`${c('1', 'Wardlatch')} ${clean(VERSION)} · ${chosen.length} incident${chosen.length > 1 ? 's' : ''} · runs locally, sends nothing but test connections, changes nothing`);
 }
 
 for (const inc of chosen) {
@@ -644,10 +647,16 @@ for (const r of withdrawUnreceipted(all)) { print('UNKNOWN', `the SAFE line for 
 const count = { SAFE: 0, EXPOSED: 0, UNKNOWN: 0, REVIEW: 0 };
 for (const r of all) if (r.status in count) count[r.status]++;
 const n = (s) => count[s];
-// JSON.stringify escapes control characters below 0x20 but passes DEL and C1 (0x7f-0x9f) through; names from the disk can
-// carry them, so they are escaped too, as the text output does
-if (json) console.log(JSON.stringify({ tool: 'wardlatch', version: VERSION, incidents: chosen.map((i) => ({ id: i.id, title: i.title, advisory: i.advisory })), results: all }, null, 1)
-  .replace(/[\u007f-\u009f]/g, (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`));
+// JSON.stringify escapes control characters below 0x20 and passes everything else through: DEL and C1, U+2028, bidi
+// overrides, zero-width and tag characters. Two rules, so that --json is as safe to hand an agent as the text is (W1):
+//   - a `reason`, at any depth, is prose a reader is given, and is escaped exactly as the text output is (\u{202e} in the
+//     value itself);
+//   - every other string keeps its real value (a path field must still name the real file), and every hidden character
+//     in it is written as a JSON escape, so the JSON text holds none raw and JSON.parse gives the real value back.
+// lib/escape.mjs says which characters count as hidden. Up to this fix only DEL and C1 were escaped, and only the second way.
+const prose = (v) => (Array.isArray(v) ? v.map(prose) : v && typeof v === 'object'
+  ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, k === 'reason' && typeof x === 'string' ? clean(x) : prose(x)])) : v);
+if (json) console.log(escapeJsonHidden(JSON.stringify(prose({ tool: 'wardlatch', version: VERSION, incidents: chosen.map((i) => ({ id: i.id, title: i.title, advisory: i.advisory })), results: all }), null, 1)));
 else {
   console.log(`\n${count.SAFE} safe · ${n('EXPOSED')} exposed · ${n('UNKNOWN')} could not be tested${n('REVIEW') ? ` · ${n('REVIEW')} to review` : ''}`);
   const trust = chosen.find((i) => i.type === 'trust');
