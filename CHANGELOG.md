@@ -507,7 +507,11 @@ These were found by the same independent read of 31 Oct 2026, and each fix has a
 - **A comment that mentions the BEGIN marker made a bundle the Mac fix could never fix.** A line such as "paste each
   certificate from its -----BEGIN CERTIFICATE----- line …" counted as a certificate that couldn't be read, so the run
   said UNKNOWN, exit 2, on a bundle the Mac's LibreSSL reads without complaint. A certificate now begins only at a line
-  that starts with the marker, which is all LibreSSL reads as one. (6a36187)
+  that starts with the marker, which is all LibreSSL reads as one. (6a36187) (That last sentence was untrue, as the
+  third read of 31 Oct found: LibreSSL reads the file 253 bytes at a time and starts a certificate at a marker that
+  falls at byte 253, 506, … of a longer line, so a withdrawn root hidden that way stayed in the file under SAFE. Since
+  b4564c9 a line where the marker comes after other text is UNKNOWN, exit 2, nothing changed, and the line says which
+  lines to edit, so a comment like the one above is refused again, now for that reason: under Security, above.)
 - **The Mac fix's refusal of a symlinked `/etc/ssl/cert.pem` gave an untrue reason, and advice with no way to follow
   it.** It said replacing the link would leave the file the Mac reads as it is; in fact the rename would replace the
   link with a file of the script's own, so `/etc/ssl/cert.pem` would stop following the file an administrator linked
