@@ -79,6 +79,17 @@ count() { local n r=0; n=$(grep -c -- "$1" "$2" 2>/dev/null) || r=$?; if [ "$r" 
 # marker counted anywhere in a line, so a comment that mentioned it ("paste each certificate from its -----BEGIN
 # CERTIFICATE----- line ...") made a bundle LibreSSL reads without complaint unfixable, as "a certificate can't be read".
 certs() { count '^-----BEGIN CERTIFICATE-----' "$1"; }
+# The SHA-256 of the file $1, or of stdin when $1 is "-": 64 hex digits, or a failure, never anything else.
+# (LibreSSL prints "(stdin)= <digest>" in some versions and "<digest>" in others; the last word is the digest in both.)
+sha() {
+  local o
+  if [ "$1" = - ]; then o=$(/usr/bin/openssl dgst -sha256 2>/dev/null) || return 1
+  else o=$(/usr/bin/openssl dgst -sha256 2>/dev/null <"$1") || return 1; fi
+  o=${o##* }
+  case "$o" in *[!0-9a-f]*|'') return 1 ;; esac
+  [ "${#o}" -eq 64 ] || return 1
+  echo "$o"
+}
 # Prints one line for each certificate in $1 that is a withdrawn root: its position (1, 2, ...) and which root it is,
 # AAA or EMS. Fails -- so the caller says UNKNOWN and changes nothing -- if any certificate can't be read, if anything
 # openssl printed isn't a fingerprint, or if the number of fingerprints read isn't the number of certificates
@@ -217,19 +228,31 @@ stopped() {
 # within one filesystem, and with the same $SUDO as the write, so it belongs to whoever owns $FILE.
 # It is made by mktemp, which creates a new file and fails if anything at all is at the name, a symbolic link
 # included. Until 31 Oct 2026 the name was fixed (.wardlatch-new.<pid>) and the guard was `[ ! -e ]`, which is true
-# for a link to nothing: cp wrote through the link and mv put the link itself where $FILE was. A signal that comes
-# while mktemp runs, before its name is known here, is covered by strays(). Returns non-zero with $FILE untouched if
-# any step fails, and every step is checked: unchecked, `set -e` ended the run with cp's own status, which is 1 --
-# the code the published table reads as EXPOSED -- and printed nothing at all.
+# for a link to nothing: cp wrote through the link and mv put the link itself where $FILE was.
+# What it renames into place is checked there, beside $FILE, where only the owner of $FILE can change it: it must be
+# byte for byte the file expected (the cleaned file's SHA-256, or the snapshot's for the restore), and the cleaned
+# file must pass the checks again -- the right number of certificates, every one readable, no withdrawn root.
+# Until 31 Oct 2026 the checks were made on the copy in the invoking user's temporary folder, and root copied it
+# later. Returns 1 with $FILE untouched if a step fails, 3 if the copy beside $FILE is not the file expected.
 replace() {
+  local got expect
+  if [ "$1" = "$tmp" ]; then expect=$want; else expect=$orig; fi
   new=$($SUDO mktemp "$DIR/.wardlatch-new.$$.XXXXXX" 2>/dev/null) || { new=''; return 1; }
   if $SUDO cp "$1" "$new" && $SUDO chmod 644 "$new"; then
-    $SUDO mv "$new" "$FILE" && { new=; return 0; }
+    got=$(sha "$new") || got=''
+    if [ "$got" != "$expect" ] || { [ "$1" = "$tmp" ] && ! built "$new"; }; then
+      $SUDO rm -f "$new" || true
+      new=''
+      return 3
+    fi
+    $SUDO mv "$new" "$FILE" && { new=''; return 0; }
   fi
   $SUDO rm -f "$new" || true
-  new=
+  new=''
   return 1
 }
+# The checks the cleaned file passed, made again on the file that is about to be renamed into place.
+built() { local n l; n=$(certs "$1") && [ "$n" -eq "$after" ] && l=$(roots "$1") && [ -z "$l" ]; }
 # The backup copy failed or isn't the file this run checked: the partial copy is removed and the dated name is never
 # used, and the line says which of those happened. Until 31 Oct 2026 the copy was made straight to the dated name,
 # so a copy that failed part-way (a full disk, a Ctrl-C) left a truncated file under exactly the name of a good backup.
@@ -262,6 +285,7 @@ tmp=$(mktemp "${TMPDIR:-/tmp}/wardlatch.XXXXXX" 2>/dev/null) || {
 trap clean EXIT
 trap stopped HUP INT TERM
 cp "$FILE" "$snap" 2>/dev/null || { echo "UNKNOWN  Can't read $FILE. Nothing changed."; exit 2; }
+orig=$(sha "$snap") || { echo "UNKNOWN  Couldn't take the SHA-256 of $FILE (openssl failed), so it wasn't checked. Nothing changed."; exit 2; }
 
 # curl also trusts other PEM blocks (BEGIN TRUSTED CERTIFICATE, BEGIN X509 CERTIFICATE), which this fix doesn't read.
 # This is read before the floor below, and the fingerprints after it, because the floor now has to say whether the
@@ -366,6 +390,9 @@ removed_phrase() {
 }
 
 strip "$snap" "$drop" >"$tmp" || { echo "UNKNOWN  Couldn't build the cleaned file, so nothing was changed. Please report this."; exit 2; }
+# The SHA-256 of the cleaned file, taken from the rebuild itself rather than from the copy in the temporary folder:
+# replace() will rename into place only a file with exactly this digest that passes the checks below again.
+want=$(strip "$snap" "$drop" | sha -) || { echo "UNKNOWN  Couldn't take the SHA-256 of the cleaned file, so nothing was changed. Please report this."; exit 2; }
 after=$(certs "$tmp") || after=-1
 left=$(roots "$tmp") || left=unreadable
 # Three separate reasons the cleaned file may not be used, each saying which one it is. Until 30 Oct 2026 they were
@@ -427,15 +454,17 @@ cmp -s "$FILE" "$snap" || {
   echo "         Backup: $backup (the file as this run read it)"
   exit 2
 }
-replace "$tmp" || { echo "UNKNOWN  Couldn't replace $FILE, so nothing was changed. Check the disk has room (df -h /)"; echo "         and that this ran with enough privilege.  Backup: $backup"; exit 2; }
+replace "$tmp" || { r=$?; if [ "$r" -eq 3 ]; then echo "UNKNOWN  The file built beside $FILE isn't the cleaned file this checked, so it was not used and"; echo "         $FILE was not changed. Please report this.  Backup: $backup"; else echo "UNKNOWN  Couldn't replace $FILE, so nothing was changed. Check the disk has room (df -h /)"; echo "         and that this ran with enough privilege.  Backup: $backup"; fi; exit 2; }
 replaced=1
 
 # The only path here that puts the original back, and the only kind of reason there may be for one: the bytes now in
 # $FILE are not the bytes this script built and checked, so what every TLS client on this Mac reads is a file nobody
-# has checked, and the backup is the only file here that has been. It compares two local files and reads nothing
-# else; no probe result reaches it. A revert on a network reading would mean the one Mac that can never be fixed is
-# the one already under attack, because putting the original back puts the withdrawn roots back.
-if ! cmp -s "$tmp" "$FILE"; then
+# has checked, and the backup is the only file here that has been. It compares $FILE's SHA-256 with the one the
+# cleaned file was checked against, beside $FILE, and reads nothing else; no probe result reaches it. A revert on a
+# network reading would mean the one Mac that can never be fixed is the one already under attack, because putting
+# the original back puts the withdrawn roots back.
+landed=$(sha "$FILE") || landed=''
+if [ "$landed" != "$want" ]; then
   # Through replace(), like the forward write: an interrupted restore left $FILE a stump when it copied the backup
   # over it in place, which is the defect the forward write was redesigned to remove and this path still had.
   # The declaration goes immediately above the call, and the harness checks that it is there.
