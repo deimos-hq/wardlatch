@@ -17,7 +17,7 @@ These are its security requirements: what a user can rely on.
 | # | Requirement | Why it matters |
 |---|---|---|
 | **R1** | **Never SAFE without evidence.** A line says SAFE only after a control has shown the check could have seen exposure; otherwise it says "could not be tested" (UNKNOWN), and the exit code is 2, not 0. | A security check that says SAFE when it couldn't know is worse than no check: people stop looking. |
-| **R2** | **Sends nothing about the user.** The only network traffic is TLS connections to the incident's public test hosts and two control sites (the advisory's page, and a self-signed test site for containers). | People run it on work machines and servers. It must not become a leak while looking for one. |
+| **R2** | **Sends nothing about the user.** The only network traffic is TLS connections to the incident's public test hosts and two control sites (the advisory's page, and a self-signed test site for containers), and the person's own container engine (`--no-containers` skips it); a curl probe's request also carries what the person's curl start-up file adds to it (section 3). | People run it on work machines and servers. It must not become a leak while looking for one. |
 | **R3** | **The command changes nothing.** No file, setting, package or container is written, moved or deleted. | A diagnostic must be safe to run anywhere, including in CI and on production servers. |
 | **R4** | **Never prints a secret it finds.** A committed key is reported by type, file, line and a mask. | Output is pasted into tickets and chats. |
 | **R5** | **What it reads can't forge what it prints.** Names from the disk, git and containers can't hide or rewrite a line. | The things being checked may be under an attacker's control (a compromised WordPress site, a cloned repository). |
@@ -86,7 +86,11 @@ roots are exactly the advisory's, by SHA-256 fingerprint, so the positive contro
 **R2, sends nothing: boundary B1.** Only `lib/probe.mjs` opens connections, and the containers' probe script makes
 its requests from inside the container to the same hosts. The probes send a plain `GET /` and add nothing from the
 machine: a request carries only what any request from that runtime carries (the machine's address, and the runtime's
-default User-Agent, which names it and its version). Responses are discarded (`-o /dev/null`, `r.resume()`), and only
+default User-Agent, which names it and its version). A curl probe also carries whatever the person's curl start-up
+file (`~/.curlrc`, or the one `CURL_HOME` or `XDG_CONFIG_HOME` points to) adds to every request, a header for one,
+because it reads that file as their own curl does: a line in it can change what curl trusts (`insecure`, `cacert`), and
+a probe that skipped it could read SAFE for a curl that accepts anything (`test/review4-0.1.9.test.mjs`, test 2, holds
+it to reading the file). Responses are discarded (`-o /dev/null`, `r.resume()`), and only
 success or failure is read. The reachability handshake sends no request at all. There is no telemetry code. *Evidence:* `test/conventions.test.mjs`
 fails if any other shipped module imports a network module or calls `fetch`.
 

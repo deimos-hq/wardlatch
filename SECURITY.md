@@ -24,8 +24,14 @@ reported, and what was actually true.
 - **Anything that sends data about the user.** Wardlatch's only network traffic is TLS connections to the incident's
   public test hosts and its two control sites (and what your own container engine sends, wherever the current docker
   context points, or a local socket `DOCKER_HOST` names; a remote `DOCKER_HOST` is not followed; `--no-containers` skips it), carrying nothing beyond what any request from the runtime being tested
-  carries (the machine's address and the runtime's default User-Agent). Telemetry, results, paths, names, environment
-  variables, keys or any other detail of the machine leaving it, by any route, is a vulnerability.
+  carries: the machine's address, the runtime's default User-Agent and, for curl, whatever your curl start-up file
+  adds to every request. The curl probe reads that file (`~/.curlrc`, or the one `CURL_HOME` or `XDG_CONFIG_HOME`
+  points to) as your own curl does, on purpose: a line in it can change what curl trusts (`insecure`, `cacert`), and a
+  probe that skipped it could report SAFE for a curl that accepts any certificate. So a header or User-Agent you set
+  there goes to the test hosts with the probe's request, as it goes with every request your curl makes; the
+  `identity-headers-2026-10` check looks for your name or email in it. Wardlatch itself adds nothing to any request.
+  Telemetry, results, paths, names, environment variables, keys or any other detail of the machine leaving it, by any
+  route other than your own curl start-up file as just described, is a vulnerability.
 - **Anything that modifies the system outside `fix/fix-macos.sh`.** The command changes nothing: no file, setting,
   package or container is written. A path that writes, deletes or changes anything is a vulnerability.
 - **The Mac fix damaging `/etc/ssl/cert.pem`.** `fix/fix-macos.sh` must leave the file intact or correctly cleaned:
