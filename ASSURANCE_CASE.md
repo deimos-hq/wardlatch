@@ -107,10 +107,19 @@ rename, copy or chmod function in `bin/` or `lib/`, and on any `open` without `O
 keys and service-account files. *Evidence:* `test/wardlatch.test.mjs` and `test/cli.test.mjs` assert the key never
 appears in text or JSON output.
 
-**R5, output can't be forged: boundary B5.** Every name printed passes through one function that escapes control
-characters (`\x1b` is shown, not obeyed), so a plugin folder named to clear its own line shows up in full. `--json`
-output is escaped by `JSON.stringify`. *Evidence:* `test/cli.test.mjs` plants such a folder and checks that no raw
-control character reaches the output.
+**R5, output can't be forged: boundary B5.** Every name, path, version and value printed passes through one escaper,
+`lib/escape.mjs`, which writes out every character of Unicode categories Cc, Cf, Cs, Co, Cn, Zl and Zp and the whole
+tag block (U+E0000 to U+E007F): control characters (`\x1b` is shown, not obeyed), line and paragraph separators, bidi
+overrides and isolates, zero-width and tag characters, and private use. So a plugin folder named to clear its own
+line, start a line of its own or reverse what follows shows up in full, as one line. In `--json`, every `reason` is
+escaped the same way, and every other string keeps its real value with those characters written as JSON escapes, so
+none of them is in the JSON text raw. What it does not do: printable text is printed as it is, so a name can still
+say anything plain letters can say, a sentence addressed to a person or an AI agent reading the output included; the
+escaper makes the hidden visible, and cannot make a planted sentence untrue. Up to 03d95c9 it escaped control
+characters only, and the others reached the output raw. *Evidence:* `test/cli.test.mjs` plants a folder named with
+control characters and checks that none reaches the output raw; `test/reread-r2.test.mjs` (the W1 tests) plants the
+other characters in walked paths, a git author, a tracked file, a plugin folder, the trust check's environment label
+and a link, checks the text output and `--json`, and checks the escaper against every code point of those categories.
 
 **R6, no host shell, no dependencies: boundaries B2, B3, B4.** Every program is started with `execFile` and an
 argument list, so a file or container name is never parsed by a shell. Inside a container, the probe script is a
