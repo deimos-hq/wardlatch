@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=66
+expect_cases=67
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -2022,6 +2022,26 @@ for how in early:evil late:evil late:extra-aaa late:P; do
   rm -f "$d"/cert.pem.wardlatch-*.bak
 done
 ok "a snapshot changed by another process while the fix read it never lands, and is never called clean"
+# ---- r3 end case
+
+# ---- r3 case: changed-in-replace
+# The bundle changes while the new file is being made and checked beside it -- after the backup, and after every
+# comparison the fix made until 31 Oct 2026, which came before replace(); built() alone, every certificate fingerprinted
+# again, took 0.6 s between that comparison and the rename. A change there (here, an administrator's root appended when
+# the new file is chmod-ed) was thrown away from the bundle and was not in the backup either, under SAFE, exit 0 (the
+# third read). The comparison is now made immediately before the rename: UNKNOWN, exit 2, the change kept, the backup
+# the file the run read, nothing beside.
+d=$work/r3/inreplace; mkdir -p "$d"
+cp "$work/original.pem" "$d/cert.pem"; cat "$work/original.pem" "$r2/corp.pem" >"$d/expected.pem"
+run "$d/cert.pem" PATH="$shims:$PATH" WL_CHMOD=race-new WL_CORP="$r2/corp.pem" "$offline" "$OFFLINE"
+[ "$code" -eq 2 ] || fail "a change while the new file was made: expected UNKNOWN, exit 2, got $code"
+grep -q '^UNKNOWN.*changed while this ran' <<<"$out" || fail "a change while the new file was made: it did not say the file changed while it ran"
+cmp -s "$d/cert.pem" "$d/expected.pem" || fail "a change while the new file was made: the change was thrown away ($(certs_in "$d/cert.pem") certificates left)"
+b=$(find "$d" -maxdepth 1 -name 'cert.pem.wardlatch-*.bak')
+[ -n "$b" ] && cmp -s "$b" "$work/original.pem" || fail "a change while the new file was made: the backup is not the file this run read"
+[ -z "$(beside "$d/cert.pem")" ] || fail "a change while the new file was made: it left $(beside "$d/cert.pem") beside the bundle"
+rm -f "$d"/cert.pem.wardlatch-*.bak
+ok "a change made while the new file is built and checked stops the run at the rename, and the change is kept"
 # ---- r3 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.

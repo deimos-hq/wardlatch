@@ -12,7 +12,9 @@
 #   - refuses a $FILE that is a symbolic link: replacing it would put a file of this script's own where the link is,
 #     so $FILE would stop following the file the link points to, and that file would be left as it is;
 #   - works on a snapshot of the file and refuses to replace it if it changed meanwhile: the backup it takes is
-#     compared with that snapshot, and the file is compared with it again immediately before the replacement;
+#     compared with that snapshot, and the file is compared with it again, by SHA-256, after the new file has been
+#     built and checked and immediately before the rename (a change in the moment between that test and the rename
+#     is the one it cannot see);
 #   - and because that snapshot is in your temporary folder, where anything running as you can change it, nothing
 #     read from it is taken on trust: before replacing anything, the backup (beside the file, where only the file's
 #     owner can change it) must have the snapshot's SHA-256, hold each certificate to be removed as what it was found
@@ -347,9 +349,10 @@ removed_phrase() {
 # byte for byte the file expected (the cleaned file's SHA-256, or the snapshot's for the restore), and the cleaned
 # file must pass the checks again -- the right number of certificates, every one readable, no withdrawn root.
 # Until 31 Oct 2026 the checks were made on the copy in the invoking user's temporary folder, and root copied it
-# later. Returns 1 with $FILE untouched if a step fails, 3 if the copy beside $FILE is not the file expected.
+# later. Returns 1 with $FILE untouched if a step fails, 3 if the copy beside $FILE is not the file expected, 4 if
+# $FILE changed (below).
 replace() {
-  local got expect
+  local got expect now
   if [ "$1" = "$tmp" ]; then expect=$want; else expect=$orig; fi
   new=$($SUDO mktemp "$DIR/.wardlatch-new.$$.XXXXXX" 2>/dev/null) || { new=''; return 1; }
   if $SUDO cp "$1" "$new" && $SUDO chmod 644 "$new"; then
@@ -358,6 +361,16 @@ replace() {
       $SUDO rm -f "$new" || true
       new=''
       return 3
+    fi
+    # The forward write replaces only the file this run read: $FILE's SHA-256 must still be the snapshot's (which the
+    # backup has been shown to have), taken here, after the new file is built and checked and immediately before the
+    # rename, so what is left between them is this test and the start of mv. Until 31 Oct 2026 the comparison came
+    # before this function, and built() alone -- every certificate fingerprinted again, 0.6 s -- lay between it and
+    # the rename: a change to $FILE in that time was lost from it and from the backup, under SAFE (the third read).
+    # Returns 4, with $FILE untouched.
+    if [ "$1" = "$tmp" ]; then
+      now=$(sha "$FILE") || now=''
+      if [ "$now" != "$orig" ]; then $SUDO rm -f "$new" || true; new=''; return 4; fi
     fi
     $SUDO mv "$new" "$FILE" && { new=''; return 0; }
   fi
@@ -586,14 +599,9 @@ checkbackup || {
   echo "         Backup: $backup (a copy of $FILE as it was when the backup was taken)"
   exit 2
 }
-# And once more, immediately before the replacement: the file must still be the snapshot the cleaned file was built
-# from, or the replacement would throw away whatever changed it.
-cmp -s "$FILE" "$snap" || {
-  echo "UNKNOWN  $FILE changed while this ran, after the backup was taken, so it was not replaced. Run this again."
-  echo "         Backup: $backup (the file as this run read it)"
-  exit 2
-}
-replace "$tmp" || { r=$?; if [ "$r" -eq 3 ]; then echo "UNKNOWN  The file built beside $FILE isn't the cleaned file this checked, so it was not used and"; echo "         $FILE was not changed. Please report this.  Backup: $backup"; else echo "UNKNOWN  Couldn't replace $FILE, so nothing was changed. Check the disk has room (df -h /)"; echo "         and that this ran with enough privilege.  Backup: $backup"; fi; exit 2; }
+# And once more, immediately before the rename, inside replace(): the file must still be the file the cleaned file was
+# built from, or the replacement would throw away whatever changed it (4).
+replace "$tmp" || { r=$?; if [ "$r" -eq 4 ]; then echo "UNKNOWN  $FILE changed while this ran, after the backup was taken, so it was not replaced. Run this again."; echo "         Backup: $backup (the file as this run read it)"; elif [ "$r" -eq 3 ]; then echo "UNKNOWN  The file built beside $FILE isn't the cleaned file this checked, so it was not used and"; echo "         $FILE was not changed. Please report this.  Backup: $backup"; else echo "UNKNOWN  Couldn't replace $FILE, so nothing was changed. Check the disk has room (df -h /)"; echo "         and that this ran with enough privilege.  Backup: $backup"; fi; exit 2; }
 replaced=1
 
 # The only path here that puts the original back, and the only kind of reason there may be for one: the bytes now in
