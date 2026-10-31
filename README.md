@@ -81,8 +81,10 @@ before it replaces the old one, a check that what landed in the file is what it 
 put the original back — and a re-test it only reads when an ordinary website loads as a control, which reports and
 never reverts. Download it in Safari from
 https://www.deimoscore.com/wardlatch/#mac and run `bash ~/Downloads/wardlatch-fix-macos.sh`, or deploy it as a root
-script from Jamf, Kandji or Intune. On macOS every run prints a line starting SAFE, EXPOSED or UNKNOWN, a run stopped
-by a signal included, and exits 0, 1 or 2 (the exit-code table is on the Mac page). If `/etc/ssl/cert.pem` is a
+script from Jamf, Kandji or Intune. On macOS every run prints a line starting SAFE, EXPOSED or UNKNOWN, from the
+script's first command on, and exits 0, 1 or 2 (the exit-code table is on the Mac page); a run stopped by a Ctrl-C, a
+Ctrl-\, a hangup or a termination (INT, QUIT, HUP or TERM) is included and exits 2, and only a signal no program can
+catch (`kill -9`) ends it with no line. If `/etc/ssl/cert.pem` is a
 symbolic link, it changes nothing and prints the command that fixes the file the link points to instead:
 `WARDLATCH_CERT_FILE='<that file>' bash '<the script>'`.
 

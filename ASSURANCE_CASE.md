@@ -140,8 +140,11 @@ answered" are one reading. A control that loaded before the change and fails aft
 certificate refused, a network that stopped answering, or anything else) and changes nothing. A wrong re-test is
 reported (EXPOSED, exit 1) with the fix left in place and no command to restore the backup, because restoring would
 put the withdrawn roots back on a Mac whose network is already answering for someone else — the one Mac that could
-then never be fixed. On macOS every exit prints a line starting SAFE, EXPOSED or UNKNOWN; a run stopped by a signal
-exits 2 with a line that says what the file holds, read from the file's SHA-256. It changes nothing on a Mac that is
+then never be fixed. On macOS every exit prints a line starting SAFE, EXPOSED or UNKNOWN, from the script's first
+command on, since its traps are set before any command runs; a run stopped by a signal (HUP, INT, QUIT or TERM) exits 2
+with a line that says what the file holds, read from the file's SHA-256, and a signal that arrives once the verdict is
+in is ignored, so it neither adds a second line nor changes the code. A signal no program can catch (SIGKILL) ends it
+with no line. It changes nothing on a Mac that is
 already clean, so running it twice is safe.
 *Evidence:* `test/fix-macos.check.sh` runs the script on copies of a vendored, unfixed macOS 27.2 bundle
 (`test/support/fixtures/macos-27.2-cert.pem`), so its result doesn't depend on whether the machine running it is fixed.

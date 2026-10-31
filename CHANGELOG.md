@@ -354,7 +354,9 @@ counted. Each fix below has a test that fails on da8f5c2 and passes after it.
   stopped before it changed anything printed nothing, though exit 2 means "read the printed line". It now always
   prints one, and reads what the file holds from its SHA-256: the cleaned file (with the backup and the undo line),
   the file the run read, or bytes the run did not build or check (with the backup named and no command to put it
-  back). *Found and fixed 31 Oct 2026 (b6cb1b2).*
+  back). (Not always, as a third read the same day found: a signal before the traps were set, or a Ctrl-\, still
+  ended the run with no line, and a signal after the verdict added a second one. Since then it prints exactly one
+  from its first command on: below.) *Found and fixed 31 Oct 2026 (b6cb1b2).*
 - **The Mac fix printed a command that puts the withdrawn roots back, on readings a network can produce.** After a
   certificate refused once the change was made — a reading someone on the network holding a compromised key can
   produce at will — it argued against reverting and then printed an `Undo:` line; with the test site still trusted
@@ -523,7 +525,8 @@ These were found by the same independent read of 31 Oct 2026, and each fix has a
   interruption leaves or the new one"), said the script "never tells you to restore a backup" while it printed
   "Put it back yourself, now", gave the old reason for refusing a link, said it refuses to replace a file that changed
   meanwhile on a path where it did not, and promised two network readings that curl 6, 7 and 28 merged. It now says
-  what the script does, including that every exit on macOS prints a SAFE, EXPOSED or UNKNOWN line. (e9036f8)
+  what the script does, including that every exit on macOS prints a SAFE, EXPOSED or UNKNOWN line (which held from
+  the script's first command on only after the third read of 31 Oct set the traps first: below). (e9036f8)
 
 ### Development (no code in the package changes)
 

@@ -127,7 +127,9 @@ could trigger would leave the Mac that most needs the fix as the one Mac that ca
 restores it by hand (`Undo:   sudo cp -p '<backup>' '<file>'`) is printed under a SAFE result, whichever reading of the
 network that SAFE came from, and under a run stopped after the file was fixed; under EXPOSED, and under every UNKNOWN
 that follows a change, the line names the backup and what it holds and prints no command to restore it. On macOS every
-exit prints a line starting SAFE, EXPOSED or UNKNOWN.
+exit prints a line starting SAFE, EXPOSED or UNKNOWN, from the script's first command on: its traps (EXIT, and HUP,
+INT, QUIT and TERM) are set before any command runs, and only a signal no program can catch (SIGKILL) ends it with no
+line.
 
 It uses `sudo` to ask for the privilege once (`sudo -v`) and for the commands that make, copy, link, rename or
 remove files beside the file or write it, and not at all when the file and its folder are writable by the user (as
