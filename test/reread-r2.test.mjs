@@ -265,12 +265,13 @@ console.log(JSON.stringify(checkVersionFiles({ product: 'GitLab', fixedIn: '18.4
 // (R2-N2): a project made with `python3 -m venv .` holding services/api/.venv, a folder named site-packages holding a
 // stealer's venv, and a link named site-packages read SAFE, exit 0. Neither walk ever went into a venv found below a
 // searched folder (R2-N4), and the trust walk examined nothing when given a venv's lib or site-packages (RR-5).
-// The rule now: every folder given with --paths is walked; every venv met is checked (its site-packages, or its
-// certifi bundle) AND walked, except the folders it keeps its own files in (bin, include, lib, share, …), which are
-// checked with it and named in the receipt; a site-packages folder that is not a venv's own is walked like any folder,
-// and a link of that name follows the link rule. The venv's own folders are not walked because a real one is deep:
-// MEASURED, a fresh `python3 -m venv` (Python 3.14, pip 26.1.2) has folders 9 levels below its root, so walking it as
-// it is gives a depth-limit row, exit 2, on every `--paths <venv>`, the advice the trust check itself prints.
+// The rule as round 3 left it: every folder given with --paths is walked; every venv met is checked (its site-packages,
+// or its certifi bundle) AND walked, except the folders it keeps its own files in (bin, include, lib, share, …), said
+// to be "checked with it". Round 4 (round 3's re-reads measured that sentence untrue and the exclusion a false SAFE):
+// every venv met is checked and walked, all but its own package folders, which are checked and not walked
+// (lib/files.mjs venvPackages(), VENV_PACKAGES_SAID); a site-packages folder that is not a venv's own is walked like
+// any folder, and a link of that name follows the link rule. A real venv's 9-level folders (pip's tree) are in its
+// site-packages, so `--paths <venv>` still makes no depth-limit row (MEASURED by re-read 2, and in round 4).
 /** A venv for the trust walk: bin/python, pyvenv.cfg and a certifi bundle. */
 function certifiVenv(root) {
   const sp = join(root, 'lib', 'python3.12', 'site-packages');
