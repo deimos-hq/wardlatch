@@ -15,7 +15,7 @@ import { droppedNodeOptions } from '../lib/run.mjs';
 import { checkBinaryAll, findOnPath, tmpTraces, tempDirs } from '../lib/binaries.mjs';
 import { checkVersionFiles, sitePackagesDirs, checkSitePackages, localImageDigests, checkImages, NOT_WALKED as VENV_NOT_WALKED } from '../lib/installs.mjs';
 import { listContainers, checkContainer, engineHost } from '../lib/containers.mjs';
-import { reposUnder, workflowsAddedSince, windowStart, NOT_WALKED as REPO_NOT_WALKED } from '../lib/workflows.mjs';
+import { reposUnder, workflowsAddedSince, windowStart, NOT_WALKED as REPO_NOT_WALKED, NESTED_SAID } from '../lib/workflows.mjs';
 import { scanRepo } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite, checkPluginsFolder, NOT_WALKED as WP_NOT_WALKED } from '../lib/wordpress.mjs';
 import { scanHeaders } from '../lib/headers.mjs';
@@ -139,11 +139,12 @@ const all = [];
 // could not open is now UNKNOWN, so an all-clear never sits beside one, and there is no count to carry.)
 // `notSearched`: the folder names the walk behind this all-clear never enters (each walker's NOT_WALKED, and macOS's own
 // Library). They are part of the receipt: up to this fix node_modules, .git, .venv and venv hid whole trees with no
-// word, while docs/ARCHITECTURE.md said no name decides a walk (WV-4).
+// word, while docs/ARCHITECTURE.md said no name decides a walk (WV-4). The two sentences that are not names (a venv's
+// own package folders; a repository inside another, which the repository walk stops before) are said after them.
 const LIBRARY = 'macOS\'s own Library';
 const namesSaid = (names) => {
-  const n = names.filter((x) => x !== LIBRARY && x !== VENV_PACKAGES_SAID);
-  return `folders named ${n.length > 1 ? `${n.slice(0, -1).join(', ')} or ${n.at(-1)}` : n[0]}, and ${LIBRARY} folders, are not searched${names.includes(VENV_PACKAGES_SAID) ? `; ${VENV_PACKAGES_SAID} are checked with the environment, not searched for other environments` : ''}`;
+  const n = names.filter((x) => x !== LIBRARY && x !== VENV_PACKAGES_SAID && x !== NESTED_SAID);
+  return `folders named ${n.length > 1 ? `${n.slice(0, -1).join(', ')} or ${n.at(-1)}` : n[0]}, and ${LIBRARY} folders, are not searched${names.includes(VENV_PACKAGES_SAID) ? `; ${VENV_PACKAGES_SAID} are checked with the environment, not searched for other environments` : ''}${names.includes(NESTED_SAID) ? `; ${NESTED_SAID} is not looked for: pass --paths with it to include it` : ''}`;
 };
 // They are said on the line under the all-clear, so its own sentence stays the one a reader (and a script) knows.
 function allClear(results, inc, kind, text, searched, notSearched) {
@@ -571,7 +572,7 @@ for (const inc of chosen) {
     // the all-clear names the instant and the date compared: up to 0.1.9 it said "since 2026-09-01", a day git read as
     // 1 Sep at the run's time of day
     if (counted(results).some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.fix}`);
-    else if (!counted(results).length) allClear(results, inc, 'workflow', `no workflow files added in commits dated on or after ${start.label} (committer date) in ${repoCount(repos)}`, searchable, [...REPO_NOT_WALKED, LIBRARY]);
+    else if (!counted(results).length) allClear(results, inc, 'workflow', `no workflow files added in commits dated on or after ${start.label} (committer date) in ${repoCount(repos)}`, searchable, [...REPO_NOT_WALKED, LIBRARY, NESTED_SAID]);
   }
   if (inc.type === 'secrets') {
     let repos = 0;
@@ -589,7 +590,7 @@ for (const inc of chosen) {
     }
     gaps(results, inc, 'secret', denied, { links, deep, levels: 4 });
     if (counted(results).some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.fix}`);
-    else if (!counted(results).length) allClear(results, inc, 'secret', `no committed keys found in the files of ${repoCount(repos)} (current files; history needs gitleaks or trufflehog)`, searchable, [...REPO_NOT_WALKED, LIBRARY]);
+    else if (!counted(results).length) allClear(results, inc, 'secret', `no committed keys found in the files of ${repoCount(repos)} (current files; history needs gitleaks or trufflehog)`, searchable, [...REPO_NOT_WALKED, LIBRARY, NESTED_SAID]);
   }
   if (inc.type === 'wordpress') {
     const denied = [...lockedRoots];
@@ -637,7 +638,7 @@ for (const inc of chosen) {
     // settings — places a reader can open. Up to 0.1.10 it also carried the words "the environment", and on a machine
     // with no settings file that phrase was the whole receipt behind "no name or email in the 0 header settings found
     // in 0 files": nothing to go and check (AUDIT-10). The environment is still read, and the reason still says so.
-    else if (!counted(results).length) allClear(results, inc, 'header', `no name or email in the ${h.settings} header setting${h.settings === 1 ? '' : 's'} found in ${h.read} file${h.read === 1 ? '' : 's'} and the environment`, [...h.files, ...searchable.filter((r) => !h.denied.includes(r))], searchable.length ? [...REPO_NOT_WALKED, LIBRARY] : undefined);
+    else if (!counted(results).length) allClear(results, inc, 'header', `no name or email in the ${h.settings} header setting${h.settings === 1 ? '' : 's'} found in ${h.read} file${h.read === 1 ? '' : 's'} and the environment`, [...h.files, ...searchable.filter((r) => !h.denied.includes(r))], searchable.length ? [...REPO_NOT_WALKED, LIBRARY, NESTED_SAID] : undefined);
     if (h.notUsed.length) note('2', `${h.notUsed.length} settings file${h.notUsed.length === 1 ? '' : 's'} this user can't open (so its tools can't read ${h.notUsed.length === 1 ? 'it' : 'them'} either): ${h.notUsed.slice(0, 4).map(short).join(', ')}${h.notUsed.length > 4 ? ', …' : ''}`);
     if (!h.id.name && !h.id.email) note('2', 'no git name or email is set, so only email-shaped values were looked for');
     note('2', `not covered: ${inc.notCovered}`);

@@ -410,3 +410,28 @@ test('derKind(): children that overrun their parent, or a primitive with an inde
   const body2 = Buffer.concat([algSeq, defOctets]);
   assert.equal(derKind(Buffer.concat([Buffer.from([0x30, body2.length]), body2]))?.type, 'encrypted private key (DER, PKCS #8)');
 });
+
+// ---- a repository inside another ------------------------------------------------------------------------------------------
+// Round 3's re-read 2, finding 4 (carried from R2-N4; MEASURED there and here): the repository walk stops at the first
+// repository it finds, so one nested inside another (vendor/tool, ignored by the outer one) is not checked by the
+// workflow, committed-keys or header checks, and the all-clear line did not say so: "SAFE no workflow files added ...
+// in 1 local repository", exit 0, with .github/workflows/steal.yml committed in the nested one. README says it; the
+// run did not. It says so now, on the line under each all-clear and in its --json notSearched, as the walks' other
+// stated exclusions are said; walking into every repository for nested ones would put a depth-limit row on every deep
+// project, so this is said, not walked.
+test('a repository inside another: the all-clear of the workflow, committed-keys and header checks says it is not looked for', () => {
+  const root = fresh('nested');
+  const outer = repoWith(join(root, 'outer'), { '.gitignore': 'vendor/\n', 'README.md': '# outer\n' });
+  repoWith(join(outer.path, 'vendor', 'tool'), { '.github/workflows/steal.yml': 'on: push\n' });
+  for (const id of ['github-actions-2026-10', 'committed-keys-2026-10', 'identity-headers-2026-10']) {
+    const r = json(['--incident', id, '--paths', outer.path]);
+    const safe = r.rows.find((x) => x.status === 'SAFE');
+    assert.ok(safe?.notSearched?.some((n) => /repository inside another/.test(n)), `${id}: ${JSON.stringify(r.rows).slice(0, 1500)}`);
+    const t = text(['--incident', id, '--paths', outer.path]).out.split('\n');
+    const under = t[t.findIndex((l) => l.startsWith('SAFE')) + 1] ?? '';
+    assert.match(under, /a repository inside another repository is not looked for: pass --paths with it to include it/, `${id}: ${under}`);
+  }
+  // and the advice holds: given with --paths, the nested repository is checked
+  const n = json(['--incident', 'github-actions-2026-10', '--paths', join(outer.path, 'vendor', 'tool')]);
+  assert.ok(n.rows.some((x) => x.status === 'REVIEW' && x.file === '.github/workflows/steal.yml'), JSON.stringify(n.rows).slice(0, 1500));
+});
