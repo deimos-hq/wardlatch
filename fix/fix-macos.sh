@@ -35,9 +35,11 @@ TEST_URL="https://dv-g3b-emudhra.we-have-a-problem.com/"
 # The control host for every online verdict: an ordinary website on no compromised chain. Apple's, the same host the
 # one-line test on the page uses, so the two tests answer about the same network.
 CONTROL_URL="https://www.apple.com/"
-# SHA-256 fingerprints: AAA Certificate Services, emSign ECC Root CA - G3
+# SHA-256 fingerprints, and the names the two roots go by
 AAA='D7:A7:A0:FB:5D:7E:27:31:D7:71:E9:48:4E:BC:DE:F7:1D:5F:0C:3E:0A:29:48:78:2B:C8:3E:E0:EA:69:9E:F4'
 EMS='86:A1:EC:BA:08:9C:4A:8D:3B:BE:27:34:C6:12:BA:34:1D:81:3E:04:3C:F9:E8:A8:62:CD:5C:57:A3:6B:BE:6B'
+AAA_NAME='AAA Certificate Services'
+EMS_NAME='emSign ECC Root CA - G3'
 
 [ "$(uname -s)" = Darwin ] || { echo "This fix is for macOS. On Linux, update the ca-certificates package."; exit 2; }
 # Before anything else, and before the -f test, which is true for a symbolic link to a regular file: this fix
@@ -99,36 +101,57 @@ $l" ;;
   done <"$1" || return 1
   [ -z "$inblk" ] && [ "$k" -eq "$n" ] && [ "$nfp" -eq "$n" ]
 }
-# Writes $1 without the certificates listed in $2. A certificate's block starts at its "=== " name line when it has
-# one (the advisory's removal, byte for byte) and at its BEGIN line when it doesn't, and it ENDS at its
-# -----END CERTIFICATE----- line -- not at the next header.
-# Until 30 Oct 2026 the skip was cleared only by the next "###" or "=== " line, so everything between a removed
-# root and the next header went with it: a trailing comment, an administrator's note, a line naming what follows.
-# Content that is not a certificate does not change the count, so `after == before - found` still matched and the
-# run printed SAFE and exited 0 with that content silently gone. Apple's own file has a "=== " line above every
-# certificate, so it was never live there. It was live on any hand-concatenated bundle, which is the ordinary case:
-# an administrator appends a corporate TLS-inspection root to this file precisely because curl ignores the keychain.
-# Ending the block at END CERTIFICATE cannot leave part of a dropped certificate behind, which would be worse. A
-# block's start line is either its own BEGIN line or the "=== " line above it with no END line in between (pass 1
-# clears `name` at every END), so the first END line at or after the start is that certificate's own. It also
-# cannot be ended early by a stray "###" line inside the block, which the old clear-on-header rule could do: that
-# left a dropped root in the output, refused by the count check below rather than removed.
-# State 2 is the one thing after the END line that may still go: the single empty separator Apple writes between
-# blocks, which is why this is still byte for byte the advisory's removal on Apple's file. Only empty lines are
-# taken there, so nothing that carries content can be lost to it.
+# Writes $1 without the certificates listed in $2 ("position:root ..." as roots() found them). For each one it
+# removes exactly these lines, and every other line in the file is kept, whatever it says:
+#   - its own block, from its -----BEGIN CERTIFICATE----- line to its own -----END CERTIFICATE----- line;
+#   - its name, when the name is directly above the block and is that root's: Apple's shape ("=== /.../CN=<name>",
+#     then "Certificate:", the openssl text dump of the certificate, and its own "SHA256 Fingerprint=" line directly
+#     above BEGIN -- every line of it indented, empty, or one of those three) or mk-ca-bundle's (the name, then a line
+#     of "=" exactly as long, directly above BEGIN);
+#   - the one empty line directly after the block, the separator Apple writes between blocks. That and Apple's name
+#     shape are why this is still byte for byte the advisory's removal on Apple's file.
+# Until 31 Oct 2026 a "=== " line anywhere above a removed root started its block, so an administrator's own "=== "
+# line above a root they had appended, and every line between it and the certificate, went with the root, and the
+# count check could not see it (it counts certificates). Every empty line after a removed root went too, not one.
 strip() {
-  awk -v list="$2" '
-    BEGIN { n = split(list, a, " "); for (i = 1; i <= n; i++) drop[a[i] + 0] = 1 }
+  awk -v list="$2" -v aaa="$AAA" -v ems="$EMS" -v aname="$AAA_NAME" -v ename="$EMS_NAME" '
+    BEGIN {
+      n = split(list, a, " ")
+      for (i = 1; i <= n; i++) { split(a[i], p, ":"); drop[p[1] + 0] = p[2] }
+    }
     NR == FNR {
-      if ($0 ~ /^=== /) name = FNR
-      if ($0 ~ /^-----BEGIN CERTIFICATE-----/) { k++; start[name ? name : FNR] = k; name = 0 }
-      if ($0 ~ /^-----END CERTIFICATE-----/) name = 0
+      L[FNR] = $0; last = FNR
+      if ($0 ~ /^-----BEGIN CERTIFICATE-----/) { k++; B[k] = FNR }
+      else if ($0 ~ /^-----END CERTIFICATE-----/ && k && !(k in E) && B[k] < FNR) E[k] = FNR
       next
     }
-    FNR in start { state = (start[FNR] in drop) ? 1 : 0 }
-    state == 2 { if ($0 == "") next; state = 0 }
-    state == 1 { if ($0 ~ /^-----END CERTIFICATE-----/) state = 2; next }
-    { print }' "$1" "$1"
+    FNR == 1 {
+      for (c in drop) {
+        if (!(c in B) || !(c in E) || ((c + 1) in B && B[c + 1] < E[c])) { broken = 1; exit 1 }
+        for (j = B[c]; j <= E[c]; j++) gone[j] = 1
+        if (E[c] < last && L[E[c] + 1] == "") gone[E[c] + 1] = 1
+        name = (drop[c] == "AAA") ? aname : ename
+        fp = (drop[c] == "AAA") ? aaa : ems
+        b = B[c]
+        # mk-ca-bundle: the name, then a line of "=" as long as it, directly above the block
+        if (b > 2 && L[b - 1] ~ /^=+$/ && L[b - 2] == name && length(L[b - 1]) == length(name)) {
+          gone[b - 1] = 1; gone[b - 2] = 1
+        }
+        # Apple: "=== .../CN=<name>", "Certificate:", the dump, "SHA256 Fingerprint=<this root>", directly above
+        if (b > 1 && L[b - 1] == "SHA256 Fingerprint=" fp) {
+          for (s = b - 1; s >= 1; s--) {
+            if (L[s] ~ /^=== /) break
+            if (L[s] !~ /^(Certificate:$|SHA1 Fingerprint=|SHA256 Fingerprint=|[ \t]|$)/) { s = 0; break }
+          }
+          tail = "/CN=" name
+          if (s >= 1 && L[s + 1] == "Certificate:" && length(L[s]) >= length(tail) && substr(L[s], length(L[s]) - length(tail) + 1) == tail) {
+            for (j = s; j < b; j++) gone[j] = 1
+          }
+        }
+      }
+    }
+    !(FNR in gone) { print }
+    END { if (broken) exit 1 }' "$1" "$1"
 }
 
 # Everything below reads this snapshot, so the checks and the change are about the same bytes. $new is the file
