@@ -53,7 +53,7 @@ programs already on the machine:
 | `lib/owners.mjs` | Who a folder Wardlatch couldn't open belongs to: a person (this user or a login account; for WordPress, the web server's account), so not having looked is UNKNOWN, or a service (root, a database, nobody, a rootless container's uids), so it is listed in one REVIEW line. A folder that refuses with EPERM is UNKNOWN whoever owns it (owner decision #32). Used only by `gaps()` in `bin/wardlatch.mjs`. | Reads `/etc/passwd`, `/etc/subuid`, `/etc/subgid` and folder owners. |
 | `lib/crash.mjs` | Imported first: a crash exits 2 (could not be tested), or 1 when an EXPOSED line was already printed. | None. |
 | `lib/run.mjs` | The only way a program is started: absolute path, argument list, cwd `/`, SIGKILL timeout, and an allowlisted environment per purpose (`version`, `git`, `engine`, `probe`); standard input only for `runSync` when the caller gives it (git's batch reads), and closed at once for every other program. | Starts programs. |
-| `lib/files.mjs` | The only way the disk is read: `pathState` (file, dir, other, gone or denied), `listDir` (entries, gone, or denied with the errno; a path too long to open is denied, ENAMETOOLONG, never gone), `denialCode` (why a folder can't be listed, read again when the row is written), `mandatoryRefusal` (whether an EPERM came from above the folder's permission bits: a sandbox the run is inside, macOS's privacy protection, System Integrity Protection, a Linux security module. It only chooses the sentence a row prints and never says which of them refused: every folder Wardlatch could not open, EPERM included, is could-not-be-tested, owner decision #32), `readCapped`/`readText`/`hashFile` (regular files under a cap, through one non-blocking descriptor), `readHead`, `realPath`, `statBits`, `fileId` (device and inode, so two spellings of one folder compare equal), `walkedTo` and `unwalkedLinks` (links a walk declined, minus those whose target the same walk walked as deep as following the link would have; a found repository or virtual environment counts as walked whole), `holdsMore` (whether a folder a depth cap stopped at holds more to walk). `isSystemFolder` gates macOS's own `Library`, on its place and its contents. Beyond it each walker skips a few folders by name, its `NOT_WALKED` (WordPress: `node_modules`, `.git`, `.venv`; repositories: `node_modules`, `.venv`, `venv`; virtual environments and the trust walk: `node_modules`, `.git`), and every all-clear that rests on such a walk names them, in its sentence and in `notSearched` (the trust check, which has no all-clear, says so under its rows). | Reads files and folders. |
+| `lib/files.mjs` | The only way the disk is read: `pathState` (file, dir, other, gone or denied), `listDir` (entries, gone, or denied with the errno; a path too long to open is denied, ENAMETOOLONG, never gone), `denialCode` (why a folder can't be listed, read again when the row is written), `mandatoryRefusal` (whether an EPERM came from above the folder's permission bits: a sandbox the run is inside, macOS's privacy protection, System Integrity Protection, a Linux security module. It only chooses the sentence a row prints and never says which of them refused: every folder Wardlatch could not open, EPERM included, is could-not-be-tested, owner decision #32), `readCapped`/`readText`/`hashFile` (regular files under a cap, through one non-blocking descriptor), `readHead`, `realPath`, `statBits`, `fileId` (device and inode, so two spellings of one folder compare equal), `walkedTo` and `unwalkedLinks` (links a walk declined, minus those whose target the same walk walked as deep as following the link would have; a found repository or virtual environment counts as walked whole), `holdsMore` (whether a folder a depth cap stopped at holds more to walk). `isSystemFolder` gates macOS's own `Library`, on its place and its contents. Beyond it each walker skips a few folders by name, its `NOT_WALKED` (WordPress: `node_modules`, `.git`, `.venv`; repositories: `node_modules`, `.venv`, `venv`; virtual environments and the trust walk: `node_modules`, `.git`), and every all-clear that rests on such a walk names them, on the line under it and in `notSearched` (the trust check, which has no all-clear, says so under its rows). | Reads files and folders. |
 | `lib/report.mjs` | `safe(searched, fields)`: the only way a SAFE result is made, and never without the list of what was looked at. Each entry in that list is a place on this machine — an absolute path that is there — or an observation declared with `saw()` because it is not a place (a test host, the environment, a version read from a file the same receipt names); anything else is prose, and a row carrying it is UNKNOWN, not SAFE. `withdrawUnreceipted(rows)` holds every row to the same rule on the way out. | Reads the state of each path in a receipt. |
 | `fix/fix-macos.sh` | The Mac fix. See below. | `/etc/ssl/cert.pem` and a dated backup beside it. |
 
@@ -97,25 +97,38 @@ Probes per runtime:
 SHA-256 fingerprints, since 0.1.10) and adds checks around it:
 
 ```
-refuse if not macOS, file missing, or < 50 certificates  ──> exit 2, nothing changed
-no bad root left?  ──> control, then re-test online ──> SAFE (or EXPOSED if it still trusts) ──> nothing changed
-write the cleaned copy to a mktemp file
-  check: no bad root left, count = before − removed, ≥ 50 certificates   else exit 2, nothing changed
-dated backup (never overwrites one) ──> copy the cleaned file in ──> chmod 644
-is the file now byte for byte the file we built?
-  no ──> restore the backup, EXPOSED, exit 1   <── the ONLY restore: it reads two local files and no probe result
-control: /usr/bin/curl against an ordinary website ($CONTROL_URL, www.apple.com), through the file itself:
-  didn't load ──> fixed in the file, not re-tested, exit 0
+refuse if not macOS, a symbolic link (printing the command for the file it points to), or missing  ──> exit 2
+snapshot the file (mktemp in $TMPDIR); every check below reads the snapshot
+refuse a block that isn't a plain certificate, a certificate that can't be fingerprinted, or fewer
+  fingerprints read than certificates counted (the completeness gate)          ──> exit 2, nothing changed
+< 50 certificates?  ──> the count, and whether a withdrawn root is in it, exit 2, nothing changed
+no withdrawn root?  ──> control, then re-test online ──> SAFE (or EXPOSED if it still trusts) ──> nothing changed
+build the cleaned file (each root's own lines only); its SHA-256 taken from the rebuild itself
+  check: no withdrawn root left, count = before − removed        else exit 2, nothing changed
+control: /usr/bin/curl against an ordinary website ($CONTROL_URL, www.apple.com), through the file as it is
+sudo -v, on its own (where the interactive run asks for the password)
+backup: mktemp beside the file ──> cp ──> compare with the snapshot ──> link to the dated name (never overwrites one)
+compare the file with the snapshot again                                       else exit 2, nothing replaced
+replace(): mktemp beside the file ──> cp ──> chmod 644 ──> check it there (SHA-256, count, fingerprints) ──> rename
+is the file now byte for byte the file we built (SHA-256)?
+  no ──> restore the backup through replace(), EXPOSED, exit 1   <── the ONLY restore: two local files, no probe result
+control again, through the new file:
   loaded ──> re-test with /usr/bin/curl against the advisory's test host:
     refused (60) ──> SAFE, fixed    no answer ──> fixed, not re-tested    still trusted (0) ──> EXPOSED, exit 1, FIX KEPT
+  failed before and after ──> fixed in the file, not re-tested, exit 0
+  loaded before, not after ──> UNKNOWN, exit 2, FIX KEPT, read by the curl code: 60 a certificate refused;
+    6, 7 or 28 the network stopped answering; anything else given as it is
+a signal at any point ──> exit 2, and a line saying what the file holds, read from its SHA-256
 ```
 
-A network result never restores the backup. Restoring returns both withdrawn roots, so a revert a hostile network
-could trigger would leave the Mac that most needs the fix as the one Mac that can never have it.
+A network result never restores the backup, and after one the script prints no command that would. Restoring
+returns the withdrawn roots, so a revert a hostile network could trigger would leave the Mac that most needs the fix
+as the one Mac that can never have it. On macOS every exit prints a line starting SAFE, EXPOSED or UNKNOWN.
 
-It uses `sudo` only for the commands that write (the backup, the copy, the `chmod`, and a restore), and not at all
-when the file and its folder are writable by the user (as in the tests, which point it at a copy with
-`WARDLATCH_CERT_FILE`).
+It uses `sudo` to ask for the privilege once (`sudo -v`) and for the commands that make, copy, link, rename or
+remove files beside the file or write it, and not at all when the file and its folder are writable by the user (as
+in the tests, which point it at a copy with `WARDLATCH_CERT_FILE`, the same variable that names the target of a
+linked `/etc/ssl/cert.pem`).
 
 ## Why it is built this way
 
