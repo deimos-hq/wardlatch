@@ -31,7 +31,8 @@
 #     it when they are that root's exactly as openssl prints them, and the one empty line after it -- and nothing
 #     else in the file;
 #   - writes the new file beside the old one and checks THAT file -- byte for byte the file it built, every other
-#     certificate still there, no withdrawn root left -- before replacing anything;
+#     certificate still there, no withdrawn root left -- before replacing anything; root writes it from what your own
+#     shell hands it, and never opens a file in your temporary folder;
 #   - makes every change to the file by renaming a finished file over it, in one step, so an interruption leaves the
 #     old file or the new one and never half of either, and removes its temporary files on a Ctrl-C or a shutdown too;
 #   - keeps the file readable by everyone, as macOS ships it;
@@ -411,7 +412,14 @@ replace() {
   if [ "$1" = "$tmp" ]; then expect=$want; else expect=$orig; fi
   step=mktemp; new=$($SUDO mktemp "$DIR/.wardlatch-new.$$.XXXXXX" 2>&1) || { why=$new; new=''; return 1; }
   case "$new" in "$DIR"/.wardlatch-new.$$.*) ;; *) why=$new; new=''; return 1 ;; esac
-  if step=cp && why=$($SUDO cp "$1" "$new" 2>&1) && step=chmod && why=$($SUDO chmod 644 "$new" 2>&1); then
+  # The bytes go in through tee's standard input, which this run's own shell opens, as the invoking user: root writes
+  # the file it just made and opens nothing else. Until 31 Oct 2026 root copied $1 itself (`sudo cp`), and $1 is the
+  # cleaned file in the invoking user's temporary folder: a process running as that user that turned it into a link to
+  # a root-only file while the run waited for the password got root to copy that file here and make it readable by
+  # everyone (chmod 644, below) before the digest check removed it (the round-3 re-read, with a stand-in sudo). Now a
+  # link to a file the user can't read fails here, as the user, and what is made readable is only what the user could
+  # already read.
+  if step=tee && why=$($SUDO tee "$new" 2>&1 <"$1" >/dev/null) && step=chmod && why=$($SUDO chmod 644 "$new" 2>&1); then
     got=$(sha "$new") || got=''
     if [ "$got" != "$expect" ] || { [ "$1" = "$tmp" ] && ! built "$new"; }; then
       $SUDO rm -f "$new" || true

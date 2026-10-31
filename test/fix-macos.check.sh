@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=77
+expect_cases=78
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -330,8 +330,27 @@ cat >"$shims/sudo" <<'SHIM'
 if [ "${WL_SUDO:-}" = grant ]; then
   n=$(cat "$WL_SUDO_STATE" 2>/dev/null); n=$(( ${n:-0} + 1 )); printf '%s' "$n" >"$WL_SUDO_STATE"
   if [ "$n" = "${WL_SUDO_REFUSE:-0}" ]; then echo 'sudo: 3 incorrect password attempts' >&2; exit 1; fi
-  [ "$1" != -v ] || exit 0
-  exec "$@"
+  # r4: WL_SUDO_LOG records each granted command, so a case can see what root was asked to open.
+  [ -z "${WL_SUDO_LOG:-}" ] || printf '%s\n' "$*" >>"$WL_SUDO_LOG"
+  # r4: WL_SUDO_SECRET names a file of mode 000, which this user can't read and root can: each granted command runs with
+  # it readable, as root would, and it is unreadable again after. At -v, where the run waits for the password, the
+  # cleaned file in TMPDIR (a wardlatch.* file holding something other than the bundle) becomes a symbolic link to it,
+  # as a process running as this user could make it. Afterwards, a file beside the bundle holding the secret's first
+  # line is recorded in WL_SUDO_LEAK.
+  if [ "$1" = -v ]; then
+    if [ -n "${WL_SUDO_SECRET:-}" ]; then
+      for t in "${TMPDIR:-/tmp}"/wardlatch.*; do
+        if [ -s "$t" ] && ! cmp -s "$t" "$WARDLATCH_CERT_FILE"; then /bin/rm -f "$t"; ln -s "$WL_SUDO_SECRET" "$t"; fi
+      done
+    fi
+    exit 0
+  fi
+  [ -n "${WL_SUDO_SECRET:-}" ] || exec "$@"
+  /bin/chmod 600 "$WL_SUDO_SECRET"; "$@"; r=$?; /bin/chmod 000 "$WL_SUDO_SECRET"
+  for f in "$(dirname "$WARDLATCH_CERT_FILE")"/.wardlatch-*; do
+    if [ -f "$f" ] && /usr/bin/grep -qF 'root-only secret' "$f" 2>/dev/null; then echo "$f" >>"$WL_SUDO_LEAK"; fi
+  done
+  exit "$r"
 fi
 exit 1
 SHIM
@@ -2397,6 +2416,45 @@ for shape in ems:compressed ems:hybrid ems:explicit ems:explicit-compressed aaa:
   rm -f "$d"/cert.pem.wardlatch-*.bak
 done
 ok "a withdrawn root's key in another encoding (EC point compressed or hybrid, explicit curve, RSA-PSS) is found and removed"
+# ---- r4 end case
+
+# ---- r4 case: root-reads
+# Root never opens a path in the invoking user's temporary folder. Until r4 the fix had root copy the cleaned file there
+# into a file beside the bundle (`sudo cp $tmp <new>`), which follows a symbolic link, and make that file world-readable
+# before its digest was checked: a process running as the user that turned the cleaned file into a link to a root-only
+# file, while the run waited for the password, got root to copy that file beside the bundle as mode 644 (round-3
+# re-read 0, with a stand-in sudo). The sudo stand-in grants every call as this user and records it; the bundle is
+# read-only to this user, so the fix uses sudo. First, an ordinary run: fixed, and no privileged command names a path in
+# TMPDIR. Then the attack: the cleaned file becomes a link to a mode-000 secret at `sudo -v`; the secret must never reach
+# a file beside the bundle, and the run must change nothing.
+if [ "$(id -u)" -eq 0 ]; then
+  echo "NOTE: running as root, so the fix never calls sudo and no file is unreadable to it; root-reads did not run."
+  notrun="$notrun root-reads"
+else
+  d=$work/r4/rootreads; mkdir -p "$d"
+  rm -f "$d"/cert.pem "$d/state" "$d/log"
+  cp "$work/original.pem" "$d/cert.pem"; chmod 444 "$d/cert.pem"
+  run "$d/cert.pem" PATH="$shims:$PATH" WL_SUDO=grant WL_SUDO_STATE="$d/state" WL_SUDO_LOG="$d/log" "$offline" "$OFFLINE"
+  [ "$code" -eq 0 ] || fail "root reads: an ordinary run through sudo: expected the bundle fixed, exit 0, got $code"
+  cmp -s "$d/cert.pem" "$r2/P.pem" || fail "root reads: an ordinary run through sudo: the bundle is not the advisory's removal"
+  [ -s "$d/log" ] || fail "root reads: the sudo stand-in recorded no command, so this case would measure nothing"
+  inuser=$(grep -F -- "$work/tmp/" "$d/log" || true)
+  [ -z "$inuser" ] || fail "root reads: root was given a path in the user's temporary folder: $inuser"
+  rm -f "$d"/cert.pem "$d"/cert.pem.wardlatch-*.bak "$d/state" "$d/leak"
+  printf '%s\n' 'root-only secret' >"$d/secret"; chmod 000 "$d/secret"
+  cp "$work/original.pem" "$d/cert.pem"; chmod 444 "$d/cert.pem"
+  stderr_ok=1
+  run "$d/cert.pem" PATH="$shims:$PATH" WL_SUDO=grant WL_SUDO_STATE="$d/state" WL_SUDO_SECRET="$d/secret" WL_SUDO_LEAK="$d/leak" "$offline" "$OFFLINE"
+  stderr_ok=''
+  chmod 600 "$d/secret"
+  [ "$(cat "$d/state")" -ge 2 ] || fail "root reads: the run made only $(cat "$d/state") sudo calls, so this case would measure nothing"
+  [ ! -s "$d/leak" ] || fail "root reads: a root-only file reached the bundle's folder: $(sort -u "$d/leak" | tr '\n' ' ')"
+  [ "$code" -eq 2 ] || fail "root reads: the cleaned file swapped for a link: expected UNKNOWN, exit 2, got $code"
+  cmp -s "$d/cert.pem" "$work/original.pem" || fail "root reads: the cleaned file swapped for a link: the bundle changed"
+  [ -z "$(beside "$d/cert.pem")" ] || fail "root reads: it left $(beside "$d/cert.pem") beside the bundle"
+  chmod 644 "$d/cert.pem"; rm -f "$d"/cert.pem.wardlatch-*.bak
+  ok "root never opens a path in the user's temporary folder: a link put there never brings a root-only file beside the bundle"
+fi
 # ---- r4 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.
