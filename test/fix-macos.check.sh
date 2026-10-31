@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=75
+expect_cases=76
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -364,6 +364,25 @@ cat >"$shims/date" <<'SHIM'
 # WL_DATE pins the stamp the fix puts in its backup's name.
 if [ -n "${WL_DATE:-}" ] && [ "${1:-}" = +%Y%m%d-%H%M%S ]; then echo "$WL_DATE"; exit 0; fi
 exec /bin/date "$@"
+SHIM
+cat >"$shims/awk" <<'SHIM'
+#!/bin/bash
+# WL_AWK=tamper-tmp: once, right after the first awk that leaves a temporary file of the fix's (a wardlatch.* file in
+# $TMPDIR that is not a copy of the bundle) holding something -- that is, as soon as the cleaned file is written --
+# one certificate of that file is swapped for $WL_TAMPER, as a same-user process could, before its SHA-256 is taken.
+/usr/bin/awk "$@"; r=$?
+if [ "${WL_AWK:-}" = tamper-tmp ] && [ ! -e "$WL_AWK_STATE" ]; then
+  for t in "${TMPDIR:-/tmp}"/wardlatch.*; do
+    [ -s "$t" ] || continue
+    cmp -s "$t" "$WARDLATCH_CERT_FILE" && continue
+    : >"$WL_AWK_STATE"
+    /usr/bin/awk -v t="$WL_TAMPER" 'BEGIN { while ((getline l < t) > 0) rep = rep l "\n" }
+      /^-----BEGIN CERTIFICATE-----/ && !done { skip = 1 }
+      skip { if ($0 ~ /^-----END CERTIFICATE-----/) { printf "%s", rep; skip = 0; done = 1 }; next }
+      { print }' "$t" >"$t.swap" && /bin/mv "$t.swap" "$t"
+  done
+fi
+exit "$r"
 SHIM
 chmod +x "$r2/curl" "$r2/openssl" "$shims"/*
 # Runs $1 on bundle $2 in the background, in its own process group, with the VAR=value arguments after them; waits
@@ -2239,6 +2258,23 @@ for how in exists meanwhile; do
 done
 rm -f "$d"/cert.pem.wardlatch-*.bak
 ok "an earlier backup at the dated name is never overwritten, whether it was there first or arrived meanwhile"
+# ---- r3 end case
+
+# ---- r3 case: digest-from-rebuild
+# The SHA-256 the new file must have is taken from the rebuild itself, not from the cleaned file in the user's
+# temporary folder, which anything running as that user can change. No case held that until 31 Oct 2026: with
+# `want=$(sha "$tmp")` in its place every case passed (the third read, RR-4, mutant WANT), and a change to the cleaned
+# file between its writing and its digest would have been renamed into place. The awk stand-in swaps one ordinary
+# certificate of the cleaned file for another root as soon as it is written. UNKNOWN, exit 2, the bundle unchanged.
+d=$work/r3/digest; mkdir -p "$d"
+cp "$work/original.pem" "$d/cert.pem"; rm -f "$d/state"
+run "$d/cert.pem" PATH="$shims:$PATH" WL_AWK=tamper-tmp WL_AWK_STATE="$d/state" WL_TAMPER="$r2/corp.pem" "$offline" "$OFFLINE"
+[ -e "$d/state" ] || fail "the cleaned file changed after it was written: the stand-in never changed it, so this case would measure nothing"
+[ "$code" -eq 2 ] || fail "the cleaned file changed after it was written: expected UNKNOWN, exit 2, got $code"
+cmp -s "$d/cert.pem" "$work/original.pem" || fail "the cleaned file changed after it was written: the bundle changed ($(grep -cF -- "$(sed -n 2p "$r2/corp.pem")" "$d/cert.pem") copies of the other root in it)"
+[ -z "$(beside "$d/cert.pem")" ] || fail "the cleaned file changed after it was written: it left $(beside "$d/cert.pem") beside the bundle"
+rm -f "$d"/cert.pem.wardlatch-*.bak
+ok "the new file's SHA-256 comes from the rebuild, so a cleaned file changed after it was written never lands"
 # ---- r3 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.
