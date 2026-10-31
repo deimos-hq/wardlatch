@@ -1074,7 +1074,10 @@ if [ "$found" -gt 0 ]; then
   # status, so one failed `rm` in the cleanup turned exit 2 ("couldn't tell") into exit 1, which the published
   # table reads as EXPOSED -- this Mac still trusts the compromised keys. `return 0` at the end does not help:
   # errexit ends the function before reaching it. Every command in clean() ends in `|| true` for that reason.
-  sed 's#^clean() { rm -f "\$snap" "\$tmp" || true; #clean() { /usr/bin/false || true; #' "$fix" >"$work/cleanfails.sh"
+  # (clean()'s first command in either shape: removing both temporary files at once, or, since r3, the snapshot alone
+  # when it has a name -- the traps are now set before the temporary files are made, so it can run before they are.)
+  sed -e 's#^clean() { rm -f "\$snap" "\$tmp" || true; #clean() { /usr/bin/false || true; #' \
+      -e 's#^clean() { \[ -z "\$snap" \] || rm -f "\$snap" || true; #clean() { /usr/bin/false || true; #' "$fix" >"$work/cleanfails.sh"
   cmp -s "$fix" "$work/cleanfails.sh" && fail "the cleanup's exit code: clean() was not found, so this case proves nothing"
   cp "$work/original.pem" "$work/cleanfails.pem"
   : >"$work/cleanfails-empty.pem"
@@ -1087,7 +1090,8 @@ if [ "$found" -gt 0 ]; then
   script=$fix
   [ "$code" -eq 2 ] || fail "the cleanup's exit code: a refused run should exit 2 whatever the cleanup does, got $code"
   # Proof it discriminates: without the `|| true`, the same failing cleanup turns that 2 into 1.
-  sed 's#^clean() { rm -f "\$snap" "\$tmp" || true; #clean() { /usr/bin/false; #' "$fix" >"$work/cleanfails-bare.sh"
+  sed -e 's#^clean() { rm -f "\$snap" "\$tmp" || true; #clean() { /usr/bin/false; #' \
+      -e 's#^clean() { \[ -z "\$snap" \] || rm -f "\$snap" || true; #clean() { /usr/bin/false; #' "$fix" >"$work/cleanfails-bare.sh"
   cmp -s "$fix" "$work/cleanfails-bare.sh" && fail "the cleanup's exit code: clean() was not found, so this case proves nothing"
   script=$work/cleanfails-bare.sh
   leak_ok=1
