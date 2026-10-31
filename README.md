@@ -76,7 +76,8 @@ rebuild them with. Check your browser on the advisory's own page.
 ## The Mac fix
 
 `fix/fix-macos.sh` removes the two roots tied to the compromised eMudhra keys from `/etc/ssl/cert.pem` (the advisory's
-change) with checks around it: no change on a fixed Mac, a dated backup it never overwrites, a check of the new file
+change), and any other certificate carrying either root's key, with checks around it: a file it can't fully check is
+refused unchanged, no change on a fixed Mac, a dated backup it never overwrites, a check of the new file
 before it replaces the old one, a check that what landed in the file is what it built — the one thing that makes it
 put the original back — and a re-test it only reads when an ordinary website loads as a control, which reports and
 never reverts. Download it in Safari from

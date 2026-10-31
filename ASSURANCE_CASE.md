@@ -120,19 +120,29 @@ checked against an allowlist before anything runs. `package.json` declares no de
 built-ins and the project's files, no `dependencies`); `test/cli.test.mjs` (unknown options refused).
 
 **R7, the Mac fix: boundary B6.** The script works on a snapshot of the file. It finds the two roots by their SHA-256
-fingerprints and refuses a file it can't fully check: a certificate it can't read, a block that isn't a plain
-certificate, or fewer fingerprints read than certificates counted (the completeness gate, so a check that fails
-without saying so counts as a failure). It refuses a symbolic link, printing the command that fixes the file the link
-points to. It won't rebuild a file of fewer than 50 certificates: one holding neither withdrawn root is reported with
-its count and nothing to remove, one still holding a root is refused, and neither is told to restore anything. It
-builds the cleaned file, removing only each withdrawn root's own lines, and checks it: no withdrawn root left, and
-exactly the count before less the roots removed. It reads an ordinary website through the file as it is (the
-control), asks `sudo` for the privilege on its own, copies the file to a new name beside it, compares that copy with
-the snapshot, and only then links it to a dated backup name that nothing may already hold. It compares the file with
-the snapshot once more immediately before the replacement, so a change made while it ran stops it. Every write to the
-file goes through `replace()`: a new file made by `mktemp` beside `/etc/ssl/cert.pem`, checked there (its SHA-256 the
-cleaned file's, and the count and fingerprint checks again), set to 644 and renamed over the old one in one step, so
-an interruption leaves the old file or the new one and never half of either. It then compares the file's SHA-256 with
+fingerprints, and any other certificate by either root's public key (a copy with a bit changed, or a root re-issued
+with the same key, which LibreSSL, OpenSSL and Apple's `python3` still trust), and refuses a file it can't fully
+check: a line where `-----BEGIN` comes after other text (LibreSSL starts a certificate at such a marker when it falls
+at byte 253, 506, … of the line), a certificate it can't read for its fingerprint and key, a block that isn't a plain
+certificate, or fewer read than certificates counted (the completeness gate, so a check that fails without saying so
+counts as a failure). It refuses a symbolic link, printing the command that fixes the file the link points to. It
+won't rebuild a file of fewer than 50 certificates: one holding neither withdrawn root is reported with its count and
+nothing to remove, one still holding a root is refused, and neither is told to restore anything. A file it finds
+clean is read again from the file itself before it says so. It builds the cleaned file, removing only each withdrawn
+root's own lines (its block, the one empty line after it, and its name lines only when they are exactly what this
+Mac's `openssl` prints for it), and checks it: no withdrawn root left, and exactly the count before less the
+certificates removed. It reads an ordinary website through the file as it is (the control), asks `sudo` for the
+privilege on its own, copies the file to a new name beside it, compares that copy with the snapshot, and only then
+links it to a dated backup name that nothing may already hold. The snapshot is in the user's temporary folder, where
+anything running as the user can change it, so the backup, beside the file where only its owner can change it, must
+then bear out everything read from the snapshot: the snapshot's SHA-256, each certificate to be removed as it was
+found, and the cleaned file's SHA-256 when cleaned the same way. Every write to the file goes through `replace()`: a
+new file made by `mktemp` beside `/etc/ssl/cert.pem`, checked there (its SHA-256 the cleaned file's, and the count and
+fingerprint checks again), set to 644 and, on the forward write, renamed over the old one only after the file is
+compared with the snapshot once more, immediately before the rename, so a change made while it ran stops it unless it
+lands in the moment between that comparison and the rename. A rename is one step, so an interruption leaves the old
+file or the new one and never half of either. A privileged step that fails is reported in its own words, sudo's
+included. It then compares the file's SHA-256 with
 the cleaned file's and restores the backup, through `replace()` too, if the two differ. That comparison of two local
 files is the **only** thing that makes it put the original back. It then reads the control again, and re-tests with
 `/usr/bin/curl` only if the control loads: without the control, "the test host refused" and "nothing on this network
@@ -144,19 +154,21 @@ then never be fixed. On macOS every exit prints a line starting SAFE, EXPOSED or
 command on, since its traps are set before any command runs; a run stopped by a signal (HUP, INT, QUIT or TERM) exits 2
 with a line that says what the file holds, read from the file's SHA-256, and a signal that arrives once the verdict is
 in is ignored, so it neither adds a second line nor changes the code. A signal no program can catch (SIGKILL) ends it
-with no line. It changes nothing on a Mac that is
-already clean, so running it twice is safe.
+with no line. It changes nothing on a Mac that is already clean, so running it twice is safe.
 *Evidence:* `test/fix-macos.check.sh` runs the script on copies of a vendored, unfixed macOS 27.2 bundle
 (`test/support/fixtures/macos-27.2-cert.pem`), so its result doesn't depend on whether the machine running it is fixed.
 It runs 76 cases, and prints and checks the count, and that every case counted as run printed its `ok` line, so a
 case that stops running can't pass as silence; one of them, `heredoc-trigger`, applies a sandbox profile of its own
 and, when the harness itself runs inside a sandbox (`WL_NESTED_SANDBOX=1`), is named as not run instead of being
-counted, as is the unreadable-file case when the harness runs as root, which can read a file of mode 000. The cases cover the first run, a second run,
-undo from the backup, empty, truncated, small, unreadable and missing files, a symbolic link and the refusal off
-macOS; copies of the script whose one network command is a stub (a network that accepts everything, one where nothing
-answers, a control that loads before the change but not after, a network that stops answering after it, a silent test
-site); interrupts and failed writes at each step; the file changing while the script runs; and what the script
-prints. `test/support/mojave-shapes.sh` runs five bundle shapes offline, the one-root shapes of Mojave-era Macs among them. CI runs both on macOS,
+counted, as is the unreadable-file case when the harness runs as root, which can read a file of mode 000. The cases
+cover the first run, a second run, undo from the backup, empty, truncated, small, unreadable and missing files, a
+symbolic link and the refusal off macOS; a withdrawn root hidden after other text on a line, under another PEM label,
+and as a copy with the same key; copies of the script whose one network command is a stub (a network that accepts
+everything, one where nothing answers, a control that loads before the change but not after, a network that stops
+answering after it, a silent test site); interrupts, from before the first command to after the verdict, and failed
+writes at each step, a later `sudo` refusal among them; the file changing while the script runs, the new file being
+made included; the snapshot swapped by a same-user process; an administrator's lines around a withdrawn root; the
+dated backup's two guards; and what the script prints. `test/support/mojave-shapes.sh` runs five bundle shapes offline, the one-root shapes of Mojave-era Macs among them. CI runs both on macOS,
 and fails if the script stops matching the SHA-256 published with the download, so the file people run is the file
 that was tested.
 
@@ -187,7 +199,7 @@ that was tested.
 | Uncontrolled resource consumption (CWE-400) | Huge trees, huge files, pipes, hung programs | Depth limits (4 to 5 levels; a folder at a limit that holds more to walk is reported as could-not-be-tested, not passed over), file-size caps (512 MB for the key scan, read in pieces past 8 MB; 2 MB for plugin files; what a cap leaves unread is UNKNOWN), only regular files read and pipes opened non-blocking, a 4,000-file cap per plugin, a timeout on every child process and connection |
 | Path traversal and symlink attacks (CWE-22, CWE-59) | Writing outside a folder | Nothing is written. Directory walks don't follow symlinked folders |
 | Untrusted search path (CWE-426) | Running programs by name | By design for `PATH` (it checks what the user runs); see section 4 for virtual environments |
-| Race conditions (CWE-367) | A scanned file swapped between its size check and its read; the Mac fix's temporary and backup files | The command checks and reads a file through one read-only, non-blocking descriptor (`lib/files.mjs`). The Mac fix makes each file beside `/etc/ssl/cert.pem` with `mktemp`, which refuses a name anything already holds, a symbolic link included; gives the backup its dated name with `link`, which refuses a taken name; compares the backup, and then the file again immediately before the replacement, with the snapshot it checked; checks the new file where it will be renamed from, in the bundle's own folder; and replaces the file by a rename, in one step |
+| Race conditions (CWE-367) | A scanned file swapped between its size check and its read; the Mac fix's temporary and backup files | The command checks and reads a file through one read-only, non-blocking descriptor (`lib/files.mjs`). The Mac fix makes each file beside `/etc/ssl/cert.pem` with `mktemp`, which refuses a name anything already holds, a symbolic link included; gives the backup its dated name with `link`, which refuses a taken name; compares the backup with the snapshot it checked, and requires the backup to bear out everything read from the snapshot; checks the new file where it will be renamed from, in the bundle's own folder, and compares the file with the snapshot again immediately before the rename; and replaces the file by a rename, in one step (a change in the moment between that comparison and the rename is the one it cannot see) |
 | Supply chain (CWE-1357) | Dependencies, CI | No dependencies; every GitHub Action pinned by full commit SHA; Dependabot proposes updates through review |
 
 ### Three rules the tests enforce (0.1.9)
@@ -440,13 +452,21 @@ document, the CHANGELOG and the README must state that limit.
 instant.
 
 **The Mac fix's re-test is worth no more than the two hosts it can reach.** It finds the two roots by their SHA-256
-fingerprints, so how macOS writes the name lines above them cannot hide one (that it read the name lines was the
-limit here until 0.1.10). What is left is the re-test. It reads the advisory's test host only after an ordinary
+fingerprints and their public keys, so how macOS writes the name lines above them cannot hide one (that it read the
+name lines was the limit here until 0.1.10). What is left is the re-test, and what the next paragraph names. It reads the advisory's test host only after an ordinary
 website has loaded through the same file as a control, and if either host does not answer it says so and claims no
 online result: a file it cleaned and checked is then reported as fixed *in the file*, never as re-tested. A network
 that answers for both hosts can still make the re-test say the wrong thing — what it cannot do is make the script
 undo the fix, which is why the re-test may report and never reverts. The script trusts `/usr/bin/curl` for both
 fetches.
+
+**What the Mac fix still cannot see** (judged, not measured). A change to the file in the moment between its last
+comparison with the snapshot and the rename is lost from the file and is in the backup neither. The control read
+before the change goes through the snapshot in the user's temporary folder, so a process running as the user can make
+it fail, which turns the one reading about the change (UNKNOWN, a certificate refused after it) into SAFE "Fixed in
+the file … nothing was re-tested online"; the file is fixed and checked in that case. And on an older macOS whose
+`openssl` prints a withdrawn root's entry differently from the text in that Mac's file, the entry's text lines stay
+and only the certificate goes: no withdrawn root is left, and its name is still readable in the file.
 
 **Releases 0.1.0 to 0.1.2 are not signed by the project**, and there is one maintainer and no second reviewer. A named
 successor has held admin access to the repository and co-owned the npm package since 21 October 2026, but has not yet

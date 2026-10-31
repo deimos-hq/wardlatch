@@ -35,7 +35,8 @@ reported, and what was actually true.
 - **Anything that modifies the system outside `fix/fix-macos.sh`.** The command changes nothing: no file, setting,
   package or container is written. A path that writes, deletes or changes anything is a vulnerability.
 - **The Mac fix damaging `/etc/ssl/cert.pem`.** `fix/fix-macos.sh` must leave the file intact or correctly cleaned:
-  never empty, truncated or unparseable, never missing certificates other than the two it removes, readable by
+  never empty, truncated or unparseable, never missing certificates other than the withdrawn roots it removes and
+  any certificate carrying one of their keys, readable by
   everyone (644) as macOS ships it, with an earlier backup never overwritten, and the original restored only when
   what landed in the file is not what the script built and checked. **A revert a network can trigger is a
   vulnerability**: putting the original back puts both withdrawn roots back, so a Mac whose network answers for
