@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=81
+expect_cases=82
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -2560,6 +2560,29 @@ for sig in TERM INT HUP QUIT; do
   { [ -z "$(beside "$d/cert.pem")" ] && [ "$(baks "$d/cert.pem")" -eq 0 ]; } || fail "$sig while the cleaned file is written: it left something beside the bundle"
 done
 ok "a signal while the cleaned file is written prints its line, not into the file being written"
+# ---- r4 end case
+
+# ---- r4 case: link-name
+# The symbolic-link refusal prints a command to run, with the link's target in it. Until r4 the target went in raw,
+# inside single quotes: a target holding a single quote broke out of them, so the printed command ran a command of the
+# link maker's choosing and then the fix without WARDLATCH_CERT_FILE (round-3 re-read 0, ATTACK-WILD W1's class); and a
+# target holding U+202E or U+2028 reached the terminal raw. A name with anything but plain characters is now never
+# printed, in the command or in the line; a plain one still is (the r2 case symlink-advice runs that command).
+d=$work/r4/linkname; mkdir -p "$d"
+for how in quote bidi; do
+  rm -f "$d/cert.pem"
+  if [ "$how" = quote ]; then tgt="real.pem'; touch $d/PWNED; X='"; else tgt=$(printf 'real\342\200\256mep.pem\342\200\250next'); fi
+  ln -s "$tgt" "$d/cert.pem"
+  run "$d/cert.pem" "$offline" "$OFFLINE"
+  [ "$code" -eq 2 ] || fail "a link whose target's name is not plain ($how): expected UNKNOWN, exit 2, got $code"
+  grep -q '^UNKNOWN.*is a symbolic link' <<<"$out" || fail "a link whose target's name is not plain ($how): it did not say the file is a symbolic link"
+  grep -qF "touch $d/PWNED" <<<"$out" && fail "a link whose target's name is not plain ($how): the line holds the command hidden in the name"
+  LC_ALL=C grep -q $'\342\200[\256\250]' <<<"$out" && fail "a link whose target's name is not plain ($how): U+202E or U+2028 reached the output raw"
+  grep -qF -- "$tgt" <<<"$out" && fail "a link whose target's name is not plain ($how): the name was printed raw"
+  [ -L "$d/cert.pem" ] || fail "a link whose target's name is not plain ($how): the link itself was replaced"
+done
+[ ! -e "$d/PWNED" ] || fail "a link whose target's name is not plain: something ran the command hidden in the name"
+ok "a link whose target's name is not plain is refused without printing the name, in the command or the line"
 # ---- r4 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.

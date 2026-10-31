@@ -85,15 +85,28 @@ KEYTEXT=no_header,no_version,no_serial,no_signame,no_validity,no_subject,no_issu
 # reason), and the file it points to would be left exactly as it was. Until 31 Oct 2026 the refusal said the Mac
 # would go on reading the old bundle, which is not what happens, and told the reader to run this "against that file"
 # without saying how. The way is WARDLATCH_CERT_FILE, so the refusal now prints the command, with the file in it.
+# The link's target is named only when every character of it is plain: letters, digits, space and / . _ + @ , : = ~ % -.
+# Whoever made the link chose that name, and until r4 it went raw into the command printed below, inside single
+# quotes: a name holding a single quote broke out of them, so the command a reader pasted ran something of the link
+# maker's choosing, then this fix without WARDLATCH_CERT_FILE; and U+202E or U+2028 in a name reached the terminal
+# raw (the round-3 re-read). The script's own path is printed on the same terms.
+plain() { case "$1" in ''|*[!A-Za-z0-9\ /._+@,:=~%-]*) return 1 ;; esac; }
 linked() {
   local to me
   to=$(readlink "$FILE" 2>/dev/null) || to=
   case "$to" in /*|'') ;; *) to="$(dirname "$FILE")/$to" ;; esac
-  case "$0" in *.sh) me=$0 ;; *) me='<this script>' ;; esac
-  echo "UNKNOWN  $FILE is a symbolic link${to:+ to $to}. Nothing changed. Replacing it would replace the link with a"
-  echo "         file of this run's own: $FILE would stop following the file it points to, and that file would be left"
-  echo "         as it is. To fix the file it points to, run this again with that file named:"
-  echo "         WARDLATCH_CERT_FILE='${to:-<the file the link points to>}' bash '$me'"
+  me='<this script>'; case "$0" in *.sh) ! plain "$0" || me=$0 ;; esac
+  if [ -z "$to" ] || plain "$to"; then
+    echo "UNKNOWN  $FILE is a symbolic link${to:+ to $to}. Nothing changed. Replacing it would replace the link with a"
+    echo "         file of this run's own: $FILE would stop following the file it points to, and that file would be left"
+    echo "         as it is. To fix the file it points to, run this again with that file named:"
+    echo "         WARDLATCH_CERT_FILE='${to:-<the file the link points to>}' bash '$me'"
+  else
+    echo "UNKNOWN  $FILE is a symbolic link, to a file whose name holds characters this doesn't print. Nothing changed."
+    echo "         Replacing it would replace the link with a file of this run's own: $FILE would stop following the"
+    echo "         file it points to, and that file would be left as it is. To fix the file it points to, run this again"
+    echo "         with WARDLATCH_CERT_FILE set to that file, once you have checked its name (ls -l shows it)."
+  fi
   exit 2
 }
 
