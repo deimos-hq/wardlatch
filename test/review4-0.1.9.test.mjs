@@ -160,7 +160,8 @@ exit 1`);
 //   - its `.Trash` arm escaped failure only because lib/workflows.mjs's TOOL_CACHES list swallowed the name, and for
 //     the WordPress check only because isSystemFolder() matched the name under a parent its fixture happened to make
 //     look like a home folder.
-// A real macOS refusal is EPERM and cannot be built by an unprivileged test at all. So this now asks the machine for
+// A real macOS refusal is EPERM. (This comment said no unprivileged test could build one; an unprivileged sandbox-exec
+// profile does, measured 31 Oct 2026: test/independent-read.test.mjs.) So this asks the machine for
 // the real article at run time and skips when there is none, in the style of serviceLockedRoot() in
 // test/release-0.1.9.test.mjs. The real ~/Pictures/*.photoslibrary is measured by test/support/errno-mechanisms.mjs,
 // which is run by hand: support/no-real-home.cjs rightly refuses to let a test read the person's own home.

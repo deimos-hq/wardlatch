@@ -74,8 +74,10 @@ test('a chmod 000 folder the person owns is could-not-be-tested and exits 2, und
 // ---- 2. a deny ACL is not macOS's refusal ----------------------------------------------------------------------------
 // The subtle forgery, and the reason the rule cannot be read off the mode bits alone: a deny ACL shuts a folder while
 // leaving its mode looking open, so `ls -ld` shows 0755 and the read still fails. Measured on this machine (see
-// test/support/errno-mechanisms.mjs): it gives EACCES, not EPERM. If it gave EPERM the whole rule would be unsound,
-// because then an attacker could put their own folder into the channel that does not change the exit code.
+// test/support/errno-mechanisms.mjs): it gives EACCES, not EPERM. (This comment used to say that if anything
+// unprivileged gave EPERM the stated-gap rule would be unsound. Something does: an unprivileged sandbox-exec profile,
+// measured 31 Oct 2026, and owner decision #32 then made every EPERM could-not-be-tested. The ACL's EACCES still must
+// be, and this test still holds that.)
 // FAILS ON THE OLD SHAPE for the same reason as test 1: under the name `.Trash` the workflow check never looked.
 test('a folder shut with a deny ACL (mode still 0755) is could-not-be-tested and exits 2',
   { skip: (process.platform !== 'darwin' || AS_ROOT) && 'macOS, as a user' }, (t) => {
@@ -89,7 +91,7 @@ test('a folder shut with a deny ACL (mode still 0755) is could-not-be-tested and
     acls.push(shut); locked.push(shut);
     let code = null; try { readdirSync(shut); } catch (e) { code = e.code; }
     if (code === null) return t.skip('the ACL did not deny the read on this file system');
-    // the premise, stated: the mode bits look open, and the errno is NOT the one that cannot be forged
+    // the premise, stated: the mode bits look open, and the errno is EACCES, not EPERM
     assert.equal(statSync(shut).mode & 0o777, 0o755, 'premise: the mode still looks open');
     assert.equal(code, 'EACCES', 'premise: an ACL denial is EACCES, not EPERM');
     assert.equal(mandatoryRefusal(shut, code), false, 'an ACL anyone can set is not macOS protecting a folder');
