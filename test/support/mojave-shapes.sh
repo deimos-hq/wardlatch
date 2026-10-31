@@ -25,8 +25,9 @@
 #
 # Offline and deterministic: a stub curl that exits 7 stands in for every probe, so no request leaves this machine
 # and the "an ordinary website didn't load" branch is what gets exercised -- which is also the real branch on a
-# machine with no network. WARDLATCH_CERT_FILE keeps every write inside a temp folder; /etc/ssl is never touched
-# and sudo is never invoked (the file and its folder are writable, so the fix sets SUDO empty).
+# machine with no network. WARDLATCH_CERT_FILE keeps every write inside a temp folder under TMPDIR; /etc/ssl is never
+# touched and sudo is never invoked (the file and its folder are writable, so the fix sets SUDO empty). CI runs this
+# on macOS since 31 Oct 2026; until then it ran nowhere but by hand.
 #
 # The stub is reached through WARDLATCH_CURL in a COPY of the script, the way test/fix-macos.check.sh does it.
 # Until 29 Oct 2026 this put a `curl` on PATH instead -- which the fix never consulted, because it calls
@@ -44,7 +45,9 @@ SRC=${1:-"$REPO/test/support/fixtures/macos-27.2-cert.pem"}
 AAA='D7:A7:A0:FB:5D:7E:27:31:D7:71:E9:48:4E:BC:DE:F7:1D:5F:0C:3E:0A:29:48:78:2B:C8:3E:E0:EA:69:9E:F4'
 EMS='86:A1:EC:BA:08:9C:4A:8D:3B:BE:27:34:C6:12:BA:34:1D:81:3E:04:3C:F9:E8:A8:62:CD:5C:57:A3:6B:BE:6B'
 
-WORK=$(mktemp -d /tmp/mojave-shapes.XXXXXX) || exit 2
+# Under TMPDIR, like everything else the tests make. Until 31 Oct 2026 this was a hard-coded /tmp, so a run whose
+# TMPDIR was its own scratch folder still wrote here.
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/mojave-shapes.XXXXXX") || exit 2
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/bin"
 printf '#!/bin/sh\nexit 7\n' > "$WORK/bin/curl"   # no probe ever answers, deterministically
@@ -117,7 +120,7 @@ shape() { # $1 = label, $2 = bundle, $3 = expected exit, $4 = expected text frag
   printf '      %s\n' "$out"
 }
 
-echo "building shapes from $SRC ($(grep -c 'BEGIN CERTIFICATE' $SRC) certificates)"
+echo "building shapes from $SRC ($(grep -c 'BEGIN CERTIFICATE' "$SRC") certificates)"
 n_both=$(build "$WORK/both.pem"   ""                all)
 n_aaa=$( build "$WORK/aaaonly.pem" "$EMS"           all)
 n_ems=$( build "$WORK/emsonly.pem" "$AAA"           all)
@@ -129,10 +132,12 @@ echo
 
 echo "A  both roots present (current macOS):"
 shape both "$WORK/both.pem" 0 "removed both withdrawn roots"
+# The fix names the root it removed and says this FILE did not hold the other. Until 31 Oct 2026 it said "the other
+# was already absent from this Mac", a claim about a Mac that one file cannot show, and these two shapes asserted it.
 echo "B  AAA only, emSign already absent  <-- THE MOJAVE SHAPE:"
-shape aaa-only "$WORK/aaaonly.pem" 0 "removed 1 of the 2 withdrawn roots; the other was already absent"
+shape aaa-only "$WORK/aaaonly.pem" 0 "removed AAA Certificate Services (this file did not hold the other withdrawn root, emSign ECC Root CA - G3)"
 echo "C  emSign only, AAA already absent (the mirror):"
-shape ems-only "$WORK/emsonly.pem" 0 "removed 1 of the 2 withdrawn roots; the other was already absent"
+shape ems-only "$WORK/emsonly.pem" 0 "removed emSign ECC Root CA - G3 (this file did not hold the other withdrawn root, AAA Certificate Services)"
 echo "D  neither root present (already fixed):"
 # "no longer holds the two roots", not "neither": shape() writes the bundle to $WORK/run-neither.pem and the fix
 # echoes that path in every line, so the old expected fragment "neither" matched the FILENAME and the assertion
