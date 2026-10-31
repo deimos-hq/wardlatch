@@ -482,3 +482,24 @@ test('WV-13 a link the home folder\'s quick look declines is not a gap; one belo
   const s = run([...LITELLM, '--paths', join(h, 'proj')], { HOME: h });
   assert.ok(unknowns(s).some((x) => x.path === join(h, 'proj', 'shared')), JSON.stringify(s.rows).slice(0, 1500));
 });
+
+// ---- M2 / WV-18: errno-mechanisms.mjs exited 0 without measuring, and counted a failed setup as a claim that holds -------
+// Its exit code was the pass condition, yet a run that measured no folder macOS protects exited 0, and its ACL and
+// chflags claims "held" when chmod +a or chflags could not run (`d === null ||`). Now a claim that could not be
+// measured is UNMEASURED, said apart from one that holds, and the run exits 2: nothing broke, and not everything was
+// confirmed. Run here with a home of the test's own (so no folder macOS protects is there to measure) and, on macOS,
+// with no program on PATH (so chmod +a, chflags and id cannot run).
+test('M2 errno-mechanisms.mjs exits non-zero when it could not measure, and never counts a failed setup as holding', () => {
+  const script = join(ROOT, 'test', 'support', 'errno-mechanisms.mjs');
+  const h = fresh('m2-home');
+  const r = spawnSync(process.execPath, [script], { encoding: 'utf8', env: { HOME: h, PATH: '/usr/bin:/bin', LANG: 'C' }, cwd: dir, timeout: 120000 });
+  assert.notEqual(r.status, 0, `the TCC half was not measured, so the run must not exit 0:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /UNMEASURED +the TCC half/, r.stdout);
+  if (process.platform !== 'darwin' || AS_ROOT) return;
+  const bare = spawnSync(process.execPath, [script], { encoding: 'utf8', env: { HOME: h, PATH: fresh('m2-no-programs'), LANG: 'C' }, cwd: dir, timeout: 120000 });
+  assert.notEqual(bare.status, 0, `${bare.stdout}${bare.stderr}`);
+  for (const what of ['a deny ACL gives EACCES', 'chflags uchg', 'chflags hidden', 'chflags opaque']) {
+    assert.doesNotMatch(bare.stdout, new RegExp(`HOLDS x2 +${what}`), `${what}: nothing was applied, so nothing holds:\n${bare.stdout}`);
+    assert.match(bare.stdout, new RegExp(`UNMEASURED +${what}`), `${what}:\n${bare.stdout}`);
+  }
+});
