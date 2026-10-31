@@ -62,6 +62,7 @@ linked() {
 [ ! -L "$FILE" ] || linked
 [ -f "$FILE" ] || { echo "UNKNOWN  $FILE not found. Nothing changed."; exit 2; }
 SUDO=sudo; if [ "$(id -u)" -eq 0 ] || { [ -w "$FILE" ] && [ -w "$(dirname "$FILE")" ]; }; then SUDO=; fi
+DIR=$(dirname "$FILE")
 
 # 0 = trusts the compromised keys, 60 = refuses them, anything else = the test site didn't answer
 # (-q: ignore ~/.curlrc, whose settings could change the answer)
@@ -177,12 +178,20 @@ strip() {
 # printed SAFE, exit 0, about a run that had been cancelled. (bash does stop if the signal lands inside a command
 # substitution, so the old shape failed only some of the time, which is worse.)
 new=        # the file beside $FILE, while there is one
+bnew=''       # the file beside $FILE the backup is copied into, until it has its dated name
 replaced=   # set once $FILE has been replaced, so a run stopped after that can say so
 # Every command here ends in `|| true`, and that is load-bearing rather than tidy. Measured on /bin/bash 3.2.57:
 # with `set -e` in force, a failing command inside the EXIT trap ends the trap AND overrides the script's exit
 # status, so one failed `rm` turned `exit 2` ("couldn't tell") into `exit 1`, which the published exit-code table
 # reads as EXPOSED. `return 0` at the end does not help -- errexit ends the function before reaching it.
-clean() { rm -f "$snap" "$tmp" || true; [ -z "$new" ] || $SUDO rm -f "$new" || true; }
+# strays() is for a file made beside $FILE whose name was not yet known when the signal came: mktemp chooses it.
+clean() { rm -f "$snap" "$tmp" || true; [ -z "$new" ] || $SUDO rm -f "$new" || true; new=''; [ -z "$bnew" ] || $SUDO rm -f "$bnew" || true; bnew=''; strays || true; }
+strays() {
+  local f
+  for f in "$DIR"/.wardlatch-new.$$.* "$DIR"/.wardlatch-backup.$$.*; do
+    if [ -e "$f" ] || [ -L "$f" ]; then $SUDO rm -f "$f" || true; fi
+  done
+}
 # A signal. Exit 2, not the conventional 130: 2 is this script's "couldn't tell, read the printed line", and an
 # interrupted run reached no verdict, which is the same thing to a fleet tool. The page publishes an exit-code
 # table that Jamf, Kandji and Intune policies are built on, and a fourth code in it would be one no policy has a
@@ -219,6 +228,22 @@ replace() {
   $SUDO rm -f "$new" || true
   new=
   return 1
+}
+# The backup copy failed or isn't the file this run checked: the partial copy is removed and the dated name is never
+# used, and the line says which of those happened. Until 31 Oct 2026 the copy was made straight to the dated name,
+# so a copy that failed part-way (a full disk, a Ctrl-C) left a truncated file under exactly the name of a good backup.
+nobackup() {
+  local left=''
+  if [ -n "$bnew" ]; then
+    if $SUDO rm -f "$bnew" 2>/dev/null; then bnew=''; else left=$bnew; fi
+  fi
+  echo "UNKNOWN  $1, so nothing was replaced and no backup was kept."
+  if [ -n "$left" ]; then
+    echo "         A partial copy is left at $left: it is not a backup. Delete it."
+  else
+    echo "         Nothing is left beside $FILE, and this run did not change it."
+  fi
+  exit 2
 }
 
 snap=$(mktemp "${TMPDIR:-/tmp}/wardlatch.XXXXXX" 2>/dev/null) || {
@@ -374,7 +399,7 @@ fi
 c0=$(control "$snap")
 
 backup="$FILE.wardlatch-$(date +%Y%m%d-%H%M%S).bak"
-[ ! -e "$backup" ] || { echo "UNKNOWN  $backup already exists. Nothing changed; run again in a second."; exit 2; }
+{ [ ! -e "$backup" ] && [ ! -L "$backup" ]; } || { echo "UNKNOWN  $backup already exists. Nothing changed; run again in a second."; exit 2; }
 # The first thing that needs privilege, asked for on its own: in the interactive run this is where sudo asks for the
 # password, and a refusal there (a wrong password three times, no answer in time) is not a full disk. Until 31 Oct
 # 2026 it happened inside the backup copy, and the line blamed disk space (df -h /).
@@ -383,19 +408,17 @@ if [ -n "$SUDO" ] && ! $SUDO -v; then
   echo "         Run this again; it asks for your Mac's password."
   exit 2
 fi
-$SUDO cp -p "$FILE" "$backup" || { echo "UNKNOWN  Couldn't write the backup $backup, so nothing was replaced. Check the disk has room (df -h /)."; exit 2; }
-# A backup nobody checked makes the Undo line below a promise this script can't keep: it names that file as the way
-# back, and the content-mismatch restore further down uses it as the only file here that has been checked. Nothing
-# is replaced until the backup is the SNAPSHOT -- the file every check above was made on. Until 31 Oct 2026 it was
-# compared with $FILE, and the "changed while this ran" check came BEFORE the backup step, which is where the
-# interactive run waits for the password: a change made during that wait was in the backup and in $FILE, both
-# comparisons passed, and the cleaned OLD snapshot was renamed over it. Measured: an administrator's root appended
-# meanwhile was gone from the file, kept only in the backup, and the run said SAFE.
-cmp -s "$backup" "$snap" || {
-  echo "UNKNOWN  The backup isn't the file this run checked: $FILE changed while this ran, or the copy went wrong."
-  echo "         Nothing was replaced. Don't restore from it; delete it and run this again.  Bad backup: $backup"
-  exit 2
-}
+# The backup. Copied under a name of its own beside $FILE, compared with the SNAPSHOT -- the file every check above
+# was made on -- and only then given its dated name, which link(2) refuses if anything at all is already there.
+# Until 31 Oct 2026 the backup was compared with $FILE, and the "changed while this ran" check came BEFORE the backup
+# step, which is where the interactive run waits for the password: a change made during that wait was in the backup
+# and in $FILE, both comparisons passed, and the cleaned OLD snapshot was renamed over it. Measured: an
+# administrator's root appended meanwhile was gone from the file, kept only in the backup, and the run said SAFE.
+bnew=$($SUDO mktemp "$DIR/.wardlatch-backup.$$.XXXXXX" 2>/dev/null) || { bnew=''; nobackup "Couldn't make a file beside $FILE for the backup (mktemp failed). Check the disk has room (df -h /)"; }
+$SUDO cp -p "$FILE" "$bnew" || nobackup "Couldn't copy $FILE to make the backup (cp failed). Check the disk has room (df -h /)"
+cmp -s "$bnew" "$snap" || nobackup "The backup copy isn't the file this run checked: $FILE changed while this ran, or the copy went wrong"
+$SUDO link "$bnew" "$backup" 2>/dev/null || nobackup "Couldn't give the backup its dated name, $backup"
+if $SUDO rm -f "$bnew"; then bnew=''; fi
 # And once more, immediately before the replacement: the file must still be the snapshot the cleaned file was built
 # from, or the replacement would throw away whatever changed it.
 cmp -s "$FILE" "$snap" || {
