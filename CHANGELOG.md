@@ -255,8 +255,10 @@ counted. Each fix below has a test that fails on da8f5c2 and passes after it.
   venv named in the receipt — and giving the venv to `--paths` is what the trust check's own advice for a linked venv
   says to do. `--paths <site>/wp-content/plugins` holding Rank Math PRO 3.0.123 read "SAFE no WordPress installs
   found". A folder given that is a venv, a `site-packages` or `dist-packages` folder, a plugins folder, a
-  `wp-content`, or one listed plugin's own folder is now checked as one found below a searched folder is. *Found and
-  fixed 31 Oct 2026 (d4d4c71).*
+  `wp-content`, or one listed plugin's own folder is now checked as one found below a searched folder is. (Not
+  wholly, as the third read found: a venv given was probed instead of walked, so the venvs inside it vanished, and a
+  listed plugin's own folder was checked only when its main file was in it: below.) *Found and fixed 31 Oct 2026
+  (d4d4c71).*
 - **A link counted as covered when its target had only been listed, which reopened AUDIT-8 in the default run.** A
   listing is not a walk: a target listed at a walk's depth limit has folders nobody opened, and the installs check's
   quick look round the home folder lists two levels and says nothing about what it can't open. `~/Development/x`
@@ -292,7 +294,9 @@ counted. Each fix below has a test that fails on da8f5c2 and passes after it.
   a repository holding `deploy-key.der` read "SAFE no committed keys found in the files of 1 local repository". A file
   of one DER element (up to 1 MB) is now read by its structure, whatever its name: the shape of a PKCS #1 RSA,
   PKCS #8, encrypted PKCS #8, SEC1 EC or OpenSSL DSA private key, or of a PKCS #12 key store, is a REVIEW finding of
-  that type on line 1, shown as "(binary DER, not shown)", never the key. *Found and fixed 31 Oct 2026 (eb357ff).*
+  that type on line 1, shown as "(binary DER, not shown)", never the key. (A store in BER, a key with one byte after
+  it, and a key after a certificate were still skipped, as the third read found: below.) *Found and fixed 31 Oct 2026
+  (eb357ff).*
 - **The header check let a link to a folder root owns ride beside SAFE, and told the person to use sudo for a link to
   their own folder.** It called the repository walk with no list for links, so links fell into the list of folders it
   could not open: a link to a folder root owns went into the service review line beside SAFE, exit 0, while every
@@ -316,15 +320,17 @@ counted. Each fix below has a test that fails on da8f5c2 and passes after it.
   waits for the password, and the backup was then compared with the file, not with the snapshot. Measured: an
   administrator's root appended during the wait was gone from the file, kept only in the backup, and the run printed
   SAFE, exit 0. The backup is now compared with the snapshot, and the file with the snapshot again immediately
-  before the replacement; a change at either point stops the run, says which, and replaces nothing. *Found and fixed
-  31 Oct 2026 (f9b8cc6).*
+  before the replacement; a change at either point stops the run, says which, and replaces nothing. (The second
+  comparison was about 0.6 seconds before the rename, as the third read found, and a change in that time was lost:
+  below.) *Found and fixed 31 Oct 2026 (f9b8cc6).*
 - **The Mac fix checked the cleaned file in the user's temporary folder, and root copied it into place later.** A
   process running as the same user could change that copy in between — append a withdrawn root, or swap a certificate
   — and the check after the rename compared the file with that same copy, so either landed under SAFE, exit 0. (The
   refuter who checked it judged it defence in depth: such a process can already reach the script's `PATH`.) The cleaned
   file's SHA-256 is now taken from the rebuild itself, and `replace()` checks the file it made beside the bundle, in
   a folder only the bundle's owner can write, before the rename: that digest, and the count and fingerprint checks
-  again. *Found and fixed 31 Oct 2026 (5a0c8ff).*
+  again. (The snapshot all of those checks were made on was still taken on trust, as the third read found: below.)
+  *Found and fixed 31 Oct 2026 (5a0c8ff).*
 - **A symbolic link planted at the new file's name made the bundle itself a link.** `replace()` built the new file at
   a fixed name, `.wardlatch-new.<pid>`, guarded by `[ ! -e ]`, which is true for a link to nothing: `cp` wrote
   through the link, `mv` put the link where the bundle was, and the run said SAFE, exit 0. It needs write access to
@@ -336,8 +342,8 @@ counted. Each fix below has a test that fails on da8f5c2 and passes after it.
   line it took every empty line, not the one separator. It now removes exactly each root's own BEGIN-to-END block,
   its name lines only when they sit directly above the block and are that root's (Apple's shape, ending in that
   root's own `SHA256 Fingerprint=` line, or mk-ca-bundle's), and the one empty line after it, and keeps every other
-  line. On Apple's own file the result is still byte for byte the advisory's removal. *Found and fixed 31 Oct 2026
-  (fbed337).*
+  line. On Apple's own file the result is still byte for byte the advisory's removal. (An indented line inside a
+  root's Apple entry still went with it, as the third read found: below.) *Found and fixed 31 Oct 2026 (fbed337).*
 - **A backup copy that failed part-way left a truncated file under the backup's dated name.** Measured: a
   245,760-byte stump of the 333,483-byte file, cut mid-certificate, beside "Couldn't write the backup"; and a backup
   that failed the comparison stayed under the dated name too. The copy is now made under a temporary name beside
@@ -365,6 +371,115 @@ counted. Each fix below has a test that fails on da8f5c2 and passes after it.
   yourself, now: sudo cp -p …". Each now names the backup and what it holds, and prints no command to restore it.
   The undo line stays under a SAFE result and under a run stopped after the file was fixed. *Found and fixed 31 Oct
   2026 (3acabb2).*
+
+The rest of this section was found by a third read, of this branch as it stood after the fixes above (03d95c9, 31 Oct
+2026): three readers who re-checked every earlier finding and looked for new ones, and, the same day, a red-team pass
+and an attacker's reading of the specification. Each fix below has a test that fails on 03d95c9 and passes after it.
+
+- **A withdrawn root hidden after other text on a line stayed in the file, and the Mac fix said SAFE.** 6a36187
+  (under Fixed) counted a certificate only where a line starts with `-----BEGIN`, on the model that LibreSSL reads one
+  nowhere else. LibreSSL reads the file 253 bytes at a time, so a marker that falls at byte 253, 506, … of a longer
+  line starts a certificate it trusts (OpenSSL 3.6.4: byte 254). Measured: with AAA Certificate Services behind 253
+  bytes of padding on one physical line, LibreSSL 3.3.6 read one certificate more than the fix counted, the Mac's own
+  `curl` connected to a local test server through a root hidden the same way, and the fix printed SAFE, exit 0 — or,
+  on a file also holding the plain roots, "Fixed in the file" with the hidden copy left. At da8f5c2, before 6a36187,
+  the fix removed the hidden copy. Readers differ, so the fix now models none of them: a line where `-----BEGIN` comes
+  after other text,
+  anywhere in it, stops the run before anything is read out of the file — UNKNOWN, exit 2, nothing changed, and the
+  line says how many such lines there are and to edit them. The script also runs with `LC_ALL=C`, because in a UTF-8
+  locale macOS's `grep` does not match a line holding bytes that are not valid UTF-8, so a marker after such bytes went
+  uncounted. *Found and fixed 31 Oct 2026 (b4564c9; the case that expected the old model, d09aa71).*
+- **A copy of a withdrawn root with another fingerprint and the same key stayed in the file under SAFE.** The fix
+  found the two roots by their certificates' SHA-256 fingerprints alone. A copy of a root with one bit of its
+  signature flipped, or a root re-issued with the same key, has another fingerprint and the same public key, and is
+  still trusted: measured with a throwaway root and leaf, LibreSSL 3.3.6, OpenSSL 3.6.4 and Apple's `python3`
+  (LibreSSL 2.8.3) all trust the bit-flipped copy as an anchor, since none checks an anchor's own signature. Each
+  certificate is now read with one `openssl` call for its fingerprint and its public key, and one that carries either
+  root's SubjectPublicKeyInfo is removed too, with its block and the one empty line after it, and named as what it is
+  ("a certificate with the key of AAA Certificate Services"); "removed both withdrawn roots" alone is printed only when
+  the file held each root once and nothing else with their keys. The SHA-256 of each key is in the script's comment
+  (AAA Certificate Services `bd153ed7…`, emSign ECC Root CA - G3 `8d417db2…`). *Found and fixed 31 Oct 2026
+  (69eef90).*
+- **A process running as the same user could still land its own root in the file under SAFE.** 5a0c8ff (above) took
+  the cleaned file's SHA-256 from the rebuild, but every check, the list of certificates to remove and the rebuild
+  itself still came from the snapshot in the user's temporary folder, and nothing tied them to the file being
+  replaced. Measured, 4 runs of 4 on the unchanged script: a same-user process swapped one certificate of the snapshot
+  for its own root while the snapshot was read, put the snapshot back before the backup was compared with it, and the
+  root landed in `/etc/ssl/cert.pem` with SAFE, exit 0. Now the backup, made beside the file where only its owner can
+  change it, must bear out everything read from the snapshot before anything is replaced: the snapshot's SHA-256, each
+  certificate to be removed as what it was found to be, and the cleaned file's SHA-256 when it is cleaned the same
+  way; and a file found clean is read again from the file itself before SAFE is said about it. Any of these failing is
+  UNKNOWN, exit 2, nothing replaced. (Judged, and left open: the control read before the change still goes through the
+  snapshot, so such a process could make it fail, which turns the one reading about the change into SAFE "Fixed in the
+  file … nothing was re-tested online". The file is fixed and checked in that case.) *Found and fixed 31 Oct 2026
+  (5bf2a64).*
+- **"Compared again immediately before the replacement" was about 0.6 seconds before it.** f9b8cc6 (above) compared
+  the file with the snapshot before `replace()`, which then made the new file and fingerprinted every certificate in
+  it again (126 `openssl` calls, measured at 0.6 s) before the rename. A change to the bundle in that time — another
+  writer, a device-management agent — was thrown away by the rename, was in the backup neither, and the run said SAFE,
+  exit 0 (measured, 4 runs of 4). The comparison is now inside `replace()`, after the new file is built and checked and
+  immediately before the rename; what is left between them is the test's own return and the start of `mv`, and the
+  script's header names that moment as the one change it cannot see. *Found and fixed 31 Oct 2026 (75da80c).*
+- **An administrator's indented note inside a withdrawn root's entry went with the root, under SAFE.** fbed337
+  (above) removed a root's Apple entry when every line between its `=== ` line and the certificate was indented, empty
+  or one of three fixed lines, so a note such as `    # IT note: AAA kept for the legacy SCEP server until 2027` was
+  deleted with it, exit 0. The entry is now compared, whole, with what this Mac's `openssl` prints for that certificate,
+  and removed only when it is exactly that; otherwise every line above the certificate stays, and only the certificate
+  and the one empty line after it go. On macOS 27.2's own file the result is still byte for byte the advisory's
+  removal (measured, all 128 entries). (Judged, not measured: on an older macOS whose `openssl` prints an entry
+  differently from the text in that Mac's file, the entry's text stays and only the certificate goes; no withdrawn
+  root is left, and its name is still readable in the file.) *Found and fixed 31 Oct 2026 (b520205).*
+- **A stopped run could still print nothing, or two lines.** The traps were set after `uname`, `readlink`, `id`,
+  `dirname` and both `mktemp` calls, so a signal in that time ended the run with 129, 130 or 143, no line, and the
+  snapshot left in the temporary folder. Ctrl-\ (`SIGQUIT`) was never trapped, so it ended the run with 131, no line,
+  and a `.wardlatch-new.<pid>` file left beside the bundle, root's in a real run, that no later run removes. And a signal
+  while the cleanup at exit ran, after the verdict, printed a second line under it ("UNKNOWN  Stopped …") and turned
+  exit 0 into 2. The traps are now the first commands the script runs, `QUIT` is trapped with `HUP`, `INT` and `TERM`,
+  and those signals are ignored once the last reading is in and during the cleanup. Each was measured with a stand-in
+  that holds the moment open; in a real run the first and the third are milliseconds wide. A signal no program can
+  catch (`SIGKILL`) still ends it with no line. *Found and fixed 31 Oct 2026 (e21b233, d42fed9, d0f9297).*
+- **Names from the disk could carry hidden characters into the output, in text and in `--json`.** The escaper wrote
+  out C0 and C1 control characters and nothing else, and `--json` escaped DEL and C1 only. A folder name holding
+  U+2028 starts a line of its own in many renderers and in a language model reading the output, U+202E reverses what
+  follows, U+200B hides inside a word, and the tag characters (U+E0000 to U+E007F) are invisible on screen and read as
+  text by a language model; APFS accepts all of them. Measured at 03d95c9: a venv under such a folder, a git author, a
+  tracked file, a plugin folder, a certifi version string and a link named with them all reached the output raw.
+  `lib/escape.mjs` is now the one escaper: it writes out every character of Unicode categories Cc, Cf, Cs, Co, Cn, Zl
+  and Zp and the whole tag block, in the text output, `--list` and the version line; in `--json` every `reason` is
+  escaped the same way, and every other string keeps its real value with those characters written as JSON escapes.
+  It makes the hidden visible; it cannot make a planted sentence in plain letters untrue. *Found and fixed 31 Oct 2026
+  (688433f).*
+- **A venv given with `--paths` hid every venv inside it, and a folder or a link named `site-packages` stopped the
+  walk.** d4d4c71 (above) probed a `--paths` folder that is a virtual environment *instead of* walking it, so a
+  project made with `python3 -m venv .` holding `services/api/.venv`, whose bundle trusts the compromised roots, read
+  SAFE, exit 0 (EXPOSED at da8f5c2). The installs walk took a folder or a link named `site-packages` or
+  `dist-packages` one level deep and never walked or reported it, so a venv holding the LiteLLM stealer below one read
+  SAFE, exit 0, and a link of that name escaped the link rule. Neither walk went into a venv found below a searched
+  folder, and the trust check given a venv's `lib` or `site-packages` folder examined nothing. Every folder given with
+  `--paths` is now walked; every venv met is checked and walked, except the folders it keeps its own files in (`bin`,
+  `Scripts`, `include`, `Include`, `lib`, `lib64`, `Lib`, `share`, `etc`), which are checked with it and named on the
+  line under every result that rests on the walk; a venv's own `site-packages` checks its venv; any other folder of
+  that name is walked like any folder, and a link of that name is a link not followed. *Found and fixed 31 Oct 2026
+  (471a4ea).*
+- **A PKCS #12 store in BER, a DER key with one byte after it, and a key after a certificate were skipped with no
+  row.** eb357ff (above) refused an indefinite length and allowed only line ends after the element, so such a file,
+  under a name that isn't a text file's, read "SAFE no committed keys found". LibreSSL 3.3.6 and OpenSSL 4.0.3 read the
+  BER store and load a DER key with a trailing NUL or space (measured). Constructed elements of indefinite length are
+  now read (nesting capped at 32), a key is a key whatever follows it, and the elements after a certificate are read
+  for a key; a certificate followed by anything else still makes no row, and a store read in BER is named "(BER)". The
+  first form of this read the elements after a certificate in quadratic time — a 33 KB file took 2.9 s, and one under
+  the 1 MB cap could have held the scan for about half an hour — and was corrected before it merged (400,000 elements,
+  3.8 ms; its test fails on the commit before c6a9600, and passes on 03d95c9, which never read past a certificate). A
+  test now also holds the key check on git's copy of a tracked file deleted from the working tree, which a
+  planted change could remove with every test green. *Found and fixed 31 Oct 2026 (5bf562b, c6a9600).*
+- **A listed plugin's own folder without its main file, and a Bedrock checkout with no core, read SAFE.** A `--paths`
+  folder named as a listed plugin was checked only when the plugin's main file was in it, so a backdoored Rank Math
+  PRO folder whose `rank-math-pro.php` was gone, with `inc/loader.php` still carrying the indicator, read "SAFE no
+  WordPress installs found in 1 folder searched", exit 0; and a Bedrock checkout before `composer install`
+  (`app/plugins` holding the compromised release, no core yet) read SAFE, exit 0. Such a folder is now checked
+  whatever is in it (with no main file its version is UNKNOWN, and the indicator is still searched for), and an
+  `app/plugins` folder is checked as a plugins folder when Bedrock's config is beside it or beside its web root, or
+  when it holds a folder named as a listed plugin. *Found and fixed 31 Oct 2026 (4719918).*
 
 ### Fixed
 - **359 of the 361 folders a run called "could not be tested" on one Mac were not gaps at all, and the two
@@ -522,7 +637,7 @@ These were found by the same independent read of 31 Oct 2026, and each fix has a
   run asks for the password, so a wrong password three times or no answer in time printed "Couldn't write the
   backup … Check the disk has room". The fix now asks for the privilege on its own first (`sudo -v`), and if that
   fails says so: "sudo didn't give this run the privilege to write <file> (sudo -v failed), so nothing was changed",
-  exit 2. (419ab68)
+  exit 2. (A refusal at a later prompt was still blamed on the disk, as the third read found: below.) (419ab68)
 - **The Mac fix made its temporary files where macOS chose, not where `TMPDIR` says.** `mktemp -t` on macOS uses the
   per-user temporary folder and ignores `TMPDIR`, so the harness's check that no temporary file was left behind,
   which watches the `TMPDIR` it sets, watched a folder the fix never wrote to and could not fail. They are now made
@@ -534,11 +649,41 @@ These were found by the same independent read of 31 Oct 2026, and each fix has a
   what the script does, including that every exit on macOS prints a SAFE, EXPOSED or UNKNOWN line (which held from
   the script's first command on only once the fixes for the third read of 31 Oct set the traps first: below). (e9036f8)
 
+These were found by the third read of 31 Oct 2026 (03d95c9), and each fix has a test that fails on 03d95c9:
+
+- **A `sudo` that refused a later prompt was still blamed on the disk, and its own words were hidden.** With
+  `Defaults timestamp_timeout=0` every `sudo` call asks for the password again. A refusal at the backup's `mktemp`
+  printed "Couldn't make a file beside … for the backup (mktemp failed). Check the disk has room (df -h /)" with sudo's
+  message sent to `/dev/null`, and every later step said "Check the disk has room" too. Each privileged step after
+  `sudo -v` now keeps what it printed, and the line that reports its failure gives those words ("Couldn't copy … to
+  make the backup (cp said: sudo: 3 incorrect password attempts)"); the disk advice is added only when the words are
+  about disk space. (572d990)
+- **A full temporary folder was reported as "Can't read" the bundle.** When the snapshot copy failed, the line said
+  the file couldn't be read, whatever the cause. It now checks whether the file reads in full, and if it does says
+  that the copy into the temporary folder failed and that the folder may be full, or not writable by this run. (273b3d4)
+- **Rows outside `gaps()` still told a person to run Wardlatch with `sudo` for an EPERM.** The LiteLLM check's
+  site-packages and version-file rows, and the WordPress check's plugin, indicator-search and plugins-folder rows and
+  its config-file doubt, said "run Wardlatch with sudo" for a folder a sandbox refused, which sudo may not open. Every
+  row about an EPERM now says what `gaps()` says (the system refused it, what commonly does, and that sudo may not
+  lift it), and "run Wardlatch with sudo" stays for a folder shut by its own mode (EACCES), which sudo opens. The rows
+  were UNKNOWN before and still are. (3c3e079)
+- **A folder past a depth limit holding only `node_modules` made a depth-limit row.** `holdsMore()` counted any
+  folder, link or `.git` past the cap, whatever the walk would have done with it, so a run exited 2 over a folder no
+  deeper walk would enter. It now counts only what the asking walk would go into: not the names it skips, not macOS's
+  own Library, a link only when it leads to a folder, and `.git` only for the repository walk. (c7539e5)
+- **A walker's gap lists were optional, so a caller that left one out got a walk that said nothing.** No caller left
+  one out; three tests did (Development, below). Each walk now takes its lists from `gapLists()`, and a walk that has a
+  gap to report and no list to put it in throws, which is could-not-be-tested, never SAFE. (5ca3e11)
+- **The eMudhra fix text for the Mac's built-in curl named the 28 Sep releases as the newest.** macOS 27.2, 26.7.2
+  and 15.8.2 shipped on 26 Oct 2026. Measured on macOS 27.2, its `/etc/ssl/cert.pem` still holds both withdrawn roots,
+  byte-identical to the vendored fixture, so only "the newest" was stale; the text now names those releases and says
+  that Apple says the file will be updated in a future macOS update. (7c0764b)
+
 ### Development (no code in the package changes)
 
 - **`test/fix-macos.check.sh` ran 60 cases at 03d95c9 (31 Oct 2026), where it ran 29** (76 after the third read of
-  that day: below). Thirty new cases for what the
-  independent read found in the Mac fix, and one for `strays()`; stand-ins for `cp`, `mv`, `mktemp`, `chmod` and
+  that day: below). Thirty new cases for what the independent read found in the Mac fix, and one for `strays()`;
+  stand-ins for `cp`, `mv`, `mktemp`, `chmod` and
   `sudo` on `PATH` make a copy fail part-way, a rename pause or a file change in mid run (the real `sudo` never runs).
   Every run on macOS must now print a line starting SAFE, EXPOSED or UNKNOWN. Assertions that were wrong were
   corrected, among them ones that required a command putting the withdrawn roots back.
@@ -563,6 +708,28 @@ These were found by the same independent read of 31 Oct 2026, and each fix has a
   and no test failed. The code was right; the test was missing. (e7f89a8)
 - **Two test comments said nothing unprivileged could produce an EPERM.** An unprivileged `sandbox-exec` profile
   does, which is why decision #32 was needed; the comments now say so. (36aaf86)
+- **`test/fix-macos.check.sh` runs 76 cases, where it ran 60 at 03d95c9.** Sixteen new cases for what the third read
+  found: `mode`, `begin-mid-line`, `labels` (a withdrawn root as `X509 CERTIFICATE` and as `TRUSTED CERTIFICATE`,
+  which LibreSSL, OpenSSL and Apple's `python3` trust and the fix refuses), `same-key`, `key-constants`,
+  `snapshot-swap`, `changed-in-replace`, `sudo-refused-later`, `early-signal`, `sigquit`, `signal-at-exit`,
+  `indent-note`, `admin-heading`, `tmpdir-full`, `backup-guards` and `digest-from-rebuild`; new stand-ins for `grep`,
+  `rm`, `uname` and `date`, and new modes for the `cp`, `chmod`, `sudo` and `mktemp` ones (the real `sudo` still never
+  runs). Three hold properties no case held, each shown to bite with a planted change the whole harness had passed:
+  the dated backup's two guards against overwriting an earlier one; the new file's SHA-256 taken from the rebuild, not
+  from the copy in the temporary folder; and an administrator's `=== ` heading above a withdrawn root's entry kept.
+  And a case that could not run is no longer counted as run: under root the unreadable-file case is named NOT RUN,
+  and the end of the run checks that every case counted printed its `ok` line. `marker-comment`, which expected the
+  6a36187 model, now expects UNKNOWN, and five checks are grouped as `{ A && B; } || fail` for ShellCheck's SC2015.
+  (3d896fe, 26b6983, d09aa71, ce64a2e, 674f882, 383e4b8, 8806442, 14686d3, 841c2de)
+- **`fix/fix-macos.sh` is executable again.** fbed337 changed its mode in git from 100755 to 100644 without saying so,
+  so `./fix/fix-macos.sh` in a clone said "Permission denied"; its bytes and SHA-256 were unchanged, and the download
+  is run with `bash`. It is 100755 again, and the harness's `mode` case reads the mode git records. (3d896fe)
+- **CI pins the Mac fix's SHA-256 after the third read,**
+  `98f8d58cadcdde8802451f3993e3030c5dad24a65d25777956593220b572bc39`. (70d730e)
+- **Five tests changed with no code, each because it relied on what this round changed.** Three walker tests left a
+  gap list out and so relied on the walk staying silent about it (15c6a3d); a Bedrock test pinned exit 2 where its own
+  fixture holds an exposed plugin, which is now found (8878433); and the venv depth-row guard could not fail on the
+  change it was written against, because its fixture stopped one level short (eeb1c0a).
 
 ## [0.1.10] - 2026-10-27
 
