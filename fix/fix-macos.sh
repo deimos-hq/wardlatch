@@ -383,17 +383,24 @@ if [ -n "$SUDO" ] && ! $SUDO -v; then
   echo "         Run this again; it asks for your Mac's password."
   exit 2
 fi
-cmp -s "$FILE" "$snap" || { echo "UNKNOWN  $FILE changed while this ran. Nothing changed; run it again."; exit 2; }
 $SUDO cp -p "$FILE" "$backup" || { echo "UNKNOWN  Couldn't write the backup $backup, so nothing was replaced. Check the disk has room (df -h /)."; exit 2; }
 # A backup nobody checked makes the Undo line below a promise this script can't keep: it names that file as the way
-# back, and the content-mismatch restore further down uses it as the only file here that has been checked. The
-# one-line fix on the page has compared the two since CL-42, and CL-43 was already a correction about this
-# instruction; the download wrote the backup and trusted it. Nothing is replaced until the backup is the file it
-# came from.
-cmp -s "$FILE" "$backup" || {
-  echo "UNKNOWN  The backup isn't the same file as $FILE, so it couldn't be used to undo this and nothing was"
-  echo "         replaced. Don't restore from it. Check the disk has room (df -h /), delete that file and run"
-  echo "         this again.  Bad backup: $backup"
+# back, and the content-mismatch restore further down uses it as the only file here that has been checked. Nothing
+# is replaced until the backup is the SNAPSHOT -- the file every check above was made on. Until 31 Oct 2026 it was
+# compared with $FILE, and the "changed while this ran" check came BEFORE the backup step, which is where the
+# interactive run waits for the password: a change made during that wait was in the backup and in $FILE, both
+# comparisons passed, and the cleaned OLD snapshot was renamed over it. Measured: an administrator's root appended
+# meanwhile was gone from the file, kept only in the backup, and the run said SAFE.
+cmp -s "$backup" "$snap" || {
+  echo "UNKNOWN  The backup isn't the file this run checked: $FILE changed while this ran, or the copy went wrong."
+  echo "         Nothing was replaced. Don't restore from it; delete it and run this again.  Bad backup: $backup"
+  exit 2
+}
+# And once more, immediately before the replacement: the file must still be the snapshot the cleaned file was built
+# from, or the replacement would throw away whatever changed it.
+cmp -s "$FILE" "$snap" || {
+  echo "UNKNOWN  $FILE changed while this ran, after the backup was taken, so it was not replaced. Run this again."
+  echo "         Backup: $backup (the file as this run read it)"
   exit 2
 }
 replace "$tmp" || { echo "UNKNOWN  Couldn't replace $FILE, so nothing was changed. Check the disk has room (df -h /)"; echo "         and that this ran with enough privilege.  Backup: $backup"; exit 2; }
