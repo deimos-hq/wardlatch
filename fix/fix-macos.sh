@@ -6,6 +6,7 @@
 # and a macOS update puts Apple's original file back (26.7.2 did): run this again after every update.
 # The removal is the advisory's (emudhra.we-have-a-problem.com); this script adds the safety around it:
 #   - finds the two roots by their SHA-256 fingerprints, not by the name lines some copies of the file don't have,
+#     and by their public keys too, so a copy with a bit changed or a root re-issued with the same key is removed;
 #     and refuses a file it can't fully check: a certificate it can't read, a block that isn't a plain certificate,
 #     a -----BEGIN marker anywhere but at the start of a line, or fewer fingerprints read than certificates counted;
 #   - refuses a $FILE that is a symbolic link: replacing it would put a file of this script's own where the link is,
@@ -49,6 +50,14 @@ AAA='D7:A7:A0:FB:5D:7E:27:31:D7:71:E9:48:4E:BC:DE:F7:1D:5F:0C:3E:0A:29:48:78:2B:
 EMS='86:A1:EC:BA:08:9C:4A:8D:3B:BE:27:34:C6:12:BA:34:1D:81:3E:04:3C:F9:E8:A8:62:CD:5C:57:A3:6B:BE:6B'
 AAA_NAME='AAA Certificate Services'
 EMS_NAME='emSign ECC Root CA - G3'
+# And their public keys, each the base64 of its SubjectPublicKeyInfo as `openssl x509 -pubkey` prints it, on one line.
+# A certificate carrying one of these keys is trusted to sign for it whatever else it says: a copy with one bit of its
+# signature flipped, or a root re-issued with the same key, has another fingerprint and the same key, and LibreSSL,
+# OpenSSL 3.6.4 and Apple's python3 trust it (measured 31 Oct 2026). SHA-256 of each SubjectPublicKeyInfo:
+#   AAA Certificate Services  bd153ed7b0434f6886b17bce8bbe84ed340c7132d702a8f4fa318f756ecbd6f3
+#   emSign ECC Root CA - G3   8d417db2dd8bf5e3084d1e3f196d583849d81bdd4c00c70b9d39369e96b8c782
+AAA_KEY='MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvkCd9G7h6naHHE1FRI6+RsiDBp3BKv4YH47kAvrzq11QihYxC5oG0MVwIs1JLVRjzLZuaEYLU+rLTCTAvHJO6vEVrvRUmhIKw3qyM2Di2olV8yJY897cz++DhqKMlE+faPKYkEaEJ8d2v+PMNSyLXgdkZYLASLCokflhn3YgUKiRx2a163hiA1bwihoT6jGjHqCZ/Tj29icyWG8H9Wu4+xQrr7eqzNZjX3OM2gWZqDioyxd4NlGs6Z70eDqNzw/ZQuKYDKsvnw4B3u+fmUnxLd+sdE0bmLVHxeUp0fmQGMdinL6DxyZ7Poolx8DdneY1aBAgnY/Y3tLDhJwNXugvyQIDAQAB'
+EMS_KEY='MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEI6UMuC0S9SjzsbLd4gISgJ45X0lNn8klNFl07LsGHOfAcq/ori/hQVSHFKhKsuh8guZbarXcs3XOiwbQhiO/RtWODz8E9Ncckn72pWPC9V+OLk+hGBkCKzIKgmR9FpPR'
 
 [ "$(uname -s)" = Darwin ] || { echo "This fix is for macOS. On Linux, update the ca-certificates package."; exit 2; }
 # Before anything else, and before the -f test, which is true for a symbolic link to a regular file. This fix replaces
@@ -101,18 +110,39 @@ sha() {
   [ "${#o}" -eq 64 ] || return 1
   echo "$o"
 }
-# Prints one line for each certificate in $1 that is a withdrawn root: its position (1, 2, ...) and which root it is,
-# AAA or EMS. Fails -- so the caller says UNKNOWN and changes nothing -- if any certificate can't be read, if anything
-# openssl printed isn't a fingerprint, or if the number of fingerprints read isn't the number of certificates
-# counted: a file this can't fully check is never called clean. That last test is the completeness gate, and it is
-# what makes a failure that says nothing count as a failure.
+# Reads one certificate (PEM, in $1) and sets $kind: AAA or EMS when it is that withdrawn root, byte for byte by its
+# SHA-256 fingerprint; AAA-KEY or EMS-KEY when it is another certificate carrying that root's public key; - for any
+# other certificate. One openssl call prints both the fingerprint and the key. Returns 1 when openssl couldn't read
+# the certificate, and 2 when what it printed isn't a fingerprint and a public key, so the caller doesn't count it.
+classify() {
+  local o f k
+  kind=''
+  o=$(printf '%s\n' "$1" | /usr/bin/openssl x509 -noout -fingerprint -sha256 -pubkey 2>/dev/null) || return 1
+  f=${o#*SHA256 Fingerprint=}; f=${f%%$'\n'*}
+  # 32 pairs of hex digits joined by colons
+  case "$f" in *[!0-9A-F:]*|'') return 2 ;; esac
+  [ "${#f}" -eq 95 ] || return 2
+  case "$o" in *$'\n-----BEGIN PUBLIC KEY-----\n'*$'\n-----END PUBLIC KEY-----'*) ;; *) return 2 ;; esac
+  k=${o#*-----BEGIN PUBLIC KEY-----}; k=${k%%-----END PUBLIC KEY-----*}; k=${k//$'\n'/}
+  case "$k" in *[!A-Za-z0-9+/=]*|'') return 2 ;; esac
+  if [ "$f" = "$AAA" ]; then kind=AAA
+  elif [ "$f" = "$EMS" ]; then kind=EMS
+  elif [ "$k" = "$AAA_KEY" ]; then kind=AAA-KEY
+  elif [ "$k" = "$EMS_KEY" ]; then kind=EMS-KEY
+  else kind=-; fi
+}
+# Prints one line for each certificate in $1 that carries a withdrawn root's key: its position (1, 2, ...) and what
+# classify() found it to be, AAA, EMS, AAA-KEY or EMS-KEY. Fails -- so the caller says UNKNOWN and changes nothing --
+# if any certificate can't be read, if anything openssl printed isn't a fingerprint and a public key, or if the number
+# of certificates read that way isn't the number counted: a file this can't fully check is never called clean. That
+# last test is the completeness gate, and it is what makes a failure that says nothing count as a failure.
 # It reads the file itself, line by line, and hands each certificate to openssl through a pipe: no temporary files and
 # no here-strings. Until 31 Oct 2026 the comparison was `grep -qxF <fingerprint> <<<"$ROOTS"`, and macOS's
 # /bin/bash 3.2 writes a here-string to a file in /private/var/tmp whatever TMPDIR says. When it couldn't (a sandbox,
 # an endpoint agent, a full disk), the grep failed, its failure read as "no match", and every certificate was "not a
 # withdrawn root": measured, the run printed SAFE and exited 0 with both roots still in the file.
 roots() {
-  local n l blk='' inblk='' k=0 nfp=0 fp
+  local n l blk='' inblk='' k=0 nfp=0 r
   n=$(certs "$1") || return 1
   while IFS= read -r l || [ -n "$l" ]; do
     case "$l" in
@@ -124,13 +154,12 @@ roots() {
         blk="$blk
 $l"
         inblk=''
-        fp=$(printf '%s\n' "$blk" | /usr/bin/openssl x509 -noout -fingerprint -sha256 2>/dev/null) || return 1
-        fp=${fp#*=}
-        # Not a fingerprint: not counted, so the gate below fails. 32 pairs of hex digits joined by colons.
-        case "$fp" in *[!0-9A-F:]*|'') continue ;; esac
-        [ "${#fp}" -eq 95 ] || continue
+        r=0; classify "$blk" || r=$?
+        [ "$r" -ne 1 ] || return 1
+        # Not a fingerprint and a key: not counted, so the gate below fails.
+        [ "$r" -eq 0 ] || continue
         nfp=$((nfp + 1))
-        if [ "$fp" = "$AAA" ]; then echo "$k AAA"; elif [ "$fp" = "$EMS" ]; then echo "$k EMS"; fi ;;
+        [ "$kind" = - ] || echo "$k $kind" ;;
       *)
         [ -z "$inblk" ] || blk="$blk
 $l" ;;
@@ -138,10 +167,11 @@ $l" ;;
   done <"$1" || return 1
   [ -z "$inblk" ] && [ "$k" -eq "$n" ] && [ "$nfp" -eq "$n" ]
 }
-# Writes $1 without the certificates listed in $2 ("position:root ..." as roots() found them). For each one it
+# Writes $1 without the certificates listed in $2 ("position:kind ..." as roots() found them). For each one it
 # removes exactly these lines, and every other line in the file is kept, whatever it says:
 #   - its own block, from its -----BEGIN CERTIFICATE----- line to its own -----END CERTIFICATE----- line;
-#   - its name, when the name is directly above the block and is that root's: Apple's shape ("=== /.../CN=<name>",
+#   - for the root itself (not a certificate found by its key alone),
+#     its name, when the name is directly above the block and is that root's: Apple's shape ("=== /.../CN=<name>",
 #     then "Certificate:", the openssl text dump of the certificate, and its own "SHA256 Fingerprint=" line directly
 #     above BEGIN -- every line of it indented, empty, or one of those three) or mk-ca-bundle's (the name, then a line
 #     of "=" exactly as long, directly above BEGIN);
@@ -167,6 +197,8 @@ strip() {
         if (!(c in B) || !(c in E) || ((c + 1) in B && B[c + 1] < E[c])) { broken = 1; exit 1 }
         for (j = B[c]; j <= E[c]; j++) gone[j] = 1
         if (E[c] < last && L[E[c] + 1] == "") gone[E[c] + 1] = 1
+        # A certificate found by its key alone is not that root, so no name or description above it names that root.
+        if (drop[c] != "AAA" && drop[c] != "EMS") continue
         name = (drop[c] == "AAA") ? aname : ename
         fp = (drop[c] == "AAA") ? aaa : ems
         b = B[c]
@@ -203,7 +235,7 @@ bnew=''       # the file beside $FILE the backup is copied into, until it has it
 writing=''    # set just BEFORE the first file is made beside $FILE: until then this run has written nothing there
 published=''  # set once the backup has its dated name
 replaced=''   # set once the cleaned file has been renamed over $FILE
-orig='' want='' after='' backup='' naaa=0 nems=0 found=0
+orig='' want='' after='' backup='' naaa=0 nems=0 kaaa=0 kems=0 found=0 kind=''
 # Every command here ends in `|| true`, and that is load-bearing rather than tidy. Measured on /bin/bash 3.2.57:
 # with `set -e` in force, a failing command inside the EXIT trap ends the trap AND overrides the script's exit
 # status, so one failed `rm` turned `exit 2` ("couldn't tell") into `exit 1`, which the published exit-code table
@@ -251,11 +283,22 @@ stopped() {
   fi
   exit 2
 }
+# What this file held of one withdrawn root: $1 copies of the root itself and $2 other certificates with its key, $3
+# its name. A certificate found by the key alone is named as that, not as the root: it is not byte for byte the root.
+one() {
+  local s=$3
+  if [ "$1" -eq 0 ]; then
+    if [ "$2" -le 1 ]; then echo "a certificate with the key of $3"; else echo "$2 certificates with the key of $3"; fi
+    return 0
+  fi
+  [ "$1" -le 1 ] || s="$1 copies of $3"
+  if [ "$2" -eq 1 ]; then s="$s and 1 other certificate with its key"; elif [ "$2" -gt 1 ]; then s="$s and $2 other certificates with its key"; fi
+  echo "$s"
+}
 # The names of the withdrawn roots this file held, from what roots() found in it. Copies are counted.
 held() {
-  local a=$AAA_NAME e=$EMS_NAME
-  [ "$naaa" -le 1 ] || a="$naaa copies of $AAA_NAME"
-  [ "$nems" -le 1 ] || e="$nems copies of $EMS_NAME"
+  local a e
+  a=$(one $((naaa - kaaa)) "$kaaa" "$AAA_NAME"); e=$(one $((nems - kems)) "$kems" "$EMS_NAME")
   if [ "$naaa" -gt 0 ] && [ "$nems" -gt 0 ]; then echo "$a and $e"
   elif [ "$naaa" -gt 0 ]; then echo "$a"
   else echo "$e"; fi
@@ -267,7 +310,7 @@ held() {
 # about a Mac drawn from one file.
 removed_phrase() {
   if [ "$naaa" -gt 0 ] && [ "$nems" -gt 0 ]; then
-    if [ "$found" -eq 2 ]; then echo "removed both withdrawn roots"; else echo "removed both withdrawn roots ($(held))"; fi
+    if [ "$found" -eq 2 ] && [ "$((kaaa + kems))" -eq 0 ]; then echo "removed both withdrawn roots"; else echo "removed both withdrawn roots ($(held))"; fi
   elif [ "$naaa" -gt 0 ]; then
     echo "removed $(held) (this file did not hold the other withdrawn root, $EMS_NAME)"
   else
@@ -371,13 +414,15 @@ spec=$(roots "$snap") || {
   exit 2
 }
 drop=''
-# Split on purpose: roots() prints "position root" pairs, digits and AAA or EMS only.
+# Split on purpose: roots() prints "position kind" pairs, digits and AAA, EMS, AAA-KEY or EMS-KEY only.
 # shellcheck disable=SC2086
 set -f; set -- $spec; set +f
 while [ "$#" -ge 2 ]; do
   case "$2" in
     AAA) naaa=$((naaa + 1)) ;;
     EMS) nems=$((nems + 1)) ;;
+    AAA-KEY) naaa=$((naaa + 1)); kaaa=$((kaaa + 1)) ;;
+    EMS-KEY) nems=$((nems + 1)); kems=$((kems + 1)) ;;
     *) echo "UNKNOWN  The fingerprint check returned something this doesn't recognise. Nothing changed; please report this."; exit 2 ;;
   esac
   drop="${drop:+$drop }$1:$2"

@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=63
+expect_cases=65
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -1928,6 +1928,62 @@ for label in x509 trusted trusted-reject; do
   [ "$(baks "$d/$label.pem")" -eq 0 ] || fail "another label ($label): it wrote a backup"
 done
 ok "a withdrawn root under another label LibreSSL trusts (X509 CERTIFICATE, TRUSTED CERTIFICATE) is UNKNOWN, unchanged"
+# ---- r3 end case
+
+# ---- r3 case: same-key
+# A copy of a withdrawn root with one bit of its signature flipped has another SHA-256 fingerprint and the same public
+# key, and LibreSSL trusts it as the root (it does not check a trust anchor's own signature; measured 31 Oct 2026). A
+# root re-issued with the same key is the same. Until 31 Oct 2026 the fix matched fingerprints only, so such a copy
+# stayed in the file under SAFE, exit 0. It is now found by its key and removed, and named as what it is.
+d=$work/r3/samekey; mkdir -p "$d"
+libre() { /usr/bin/openssl crl2pkcs7 -nocrl -certfile "$1" 2>/dev/null | /usr/bin/openssl pkcs7 -print_certs 2>/dev/null | grep -c '^-----BEGIN CERTIFICATE-----' || true; }
+flip() {   # $1 = certificate, $2 = out: the same certificate with the low bit of its last byte (in the signature) flipped
+  local h
+  h=$(/usr/bin/openssl x509 -in "$1" -outform DER | xxd -p | tr -d '\n')
+  printf '%s%02x' "${h:0:${#h}-2}" $(( 0x${h: -2} ^ 1 )) | xxd -r -p | /usr/bin/openssl x509 -inform DER -out "$2" ||
+    fail "a same-key copy: openssl could not read the flipped copy, so this case would measure nothing"
+  [ "$(/usr/bin/openssl x509 -in "$2" -noout -fingerprint -sha256)" != "$(/usr/bin/openssl x509 -in "$1" -noout -fingerprint -sha256)" ] ||
+    fail "a same-key copy: the flipped copy has the root's fingerprint, so this case would measure nothing"
+  [ "$(/usr/bin/openssl x509 -in "$2" -noout -pubkey)" = "$(/usr/bin/openssl x509 -in "$1" -noout -pubkey)" ] ||
+    fail "a same-key copy: the flipped copy does not carry the root's key"
+}
+flip "$r2/aaa.pem" "$d/aaa-flipped.pem"; flip "$r2/ems.pem" "$d/ems-flipped.pem"
+for shape in aaa-alone ems-alone with-both; do
+  case "$shape" in
+    aaa-alone) cat "$r2/P.pem" "$d/aaa-flipped.pem" >"$d/$shape.pem"; copy=$d/aaa-flipped.pem
+               want='removed a certificate with the key of AAA Certificate Services (this file did not hold the other withdrawn root, emSign ECC Root CA - G3)' ;;
+    ems-alone) cat "$r2/P.pem" "$d/ems-flipped.pem" >"$d/$shape.pem"; copy=$d/ems-flipped.pem
+               want='removed a certificate with the key of emSign ECC Root CA - G3 (this file did not hold the other withdrawn root, AAA Certificate Services)' ;;
+    with-both) cat "$work/original.pem" "$d/aaa-flipped.pem" >"$d/$shape.pem"; copy=$d/aaa-flipped.pem
+               want='removed both withdrawn roots (AAA Certificate Services and 1 other certificate with its key and emSign ECC Root CA - G3)' ;;
+  esac
+  [ "$(libre "$d/$shape.pem")" -eq "$(certs_in "$d/$shape.pem")" ] || fail "a same-key copy ($shape): LibreSSL does not read every certificate, so this case would measure nothing"
+  run "$d/$shape.pem" "$offline" "$OFFLINE"
+  [ "$code" -eq 0 ] || fail "a same-key copy ($shape): expected the file fixed, exit 0, got $code"
+  grep -qF -- "$(sed -n 2p "$copy")" "$d/$shape.pem" && fail "a same-key copy ($shape): the copy carrying a withdrawn root's key is still in the file"
+  [ "$(bad "$d/$shape.pem")" -eq 0 ] || fail "a same-key copy ($shape): a withdrawn root is still in the file"
+  [ "$(certs_in "$d/$shape.pem")" -eq $((total - 2)) ] || fail "a same-key copy ($shape): expected $((total - 2)) certificates, got $(certs_in "$d/$shape.pem")"
+  grep -qF -- "$want" <<<"$out" || fail "a same-key copy ($shape): it did not say \"$want\""
+  rm -f "$d"/"$shape".pem.wardlatch-*.bak
+done
+ok "a copy of a withdrawn root with a bit changed (same key, another fingerprint) is found by its key and removed"
+# ---- r3 end case
+
+# ---- r3 case: key-constants
+# The public keys the fix matches are the withdrawn roots' own: each is the key of the certificate in
+# lib/incidents/ (the incident's roots, which test/incidents.test.mjs ties to its distrusted fingerprints), and the
+# SHA-256 the script's comment gives for each is the SHA-256 of that key's SubjectPublicKeyInfo.
+for r in aaa:AAA_KEY emsign:EMS_KEY; do
+  pem=$root/lib/incidents/emudhra-2026-10-root-${r%%:*}.pem
+  [ -s "$pem" ] || fail "the keys: $pem is not there"
+  real=$(/usr/bin/openssl x509 -in "$pem" -noout -pubkey | sed '1d;$d' | tr -d '\n')
+  inscript=$(sed -n "s/^${r#*:}='\\([A-Za-z0-9+/=]*\\)'\$/\\1/p" "$fix")
+  [ -n "$inscript" ] || fail "the keys: ${r#*:} was not found in $fix"
+  [ "$inscript" = "$real" ] || fail "the keys: ${r#*:} in the script is not the key of $pem"
+  spki=$(/usr/bin/openssl x509 -in "$pem" -noout -pubkey | /usr/bin/openssl pkey -pubin -outform DER | /usr/bin/openssl dgst -sha256 | sed 's/.* //')
+  grep -qE "^#   .* $spki\$" "$fix" || fail "the keys: the script's comment does not give $spki, the SHA-256 of the SubjectPublicKeyInfo of $pem"
+done
+ok "the keys the fix matches are the withdrawn roots' own, and the SHA-256 its comment gives for each is right"
 # ---- r3 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.
