@@ -375,6 +375,14 @@ c0=$(control "$snap")
 
 backup="$FILE.wardlatch-$(date +%Y%m%d-%H%M%S).bak"
 [ ! -e "$backup" ] || { echo "UNKNOWN  $backup already exists. Nothing changed; run again in a second."; exit 2; }
+# The first thing that needs privilege, asked for on its own: in the interactive run this is where sudo asks for the
+# password, and a refusal there (a wrong password three times, no answer in time) is not a full disk. Until 31 Oct
+# 2026 it happened inside the backup copy, and the line blamed disk space (df -h /).
+if [ -n "$SUDO" ] && ! $SUDO -v; then
+  echo "UNKNOWN  sudo didn't give this run the privilege to write $FILE (sudo -v failed), so nothing was changed."
+  echo "         Run this again; it asks for your Mac's password."
+  exit 2
+fi
 cmp -s "$FILE" "$snap" || { echo "UNKNOWN  $FILE changed while this ran. Nothing changed; run it again."; exit 2; }
 $SUDO cp -p "$FILE" "$backup" || { echo "UNKNOWN  Couldn't write the backup $backup, so nothing was replaced. Check the disk has room (df -h /)."; exit 2; }
 # A backup nobody checked makes the Undo line below a promise this script can't keep: it names that file as the way
