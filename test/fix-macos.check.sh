@@ -2034,7 +2034,7 @@ nth() {   # $1 = bundle, $2 = which certificate, $3 = the certificate to put in 
 }
 nth "$work/original.pem" 10 "$r2/corp.pem" >"$d/evil.pem"
 nth "$work/original.pem" 10 "$r2/aaa.pem" >"$d/extra-aaa.pem"
-[ "$(certs_in "$d/evil.pem")" -eq "$total" ] && [ "$(bad "$d/evil.pem")" -eq 2 ] && grep -qF -- "$(sed -n 2p "$r2/corp.pem")" "$d/evil.pem" ||
+{ [ "$(certs_in "$d/evil.pem")" -eq "$total" ] && [ "$(bad "$d/evil.pem")" -eq 2 ] && grep -qF -- "$(sed -n 2p "$r2/corp.pem")" "$d/evil.pem"; } ||
   fail "the snapshot swapped: the attacker's variant was not built as described"
 [ "$(bad "$d/extra-aaa.pem")" -eq 3 ] || fail "the snapshot swapped: the variant with an extra AAA was not built as described"
 for how in early:evil late:evil late:extra-aaa late:P; do
@@ -2066,7 +2066,7 @@ run "$d/cert.pem" PATH="$shims:$PATH" WL_CHMOD=race-new WL_CORP="$r2/corp.pem" "
 grep -q '^UNKNOWN.*changed while this ran' <<<"$out" || fail "a change while the new file was made: it did not say the file changed while it ran"
 cmp -s "$d/cert.pem" "$d/expected.pem" || fail "a change while the new file was made: the change was thrown away ($(certs_in "$d/cert.pem") certificates left)"
 b=$(find "$d" -maxdepth 1 -name 'cert.pem.wardlatch-*.bak')
-[ -n "$b" ] && cmp -s "$b" "$work/original.pem" || fail "a change while the new file was made: the backup is not the file this run read"
+{ [ -n "$b" ] && cmp -s "$b" "$work/original.pem"; } || fail "a change while the new file was made: the backup is not the file this run read"
 [ -z "$(beside "$d/cert.pem")" ] || fail "a change while the new file was made: it left $(beside "$d/cert.pem") beside the bundle"
 rm -f "$d"/cert.pem.wardlatch-*.bak
 ok "a change made while the new file is built and checked stops the run at the rename, and the change is kept"
@@ -2119,7 +2119,7 @@ for how in uname:TERM uname:INT uname:HUP mktemp:INT mktemp:TERM; do
   [ "$code" -eq 2 ] || fail "a signal before the traps ($how): expected exit 2, got $code"
   grep -q '^UNKNOWN  Stopped before this changed anything' <<<"$out" || fail "a signal before the traps ($how): it did not say it stopped before changing anything"
   cmp -s "$d/cert.pem" "$work/original.pem" || fail "a signal before the traps ($how): the bundle changed"
-  [ -z "$(beside "$d/cert.pem")" ] && [ "$(baks "$d/cert.pem")" -eq 0 ] || fail "a signal before the traps ($how): it left something beside the bundle"
+  { [ -z "$(beside "$d/cert.pem")" ] && [ "$(baks "$d/cert.pem")" -eq 0 ]; } || fail "a signal before the traps ($how): it left something beside the bundle"
 done
 ok "a signal at the very start of a run, or while the snapshot is being made, prints a line and leaves nothing"
 # ---- r3 end case
@@ -2135,7 +2135,7 @@ sigrun "$fix" "$d/cert.pem" PATH="$shims:$PATH" WL_CP=sig-backup "$offline" "$OF
 [ "$code" -eq 2 ] || fail "QUIT during the backup copy: expected exit 2, got $code"
 grep -q '^UNKNOWN  Stopped' <<<"$out" || fail "QUIT during the backup copy: it did not say it was stopped"
 cmp -s "$d/cert.pem" "$work/original.pem" || fail "QUIT during the backup copy: the bundle changed"
-[ -z "$(beside "$d/cert.pem")" ] && [ "$(baks "$d/cert.pem")" -eq 0 ] || fail "QUIT during the backup copy: it left $(beside "$d/cert.pem") beside the bundle"
+{ [ -z "$(beside "$d/cert.pem")" ] && [ "$(baks "$d/cert.pem")" -eq 0 ]; } || fail "QUIT during the backup copy: it left $(beside "$d/cert.pem") beside the bundle"
 cp "$work/original.pem" "$d/cert.pem"
 sigrun "$fix" "$d/cert.pem" PATH="$shims:$PATH" WL_MV=sig-forward "$offline" "$OFFLINE"
 [ "$code" -eq 2 ] || fail "QUIT just after the rename: expected exit 2, got $code"
@@ -2230,7 +2230,7 @@ run "$d/cert.pem" PATH="$shims:$PATH" WL_CP=full-snap "$offline" "$OFFLINE"
 grep -q "Can't read" <<<"$out" && fail "a full TMPDIR: it said the bundle can't be read"
 grep -q "^UNKNOWN  Couldn't write a copy of $d/cert.pem into $work/tmp" <<<"$out" || fail "a full TMPDIR: it did not say the copy into the temporary folder failed"
 cmp -s "$d/cert.pem" "$work/original.pem" || fail "a full TMPDIR: the bundle changed"
-[ -z "$(beside "$d/cert.pem")" ] && [ "$(baks "$d/cert.pem")" -eq 0 ] || fail "a full TMPDIR: it left something beside the bundle"
+{ [ -z "$(beside "$d/cert.pem")" ] && [ "$(baks "$d/cert.pem")" -eq 0 ]; } || fail "a full TMPDIR: it left something beside the bundle"
 ok "a temporary folder with no room is reported as that, not as a bundle that can't be read"
 # ---- r3 end case
 
