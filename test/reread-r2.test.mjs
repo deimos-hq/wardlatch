@@ -276,10 +276,13 @@ function certifiVenv(root) {
   put(join(sp, 'certifi-2026.06.17.dist-info', 'METADATA'), 'Version: 2026.06.17\n');
   return root;
 }
-/** Folders as deep as a real venv's own: pip's tree in site-packages, and jupyter's in share/. */
+/** Folders as deep as a real venv's own: pip's tree in site-packages, and jupyter's in share/ (a lab extension's
+ *  static/js folder is seven levels below the venv). The share/ tree must reach past the cap on its own: the
+ *  site-packages tree is also kept out of the walk by venvOfPackages(), so with share/ one level shallower (as this was
+ *  first written) the re-read's candidate fix D4, which walks the venv's own folders, passed this test. */
 function deepInside(env) {
   put(join(env, 'lib', 'python3.12', 'site-packages', 'pip', '_internal', 'operations', 'install', 'x', 'y', 'f.py'), '');
-  put(join(env, 'share', 'jupyter', 'labextensions', '@w', 'manager', 'static', 'f.js'), '');
+  put(join(env, 'share', 'jupyter', 'labextensions', '@w', 'manager', 'static', 'js', 'f.js'), '');
 }
 const discovered = async (roots) => {
   const { discover } = await import('../lib/discover.mjs');
