@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=72
+expect_cases=73
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -2173,6 +2173,28 @@ if ! cmp -s "$d/cert.pem" "$d/expected.pem"; then
 fi
 rm -f "$d"/cert.pem.wardlatch-*.bak
 ok "an indented line an administrator added inside a withdrawn root's entry is kept; only the certificate goes"
+# ---- r3 end case
+
+# ---- r3 case: admin-heading
+# An administrator's own "=== " heading directly above Apple's text dump of a withdrawn root, in place of Apple's
+# "=== .../CN=<name>" line. The heading is theirs, not the root's name, so it stays, and with it the dump under it; only
+# the certificate goes. No case held this until 31 Oct 2026: with the test that the "=== " line names the root taken
+# out, every other case passed while the heading and the dump went with the root, under SAFE (the third read, MJ).
+d=$work/r3/heading; mkdir -p "$d"
+heading='=== Added by IT on 2026-10-01: legacy SCEP root, keep until 2027'
+awk -v h="$heading" 'NR == 1 { print h; next } { print }' "$r2/aaa-entry.pem" >"$d/entry.pem"
+{ cat "$r2/emsonly.pem"; cat "$d/entry.pem"; echo; } >"$d/cert.pem"
+{ cat "$r2/P.pem"; awk '/^-----BEGIN CERTIFICATE-----/ { exit } { print }' "$d/entry.pem"; } >"$d/expected.pem"
+run "$d/cert.pem" "$offline" "$OFFLINE"
+[ "$code" -eq 0 ] || fail "an administrator's heading: expected the bundle fixed, exit 0, got $code"
+[ "$(bad "$d/cert.pem")" -eq 0 ] || fail "an administrator's heading: a withdrawn root is still there"
+grep -qxF -- "$heading" "$d/cert.pem" || fail "an administrator's heading: the heading was deleted with the root"
+if ! cmp -s "$d/cert.pem" "$d/expected.pem"; then
+  diff "$d/expected.pem" "$d/cert.pem" | head -10 | sed 's/^/    > /'
+  fail "an administrator's heading: the file is not the bundle with only the certificate (and emSign's whole entry) removed"
+fi
+rm -f "$d"/cert.pem.wardlatch-*.bak
+ok "an administrator's own heading above a withdrawn root's dump stays, with the dump; only the certificate goes"
 # ---- r3 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.
