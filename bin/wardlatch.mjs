@@ -191,7 +191,9 @@ function notRunRow(results, inc, what, paths) {
 // `searchesRoots`: whether this check searches the --paths folders at all (Plex's and GitLab's look only in their own
 // install places: a --paths folder that isn't there is nothing to them)
 // → the number of stated gaps, for the all-clear's receipt to record beside what it searched (lib/report.mjs).
-function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, review = [], links = [] } = {}) {
+// `deep`: the folders the walk's depth cap stopped at with more below them, `levels` that cap: one UNKNOWN row. Up to this
+// fix the caps were silent, and a site one level past one read SAFE with no row (WV-7).
+function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, review = [], links = [], deep = [], levels } = {}) {
   for (const d of searchesRoots ? missingRoots : []) {
     const reason = `given with --paths, but ${pathState(d) === 'gone' ? 'not there' : 'not a folder'}, so it was not searched`;
     results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason });
@@ -236,6 +238,13 @@ function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, revi
   // (a link whose target the same walk listed never reaches here: lib/files.mjs unwalkedLinks)
   for (const d of [...new Set(links)].filter((x) => !found.includes(x))) {
     unknown(d, 'is a link to a folder somewhere else, so it was not followed: pass --paths with the folder it points to, to include it');
+  }
+  const past = [...new Set(deep)];
+  if (past.length) {
+    const one = past.length === 1;
+    const reason = `${past.length} folder${one ? ' is' : 's are'} deeper than this check walks (${levels ?? 'the'} levels below the folders searched), so ${one ? 'it was' : 'they were'} not searched: ${past.slice(0, 3).map(short).join(', ')}${past.length > 3 ? `, and ${past.length - 3} more` : ''}. Pass --paths with a folder nearer to ${one ? 'it' : 'them'} to include ${one ? 'it' : 'them'}`;
+    results.push({ incident: inc.id, kind, status: 'UNKNOWN', what: 'depth limit', paths: past, reason });
+    print('UNKNOWN', `${past.length} folder${one ? '' : 's'} past the depth limit`); note('33', reason);
   }
   // a searched root itself (a --paths folder, or /var/www) that can't be opened is always UNKNOWN: it was asked for
   for (const d of [...new Set(dirs)].filter((x) => !found.includes(x))) {
@@ -362,8 +371,8 @@ for (const inc of chosen) {
     const impostors = canaries.filter((x) => x.impostor);
     if (impostors.length) note('33', `${impostors.length} test host${impostors.length === 1 ? '' : 's'} answered with a certificate from "${impostors[0].impostor}", not the compromised chain: something on this network (a TLS-inspecting firewall, a DNS filter) is in the way, and those hosts were not used`);
     const rootsPem = join(LIB, 'incidents', inc.rootsPem);
-    const deniedVenvs = [...lockedRoots], foundUnread = [], notRun = [], untested = [], links = [];
-    for (const rt of discover({ roots: searchable, denied: deniedVenvs, found: foundUnread, notRun, untested, links })) {
+    const deniedVenvs = [...lockedRoots], foundUnread = [], notRun = [], untested = [], links = [], deep = [];
+    for (const rt of discover({ roots: searchable, denied: deniedVenvs, found: foundUnread, notRun, untested, links, deep })) {
       const r = await check(rt, canaries, { rootsPem, controlUrl: inc.advisory });
       const row = { incident: inc.id, ...rt, ...r, fix: r.status === 'EXPOSED' ? fixFor(rt) : undefined };
       results.push(row);
@@ -373,7 +382,7 @@ for (const inc of chosen) {
       if (r.note) note('2', r.note);
       if (row.fix) note('2', `fix: ${row.fix}`);
     }
-    gaps(results, inc, 'search', deniedVenvs, { found: foundUnread });
+    gaps(results, inc, 'search', deniedVenvs, { found: foundUnread, deep, levels: 5 });
     // found, but not tested (lib/discover.mjs says why): UNKNOWN, never dropped
     for (const u of untested) {
       results.push({ incident: inc.id, kind: 'curl', status: 'UNKNOWN', ...u.fields, reason: u.reason });
@@ -457,7 +466,7 @@ for (const inc of chosen) {
       else if (r.status === 'REVIEW' && inc.reviewFix) note('2', `check: ${inc.reviewFix}`);
     };
     // what was looked at, for the all-clear's receipt; folders that couldn't be opened, for UNKNOWN rows
-    const searched = [], denied = [], foundUnread = [], links = [];
+    const searched = [], denied = [], foundUnread = [], links = [], deep = [];
     let lookedFor = '';
     if (inc.versionFiles) {
       const v = inc.versionFiles;
@@ -476,7 +485,7 @@ for (const inc of chosen) {
       if (explicitPaths && !searchable.length) show({ status: 'UNKNOWN', reason: `none of the folders given with --paths exist (${roots.map(short).join(', ')}), so no virtual environment there was searched` }, 'folders given with --paths');
       denied.push(...lockedRoots);
       const walked = [];
-      const dirs = sitePackagesDirs({ roots: searchable, denied, found: foundUnread, links, walked });
+      const dirs = sitePackagesDirs({ roots: searchable, denied, found: foundUnread, links, walked, deep });
       for (const r of checkSitePackages(inc.sitePackages, dirs)) show(r, `${r.what}  ${short(r.dir)}`, inc.sitePackages.fix);
       // the folders the person asked about as well as the environments found in them: a --paths folder with no virtual
       // environment in it left nothing in the receipt, so the all-clear could not be read as having searched the one
@@ -511,7 +520,7 @@ for (const inc of chosen) {
       }
       for (const r of checkImages(inc, byEngine)) show(r, `${r.engine} image ${r.what}`, inc.dockerFix);
     }
-    gaps(results, inc, 'install', denied, { found: foundUnread, searchesRoots: Boolean(inc.sitePackages), links });
+    gaps(results, inc, 'install', denied, { found: foundUnread, searchesRoots: Boolean(inc.sitePackages), links, deep, levels: 5 });
     // nothing found in any part that could be looked at: the all-clear names every folder it searched. An engine that
     // couldn't be asked keeps its own UNKNOWN row (and the exit code at 2) beside it, and one that isn't running its
     // REVIEW row; a finding or another gap doesn't.
@@ -525,8 +534,8 @@ for (const inc of chosen) {
   if (start.error) { results.push({ incident: inc.id, kind: 'workflow', status: 'UNKNOWN', reason: start.error }); print('UNKNOWN', 'workflow review'); note('33', start.error); }
   if (inc.type === 'workflows' && !start.error) {
     let repos = 0;
-    const denied = [...lockedRoots], links = [];
-    for (const repo of reposUnder(searchable, 4, denied, links)) {
+    const denied = [...lockedRoots], links = [], deep = [];
+    for (const repo of reposUnder(searchable, 4, denied, links, { deep })) {
       const added = workflowsAddedSince(repo, inc.since);
       // read, but the window isn't all here or a commit's time can't be read (a shallow repository, wherever it is cut;
       // a committer time that isn't a whole number): UNKNOWN with that reason, not as a repository git couldn't read
@@ -538,7 +547,7 @@ for (const inc of chosen) {
         print('REVIEW', `${short(repo)}/${w.file}`, c('2', `  added ${w.commit}`));
       }
     }
-    gaps(results, inc, 'workflow', denied, { links });
+    gaps(results, inc, 'workflow', denied, { links, deep, levels: 4 });
     // the all-clear names the instant and the date compared: up to 0.1.9 it said "since 2026-09-01", a day git read as
     // 1 Sep at the run's time of day
     if (counted(results).some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.fix}`);
@@ -546,8 +555,8 @@ for (const inc of chosen) {
   }
   if (inc.type === 'secrets') {
     let repos = 0;
-    const denied = [...lockedRoots], links = [];
-    for (const repo of reposUnder(searchable, 4, denied, links)) {
+    const denied = [...lockedRoots], links = [], deep = [];
+    for (const repo of reposUnder(searchable, 4, denied, links, { deep })) {
       const hits = scanRepo(repo);
       if (hits.own) { results.push({ incident: inc.id, kind: 'secret', status: 'UNKNOWN', repo, reason: hits.error }); print('UNKNOWN', short(repo)); note('33', hits.error); continue; }
       if (hits.error) { unread('secret', repo, hits.error); continue; }
@@ -558,14 +567,14 @@ for (const inc of chosen) {
         print('REVIEW', `${short(repo)}/${h.file}:${h.line}`, c('2', `  ${h.type} ${h.masked}`));
       }
     }
-    gaps(results, inc, 'secret', denied, { links });
+    gaps(results, inc, 'secret', denied, { links, deep, levels: 4 });
     if (counted(results).some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.fix}`);
     else if (!counted(results).length) allClear(results, inc, 'secret', `no committed keys found in the files of ${repoCount(repos)} (current files; history needs gitleaks or trufflehog)`, searchable);
   }
   if (inc.type === 'wordpress') {
     const denied = [...lockedRoots];
-    const privateDot = [], coreOnly = [], links = [], loose = [];
-    const sites = wordpressUnder(searchable, 5, denied, privateDot, coreOnly, links, { loose });
+    const privateDot = [], coreOnly = [], links = [], loose = [], deep = [];
+    const sites = wordpressUnder(searchable, 5, denied, privateDot, coreOnly, links, { loose, deep });
     for (const core of coreOnly) {
       const reason = 'WordPress core is here, but no plugins folder is where WordPress, a moved wp-content, Bedrock or its wp-config.php puts one, so its plugins were not checked: pass --paths for the folder that holds them';
       results.push({ incident: inc.id, kind: 'wordpress', site: core, status: 'UNKNOWN', what: 'plugins folder', reason });
@@ -584,7 +593,7 @@ for (const inc of chosen) {
       const own = inc.rules.filter((x) => basename(r) === x.plugin && pathState(join(r, x.mainFile)) === 'file');
       if (own.length && !loose.includes(dirname(r))) for (const f of checkPluginsFolder(dirname(r), own)) show(r, f);
     }
-    gaps(results, inc, 'wordpress', denied, { review: privateDot, links });
+    gaps(results, inc, 'wordpress', denied, { review: privateDot, links, deep, levels: 5 });
     // sites found with none of the listed plugins are named as found (up to b03e7be this said "no WordPress installs found")
     const looseSaid = loose.length ? `; ${loose.length} plugins folder${loose.length === 1 ? '' : 's'} with no WordPress core beside ${loose.length === 1 ? 'it' : 'them'} checked, with none of the listed plugins` : '';
     if (!counted(results).length) allClear(results, inc, 'wordpress', `${sites.length ? `${sites.length} WordPress install${sites.length === 1 ? '' : 's'} found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched; none has any of the listed plugins` : `no WordPress installs found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched (run it on the server, or pass --paths)`}${looseSaid}`, [...searchable, ...loose]);
@@ -601,7 +610,7 @@ for (const inc of chosen) {
       results.push({ incident: inc.id, kind: 'header', status: f.status, file: f.file, where: f.where, carries: f.carries, to: f.to, fix: inc.fix });
       print(f.status, `${short(f.file)} · ${f.where}`, c('2', `  carries ${f.carries}, ${f.to}`));
     }
-    gaps(results, inc, 'header', [...lockedRoots, ...h.denied]);
+    gaps(results, inc, 'header', [...lockedRoots, ...h.denied], { deep: h.deep, levels: 4 });
     if (h.findings.length) note('2', `fix: ${inc.fix}`);
     // The receipt is the settings files that were read and the folders that were walked for a repository's own
     // settings — places a reader can open. Up to 0.1.10 it also carried the words "the environment", and on a machine

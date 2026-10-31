@@ -254,3 +254,40 @@ test('WV-3 a link to a folder listed only at the walk\'s depth floor is a gap: a
   // the control the refuter used: through the link itself, it is EXPOSED
   assert.equal(run(['--incident', 'wordpress-plugins-2026-10', '--paths', join(root, 'shortcut')]).code, 1);
 });
+
+// ---- WV-7: the walkers' depth caps were silent --------------------------------------------------------------------------
+// Something one level past a walker's cap (5 levels for WordPress, venvs and the trust walk; 4 for repositories) read
+// SAFE with no row, while the indicator search in the same file reports its own cap. A folder past the cap that holds
+// more to walk is now one UNKNOWN row per check; one that holds only files is not (nothing a deeper walk would open).
+test('WV-7 a site, a venv or a repository one level past the depth cap is could-not-be-tested, never a silent SAFE', () => {
+  const w = fresh('wv7-wp');
+  const site = wpSite(join(w, 'a', 'b', 'c', 'd', 'e', 'site'));
+  const wr = run(['--incident', 'wordpress-plugins-2026-10', '--paths', w]);
+  assert.deepEqual(wr.rows.filter((x) => x.status === 'SAFE'), [], `WordPress: ${JSON.stringify(wr.rows).slice(0, 1500)}`);
+  assert.ok(unknowns(wr).some((x) => x.what === 'depth limit' && x.paths.includes(site)), JSON.stringify(wr.rows).slice(0, 1500));
+  assert.equal(wr.code, 2);
+  // the refuter's control: one level nearer, it is found
+  assert.equal(run(['--incident', 'wordpress-plugins-2026-10', '--paths', join(w, 'a')]).code, 1);
+
+  const v = fresh('wv7-venv');
+  litellmVenv(join(v, 'a', 'b', 'c', 'd', 'e', 'f', '.venv'));
+  const vr = run([...LITELLM, '--paths', v]);
+  assert.deepEqual(vr.rows.filter((x) => x.status === 'SAFE'), [], `LiteLLM: ${JSON.stringify(vr.rows).slice(0, 1500)}`);
+  assert.ok(unknowns(vr).some((x) => x.what === 'depth limit'), JSON.stringify(vr.rows).slice(0, 1500));
+  assert.equal(vr.code, 2);
+
+  const g = fresh('wv7-git');
+  mkdirSync(join(g, 'a', 'b', 'c', 'd', 'repo', '.git'), { recursive: true });
+  const gr = run(['--incident', 'github-actions-2026-10', '--paths', g]);
+  assert.deepEqual(gr.rows.filter((x) => x.status === 'SAFE'), [], `workflows: ${JSON.stringify(gr.rows).slice(0, 1500)}`);
+  assert.ok(unknowns(gr).some((x) => x.what === 'depth limit' && x.paths.includes(join(g, 'a', 'b', 'c', 'd', 'repo'))), JSON.stringify(gr.rows).slice(0, 1500));
+  assert.equal(gr.code, 2);
+});
+
+test('WV-7 a folder past the cap that holds only files is not a gap: nothing a deeper walk would open', () => {
+  const w = fresh('wv7-leaf');
+  put(join(w, 'a', 'b', 'c', 'd', 'e', 'leaf', 'notes.txt'), 'x');
+  const r = run(['--incident', 'wordpress-plugins-2026-10', '--paths', w]);
+  assert.equal(unknowns(r).length, 0, JSON.stringify(r.rows));
+  assert.equal(r.code, 0);
+});
