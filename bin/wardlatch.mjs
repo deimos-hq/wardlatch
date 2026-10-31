@@ -19,7 +19,7 @@ import { reposUnder, workflowsAddedSince, windowStart, NOT_WALKED as REPO_NOT_WA
 import { scanRepo } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite, checkPluginsFolder, NOT_WALKED as WP_NOT_WALKED } from '../lib/wordpress.mjs';
 import { scanHeaders } from '../lib/headers.mjs';
-import { pathState, readText, listDir, denialCode, mandatoryRefusal, statBits, epermCauses, VENV_OWN_SAID } from '../lib/files.mjs';
+import { pathState, readText, listDir, denialCode, mandatoryRefusal, statBits, epermCauses, VENV_PACKAGES_SAID } from '../lib/files.mjs';
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
 import { safe, saw, withdrawUnreceipted } from '../lib/report.mjs';
 import { escapeHidden, escapeJsonHidden } from '../lib/escape.mjs';
@@ -142,8 +142,8 @@ const all = [];
 // word, while docs/ARCHITECTURE.md said no name decides a walk (WV-4).
 const LIBRARY = 'macOS\'s own Library';
 const namesSaid = (names) => {
-  const n = names.filter((x) => x !== LIBRARY && x !== VENV_OWN_SAID);
-  return `folders named ${n.length > 1 ? `${n.slice(0, -1).join(', ')} or ${n.at(-1)}` : n[0]}, and ${LIBRARY} folders, are not searched${names.includes(VENV_OWN_SAID) ? `; ${VENV_OWN_SAID} are checked with it, not searched` : ''}`;
+  const n = names.filter((x) => x !== LIBRARY && x !== VENV_PACKAGES_SAID);
+  return `folders named ${n.length > 1 ? `${n.slice(0, -1).join(', ')} or ${n.at(-1)}` : n[0]}, and ${LIBRARY} folders, are not searched${names.includes(VENV_PACKAGES_SAID) ? `; ${VENV_PACKAGES_SAID} are checked with the environment, not searched for other environments` : ''}`;
 };
 // They are said on the line under the all-clear, so its own sentence stays the one a reader (and a script) knows.
 function allClear(results, inc, kind, text, searched, notSearched) {
@@ -428,7 +428,7 @@ for (const inc of chosen) {
     }
     const down = canaries.filter((x) => !x.up).length;
     if (down) note('33', `${down} of ${canaries.length} test hosts did not answer`);
-    if (searchable.length) note('2', `virtual environments were looked for in ${searchable.length} folder${searchable.length === 1 ? '' : 's'}, 5 levels deep; ${namesSaid([...TRUST_NOT_WALKED, LIBRARY, VENV_OWN_SAID])}`);
+    if (searchable.length) note('2', `virtual environments were looked for in ${searchable.length} folder${searchable.length === 1 ? '' : 's'}, 5 levels deep; ${namesSaid([...TRUST_NOT_WALKED, LIBRARY, VENV_PACKAGES_SAID])}`);
   }
   // A trust check that found nothing to test is not an all-clear: possible anywhere, and always so for the machine itself
   // on Windows, whose program names discover() doesn't look for (a container row must not hide that). Up to 0.1.6
@@ -543,7 +543,7 @@ for (const inc of chosen) {
     // couldn't be asked keeps its own UNKNOWN row (and the exit code at 2) beside it, and one that isn't running its
     // REVIEW row; a finding or another gap doesn't.
     const onlyEngineGaps = counted(results).every((r) => r.engine && (r.status === 'UNKNOWN' || r.notRunning));
-    if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked${lookedFor ? ` for ${lookedFor},` : ''} in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean), inc.sitePackages ? [...VENV_NOT_WALKED, LIBRARY, VENV_OWN_SAID] : undefined);
+    if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked${lookedFor ? ` for ${lookedFor},` : ''} in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean), inc.sitePackages ? [...VENV_NOT_WALKED, LIBRARY, VENV_PACKAGES_SAID] : undefined);
   }
 
   // the window's start: an explicit UTC instant, or the review is UNKNOWN (up to 0.1.9 a bare date read SAFE: see
