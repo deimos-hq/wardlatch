@@ -126,11 +126,16 @@ environments and the trust check, 4 for git repositories (the workflow, committe
 that depth that holds more to walk is could-not-be-tested: one UNKNOWN line per check (`1 folder past the depth
 limit`, or how many) names those folders, and `--paths` with a folder nearer to them includes them. Each walk also
 skips folders by name: the WordPress walk `node_modules`, `.git` and `.venv`; the repository walk `node_modules`,
-`.venv` and `venv`; the virtual-environment and trust walks `node_modules` and `.git`; and all of them macOS's own
-Library folders. Every all-clear that rests on such a walk names them on the line under it (`folders named
-node_modules or .git, and macOS's own Library folders, are not searched`), and the trust check, which has no
-all-clear, says so under its rows. A link to a folder elsewhere is not followed; it is could-not-be-tested unless the
-same walk went through the folder it points to, at least as deep as following the link would have.
+`.venv` and `venv`; the virtual-environment and trust walks `node_modules` and `.git`, and, inside a virtual
+environment, the folders it keeps its own files in (`bin`, `Scripts`, `include`, `Include`, `lib`, `lib64`, `Lib`,
+`share`, `etc`), which are checked with it rather than searched; and all of them macOS's own Library folders. Every
+all-clear that rests on such a walk names them on the line under it (`folders named node_modules or .git, and macOS's
+own Library folders, are not searched; inside a virtual environment, the folders it keeps its own files in (…) are
+checked with it, not searched`), and the trust check, which has no all-clear, says so under its rows. The repository
+walk also stops at each repository it finds, so a repository inside another one (a clone in an ignored folder, for
+example) is not checked by the workflow, committed-keys or header checks, and the line under their all-clear does not
+say so. A link to a folder elsewhere is not followed; it is could-not-be-tested unless the same walk went through the
+folder it points to, at least as deep as following the link would have.
 
 `--json` prints one object: `{ tool, version, incidents: [{ id, title, advisory }], results: [...] }`. Each result
 has `incident`, `status` and `kind` (`node`, `curl`, `python`, `macos-system`, `container`,
