@@ -83,7 +83,9 @@ Every deadline above used to bind us only to someone else. That is the wrong way
 than anyone, so most defects in it will be found by us, and the ones we find are the ones no outside clock is
 counting. A defect we find in our own tools gets the same 72 hours, the same 7 days, the same advisory and the
 same changelog entry, and the dates we found it and shipped it are stated. If we hold one longer than that, the
-record says for how long and why.
+record says for how long and why. Where this stands on 31 Oct 2026: the defects under Security in "Unreleased" in
+[CHANGELOG.md](CHANGELOG.md), which we found ourselves from 29 to 31 October, each say the day they were found, but
+none has an advisory yet, draft or published, and none has shipped, so no shipped date can be stated yet.
 
 If a fix is not possible or not worth its risk, the advisory says so and explains the workaround, rather than staying
 quiet.
