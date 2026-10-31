@@ -329,6 +329,7 @@ strays() {
 stopped() {
   local now
   trap '' HUP INT QUIT TERM
+  exec >&3
   clean
   if [ -z "$writing" ]; then
     echo "UNKNOWN  Stopped before this changed anything: nothing was written to $FILE or beside it. Run this again."
@@ -512,6 +513,11 @@ nosnap() {
 # The cleanup at exit ignores the signals first: it runs after the verdict line, and a signal during it ran stopped(),
 # which printed a second line contradicting the first and turned exit 0 or 1 into 2 (the third read). settled() does
 # the same from the moment the last reading is in, for the lines of the verdict itself.
+# File descriptor 3 is the standard output this run started with, where stopped() writes its line: a signal can arrive
+# while standard output is sent somewhere else, as it is into the cleaned file while that is written (`strip ...
+# >"$tmp"`), and until r4 the line went into that file, which clean() then deletes, and the run ended with no line (the
+# round-3 re-read). A run whose standard output is closed has nowhere to print a line, and ends here, changing nothing.
+exec 3>&1 || exit 2
 trap 'trap "" HUP INT QUIT TERM; clean' EXIT
 trap stopped HUP INT TERM
 # And QUIT, which Ctrl-\ sends: untrapped, it ended the run with 131 and no line, and left a .wardlatch-new.<pid>.*

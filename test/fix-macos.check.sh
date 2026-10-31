@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=80
+expect_cases=81
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -414,6 +414,11 @@ cat >"$shims/awk" <<'SHIM'
 # puts the bundle's bytes back in it, so what was read and what is built from differ, as a same-user process can make them.
 if [ "${WL_AWK:-}" = restore-snap ] && [ -e "$WL_SWAP_STATE.done" ] && [ ! -e "$WL_SWAP_STATE.back" ]; then
   : >"$WL_SWAP_STATE.back"; /bin/cp "$WARDLATCH_CERT_FILE" "$(cat "$WL_SWAP_STATE")"
+fi
+# r4: WL_AWK=hold-strip: the first awk that strip() runs (it alone sets WL_STRIP=1) -- the cleaned file being written --
+# touches $WL_MARK and waits first, so a case can send a signal while the cleaned file is built. Once: $WL_AWK_STATE.
+if [ "${WL_AWK:-}" = hold-strip ] && [ "${WL_STRIP:-}" = 1 ] && [ ! -e "$WL_AWK_STATE" ]; then
+  : >"$WL_AWK_STATE"; : >"$WL_MARK"; /bin/sleep 3
 fi
 /usr/bin/awk "$@"; r=$?
 if [ "${WL_AWK:-}" = tamper-tmp ] && [ ! -e "$WL_AWK_STATE" ]; then
@@ -2536,6 +2541,25 @@ grep -q "^UNKNOWN  The file built beside $d/cert.pem isn't the cleaned file this
 [ -z "$(beside "$d/cert.pem")" ] || fail "built() last: it left $(beside "$d/cert.pem") beside the bundle"
 rm -f "$d"/cert.pem.wardlatch-*.bak
 ok "a cleaned file that still holds a withdrawn root is stopped by the check on the file beside the bundle, whatever the earlier checks read"
+# ---- r4 end case
+
+# ---- r4 case: sig-in-strip
+# A signal while the cleaned file is being written. The fix writes it with `strip ... >"$tmp"`, and until r4 a signal
+# then ran stopped() with its standard output still sent into $tmp: its line went into the file that clean() deletes,
+# and the run ended exit 2 with no line at all (round-3 re-read 0: TERM, INT, QUIT and HUP at all four calls there).
+# The awk stand-in holds strip()'s own awk; each signal must give exit 2, the line, and nothing left.
+d=$work/r4/sigstrip; mkdir -p "$d"
+for sig in TERM INT HUP QUIT; do
+  cp "$work/original.pem" "$d/cert.pem"; rm -f "$d/state"
+  sigrun_sig=$sig
+  sigrun "$fix" "$d/cert.pem" PATH="$shims:$PATH" WL_AWK=hold-strip WL_AWK_STATE="$d/state" "$offline" "$OFFLINE"
+  sigrun_sig=INT
+  [ "$code" -eq 2 ] || fail "$sig while the cleaned file is written: expected exit 2, got $code"
+  grep -q '^UNKNOWN  Stopped before this changed anything' <<<"$out" || fail "$sig while the cleaned file is written: it did not say it stopped before changing anything"
+  cmp -s "$d/cert.pem" "$work/original.pem" || fail "$sig while the cleaned file is written: the bundle changed"
+  { [ -z "$(beside "$d/cert.pem")" ] && [ "$(baks "$d/cert.pem")" -eq 0 ]; } || fail "$sig while the cleaned file is written: it left something beside the bundle"
+done
+ok "a signal while the cleaned file is written prints its line, not into the file being written"
 # ---- r4 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.
