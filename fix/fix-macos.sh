@@ -214,14 +214,15 @@ stopped() {
 # either. Copying into $FILE in place truncated it first, so a Ctrl-C, a sudo timeout or a power cut during that
 # copy left every built-in TLS client on the Mac -- curl, git, python3, openssl -- reading a stump of a certificate
 # file until somebody ran this again. The file is made beside $FILE, not in $TMPDIR, because a rename only works
-# within one filesystem, and with the same $SUDO as the write, so it belongs to whoever owns $FILE. Its name is
-# fixed and recorded BEFORE it is made, so a signal arriving while it is being made still finds it in $new; a name
-# that is already taken is left alone and never removed, because it is not this run's to remove. Returns non-zero
-# with $FILE untouched if any step fails, and every step is checked: unchecked, `set -e` ended the run with cp's
-# own status, which is 1 -- the code the published table reads as EXPOSED -- and printed nothing at all.
+# within one filesystem, and with the same $SUDO as the write, so it belongs to whoever owns $FILE.
+# It is made by mktemp, which creates a new file and fails if anything at all is at the name, a symbolic link
+# included. Until 31 Oct 2026 the name was fixed (.wardlatch-new.<pid>) and the guard was `[ ! -e ]`, which is true
+# for a link to nothing: cp wrote through the link and mv put the link itself where $FILE was. A signal that comes
+# while mktemp runs, before its name is known here, is covered by strays(). Returns non-zero with $FILE untouched if
+# any step fails, and every step is checked: unchecked, `set -e` ended the run with cp's own status, which is 1 --
+# the code the published table reads as EXPOSED -- and printed nothing at all.
 replace() {
-  new="$(dirname "$FILE")/.wardlatch-new.$$"
-  [ ! -e "$new" ] || { new=; return 1; }
+  new=$($SUDO mktemp "$DIR/.wardlatch-new.$$.XXXXXX" 2>/dev/null) || { new=''; return 1; }
   if $SUDO cp "$1" "$new" && $SUDO chmod 644 "$new"; then
     $SUDO mv "$new" "$FILE" && { new=; return 0; }
   fi
