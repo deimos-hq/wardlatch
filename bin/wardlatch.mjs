@@ -393,7 +393,7 @@ for (const inc of chosen) {
       if (r.note) note('2', r.note);
       if (row.fix) note('2', `fix: ${row.fix}`);
     }
-    gaps(results, inc, 'search', deniedVenvs, { found: foundUnread, deep, levels: 5 });
+    gaps(results, inc, 'search', deniedVenvs, { found: foundUnread, links, deep, levels: 5 });
     // found, but not tested (lib/discover.mjs says why): UNKNOWN, never dropped
     for (const u of untested) {
       results.push({ incident: inc.id, kind: 'curl', status: 'UNKNOWN', ...u.fields, reason: u.reason });

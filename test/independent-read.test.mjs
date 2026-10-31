@@ -313,3 +313,35 @@ test('WV-4 every all-clear that rests on a walk names the folder names it never 
     assert.match(under, /are not searched/, under);
   }
 });
+
+// ---- WV-5: the trust walk dropped a link to a folder that holds environments --------------------------------------------
+// discover() reported a declined link only when its name or contents looked like an environment, and the command never
+// read the `links` it filled: ~/Development/work -> /Volumes/Work, with app/.venv in it, had no row of any kind.
+/** A stand-in loaded into the command for the trust check: no network, and no program run but this Node. */
+const offline = () => put(join(dir, 'offline.cjs'), `'use strict';
+const tls = require('node:tls'), net = require('node:net'), cp = require('node:child_process'), { EventEmitter } = require('node:events');
+tls.connect = (...a) => { const s = new EventEmitter(); s.end = s.destroy = () => s; process.nextTick(() => s.emit('error', Object.assign(new Error('offline'), { code: 'ECONNREFUSED' }))); return s; };
+net.connect = net.createConnection = () => { throw new Error('no network in these tests'); };
+const guard = (o) => function (f, ...r) { if (String(f) !== process.execPath) throw Object.assign(new Error('not run in these tests'), { code: 'ENOENT' }); return o.call(this, f, ...r); };
+for (const k of ['execFile', 'execFileSync', 'spawn', 'spawnSync']) cp[k] = guard(cp[k]);
+require('node:module').syncBuiltinESMExports();
+`);
+
+test('WV-5 the trust check reports a link to a folder holding environments, as it does a linked environment', async () => {
+  const d = fresh('wv5');
+  certifiVenv(join(d, 'volume', 'app', '.venv'));
+  const root = fresh('wv5/root');
+  symlinkSync(join(d, 'volume'), join(root, 'work'));
+  certifiVenv(join(root, 'x', '.venv'));
+  const r = run(['--incident', 'emudhra-2026-10', '--no-containers', '--paths', root], { PATH: fresh('wv5-empty-path') }, ['--require', offline()]);
+  assert.ok(unknowns(r).some((x) => x.path === join(root, 'work')), `the link is a gap: ${JSON.stringify(r.rows).slice(0, 2000)}`);
+  // and a link that looks like an environment is still reported once, as an untested environment, not twice
+  const { discover } = await import('../lib/discover.mjs');
+  const e = fresh('wv5-env');
+  certifiVenv(join(e, 'elsewhere', 'venv'));
+  const er = fresh('wv5-env/root');
+  symlinkSync(join(e, 'elsewhere', 'venv'), join(er, '.venv'));
+  const links = [], untested = [];
+  discover({ roots: [er], pathEnv: fresh('wv5-no-programs'), links, untested });
+  assert.deepEqual([untested.map((x) => x.fields.env), links], [[join(er, '.venv')], []]);
+});
