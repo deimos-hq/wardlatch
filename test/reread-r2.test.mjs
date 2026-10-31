@@ -320,20 +320,28 @@ test('RR-5 the trust walk given a venv\'s lib or site-packages folder probes tha
 // What this test was for still holds and is still asserted: a venv's own package folders, where a real venv's 9-level
 // folders are (pip's tree), are checked and not walked, so they make no depth-limit row (re-read 2 measured exactly this
 // with VENV_OWN emptied: no depth row on a real `python3 -m venv`).
+// (Second round-4 change, before the code it tests: inside a venv the walk met, a folder past the cap with no folder in
+// it cannot hold a venv a walk would check, so jupyter's lab extension tree, whose last folder past the cap holds only
+// files, is no row; a venv planted in share/ past the cap is, since nothing checked its packages. The first cut of this
+// rewrite counted the extension tree's leaf folder, which the iron law does not need: nothing there could be found.)
 test('R2-N1 a venv\'s own package folders are not walked, so pip\'s deep tree makes no depth-limit row; its share/ is walked, and past the cap it says so', async () => {
   const env = certifiVenv(join(fresh('n1-deep'), '.venv'));
   deepInside(env);
+  const planted = join(env, 'share', 'a', 'b', 'c', 'd', 'e', '.venv');
+  put(join(planted, 'pyvenv.cfg'), 'home = /usr\n');
+  mkdirSync(join(planted, 'lib', 'python3.12', 'site-packages'), { recursive: true });
   const under = (p, d) => p === d || p.startsWith(`${d}/`);
   const { sitePackagesDirs } = await import('../lib/installs.mjs');
   const installsDeep = (given) => { const deep = [], links = []; sitePackagesDirs({ roots: [given], patterns: [], home: '', denied: [], deep, links }); return deep; };
   // given its lib: only the package folder is below it, and it is the venv's own
   assert.deepEqual((await discovered([join(env, 'lib')])).deep, [], 'trust, --paths <venv>/lib');
   assert.deepEqual(installsDeep(join(env, 'lib')), [], 'installs, --paths <venv>/lib');
-  // given the venv, or the folder holding it: the share/ tree is reported past the cap, and nothing in lib is
+  // given the venv, or the folder holding it: the venv planted in share/ is reported past the cap (one row, on its way),
+  // and nothing in lib, nor jupyter's tree, is
   for (const given of [env, dirname(env)]) {
     for (const [walk, deep] of [['trust', (await discovered([given])).deep], ['installs', installsDeep(given)]]) {
-      assert.ok(deep.length > 0, `${walk}, --paths ${given}: a share/ tree past the cap must be a depth-limit row: ${JSON.stringify(deep)}`);
-      assert.ok(deep.every((p) => under(p, join(env, 'share'))), `${walk}, --paths ${given}: only share/ is past the cap: ${JSON.stringify(deep)}`);
+      assert.equal(deep.length, 1, `${walk}, --paths ${given}: the planted venv past the cap is one depth-limit row: ${JSON.stringify(deep)}`);
+      assert.ok(under(planted, deep[0]) && under(deep[0], join(env, 'share', 'a')), `${walk}, --paths ${given}: ${JSON.stringify(deep)}`);
     }
   }
 });
