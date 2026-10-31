@@ -435,3 +435,34 @@ test('a repository inside another: the all-clear of the workflow, committed-keys
   const n = json(['--incident', 'github-actions-2026-10', '--paths', join(outer.path, 'vendor', 'tool')]);
   assert.ok(n.rows.some((x) => x.status === 'REVIEW' && x.file === '.github/workflows/steal.yml'), JSON.stringify(n.rows).slice(0, 1500));
 });
+
+// ---- WordPress: a loose plugins folder whose parent is neither wp-content nor Bedrock's app/ -----------------------------
+// Round 3's re-read 2, finding 6 (R2-N7's class; MEASURED there and here): a copy of a plugins folder under another
+// parent (Skeleton's content/plugins, a backup named otherwise) holding the compromised Rank Math PRO 3.0.123 read
+// "SAFE no WordPress installs found in 1 folder searched", exit 0. The rule that found a listed plugin's folder in an
+// app/plugins with no Bedrock config beside it (the `names` rule, R2-N7) asked for the parent to be app/.
+const WP = ['--incident', 'wordpress-plugins-2026-10'];
+test('WordPress: a plugins folder holding a listed plugin is checked whatever its parent is called; one holding none is not a WordPress folder', () => {
+  const root = fresh('wp-loose');
+  const plugin = join(root, 'backup', 'content', 'plugins', 'seo-by-rank-math-pro');
+  put(join(plugin, 'rank-math-pro.php'), '<?php\n/*\nPlugin Name: Rank Math PRO\nVersion: 3.0.123\n*/\n');
+  const r = json([...WP, '--paths', join(root, 'backup')]);
+  assert.ok(r.rows.some((x) => x.status === 'EXPOSED' && x.site === join(root, 'backup', 'content', 'plugins') && /3\.0\.123/.test(x.what)), JSON.stringify(r.rows).slice(0, 1500));
+  assert.equal(r.code, 1);
+  // and the same backup beside a WordPress site found in the same search is still checked: a site elsewhere under the
+  // folder searched does not make every other folder there part of it
+  const site = join(root, 'site');
+  put(join(site, 'wp-includes', 'version.php'), '<?php $wp_version = "6.7";\n');
+  put(join(site, 'wp-config.php'), '<?php // nothing that moves the content folder\n');
+  mkdirSync(join(site, 'wp-content', 'plugins'), { recursive: true });
+  const both = json([...WP, '--paths', root]);
+  assert.ok(both.rows.some((x) => x.status === 'EXPOSED' && x.site === join(root, 'backup', 'content', 'plugins')), JSON.stringify(both.rows).slice(0, 1500));
+  assert.equal(both.code, 1);
+  // the control: a plugins folder of something else (a build tool's), holding no listed plugin, has no rows of its
+  // own, not even "plugin folder added" for its new folders
+  const other = fresh('wp-other');
+  mkdirSync(join(other, 'tool', 'plugins', 'lint-rules'), { recursive: true });
+  const o = json([...WP, '--paths', other]);
+  assert.deepEqual(o.rows.map((x) => x.status), ['SAFE'], JSON.stringify(o.rows).slice(0, 1500));
+  assert.match(o.rows[0].reason, /no WordPress installs found/, o.rows[0].reason);
+});
