@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=65
+expect_cases=66
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -1986,6 +1986,42 @@ for r in aaa:AAA_KEY emsign:EMS_KEY; do
   grep -qE "^#   .* $spki\$" "$fix" || fail "the keys: the script's comment does not give $spki, the SHA-256 of the SubjectPublicKeyInfo of $pem"
 done
 ok "the keys the fix matches are the withdrawn roots' own, and the SHA-256 its comment gives for each is right"
+# ---- r3 end case
+
+# ---- r3 case: snapshot-swap
+# The F1 class: the snapshot is in the invoking user's temporary folder, so a process running as that user can change
+# it while the fix reads it, and put it back before the backup is compared with it. Until 31 Oct 2026 the checks and
+# the cleaned file came from the snapshot alone, and a swapped certificate landed in the bundle under SAFE, exit 0
+# (the third read: 4 runs of 4). The cp and grep stand-ins swap it at the copy (before its SHA-256 is taken) or at the
+# first read after that, and put it back just before the backup copy. Each run must be UNKNOWN, exit 2, with the
+# bundle byte for byte as it was. The variants: one ordinary certificate swapped for an attacker's root; one swapped
+# for a copy of AAA Certificate Services (so the run would remove an ordinary certificate as a "copy" of it); and the
+# whole snapshot swapped for the cleaned file (so a bundle holding both roots would read as already clean).
+d=$work/r3/swap; mkdir -p "$d"
+nth() {   # $1 = bundle, $2 = which certificate, $3 = the certificate to put in its place
+  awk -v k="$2" -v t="$3" 'BEGIN { while ((getline l < t) > 0) rep = rep l "\n" }
+    /^-----BEGIN CERTIFICATE-----/ { n++; if (n == k) { skip = 1 } }
+    skip { if ($0 ~ /^-----END CERTIFICATE-----/) { printf "%s", rep; skip = 0 }; next }
+    { print }' "$1"
+}
+nth "$work/original.pem" 10 "$r2/corp.pem" >"$d/evil.pem"
+nth "$work/original.pem" 10 "$r2/aaa.pem" >"$d/extra-aaa.pem"
+[ "$(certs_in "$d/evil.pem")" -eq "$total" ] && [ "$(bad "$d/evil.pem")" -eq 2 ] && grep -qF -- "$(sed -n 2p "$r2/corp.pem")" "$d/evil.pem" ||
+  fail "the snapshot swapped: the attacker's variant was not built as described"
+[ "$(bad "$d/extra-aaa.pem")" -eq 3 ] || fail "the snapshot swapped: the variant with an extra AAA was not built as described"
+for how in early:evil late:evil late:extra-aaa late:P; do
+  v=$d/${how#*:}.pem; [ "${how#*:}" != P ] || v=$r2/P.pem
+  cp "$work/original.pem" "$d/cert.pem"; rm -f "$d/state" "$d/state.done"
+  run "$d/cert.pem" PATH="$shims:$PATH" WL_CP="swap-${how%%:*}" WL_GREP=swap WL_SWAP_STATE="$d/state" WL_VARIANT="$v" "$offline" "$OFFLINE"
+  [ -s "$d/state" ] || fail "the snapshot swapped ($how): the stand-in never saw the snapshot copy, so this case would measure nothing"
+  [ "${how%%:*}" = early ] || [ -e "$d/state.done" ] || fail "the snapshot swapped ($how): the stand-in never swapped it, so this case would measure nothing"
+  [ "$code" -eq 2 ] || fail "the snapshot swapped ($how): expected UNKNOWN, exit 2, got $code"
+  grep -q '^UNKNOWN' <<<"$out" || fail "the snapshot swapped ($how): expected UNKNOWN"
+  cmp -s "$d/cert.pem" "$work/original.pem" || fail "the snapshot swapped ($how): the bundle changed ($(certs_in "$d/cert.pem") certificates, $(bad "$d/cert.pem") withdrawn roots)"
+  [ -z "$(beside "$d/cert.pem")" ] || fail "the snapshot swapped ($how): it left $(beside "$d/cert.pem") beside the bundle"
+  rm -f "$d"/cert.pem.wardlatch-*.bak
+done
+ok "a snapshot changed by another process while the fix read it never lands, and is never called clean"
 # ---- r3 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.

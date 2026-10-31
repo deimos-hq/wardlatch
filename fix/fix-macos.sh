@@ -13,6 +13,11 @@
 #     so $FILE would stop following the file the link points to, and that file would be left as it is;
 #   - works on a snapshot of the file and refuses to replace it if it changed meanwhile: the backup it takes is
 #     compared with that snapshot, and the file is compared with it again immediately before the replacement;
+#   - and because that snapshot is in your temporary folder, where anything running as you can change it, nothing
+#     read from it is taken on trust: before replacing anything, the backup (beside the file, where only the file's
+#     owner can change it) must have the snapshot's SHA-256, hold each certificate to be removed as what it was found
+#     to be, and give byte for byte the cleaned file when cleaned the same way; a file found clean is read again
+#     from the file itself;
 #   - changes nothing if the file is already clean;
 #   - refuses a bundle too small to be a trust store, and never advises putting back a copy that holds a withdrawn
 #     root: the only way back it ever names is its own backup, in the Undo line under a SAFE result or under a run
@@ -167,6 +172,17 @@ $l" ;;
   done <"$1" || return 1
   [ -z "$inblk" ] && [ "$k" -eq "$n" ] && [ "$nfp" -eq "$n" ]
 }
+# Reads $1 as the trust store this run is about, and sets $blocks, $before, $inline and $spec. Returns 0 when it could
+# be fully checked; 1 when it couldn't be read; 2 when a line holds -----BEGIN after other text; 3 when a block isn't
+# a plain certificate; 4 when a certificate couldn't be read with its fingerprint and key.
+inspect() {
+  blocks=$(count '^-----BEGIN ' "$1") && before=$(certs "$1") && inline=$(count '.-----BEGIN' "$1") || return 1
+  [ "$inline" -eq 0 ] || return 2
+  [ "$blocks" -eq "$before" ] || return 3
+  spec=$(roots "$1") || return 4
+}
+# The $2-th certificate of $1, from its BEGIN line to its END line, as roots() hands it to openssl.
+block() { awk -v k="$2" '/^-----BEGIN CERTIFICATE-----/ { n++ } n == k { print } n == k && /^-----END CERTIFICATE-----/ { exit }' "$1"; }
 # Writes $1 without the certificates listed in $2 ("position:kind ..." as roots() found them). For each one it
 # removes exactly these lines, and every other line in the file is kept, whatever it says:
 #   - its own block, from its -----BEGIN CERTIFICATE----- line to its own -----END CERTIFICATE----- line;
@@ -351,6 +367,28 @@ replace() {
 }
 # The checks the cleaned file passed, made again on the file that is about to be renamed into place.
 built() { local n l; n=$(certs "$1") && [ "$n" -eq "$after" ] && l=$(roots "$1") && [ -z "$l" ]; }
+# Everything above the backup step -- the counts, which certificates are withdrawn roots, and the cleaned file and its
+# SHA-256 -- was read from the snapshot in the invoking user's temporary folder, which anything running as that user
+# can change between one read and the next. The backup is a copy of $FILE beside it, which only the owner of $FILE can
+# change, so before the replacement the backup has to bear all of that out: its SHA-256 is the one the snapshot had
+# when it was taken; each certificate this run is about to remove is, in the backup, what roots() found it to be; and
+# the backup cleaned the same way is byte for byte the file this run built and checked. Until 31 Oct 2026 nothing did:
+# a same-user process that swapped one certificate of the snapshot while it was read, and put the snapshot back before
+# the backup was compared with it, landed its own root in $FILE under SAFE, exit 0 (the F1 class; measured by the third
+# read, 4 runs of 4). Fails if any of the three doesn't hold.
+checkbackup() {
+  local p t
+  [ "$(sha "$backup")" = "$orig" ] || return 1
+  # Split on purpose: $drop is "position:kind" pairs, digits, colons, AAA, EMS and -KEY only.
+  # shellcheck disable=SC2086
+  set -f; set -- $drop; set +f
+  for p in "$@"; do
+    t=$(block "$backup" "${p%%:*}") || return 1
+    classify "$t" || return 1
+    [ "$kind" = "${p#*:}" ] || return 1
+  done
+  [ "$(strip "$backup" "$drop" | sha -)" = "$want" ]
+}
 # The backup copy failed or isn't the file this run checked: the partial copy is removed and the dated name is never
 # used, and the line says which of those happened. Until 31 Oct 2026 the copy was made straight to the dated name,
 # so a copy that failed part-way (a full disk, a Ctrl-C) left a truncated file under exactly the name of a good backup.
@@ -389,30 +427,26 @@ orig=$(sha "$snap") || { echo "UNKNOWN  Couldn't take the SHA-256 of $FILE (open
 # This is read before the floor below, and the fingerprints after it, because the floor now has to say whether the
 # file holds a withdrawn root: a block this fix cannot read could hold one, so "it holds neither" would otherwise be
 # a claim about bytes nobody checked.
-if ! blocks=$(count '^-----BEGIN ' "$snap") || ! before=$(certs "$snap") || ! inline=$(count '.-----BEGIN' "$snap"); then
-  echo "UNKNOWN  Couldn't read the copy of $FILE this run took, so it wasn't checked. Nothing changed."
-  exit 2
-fi
-# A marker after other text on its line. LibreSSL (curl, git, python3, openssl) starts a certificate there when the
-# marker falls at byte 253, 506, ... of the line, OpenSSL 3.6.4 at byte 254, and other readers may differ again, so
-# this fails closed on the marker anywhere but at the start of a line rather than guess which readers see it.
-if [ "$inline" -ne 0 ]; then
-  echo "UNKNOWN  $FILE has $inline line(s) where -----BEGIN comes after other text. curl, git, python3 and openssl can"
-  echo "         read a certificate from such a line, depending on where the marker falls in it, and this fix can't"
-  echo "         check it. Nothing changed. Edit those lines so that -----BEGIN only ever starts a line, then run"
-  echo "         this again; or run npx wardlatch@latest to test what this Mac's tools trust."
-  exit 2
-fi
-if [ "$blocks" -ne "$before" ]; then
-  echo "UNKNOWN  $FILE holds blocks that aren't plain certificates (such as BEGIN TRUSTED CERTIFICATE), which curl also"
-  echo "         trusts and this fix can't check. Nothing changed. Run npx wardlatch@latest to test the Mac's tools."
-  exit 2
-fi
-spec=$(roots "$snap") || {
-  echo "UNKNOWN  A certificate in $FILE couldn't be read and fingerprinted, so the file wasn't fully checked."
-  echo "         Nothing changed."
-  exit 2
-}
+r=0; inspect "$snap" || r=$?
+case "$r" in
+  0) ;;
+  1) echo "UNKNOWN  Couldn't read the copy of $FILE this run took, so it wasn't checked. Nothing changed."
+     exit 2 ;;
+  # A marker after other text on its line. LibreSSL (curl, git, python3, openssl) starts a certificate there when the
+  # marker falls at byte 253, 506, ... of the line, OpenSSL 3.6.4 at byte 254, and other readers may differ again, so
+  # this fails closed on the marker anywhere but at the start of a line rather than guess which readers see it.
+  2) echo "UNKNOWN  $FILE has $inline line(s) where -----BEGIN comes after other text. curl, git, python3 and openssl can"
+     echo "         read a certificate from such a line, depending on where the marker falls in it, and this fix can't"
+     echo "         check it. Nothing changed. Edit those lines so that -----BEGIN only ever starts a line, then run"
+     echo "         this again; or run npx wardlatch@latest to test what this Mac's tools trust."
+     exit 2 ;;
+  3) echo "UNKNOWN  $FILE holds blocks that aren't plain certificates (such as BEGIN TRUSTED CERTIFICATE), which curl also"
+     echo "         trusts and this fix can't check. Nothing changed. Run npx wardlatch@latest to test the Mac's tools."
+     exit 2 ;;
+  *) echo "UNKNOWN  A certificate in $FILE couldn't be read and fingerprinted, so the file wasn't fully checked."
+     echo "         Nothing changed."
+     exit 2 ;;
+esac
 drop=''
 # Split on purpose: roots() prints "position kind" pairs, digits and AAA, EMS, AAA-KEY or EMS-KEY only.
 # shellcheck disable=SC2086
@@ -459,12 +493,23 @@ if [ "$before" -lt 50 ]; then
   exit 2
 fi
 if [ "$found" -eq 0 ]; then
-  c=$(control "$snap")
+  # That the file holds neither root is read again from $FILE itself, and the network through $FILE, not through the
+  # snapshot: the snapshot is in the invoking user's temporary folder, where anything running as that user can change
+  # it between one read and the next, and $FILE is what this verdict is about. Until 31 Oct 2026 a snapshot swapped
+  # for a clean copy while it was read made a file holding both roots read SAFE, nothing changed (the F1 class).
+  sb=$before; r=0; inspect "$FILE" || r=$?
+  if [ "$r" -ne 0 ] || [ -n "$spec" ] || [ "$before" -ne "$sb" ]; then
+    echo "UNKNOWN  The copy of $FILE this run read held neither withdrawn root, but $FILE itself doesn't read the same"
+    echo "         way now: it changed while this ran, or something changed the copy in ${TMPDIR:-/tmp}. Nothing changed."
+    echo "         Run this again."
+    exit 2
+  fi
+  c=$(control "$FILE")
   if [ "$c" -ne 0 ]; then
     echo "SAFE     $FILE no longer holds the two roots. Nothing changed."
     echo "         (An ordinary website didn't load either (curl $c), so nothing was re-tested online.)"
   else
-    r=$(trust "$snap")
+    r=$(trust "$FILE")
     case "$r" in
       60) echo "SAFE     $FILE already refuses the compromised keys. Nothing changed." ;;
       0)  echo "EXPOSED  $FILE holds neither root but still trusts the test site. Nothing changed; please report this."; exit 1 ;;
@@ -535,6 +580,12 @@ cmp -s "$bnew" "$snap" || nobackup "The backup copy isn't the file this run chec
 $SUDO link "$bnew" "$backup" 2>/dev/null || nobackup "Couldn't give the backup its dated name, $backup"
 published=1
 if $SUDO rm -f "$bnew"; then bnew=''; fi
+checkbackup || {
+  echo "UNKNOWN  The backup of $FILE doesn't bear out what this run read from its copy in ${TMPDIR:-/tmp}: that copy"
+  echo "         changed while it was read, or $FILE changed. Nothing was replaced. Run this again."
+  echo "         Backup: $backup (a copy of $FILE as it was when the backup was taken)"
+  exit 2
+}
 # And once more, immediately before the replacement: the file must still be the snapshot the cleaned file was built
 # from, or the replacement would throw away whatever changed it.
 cmp -s "$FILE" "$snap" || {
