@@ -254,7 +254,9 @@ function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, revi
   // was true. "I chose not to look" now lands where "I could not look" already did.
   // (a link whose target the same walk listed never reaches here: lib/files.mjs unwalkedLinks)
   for (const d of [...new Set(links)].filter((x) => !found.includes(x))) {
-    unknown(d, 'is a link to a folder somewhere else, so it was not followed: pass --paths with the folder it points to, to include it');
+    // the installs check reads a linked venv's own package folders through the link (lib/installs.mjs), and says so
+    if (kind === 'install' && pathState(join(d, 'pyvenv.cfg')) === 'file') unknown(d, 'is a link to a virtual environment somewhere else: its own packages were checked through it, and nothing else in it was searched, since links are not followed: pass --paths with the folder it points to, to include it');
+    else unknown(d, 'is a link to a folder somewhere else, so it was not followed: pass --paths with the folder it points to, to include it');
   }
   const past = [...new Set(deep)];
   if (past.length) {
