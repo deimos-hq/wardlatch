@@ -455,3 +455,34 @@ test('R2-N7 a Bedrock checkout with no WordPress core yet has its app/plugins ch
   assert.deepEqual(o.rows.filter((x) => x.status !== 'SAFE'), [], JSON.stringify(o.rows));
   assert.equal(o.code, 0);
 });
+
+// ---- R2-N8: holdsMore() counted names the walk never enters --------------------------------------------------------------
+// A folder past a walker's depth cap was a gap when it held any folder, link or .git, whatever that walker would have
+// done with it: a folder holding only node_modules, which no walk enters at any depth, made a depth-limit row and exit
+// 2 (false UNKNOWN noise, the kind that teaches people `|| true`). Each walker now asks with the names it does not enter.
+test('R2-N8 a folder past the depth cap holding only names the walk never enters, or a link to a file, is not a gap', async () => {
+  const deep6 = (root) => join(root, '1', '2', '3', '4', '5', '6');
+  const n = fresh('n8-venv');
+  put(join(deep6(n), 'node_modules', 'x', 'index.js'), '');
+  put(join(deep6(n), '.git', 'HEAD'), 'ref: refs/heads/main\n');
+  put(join(deep6(n), 'notes.txt'), 'x');
+  symlinkSync(join(deep6(n), 'notes.txt'), join(deep6(n), 'link-to-a-file'));
+  const r = json([...LITELLM, '--paths', n]);
+  assert.deepEqual(unknowns(r), [], JSON.stringify(r.rows).slice(0, 2000));
+  assert.equal(r.code, 0);
+  const { discover } = await import('../lib/discover.mjs');
+  const deep = [];
+  discover({ roots: [n], pathEnv: fresh('n8-no-programs'), deep, links: [], untested: [] });
+  assert.deepEqual(deep, [], 'the trust walk');
+  const w = fresh('n8-wp');
+  put(join(deep6(w), '.venv', 'pyvenv.cfg'), 'home = /usr\n');
+  assert.deepEqual(unknowns(json([...WP, '--paths', w])), [], 'WordPress never enters .venv');
+  // the guard: a repository past the workflow walk's cap (4 levels) is still a gap, and a folder still is for the venv walk
+  const g = fresh('n8-git');
+  mkdirSync(join(g, 'a', 'b', 'c', 'd', 'e', '.git'), { recursive: true });
+  const gr = json(['--incident', 'github-actions-2026-10', '--paths', g]);
+  assert.ok(unknowns(gr).some((x) => x.what === 'depth limit'), JSON.stringify(gr.rows));
+  const v = fresh('n8-folder');
+  mkdirSync(join(deep6(v), 'proj'), { recursive: true });
+  assert.ok(unknowns(json([...LITELLM, '--paths', v])).some((x) => x.what === 'depth limit'));
+});
