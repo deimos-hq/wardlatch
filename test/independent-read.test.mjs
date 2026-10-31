@@ -503,3 +503,17 @@ test('M2 errno-mechanisms.mjs exits non-zero when it could not measure, and neve
     assert.match(bare.stdout, new RegExp(`UNMEASURED +${what}`), `${what}:\n${bare.stdout}`);
   }
 });
+
+// ---- MUT-8: a stale PATH entry could turn an all-clear into "UNKNOWN internal error" with no test failing ---------------
+// findAllOnPath() puts a PATH folder in the receipt only when it is there. The refuter dropped that filter and the whole
+// suite stayed green, while a run with a PATH entry that no longer exists (an ordinary leftover) read "UNKNOWN internal
+// error: an all-clear that names /no/such/stale/entry ... please report this", exit 2. This holds the filter.
+test('MUT-8 a PATH entry that is not there does not withdraw the "not found on PATH" all-clear', () => {
+  const stale = join(dir, 'no', 'such', 'stale', 'entry'), real = fresh('mut8-bin');
+  const r = run(['--incident', 'ovhcloud-cli-2026-10', '--no-containers', '--paths', fresh('mut8-root')], { PATH: `${real}:${stale}` });
+  const safe = r.rows.find((x) => x.kind === 'binary');
+  assert.equal(safe?.status, 'SAFE', JSON.stringify(r.rows));
+  assert.ok(safe.searched.includes(real), `the PATH folder that is there is in the receipt: ${JSON.stringify(safe.searched)}`);
+  assert.ok(!safe.searched.includes(stale), `the one that is not there is not: ${JSON.stringify(safe.searched)}`);
+  assert.equal(r.code, 0);
+});
