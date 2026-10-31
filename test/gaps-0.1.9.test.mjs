@@ -474,9 +474,10 @@ test('a virtual environment three levels under the home folder is found, and its
 test('virtual environments inside node_modules or .git are not looked at; one in a folder merely named .Trash IS', () => {
   // lib/installs.mjs:136 (node_modules and .git are skipped). The .Trash case changed with the isSystemFolder fix:
   // up to then any folder with that name, under any parent on any platform, was stepped over in silence, so
-  // `mkdir .Trash` hid a whole tree from every walk and the run still read SAFE. macOS's real Trash (a home folder,
-  // a volume root) is still skipped — see the isSystemFolder unit test below — but a project folder that happens to
-  // carry the name is searched, exactly as a project folder named Library is.
+  // `mkdir .Trash` hid a whole tree from every walk and the run still read SAFE. No folder named .Trash is skipped by
+  // its name any more, macOS's real Trash included (the isSystemFolder unit test below asserts it): a project folder
+  // that happens to carry the name is searched, exactly as a project folder named Library is, and the real Trash is
+  // walked, and could-not-be-tested if it refuses (owner decision #32).
   const root = fresh('i136-root');
   for (const p of ['node_modules/pkg/.venv', '.git/x/.venv']) venv(join(root, p), { certifi: false });
   const hidden = venv(join(root, '.Trash', 'old', '.venv'), { certifi: false });
@@ -493,7 +494,8 @@ test('virtual environments inside node_modules or .git are not looked at; one in
 // a modern *.photoslibrary has no Contents directory, so the bundle-marker arm returned false for Photos and true for
 // Photo Booth Library only by accident. Nothing is skipped by name any more except macOS's own Library, which keeps
 // its place gate (a project folder called Library is searched: ca530b7). The Trash and the photo libraries are walked,
-// and the EPERM they answer with is read as the mandatory refusal it is (lib/files.mjs mandatoryRefusal).
+// and an EPERM they answer with is could-not-be-tested, exit 2, whoever owns them (owner decision #32, 31 Oct 2026;
+// lib/files.mjs mandatoryRefusal() now only chooses the words of that row).
 test('isSystemFolder gates only macOS\'s own Library, and never decides by a folder\'s name', () => {
   if (process.platform !== 'darwin') return;
   // literal paths, not homedir(): this file preloads no-real-home.cjs, so homedir() is a temp folder here
