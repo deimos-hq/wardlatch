@@ -138,6 +138,20 @@ test('venv layouts: a venv\'s packages at lib/pypy3.X, Lib or beside pyvenv.cfg 
   }
 });
 
+// The round-4 mutant run found the test above blind to two mutants of venvPackages() (its lib names read case-
+// sensitively; the package folder beside pyvenv.cfg dropped): the walk itself goes into a venv now and meets those
+// folders, so above the depth floor they are checked either way. A venv met at the floor is not walked: there only
+// venvPackages() finds its packages. So each layout again, six folders down.
+test('venv layouts: a venv met at the depth floor has its packages checked whatever their layout', () => {
+  for (const [name, pkgs] of Object.entries(LAYOUTS)) {
+    const root = fresh(`layout-floor-${name}`);
+    const sp = litellmVenv(join(root, 'a', 'b', 'c', 'd', 'e', '.venv'), pkgs);
+    const r = json([...LITELLM, '--paths', root]);
+    assert.deepEqual(exposedIn(r, sp), ['cook.pth', 'litellm-1.107.0.dist-info'], `${name}: ${JSON.stringify(r.rows).slice(0, 1500)}`);
+    assert.equal(r.code, 1, name);
+  }
+});
+
 test('venv layouts: the trust walk probes the certifi of a PyPy venv, and of one with its packages in lib64', async () => {
   for (const name of ['pypy', 'lib64']) {
     const env = certifiVenv(join(fresh(`trust-${name}`), '.venv'), LAYOUTS[name]);
