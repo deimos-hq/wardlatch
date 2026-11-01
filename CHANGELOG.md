@@ -695,8 +695,9 @@ These were found by the third read of 31 Oct 2026 (03d95c9), and each fix has a 
 - **`test/support/mojave-shapes.sh` runs in CI**, in the mac-fix job on macOS, offline, and fails if any shape
   misbehaves; it writes under `TMPDIR`, not a fixed `/tmp`, and shapes B and C assert the root removed by name instead
   of "the other was already absent". CI pinned the Mac fix's SHA-256 after this round,
-  `7d0640b49b63b5964cb96aecca474446d4cac5884cb10f147eb627beb7f66cd1`, and pins
-  `98f8d58cadcdde8802451f3993e3030c5dad24a65d25777956593220b572bc39` since the third read (below). (67741a7, 2f060fc)
+  `7d0640b49b63b5964cb96aecca474446d4cac5884cb10f147eb627beb7f66cd1`, pinned
+  `98f8d58cadcdde8802451f3993e3030c5dad24a65d25777956593220b572bc39` after the third read, and pins
+  `d8a4bffd43f97449f2d92b8c5b5cb2e908f698cb09482fb3cb9e3ba2c07a97a5` since the fourth (below). (67741a7, 2f060fc)
 - **`test/support/errno-mechanisms.mjs` exited 0 without measuring, and counted a failed setup as a claim that
   holds.** Its exit code is its verdict, and a run that found no folder macOS protects said the half of the rule about
   them was unverified and still exited 0. A claim whose setup could not be applied is now UNMEASURED, counted apart,
@@ -732,6 +733,34 @@ These were found by the third read of 31 Oct 2026 (03d95c9), and each fix has a 
   gap list out and so relied on the walk staying silent about it (15c6a3d); a Bedrock test pinned exit 2 where its own
   fixture holds an exposed plugin, which is now found (8878433); and the venv depth-row guard could not fail on the
   change it was written against, because its fixture stopped one level short (eeb1c0a).
+- **`test/fix-macos.check.sh` runs 94 cases, where it ran 76 after the third read.** Eighteen new cases, each written
+  against a defect the fourth read fixed or a planted change the third read's re-reads found every case passing:
+  `samekey-enc` and `key-undecoded` (the key in other encodings, and a key `openssl` can't decode), `locale` (a hidden
+  root in Terminal's default UTF-8 locale, and a pad ending in `-`), `root-reads`, `hide-root` and `built-last`,
+  `changed-in-built` and `reswap-after-link` (the two race fixes of the third read, each now held by a case),
+  `floor-swap`, `sig-in-strip`, `every-signal`, `exit-signals` and `settled`, `stdout-fails`, `link-name`,
+  `clean-reads-file`, `disk-advice` and `other-runs-files`. Each names the planted change it catches, and each was
+  planted and caught. Its signal cases are no longer failed, blaming the fix, when the harness starts with a signal
+  ignored, as a background job from a script does: they restore the signal first, and say so in a NOTE. (4011911,
+  2153f33, d305fa1, and the fixing commits under Security)
+- **Tests for the lib changes the third read's re-reads planted and no test caught.** Seven of twelve survived the
+  node suite. New tests are written against each: holdsMore() counting macOS's Library (L04), Bedrock 1.0.0's layout
+  (L09), `--list` without the escaper (L12) and the venv rules (dd17264, 206fa47, dd0d23f); the key reader's
+  strictness (L05, L06) and the crash message (L11) in the tests of e85a3ef and c5ad2a9. Not every planted change of
+  this round's own lib code is caught yet: the round's strict audit found some that survive, and they are open. Four tests changed with no
+  code: decision #33 replaced the rule three tests pinned (bde26ef), a walker test counted a leaf folder past the cap
+  where no venv can be (817342d), the escaper test expected the wrong selector for "A" (b4106be), and a comment
+  described the venv walk as the third read left it (13c39c6).
+- **CI pins the Mac fix's SHA-256 after the fourth read,**
+  `d8a4bffd43f97449f2d92b8c5b5cb2e908f698cb09482fb3cb9e3ba2c07a97a5` (202950c). On the way it pinned
+  `f060d8165aaf8e21e103737ce9cefe55d49f7e8d3ff8323d91be4e00ca325a73` (5fb2644) and
+  `0d183c2bfbf0bd0d585fd3f8db5ac1728893beb83bfc31c9b024696443ad16cc` (37f1b61), neither of which the site has had.
+  Fourteen of the sixteen commits of the Mac fix's branch this round changed the script without the pin, so CI's pin
+  step fails on each of them alone (measured, commit by commit); from 202950c the pin changes in the same commit as the
+  script.
+- **`test/fix-macos.check.sh` lost its executable bit, unannounced.** 8950bb9 changed its mode in git from 100755 to
+  100644, the slip fbed337 made with the fix itself. CI runs it as `bash test/fix-macos.check.sh`, so nothing fails,
+  and no test reads the harness's own mode. It is still 100644 on this branch; restoring it is a mode-only commit.
 
 ## [0.1.10] - 2026-10-27
 
