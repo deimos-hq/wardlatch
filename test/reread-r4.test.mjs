@@ -9,6 +9,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, readFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, realpathSync, statSync, chmodSync } from 'node:fs';
 import { spawnSync, execFileSync } from 'node:child_process';
+import { symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -344,4 +345,67 @@ test('B-e85-1: a real openssl PKCS #12 over the cap, whose key openssl reads bac
   const r = json([...KEYS, '--paths', repoWith(fresh('e85-p12-real-repo'), { 'keystore.bin': body }).path]);
   assert.ok(!r.rows.some((x) => x.status === 'SAFE'), `an all-clear over a ${body.length}-byte store openssl reads a key out of: ${JSON.stringify(r.rows).slice(0, 900)}`);
   assert.ok(JSON.stringify(r.rows).includes('PKCS #12 key store'), JSON.stringify(r.rows).slice(0, 900));
+});
+
+// ---- the sieve is load-bearing: a planted link must not make an unrelated folder a venv's own -------------------------
+// namedAs() asks the disk whether a name is one of the exact names, but only for a name that could fold to one. Drop
+// that sieve and a link does the folding instead: `d/site-packages -> d/innocent` makes `innocent` the same file as the
+// site path, so `innocent` would be a venv's package folder — checked at its top and never walked — and anything
+// inside it would stop being searched. The same for `d/lib -> d/libs`.
+test('the disk is asked only about a name that could fold: a planted link does not make another folder a venv\'s own', async () => {
+  const { isSiteName, isLibName } = await files();
+  const d = fresh('sieve-link');
+  mkdirSync(join(d, 'innocent'));
+  mkdirSync(join(d, 'libs'));
+  symlinkSync(join(d, 'innocent'), join(d, 'site-packages'));
+  symlinkSync(join(d, 'libs'), join(d, 'lib'));
+  assert.equal(statSync(join(d, 'site-packages')).ino, statSync(join(d, 'innocent')).ino, 'the link does not lead to it, so this test proves nothing');
+  assert.equal(isSiteName('innocent', d), false, 'a link made an unrelated folder a venv\'s package folder');
+  assert.equal(isLibName('libs', d), false, 'a link made an unrelated folder a venv\'s lib folder');
+  // and end to end: a stealer's venv inside the linked-to folder is still found
+  const parent = fresh('sieve-link-e2e');
+  certifiVenv(join(parent, '.venv'), []);
+  mkdirSync(join(parent, '.venv', 'innocent'), { recursive: true });
+  symlinkSync(join(parent, '.venv', 'innocent'), join(parent, '.venv', 'site-packages'));
+  const sp = litellmVenv(join(parent, '.venv', 'innocent', 'inner', '.venv'));
+  const r = json([...LITELLM, '--paths', parent]);
+  assert.deepEqual(exposedIn(r, sp), ['cook.pth', 'litellm-1.107.0.dist-info'], JSON.stringify(r.rows).slice(0, 900));
+});
+
+// ---- B-e85-1 from git's own copy: a store deleted from the working tree but still tracked ----------------------------
+// scanIndexed() reads git's copy of a file that is tracked and no longer on disk. It has the same cap and the same
+// skip, so the same store read SAFE from there.
+test('B-e85-1: a PKCS #12 over the cap that was deleted from the working tree is still a finding, from git\'s copy', () => {
+  const { path, g } = repoWith(fresh('e85-p12-deleted'), { 'keystore.bin': p12Shape(1_500_000) });
+  rmSync(join(path, 'keystore.bin'));
+  const r = json([...KEYS, '--paths', path]);
+  assert.ok(!r.rows.some((x) => x.status === 'SAFE'), `an all-clear over a tracked key store: ${JSON.stringify(r.rows).slice(0, 900)}`);
+  assert.ok(JSON.stringify(r.rows).includes('PKCS #12 key store'), JSON.stringify(r.rows).slice(0, 900));
+  assert.ok(g('ls-files').toString().includes('keystore.bin'), 'the file is no longer tracked, so git\'s copy was not the path under test');
+});
+test('B-e85-1: DER over the cap, deleted from the working tree, that cannot be named is UNKNOWN from git\'s copy', () => {
+  const { path } = repoWith(fresh('e85-der-deleted'), { 'keystore.bin': unknownDer(1_500_000) });
+  rmSync(join(path, 'keystore.bin'));
+  const r = json([...KEYS, '--paths', path]);
+  assert.equal(r.code, 2, `exit ${r.code}, wanted 2: ${JSON.stringify(r.rows).slice(0, 900)}`);
+  assert.ok(!r.rows.some((x) => x.status === 'SAFE'), JSON.stringify(r.rows).slice(0, 900));
+  assert.ok(JSON.stringify(r.rows).includes('longer than the 1 MB read'), JSON.stringify(r.rows).slice(0, 900));
+});
+
+// ---- SN-1 at the depth floor: a folded leaf inside a venv is still "checked", and one outside is still walked -------
+// onlyChecked()'s leaf rule and the installs walk's own site-packages branch compared names exactly too, so a folded
+// package folder past the depth floor counted as a folder with nothing in it rather than as a package folder.
+test('SN-1: a folded package-folder name is treated as a package folder by the walk\'s own branch too', () => {
+  if (!caseBlind()) return;
+  // a site-packages folder met by the walk, NOT as a venv's own: its contents are checked and it is walked
+  const d = fresh('sn1-walkbranch');
+  const sp = join(d, 'Site-Packages');
+  mkdirSync(sp, { recursive: true });
+  put(join(sp, 'cook.pth'), 'import os\n');
+  put(join(sp, 'litellm-1.107.0.dist-info', 'METADATA'), 'Metadata-Version: 2.1\nName: litellm\nVersion: 1.107.0\n');
+  const r = json([...LITELLM, '--paths', d]);
+  assert.deepEqual(exposedIn(r, sp), ['cook.pth', 'litellm-1.107.0.dist-info'], JSON.stringify(r.rows).slice(0, 900));
+  // and the same folder given directly with --paths
+  const r2 = json([...LITELLM, '--paths', sp]);
+  assert.deepEqual(exposedIn(r2, sp), ['cook.pth', 'litellm-1.107.0.dist-info'], JSON.stringify(r2.rows).slice(0, 900));
 });
