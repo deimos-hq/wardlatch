@@ -77,11 +77,23 @@ rebuild them with. Check your browser on the advisory's own page.
 
 `fix/fix-macos.sh` removes the two roots tied to the compromised eMudhra keys from `/etc/ssl/cert.pem` (the advisory's
 change), and any other certificate carrying either root's key in whatever encoding (a copy with a bit changed, a root
-re-issued with the same key, an EC point stored compressed, a key relabelled), with checks around it: a file it can't
-fully check is refused unchanged, no change on a fixed Mac, a dated backup it never overwrites, a check of the new file
+re-issued with the same key, an EC point stored compressed, a key relabelled). It also removes any certificate
+carrying one of seven **other** keys of this incident: the six compromised TLS intermediate keys (12 certificates,
+because each intermediate was issued twice, under `emSign Root TLS CA - G3` and under `AAA Certificate Services`) and
+`emSign Root TLS CA - G3`'s own key, which exists both cross-signed and self-signed. Removing the two roots is enough
+only for a reader that insists on a chain ending at a self-signed root in the file; `/usr/bin/curl`, Apple's `git` and
+the built-in `perl` take *every* CA certificate in the file as a trust anchor, so one of those intermediates left in
+the bundle keeps trusting everything it issued. There are checks around all of it: a file it can't
+fully check is refused unchanged — a certificate it can't read, a block that isn't a plain certificate, a `-----BEGIN`
+marker anywhere but at the start of a line, a NUL byte anywhere in the file, or fewer fingerprints read than
+certificates counted — no change on a fixed Mac, a dated backup it never overwrites, a check of the new file
 before it replaces the old one, a check that what landed in the file is what it built — the one thing that makes it
 put the original back — and a re-test it only reads when an ordinary website loads as a control, which reports and
-never reverts. Download it in Safari from
+never reverts. The re-test names the library it measures with (`CURL_SSL_BACKEND=openssl`), because the built-in
+`curl` is built with both LibreSSL and Apple's Security framework and the variable picks one at run time: under
+Apple's, the answer is about Apple's own block of these certificates rather than about this file. And from
+3 May 2027, when the advisory's test site's own certificate expires, no verdict is taken from it at all: a refusal
+then would prove nothing, so the file is still fixed and nothing online is claimed. Download it in Safari from
 https://www.deimoscore.com/wardlatch/#mac and run `bash ~/Downloads/wardlatch-fix-macos.sh`, or deploy it as a root
 script from Jamf, Kandji or Intune. On macOS every run prints a line starting SAFE, EXPOSED or UNKNOWN, from the
 script's first command on, and exits 0 only after a SAFE line, 1 only after an EXPOSED one, and 2 otherwise (the
@@ -192,7 +204,7 @@ To work on it: `git clone`, then `npm test`. Nothing to install.
 
 `npx wardlatch@latest` checks all of them; `--incident <id>` checks only the ones named.
 
-- `emudhra-2026-10`: eMudhra intermediate CA compromise, 20 Oct 2026 ([advisory](https://emudhra.we-have-a-problem.com/)). Real TLS probes per runtime, plus cloudflared (fixed in 2026.10.2) and the Go toolchain (1.27.3 / 1.26.10).
+- `emudhra-2026-10`: eMudhra intermediate CA compromise, 20 Oct 2026 ([advisory](https://emudhra.we-have-a-problem.com/)). Eight CA keys, six of them TLS, in 12 certificates. Real TLS probes per runtime, plus cloudflared (fixed in 2026.10.2) and the Go toolchain (1.27.3 / 1.26.10). The incident file also carries the seven keys a bundle must not hold besides the two withdrawn roots: the six compromised TLS intermediate keys and `emSign Root TLS CA - G3`'s own, which the Mac fix matches by key so that both of that CA's certificates — the cross-signed one the advisory's hosts serve and the self-signed copy — are covered at once.
 - `ovhcloud-cli-2026-10`: OVHcloud CLI v0.11.0 to v0.15.0 swapped for a secret-stealer on 19 Oct ([OVHcloud's advisory](https://github.com/ovh/ovhcloud-cli/security/advisories/GHSA-862f-55f5-vmvw)). Never runs the program: compares the installed file with the five compromised builds OVHcloud published, and looks for the `envchecker-` folder the stealer leaves in the temp directory.
 - `php-2026-10`: two critical PHP flaws (CVE-2026-109618 and CVE-2026-109619), fixed on 21 Oct in 8.5.12, 8.4.27, 8.3.36 and 8.2.35 ([report](https://blog.qualys.com/vulnerabilities-threat-research/2026/10/20/php-announces-critical-security-release-for-two-vulnerabilities)). Flags an installed PHP older than its line's fix, or on a line with no fix: `php`, and versioned programs beside it (`php8.1`, `php-fpm8.1`, `php-cgi8.3`) on your `PATH`, in the `sbin` folders, and in macOS Homebrew's `php@*`, Remi, cPanel and Plesk install folders.
 - `github-actions-2026-10`: credential-stealing workflow files planted in tens of thousands of repositories since 7 Oct ([report](https://thehackernews.com/2026/10/credential-stealing-github-actions.html)). Lists workflow files added to your local repositories by commits dated on or after 30 Aug 2026 00:00 UTC (git's committer date), to review: the sources say to check from 31 Aug, and the earliest related commit one of them names was made on 30 Aug at 00:30 UTC. Each review line shows the commit, its committer date (in UTC) and its author; a file added more than once in the window (added, deleted and added again) gets a line for each commit that added it, newest first. A change to a workflow file that already existed isn't listed; the check lists added files, as the campaign added them. Every commit on every branch is read, whatever its date, so a commit back-dated on top can't hide the ones beneath it; a workflow whose own commit claims a date before 30 Aug isn't listed, since whoever makes a commit sets its date. A shallow clone is UNKNOWN, wherever its history is cut, since a commit's date can't show that nothing is below the cut: run `git fetch --unshallow` in it first, or in CI check out with `fetch-depth: 0` (`actions/checkout` fetches one commit unless told otherwise). Review lines don't change the exit code.

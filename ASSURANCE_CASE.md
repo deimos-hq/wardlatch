@@ -140,18 +140,33 @@ fingerprints, and any other certificate by either root's public key, compared as
 coordinate, an RSA key's modulus) so that every encoding of the key matches: a copy with a bit changed or a root
 re-issued with the same key, which LibreSSL, OpenSSL and Apple's `python3` still trust, and the same key stored another
 way (an EC point compressed or hybrid, explicit curve parameters, an RSA key labelled RSA-PSS), which LibreSSL and
-`/usr/bin/curl` trust. It refuses a file it can't fully check: a line where `-----BEGIN` comes after other text
-(LibreSSL starts a certificate at such a marker when it falls at byte 253, 506, … of the line), a certificate it can't
+`/usr/bin/curl` trust. It removes, the same way and by key, any certificate carrying one of seven **other** keys of
+this incident: the six compromised TLS intermediate keys (12 certificates, each intermediate issued both under
+`emSign Root TLS CA - G3` and under `AAA Certificate Services`) and `emSign Root TLS CA - G3`'s own key, which covers
+both of that CA's certificates, the cross-signed one and the self-signed copy. Removing the two roots alone is enough
+only for a reader that requires a chain ending at a self-signed root in the file; `/usr/bin/curl` since 7.68 on
+OpenSSL-style backends, Apple's `git` through the same libcurl, and the built-in `perl` take every CA certificate in
+the file as a trust anchor, so one of those intermediates left behind keeps trusting everything it issued, and a
+self-signed `emSign Root TLS CA - G3` is a full anchor for `python3` and the `openssl` CLI too. It refuses a file it
+can't fully check: a line where `-----BEGIN` comes after other text
+(LibreSSL starts a certificate at such a marker when it falls at byte 253, 506, … of the line), a NUL byte anywhere in
+the file (LibreSSL reads the file in 253-byte pieces and cuts each at its first NUL, so it reads bytes that `bash
+read` and `awk` — which cut the whole line there — never see, and a withdrawn root can be hidden inside an
+ordinary-looking block that way), a certificate it can't
 read for its fingerprint and key (a key `openssl` can't decode included), a block that isn't a plain certificate, or
 fewer read than certificates counted (the completeness gate, so a check that fails without saying so counts as a
 failure). It refuses a symbolic link, printing the command that fixes the file the link points to when that file's
 name is plain, and otherwise saying the name holds characters it doesn't print. It won't rebuild a file of fewer than
-50 certificates: the file itself is read again, one holding neither withdrawn root is reported with its count and
-nothing to remove, one still holding a root is refused, one that doesn't read as the copy did is reported as that, and
+50 certificates: the file itself is read again, one holding neither withdrawn root nor a compromised key is reported
+with its count and nothing to remove, one still holding a root is refused, one holding a compromised key is refused
+and that key is named, one that doesn't read as the copy did is reported as that, and
 none is told to restore anything. A file it finds clean is read again from the file itself before it says so. It
 builds the cleaned file, removing only each withdrawn root's own lines (its block, the one empty line after it, and its
-name lines only when they are exactly what this Mac's `openssl` prints for it), and checks it: no withdrawn root left,
-and exactly the count before less the certificates removed. It reads an ordinary website through the snapshot (the
+name lines only when they are exactly what this Mac's `openssl` prints for it; for a certificate found by its key
+alone, only the block and the empty line after it, since no name above it is that root's), and checks it: no withdrawn
+root left, and exactly the count before less the certificates removed. Every other line in the file is kept, whatever
+it says — which holds because a file with a NUL byte in it never reaches the rewrite: `awk` cuts a record at its
+first NUL, so before 1 November 2026 a rewrite silently cut every line that held one. It reads an ordinary website through the snapshot (the
 control), asks `sudo` for the privilege on its own, copies the file to a new name beside it, compares that copy with
 the snapshot, and only then links it to a dated backup name that nothing may already hold. The snapshot is in the
 user's temporary folder, where anything running as the user can change it, so the backup, beside the file where only
@@ -169,7 +184,15 @@ included. It then compares the file's SHA-256 with
 the cleaned file's and restores the backup, through `replace()` too, if the two differ. That comparison of two local
 files is the **only** thing that makes it put the original back. It then reads the control again, and re-tests with
 `/usr/bin/curl` only if the control loads: without the control, "the test host refused" and "nothing on this network
-answered" are one reading. A control that loaded before the change and fails after it is reported by its curl code (a
+answered" are one reading. Both the control and the re-test name the library they measure with,
+`CURL_SSL_BACKEND=openssl`: the built-in `curl` is built with LibreSSL *and* SecureTransport and that variable picks
+one at run time, and under SecureTransport the `--cacert` anchors are judged by Apple's Security framework, which
+blocks these certificates whatever file it is given — so the answer would be about Apple's block and not about this
+file. An unknown backend name selects SecureTransport too, so the library is named rather than the variable merely
+cleared. And neither reading is taken at all once the advisory's test site's own certificate has expired
+(3 May 2027 01:04 UTC), or when this Mac's date cannot be read: `curl`'s 60 is `CURLE_PEER_FAILED_VERIFICATION`,
+which an expired leaf gives through a file that trusts its root and through one that does not alike, so a refusal
+from then on would prove nothing. The file is still fixed; nothing online is claimed. A control that loaded before the change and fails after it is reported by its curl code (a
 certificate refused, a network that stopped answering, or anything else) and changes nothing. A wrong re-test is
 reported (EXPOSED, exit 1) with the fix left in place and no command to restore the backup, because restoring would
 put the withdrawn roots back on a Mac whose network is already answering for someone else — the one Mac that could

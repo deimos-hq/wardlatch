@@ -19,6 +19,87 @@ SECURITY.md promises for them are not open yet; the release that ships them stat
 
 ### Security
 
+- **A NUL byte hid a withdrawn root from the Mac fix, and not from the tools the fix is about.** macOS's
+  `/bin/bash` 3.2 `read` cuts a line at its first NUL byte and drops the rest of it, and so does `awk`
+  (measured: `printf 'ab\0cd\n'` comes back from `read` as `ab`, length 2). LibreSSL does not: it reads the file
+  with `BIO_gets` in 253-byte pieces and cuts *each piece* at its first NUL, so on a line longer than 253 bytes it
+  reads every piece after the first. So one certificate block could carry base64 that `curl`, `git`, `ruby`, `perl`
+  and `openssl` decode as `AAA Certificate Services` or `emSign ECC Root CA - G3` while the fix, reading the same
+  block line by line, saw an innocent throwaway certificate — and said `SAFE`, exit 0, "no longer holds the two
+  roots. Nothing changed", with the root still verifying through that file before and after. No earlier check caught
+  it: the `-----BEGIN` marker still only ever started a line, so the round-3 gate matched nothing; the counts agreed;
+  and every certificate the fix did read had a fingerprint and a key, so the completeness gate passed too. A
+  line-length check cannot stand in for it, because `awk` measures the line it already cut: on such a file
+  `awk 'length($0)>252'` reports no line at all. `roots()` now counts the NUL bytes on *bytes*, with `tr`, before it
+  reads a line, and any at all makes the run UNKNOWN, exit 2, with nothing changed and a line saying why. Every path
+  that reads the file for withdrawn roots goes through `roots()` — the snapshot, the backup, the re-reads from the
+  file itself, the cleaned file and `built()` — so one test covers them all. The same refusal makes true a sentence
+  that was not: `strip()` rewrote the file with `awk`, so every line holding a NUL byte came out cut short, while
+  the header said it "removes only each withdrawn root's own lines … and nothing else in the file" (measured: Apple's
+  file plus `# admin note: keep\0 this whole line` was rewritten with that line cut, under a SAFE that named only the
+  roots). Apple's own file holds no NUL byte and no line over 231 bytes, so this costs it nothing.
+  `test/fix-macos.check.sh` gains three cases: a block built so that LibreSSL reads the withdrawn root and a line
+  reader does not, for each root, each shown first to be read that way by LibreSSL and to verify the root through the
+  file (otherwise the case would measure nothing); a NUL byte outside any block, in a file that still holds both
+  roots, so it is about a run that *did* rewrite the file; and the control that a file with no NUL byte is still
+  fixed, without which a change that refused everything would pass. *Found 31 Oct 2026, fixed 1 Nov 2026.*
+
+- **A compromised eMudhra intermediate, or `emSign Root TLS CA - G3`, left in the bundle read SAFE.** The incident is
+  a compromise of eight CA keys, six of them TLS, in 12 certificates. Removing the two withdrawn roots clears the
+  compromised intermediates only for a reader that insists on a chain ending at a self-signed root in the file.
+  `/usr/bin/curl` 8.7.1 does not: like curl since 7.68 on OpenSSL-style backends it takes *every* CA certificate in a
+  `--cacert` file as a trust anchor, and Apple's `git` goes through the same libcurl, as does the built-in `perl`. So
+  a `cert.pem` holding one of those intermediates kept trusting everything it had issued after both roots were gone,
+  and the fix — which looked only for the two roots — said `SAFE`, exit 0, nothing changed. `emSign Root TLS CA - G3`,
+  which issued six of the 12, is worse again: besides the cross-signed certificate the advisory's hosts serve, it
+  exists as a **self-signed** certificate, which is a full trust anchor for every reader, `python3` and the `openssl`
+  CLI included, with no partial chain needed. Measured on the branch as it stood: all 14 of those certificates read
+  SAFE, exit 0, unchanged, each still readable out of the file by LibreSSL afterwards; and the advisory's `ov-g3c`
+  leaf verified through the cleaned bundle plus its intermediate under `openssl verify -partial_chain`, and failed
+  through the cleaned bundle alone. The fix now carries seven more keys and removes any certificate holding one, by
+  key, in the same way and with the same machinery as the roots' keys: the six compromised TLS intermediate keys
+  (which cover all 12 certificates, because each intermediate was issued twice, under `emSign Root TLS CA - G3` and
+  under `AAA Certificate Services`) and `emSign Root TLS CA - G3`'s own key, which covers both of its certificates at
+  once. A bundle too small to rebuild that holds one of them is UNKNOWN with the key named, not "nothing to remove".
+  `lib/incidents/emudhra-2026-10.json` carries the seven as `withdrawnKeys`, apart from `distrustedRoots`, which
+  drives the probes' forced-roots control and has one PEM file and one canary group per entry. Each key value was
+  derived from its certificates three times — LibreSSL 3.3.6, OpenSSL 4.0.3 and node's own `crypto` — and refused if
+  it came out as the SHA-256 of no input (`e3b0c442…`). `test/fix-macos.check.sh` gains one case per certificate, 14
+  of them, each with LibreSSL as the oracle that the key was in the file before the run and gone after it, counted by
+  the SHA-256 of the SubjectPublicKeyInfo rather than by a name; plus the control that a bundle holding none of them
+  is left alone, and the small-bundle case. `test/incidents.test.mjs` gains the data's own checks, including that
+  none of the seven is in the macOS bundle Apple ships — with the two withdrawn roots as that scan's positive
+  control, since a scan that read nothing would report every key absent. The owner's decision #38, 31 Oct 2026, was
+  to add `emSign Root TLS CA - G3`: "Yes, add it." *Found 31 Oct 2026, fixed 1 Nov 2026.*
+
+- **The Mac fix's online checks could be made to measure Apple's block instead of the file.** `/usr/bin/curl` 8.7.1 is
+  built with LibreSSL *and* SecureTransport, and `CURL_SSL_BACKEND` picks one at run time. The fix's `-q` keeps
+  `~/.curlrc` out; nothing kept the environment out, and the probes run as the person who typed the command, with
+  their environment. Under SecureTransport the `--cacert` anchors are judged by Apple's Security framework, which
+  blocks the eMudhra certificates (19 and 23 October 2026) whatever file it is given, so the answer stops being about
+  `/etc/ssl/cert.pem` at all: measured, a copy of the cleaned file plus `emSign Root TLS CA - G3` read EXPOSED by
+  default and SAFE with `CURL_SSL_BACKEND=secure-transport`, while the default `curl` through that same file still
+  loaded the test site. An unknown backend name selects SecureTransport too, so the library has to be named rather
+  than the variable merely cleared. Both probes now say `CURL_SSL_BACKEND=openssl`, which measured on this Mac
+  selects LibreSSL; the proxy variables are deliberately left alone, since they decide how the network is reached and
+  not which library judges the chain. `test/fix-macos.check.sh` gains a case that runs with the variable set to
+  `secure-transport`, to nothing, and to a name curl does not know, and reads back from the curl stand-in what each
+  probe was actually given. *Found 31 Oct 2026, fixed 1 Nov 2026.*
+
+- **From 3 May 2027 the Mac fix would have called every unfixed Mac safe.** `curl`'s exit 60 is
+  `CURLE_PEER_FAILED_VERIFICATION`, which covers an expired certificate as well as one signed by a key the file does
+  not trust — measured on a throwaway pair, an expired leaf gives 60 through a file that trusts its root and through
+  one that does not alike, which are the two readings this test exists to tell apart. The advisory's test leaves
+  expire 3 May 2027 01:04:36 UTC, so from that day "refuses the compromised keys" would have been printed for a file
+  that still held both roots, and the EXPOSED branches could never have fired again. The fix now reads the clock
+  before it reads anything into exit 60: on and after that date, or when this Mac's date cannot be read at all, it
+  takes no verdict from the test site, says why in one line, and still fixes the file — the same rule the library
+  already applied (`bin/wardlatch.mjs`, "a refusal here would prove nothing"). `test/fix-macos.check.sh` gains a case
+  with the clock behind a stand-in: the day before the date, where the online reading must still be taken (the
+  control); the day itself, a year later, and a clock that cannot be read, where it must not be; and an already-clean
+  file on that date. The site's own one-line test already had this gate and the library pin as of 1 Nov 2026, and was
+  not changed. *Found 31 Oct 2026, fixed 1 Nov 2026.*
+
 - **The Mac fix undid itself on what the network said.** After writing the cleaned `/etc/ssl/cert.pem`, it re-tested
   against the advisory's test host and, if that host answered and was trusted (`curl` exit 0), copied the backup back
   over the file. The backup is Apple's original: it holds both withdrawn roots. Anything that can answer for
