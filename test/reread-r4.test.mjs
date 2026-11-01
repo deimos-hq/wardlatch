@@ -473,3 +473,115 @@ test('a FIFO in a venv\'s lib does not stop its packages being found, and makes 
   assert.deepEqual(about, [], `a FIFO in a venv's lib made a row: ${JSON.stringify(about).slice(0, 600)}`);
   assert.equal(r.code, 1, `exit ${r.code}: ${JSON.stringify(r.rows).slice(0, 600)}`);
 });
+
+// ---- F2: the same store with an INDEFINITE outer length, over the bytes read (round-5 re-read #1, false-SAFE) -------
+// B-e85-1 above closed the stated-length case. derPastEnd() reached it through declaredEnd(), which returns null for the
+// indefinite-length marker (0x80), so a BER store over the cap never took the clipped read: no finding, no gap row, not
+// even a row saying a file was not read. MEASURED at 9a8ecfb (F2-DER-INDEFINITE.md, 1 Nov 2026): one real
+// `openssl pkcs12 -export` store of 1,866,486 bytes, its outer SEQUENCE re-wrapped `30 80 … 00 00` and nothing else
+// changed, committed as keystore.bin, read "SAFE no committed keys found in the files of 1 local repository", exit 0 —
+// while the other three cells of the 2x2 (definite/under, indefinite/under, definite/over) were all named, and both
+// LibreSSL 3.3.6 and OpenSSL 4.0.3 (-legacy) take the same private key out of all four.
+/** `der` with the outer SEQUENCE's definite length replaced by the indefinite marker and an end-of-contents appended:
+ *  legal BER, the one length encoding this project had already found a reader for (R2-N3). */
+function toBer(der) {
+  assert.equal(der[0], SEQ_TAG, 'toBer() was given something that is not a SEQUENCE');
+  const hdr = der[1] > 0x80 ? 2 + (der[1] & 0x7f) : 2;
+  return Buffer.concat([Buffer.from([SEQ_TAG, 0x80]), der.subarray(hdr), Buffer.from([0, 0])]);
+}
+/** An indefinite-length SEQUENCE of a shape Wardlatch does not know whose children are WELL-FORMED elements and whose
+ *  end-of-contents is present: INT 7, OCTET STRING of `fill` bytes, 00 00. Every byte of it can be read, so it is the
+ *  control against which dropping the terminator is the only change. */
+const berKnownEnd = (fill) => Buffer.concat([Buffer.from([SEQ_TAG, 0x80]), tlv(INT_TAG, Buffer.from([7])), tlv(OCTETS_TAG, Buffer.alloc(fill, 0x42)), Buffer.from([0, 0])]);
+
+test('F2: a PKCS #12 key store with an indefinite outer length, over the bytes read, is a finding, not an all-clear', () => {
+  const big = toBer(p12Shape(1_500_000));
+  assert.ok(big.length > 1024 * 1024, `the specimen must be over the 1 MB cap to prove anything: ${big.length}`);
+  assert.equal(big[1], 0x80, 'premise: the specimen must carry the indefinite-length marker');
+  const r = json([...KEYS, '--paths', repoWith(fresh('f2-p12-ber-big'), { 'keystore.bin': big }).path]);
+  assert.ok(!r.rows.some((x) => x.status === 'SAFE'), `an all-clear over a ${big.length}-byte key store: ${JSON.stringify(r.rows).slice(0, 900)}`);
+  assert.ok(JSON.stringify(r.rows).includes('PKCS #12 key store (BER)'), `the store is not named, or not named BER: ${JSON.stringify(r.rows).slice(0, 900)}`);
+});
+test('F2: BER over the bytes read that cannot be named from its head is UNKNOWN, exit 2, never part of an all-clear', () => {
+  const r = json([...KEYS, '--paths', repoWith(fresh('f2-ber-unknown'), { 'keystore.bin': toBer(unknownDer(1_500_000)) }).path]);
+  assert.equal(r.code, 2, `exit ${r.code}, wanted 2: ${JSON.stringify(r.rows).slice(0, 900)}`);
+  assert.ok(r.rows.some((x) => x.status === 'UNKNOWN'), JSON.stringify(r.rows).slice(0, 900));
+  assert.ok(!r.rows.some((x) => x.status === 'SAFE'), `an all-clear beside a file that was not read: ${JSON.stringify(r.rows).slice(0, 900)}`);
+  // the reason names the cap, so "nothing here" and "I stopped reading" can be told apart. Its two halves are asserted
+  // apart and not as one phrase, so this holds whatever the sentence around them says.
+  assert.ok(/1 MB/.test(JSON.stringify(r.rows)), `the reason does not name the cap: ${JSON.stringify(r.rows).slice(0, 900)}`);
+  assert.ok(JSON.stringify(r.rows).includes('was not read'), `the reason does not say it was not read: ${JSON.stringify(r.rows).slice(0, 900)}`);
+});
+// The completeness gate, and the one that stops a future change re-breaking one shape while fixing another: the universe
+// is the 2x2 of {stated length, indefinite length} x {under the cap, over it}, and every cell must be named, with the
+// encoding its bytes really carry. The two under-cap cells must NOT take the not-read path, so none of this can be met
+// by calling every unread file a key store.
+test('F2 control: all four of {stated, indefinite} x {under, over the cap} name the store, and only over the cap is clipped', () => {
+  const universe = { 'definite-under': p12Shape(2000), 'indefinite-under': toBer(p12Shape(2000)), 'definite-over': p12Shape(1_500_000), 'indefinite-over': toBer(p12Shape(1_500_000)) };
+  let cells = 0;
+  for (const [name, body] of Object.entries(universe)) {
+    assert.equal(body.length > 1024 * 1024, name.endsWith('-over'), `${name}: the specimen is on the wrong side of the cap (${body.length} B)`);
+    assert.equal(body[1] === 0x80, name.startsWith('indefinite'), `${name}: the specimen's length encoding is not the one its name claims`);
+    const r = json([...KEYS, '--paths', repoWith(fresh(`f2-universe-${name}`), { 'keystore.bin': body }).path]);
+    const rows = JSON.stringify(r.rows);
+    assert.ok(!r.rows.some((x) => x.status === 'SAFE'), `${name}: an all-clear over a key store: ${rows.slice(0, 700)}`);
+    const enc = /PKCS #12 key store \((DER|BER)\)/.exec(rows)?.[1];
+    assert.equal(enc, name.startsWith('indefinite') ? 'BER' : 'DER', `${name}: not named, or named with the wrong encoding: ${rows.slice(0, 700)}`);
+    assert.equal(/1 MB/.test(rows), false, `${name}: the row names the cap, so this store took the not-read path: ${rows.slice(0, 700)}`);
+    cells++;
+  }
+  assert.equal(cells, 4, 'the universe is the four cells of the 2x2 and nothing else');
+});
+test('F2: an indefinite-length store over the cap, deleted from the working tree, is still a finding from git\'s copy', () => {
+  const { path, g } = repoWith(fresh('f2-p12-ber-deleted'), { 'keystore.bin': toBer(p12Shape(1_500_000)) });
+  rmSync(join(path, 'keystore.bin'));
+  const r = json([...KEYS, '--paths', path]);
+  assert.ok(!r.rows.some((x) => x.status === 'SAFE'), `an all-clear over a tracked key store: ${JSON.stringify(r.rows).slice(0, 900)}`);
+  assert.ok(JSON.stringify(r.rows).includes('PKCS #12 key store (BER)'), JSON.stringify(r.rows).slice(0, 900));
+  assert.ok(g('ls-files').toString().includes('keystore.bin'), 'the file is no longer tracked, so git\'s copy was not the path under test');
+});
+// The precision gate. BER must not come to mean "not read": an indefinite element whose end-of-contents IS inside the
+// bytes was read in full, and an unrecognised shape inside bytes that were all read claims nothing, exactly as a stated
+// length under the cap claims nothing. Without this the fix could be met by calling every file that begins 30 80
+// UNKNOWN. It passes at 9a8ecfb by nature, which is what makes it a control and not a second red test.
+test('F2 control: an indefinite element whose end-of-contents is inside the bytes read is not called unread', () => {
+  const body = berKnownEnd(2000);
+  assert.ok(body.length < 1024 * 1024);
+  const r = json([...KEYS, '--paths', repoWith(fresh('f2-ber-under-known-end'), { 'keystore.bin': body }).path]);
+  assert.equal(r.code, 0, `exit ${r.code}, wanted 0 for a file every byte of which was read: ${JSON.stringify(r.rows).slice(0, 900)}`);
+  assert.ok(!r.rows.some((x) => x.status === 'UNKNOWN'), `a file that was read in full is called unread: ${JSON.stringify(r.rows).slice(0, 900)}`);
+});
+// The end-of-contents itself. The two under-cap shapes differ from the control above in NOTHING but the terminator: one
+// byte of it, or both, taken off the end. The third is a nested indefinite element whose own terminator is past the cap,
+// so the outer one can never be reached. MEASURED (F2-DER-INDEFINITE.md §3): neither LibreSSL 3.3.6 nor OpenSSL 4.0.3
+// (-legacy) takes a key out of any of the three, so a SAFE over them is not a false SAFE on the reader test — but they
+// are files the tool could not read through, and a file it could not read through is never part of an all-clear.
+test('F2: a missing, halved or unreachable end-of-contents is UNKNOWN, never an all-clear', () => {
+  const whole = berKnownEnd(2000);
+  const nested = Buffer.concat([Buffer.from([SEQ_TAG, 0x80]), tlv(INT_TAG, Buffer.from([3])), Buffer.from([SEQ_TAG, 0x80]), Buffer.alloc(1_500_000, 0x43), Buffer.from([0, 0, 0, 0])]);
+  const shapes = { 'terminator gone': whole.subarray(0, whole.length - 2), 'terminator halved': whole.subarray(0, whole.length - 1), 'nested, terminator past the cap': nested };
+  for (const [name, body] of Object.entries(shapes)) {
+    const r = json([...KEYS, '--paths', repoWith(fresh(`f2-eoc-${name.replace(/[^a-z]+/g, '-')}`), { 'keystore.bin': body }).path]);
+    assert.ok(!r.rows.some((x) => x.status === 'SAFE'), `${name}: an all-clear over a file that was not read through: ${JSON.stringify(r.rows).slice(0, 700)}`);
+    assert.ok(r.rows.some((x) => x.status === 'UNKNOWN'), `${name}: no UNKNOWN row: ${JSON.stringify(r.rows).slice(0, 700)}`);
+  }
+});
+// And a real store, built by this machine's openssl, re-wrapped BER, and read back by openssl before Wardlatch is
+// judged: the receipt that the shape above is the shape of a file a private key can be taken out of.
+test('F2: a real openssl PKCS #12 re-wrapped BER over the cap, whose key openssl reads back, is a finding', (t) => {
+  const ssl = '/usr/bin/openssl';
+  if (!existsSync(ssl)) return t.skip('no /usr/bin/openssl on this machine');
+  const w = fresh('f2-p12-real');
+  const run = (...a) => spawnSync(ssl, a, { env: { PATH: '/usr/bin:/bin', HOME: home }, encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 });
+  if (run('req', '-x509', '-newkey', 'rsa:2048', '-keyout', join(w, 'k.pem'), '-out', join(w, 'c.pem'), '-days', '2', '-nodes', '-subj', '/CN=probe').status !== 0) return t.skip('openssl could not make a key pair here');
+  writeFileSync(join(w, 'chain.pem'), Buffer.concat(Array.from({ length: 2600 }, () => readFileSync(join(w, 'c.pem')))));
+  if (run('pkcs12', '-export', '-inkey', join(w, 'k.pem'), '-in', join(w, 'c.pem'), '-certfile', join(w, 'chain.pem'), '-passout', 'pass:', '-out', join(w, 'der.p12')).status !== 0) return t.skip('openssl could not make a PKCS #12 here');
+  const body = toBer(readFileSync(join(w, 'der.p12')));
+  assert.ok(body.length > 1024 * 1024, `the store must be over the cap: ${body.length}`);
+  writeFileSync(join(w, 'keystore.bin'), body);
+  const back = run('pkcs12', '-in', join(w, 'keystore.bin'), '-nocerts', '-nodes', '-passin', 'pass:');
+  assert.ok(String(back.stdout).includes('PRIVATE KEY'), 'openssl cannot read a key out of this BER store, so it proves nothing');
+  const r = json([...KEYS, '--paths', repoWith(fresh('f2-p12-real-repo'), { 'keystore.bin': body }).path]);
+  assert.ok(!r.rows.some((x) => x.status === 'SAFE'), `an all-clear over a ${body.length}-byte BER store openssl reads a key out of: ${JSON.stringify(r.rows).slice(0, 900)}`);
+  assert.ok(JSON.stringify(r.rows).includes('PKCS #12 key store (BER)'), JSON.stringify(r.rows).slice(0, 900));
+});
