@@ -795,10 +795,11 @@ if [ "$before" -lt 50 ]; then
   else
     # Small, no withdrawn root, but a certificate carrying one of the other seven keys: a corporate or hand-built
     # bundle, most likely, so this does not call it damaged. It still must not read SAFE.
-    echo "UNKNOWN  $FILE has $before certificates, fewer than the 50 this expects of a trust store, so this fix will"
-    echo "         not rebuild it -- and it holds $(wheld), which curl, git and the"
-    echo "         built-in perl take as a trust anchor for everything that key signed. Nothing changed. Take those"
-    echo "         certificates out of the file yourself, then run npx wardlatch@latest to test what this Mac trusts."
+    echo "UNKNOWN  $FILE holds $(wheld)."
+    echo "         curl, git and the built-in perl take such a certificate as a trust anchor for everything that key"
+    echo "         signed. It has only $before certificates, fewer than the 50 this expects of a trust store, so this"
+    echo "         fix will not rebuild it, and nothing was changed. Take those certificates out of the file"
+    echo "         yourself, then run npx wardlatch@latest to test what this Mac trusts."
   fi
   exit 2
 fi
