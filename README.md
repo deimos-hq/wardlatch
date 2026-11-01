@@ -70,8 +70,16 @@ Two checks keep the answer honest:
   controls come first: a normal site must open, and a self-signed one must be refused, or the result is "couldn't
   test". `--no-containers` skips them. Nothing is written into a container.
 
-Compiled programs (Go, Rust, Electron) carry the trust list of the toolchain that built them; Wardlatch prints what to
-rebuild them with. Check your browser on the advisory's own page.
+Whether a compiled program follows this fix turns on where its trust list lives, not on which language built it.
+Some carry a copy of their own, and for those the system fix changes nothing — only a rebuild or an app update does.
+An Electron app is one: its bundled Chromium and Node each carry a list, and both withdrawn roots are compiled into
+the Electron frameworks we measured, so removing them from `/etc/ssl/cert.pem` leaves those apps trusting them. So is
+Rust built against `webpki-roots`, which describes itself as "a compiled-in copy of the root certificates trusted by
+Mozilla". Others read the system store at run time and do follow the fix: Rust through `rustls-native-certs` or
+`native-tls`, and Go. Go is worth saying plainly, because it is both — a Go program reads the OS store as it runs (on
+macOS through Apple's verifier), so it picks the removal up, and yet it still has to be rebuilt, because what a fixed
+Go compiles in is the *refusal* of these intermediates and not a list of roots. Wardlatch prints what to rebuild or
+update in each case. Check your browser on the advisory's own page.
 
 ## The Mac fix
 
