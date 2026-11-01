@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=94
+expect_cases=95
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -2895,6 +2895,38 @@ cmp -s "$d/cert.pem" "$work/original.pem" || fail "a key not decoded: the bundle
 [ "$(baks "$d/cert.pem")" -eq 0 ] || fail "a key not decoded: it wrote a backup"
 ok "a certificate whose key openssl does not decode is not counted, so the run is UNKNOWN and nothing changes"
 # ---- r4 end case
+
+# ---- r5 case: link-nl
+# F-6b0-1. A bundle that is a symbolic link whose TARGET's name ends in a line break, beside a decoy with the same
+# name without it. Until r5 the line said the link pointed at the decoy and the command it printed named the decoy:
+# `to=$(readlink "$FILE")` drops every trailing line break. MEASURED (round 4's strict audit, and again here against
+# 99a7f7d). Only whoever can make the link can do this, which for /etc/ssl is root.
+# readlink cannot tell the two names apart at all on this macOS -- it prints a target without a trailing break WITH
+# one added and one with a break WITHOUT, so both come out the same 9 bytes -- so the sentinel the finding proposed
+# would not have worked either. /usr/bin/stat -nf '%Y' adds nothing, and is what the fix reads now.
+d=$work/r5/linknl; mkdir -p "$d"
+nltgt=$'real.pem\n'
+cp "$work/original.pem" "$d/$nltgt"
+printf 'DECOY -- not the file the link points to\n' >"$d/real.pem"
+rm -f "$d/cert.pem"; ln -s "$d/$nltgt" "$d/cert.pem"
+[ "$(/usr/bin/stat -nf '%Y' "$d/cert.pem" | wc -c | tr -d ' ')" -gt "$(printf '%s' "$d/real.pem" | wc -c | tr -d ' ')" ] \
+  || fail "a link to a name ending in a line break: the fixture's target has no line break in it, so this case would measure nothing"
+run "$d/cert.pem" "$offline" "$OFFLINE"
+[ "$code" -eq 2 ] || fail "a link to a name ending in a line break: expected UNKNOWN, exit 2, got $code"
+grep -q "is a symbolic link, to a file whose name holds characters this doesn't print" <<<"$out" \
+  || fail "a link to a name ending in a line break: it named the target as if the name were plain"
+grep -qF "WARDLATCH_CERT_FILE='$d/real.pem'" <<<"$out" \
+  && fail "a link to a name ending in a line break: the command it printed names the decoy beside it"
+grep -q "is a symbolic link to " <<<"$out" && fail "a link to a name ending in a line break: it printed a target name"
+[ -L "$d/cert.pem" ] || fail "a link to a name ending in a line break: the link itself was replaced"
+grep -q '^DECOY' "$d/real.pem" || fail "a link to a name ending in a line break: the decoy was changed"
+# the control, the other way: a plain target IS named, and in the command (the r2 case symlink-advice runs it)
+rm -f "$d/cert.pem"; ln -s "$d/real.pem" "$d/cert.pem"
+run "$d/cert.pem" "$offline" "$OFFLINE"
+[ "$code" -eq 2 ] || fail "a link to a plain name: expected UNKNOWN, exit 2, got $code"
+grep -qF "WARDLATCH_CERT_FILE='$d/real.pem'" <<<"$out" || fail "a link to a plain name: the command no longer names it"
+ok "a link whose target's name ends in a line break is never named, and the command never names the file beside it"
+# ---- r5 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.
 cp "$work/original.pem" "$work/unreadable.pem"
