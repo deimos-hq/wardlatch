@@ -17,6 +17,73 @@
       "spkiSha256": "8d417db2dd8bf5e3084d1e3f196d583849d81bdd4c00c70b9d39369e96b8c782"
     }
   ],
+  "withdrawnKeys": [
+    {
+      "name": "emSign Root TLS CA - G3",
+      "spkiSha256": "c619e4780ed8e0abeda24ad732567de4383a7ea941338f6d1a7d1b49ac792fe9",
+      "ecX": "5f0fdc3fab5716c4be83f5b3061fa090e2efa0015e8637db3e3f0431f41978842fb4894f103a4f2658efd1c17432d740",
+      "certificates": [
+        "7D:D7:8D:5F:4F:13:45:9A:83:DF:F9:AB:BB:A6:2E:DB:AF:6F:2D:10:2B:F2:57:FD:71:2F:4D:9F:27:46:ED:8D",
+        "30:94:02:57:92:03:9A:68:AF:6E:55:36:86:41:0B:DA:B7:C0:D4:A3:6B:90:84:CB:A6:42:02:E3:5D:6E:BB:DD"
+      ],
+      "why": "The CA that issued six of the 12 compromised intermediates. Its own key is not among the eight compromised ones, but a bundle holding either of its two certificates vouches for all six: curl, git and the built-in perl take every CA certificate in a --cacert file as a trust anchor, and the self-signed copy is a full anchor for every reader. Both certificates carry this one key, so matching by key covers both."
+    },
+    {
+      "name": "EM DV TLS CA - G3B",
+      "spkiSha256": "ebed6475c2c2d80fcb199f3fe8dd6e6b3ce60b77eb15d4e42c3dec0c6f5b5105",
+      "ecX": "e79ed9c04a9773c4735e51111da85ac2bd5e64ab374b80e12cbc2038ec1e4f0e3b812fc9859e1e67afb04e2f8bc97f74",
+      "certificates": [
+        "42:C4:AC:CD:12:C4:F5:95:97:92:5E:1A:08:A7:A9:01:02:60:85:43:80:93:08:D5:0E:C4:27:E1:18:BA:14:93",
+        "45:A8:83:F3:49:AE:DF:D5:F3:A6:49:B5:49:8F:FB:12:17:12:BA:8B:44:8F:3F:2A:91:DB:C5:A7:66:FC:DD:BE"
+      ]
+    },
+    {
+      "name": "EM DV TLS CA - G3C",
+      "spkiSha256": "49dd353dc2b919a3770645117d0e60c16115e7d1bc259eefe734b00ea434fe5f",
+      "ecX": "3a7a7862c8c44d324ddd69033a6782c0efeefe4055e68a123fa0371ba3bd9194514ee172a433e3630f02bd188037d9e5",
+      "certificates": [
+        "01:64:D7:CE:AE:5B:B9:09:C2:72:AF:15:1F:F4:4B:11:77:AE:9B:47:D9:42:4B:94:F1:D9:55:8C:30:93:4D:19",
+        "62:B7:F9:86:82:63:F7:2F:69:11:FC:78:CE:AF:72:C1:97:91:58:B7:36:8B:F6:48:68:3B:B2:AA:39:B0:2E:72"
+      ]
+    },
+    {
+      "name": "EM OV TLS CA - G3B",
+      "spkiSha256": "43bffa19d6ef651451f6841e019931e96f6f2eaeff28ab4b6f1ce4576de2717b",
+      "ecX": "73897aa0eb3cfdca8b12402ffaf0abc4e1212baf8dee778ac9ee2d6db83fac280c5e05638ae7a2acd71c322a8e361cde",
+      "certificates": [
+        "5F:1D:ED:4D:D5:90:AF:74:63:12:90:CF:07:3B:12:2A:2A:AC:6A:1F:A4:79:77:8A:0B:D4:35:79:BD:83:26:99",
+        "98:B8:96:62:5C:0C:23:0A:DE:EC:3E:B2:CF:6A:AD:50:01:EC:F9:15:6A:68:64:4E:82:37:4C:E5:83:3B:C2:5B"
+      ]
+    },
+    {
+      "name": "EM OV TLS CA - G3C",
+      "spkiSha256": "63ecefee431d49523bc1136c4e72d0206a477086caf606cd5cf025686c109cf8",
+      "ecX": "138251cd52ac9298c1c8aad977321deb97e709bd0b4ca0aca55dc8ad51dcfc9d1589a1597e3a5120e1efd631c63e1835",
+      "certificates": [
+        "74:85:B5:1C:0E:D1:92:87:8F:A1:D2:F9:48:FB:52:9A:E1:84:2C:C5:08:6C:4B:67:F7:BE:5B:20:39:DE:94:89",
+        "CB:6E:15:16:5A:C8:02:E9:B3:F9:93:F1:6C:25:D4:1F:4E:81:C2:1E:BD:E7:1A:E1:B0:12:AC:00:BF:9C:7C:3F"
+      ]
+    },
+    {
+      "name": "EM EV TLS CA - G3B",
+      "spkiSha256": "e0254c7fcdc265e2f0f8a428dabb75ab4ae039b4872d62f5ee57f0877d5a8a41",
+      "ecX": "25dba85a64d397da0b1052e9ea546e487befea9c9d9d68a0c5eadcfeef75a69bb5d6fc01f42bfbca6eb40bcd64c0767e",
+      "certificates": [
+        "57:94:80:AE:A1:66:29:0B:D3:C6:43:58:9E:79:5F:C0:D0:E5:4E:86:50:5D:18:0F:1D:FF:99:EF:D3:19:95:12",
+        "E7:56:8F:E6:E1:23:31:F4:FD:7D:E6:1D:A4:C7:55:9D:0F:8E:B1:92:A2:18:D4:74:1A:3B:A7:51:84:33:38:38"
+      ]
+    },
+    {
+      "name": "EM EV TLS CA - G3C",
+      "spkiSha256": "5c0660a2b164910d8ff589c18e14552e9e0ec237dcefe2cb736d41a4811f81a0",
+      "ecX": "2d56e829a6fb82c64a4697d960af951e9067ae91f926d34306da48a8aaeb7869b6a67e6d27426e0442aa03b36e1988df",
+      "certificates": [
+        "43:2E:C2:5F:0D:28:DE:90:06:D9:7B:F7:52:F1:7B:BB:2C:D4:1F:66:99:33:FC:B0:72:D9:A1:14:8D:02:61:F3",
+        "FD:9D:5C:2D:BB:D4:99:5A:B6:9B:8D:50:C4:39:D9:52:7B:00:52:91:99:C2:FD:01:B2:17:4E:B5:8F:07:02:1F"
+      ]
+    }
+  ],
+  "withdrawnKeysNote": "Seven keys that a bundle must not hold, over and above the two withdrawn roots in distrustedRoots. Six of them are the compromised TLS intermediate keys: six keys in 12 certificates, because each intermediate was issued twice, once under emSign Root TLS CA - G3 and once under AAA Certificate Services (Sectigo's cross-sign). The seventh is emSign Root TLS CA - G3's own key. These are keys, not trust anchors any root programme listed, so they are not in distrustedRoots: that array drives the probe's forced-roots control and has one PEM file and one canary group per entry. spkiSha256 is the SHA-256 of the SubjectPublicKeyInfo as it ships; ecX is the X coordinate of the EC point (48 bytes, lowercase hex), which every encoding of the point carries and which is what fix/fix-macos.sh compares. Each value was derived from the certificate twice, with LibreSSL 3.3.6 and with OpenSSL 4.0.3, and refused if it came out as the SHA-256 of no input (e3b0c442...).",
   "rootsPem": "emudhra-2026-10-roots.pem",
   "canaries": [
     "dv-g3b",

@@ -25,3 +25,24 @@ VeriSign Universal roots.
 
 **It contains both withdrawn roots** — `AAA Certificate Services` (`D7:A7:A0:FB…`) and `emSign ECC Root CA - G3`
 (`86:A1:EC:BA…`) — on purpose. That is what makes it a usable subject for the fix's tests.
+
+## `emudhra-2026-10-compromised-keys.pem`
+
+The 14 **public** certificates of the eMudhra incident that are not either withdrawn root: the two
+`emSign Root TLS CA - G3` certificates (the self-signed one, `7D:D7:8D:5F…`, and the one cross-signed by
+`emSign ECC Root CA - G3`, `30:94:02:57…`) and the 12 compromised intermediates. Between them they carry seven
+keys — six intermediate keys, each issued twice (once under `emSign Root TLS CA - G3`, once under
+`AAA Certificate Services`), and `emSign Root TLS CA - G3`'s own.
+
+**Why it is here.** The cases that show a bundle holding one of these reads EXPOSED, and that the Mac fix removes
+it, need the certificates themselves, and they must run offline and in CI. Nothing here is secret: every one is a
+CA certificate that was served publicly, and each entry carries its subject, issuer, SHA-256 fingerprint and the
+SHA-256 of its SubjectPublicKeyInfo as comment lines above it. No private key is in this repository.
+
+**Provenance.** Read on 31 October 2026 from the chains the advisory's own 12 test hosts serve (one
+`openssl s_client -showcerts` each, read-only) and, for the self-signed `emSign Root TLS CA - G3`, from crt.sh
+entry 12478656984. The 12 fingerprints are the 12 Apple lists in HT149555, compared as raw bytes rather than
+through a summariser. Each key value in `lib/incidents/emudhra-2026-10.json`'s `withdrawnKeys` was re-derived from
+these certificates twice, with LibreSSL 3.3.6 and with OpenSSL 4.0.3.
+
+sha256 `489d8e0e1632412a960cbf126e1f54f9aa287c6e40d4be6250cc2f3b3ec7525c`, 14 certificates.
