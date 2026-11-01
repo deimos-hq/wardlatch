@@ -142,8 +142,8 @@ limit`, or how many) names those folders, and `--paths` with a folder nearer to 
 skips folders by name: the WordPress walk `node_modules`, `.git` and `.venv`; the repository walk `node_modules`,
 `.venv` and `venv`; the virtual-environment and trust walks `node_modules` and `.git`, and, inside a virtual
 environment they go into, its own package folders (`site-packages` or `dist-packages` beside its `pyvenv.cfg`, in its
-`lib`, `lib64` or `Lib` folder, or one level below that; the code takes any of its folders whose name begins `lib`,
-in any case, such as `libs`, which the line under the all-clear does not say), which are checked with the environment
+`lib`, `lib64` or `Lib` folder, or one level below that, under those names or any spelling this disk opens them by),
+which are checked with the environment
 (for the incident's files, and for its certifi) rather than searched for other environments; the rest of a virtual
 environment, its `bin`,
 `share` and `etc` included, is walked like any folder; and all of them macOS's own Library folders. Every all-clear
