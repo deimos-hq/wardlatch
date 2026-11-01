@@ -3083,9 +3083,14 @@ ok "a bundle too small to rebuild that holds a compromised key is UNKNOWN and na
 # CURL_SSL_BACKEND set to something else in its environment reaches curl with openssl anyway and gives the same
 # verdict. The stub reports what it was given, so the second is measured and not read off the source.
 d=$work/r5/backend; mkdir -p "$d"
-sites=$(grep -c 'CURL_SSL_BACKEND=openssl /usr/bin/curl' "$fix" || true)
-[ "$sites" -ge 2 ] || fail "the curl backend: only $sites of the curl call sites name CURL_SSL_BACKEND=openssl"
-[ "$(grep -o '/usr/bin/curl' "$fix" | wc -l | tr -d ' ')" -eq "$sites" ] || fail "the curl backend: a /usr/bin/curl call site does not name CURL_SSL_BACKEND=openssl"
+# A CALL SITE is a line that runs the command, so comment lines are left out -- three of this script's lines name
+# /usr/bin/curl while explaining why the library is pinned, and counting every mention of the string made this read
+# five call sites where there are two. Both counts are printed into the failure, so a line that stopped being
+# counted cannot pass as agreement.
+callsites=$(grep -v '^[[:space:]]*#' "$fix" | grep -c '/usr/bin/curl' || true)
+pinned=$(grep -v '^[[:space:]]*#' "$fix" | grep -c 'CURL_SSL_BACKEND=openssl /usr/bin/curl' || true)
+[ "$callsites" -ge 2 ] || fail "the curl backend: $callsites curl call sites found, not the 2 this script has, so this case would measure nothing"
+[ "$pinned" -eq "$callsites" ] || fail "the curl backend: $pinned of $callsites curl call sites name CURL_SSL_BACKEND=openssl"
 cat >"$r2/curlbe" <<'STUB'
 #!/bin/bash
 # Stands in for /usr/bin/curl and writes the backend it was given, one line per call, to $BE_LOG.
@@ -3118,7 +3123,17 @@ ok "both curl probes name CURL_SSL_BACKEND=openssl, whatever the environment set
 # The clock is a stand-in, so this case is the same on any day; the control is the same file with the clock before
 # the date, which must still take the online reading.
 d=$work/r5/expiry; mkdir -p "$d"
-behind /bin/date WARDLATCH_DATE "$r2/clock.sh" 1
+# This case needs BOTH stand-ins in one copy: the clock, to put the date where it wants it, and curl, because the
+# whole point is that the test site would have answered 60 and the run must not read it. behind() builds each copy
+# from the shipped script, so a copy with the clock behind a stand-in still reaches the real curl -- which, with no
+# network, printed "an ordinary website didn't load" and the control failed closed rather than passing wrongly. So
+# the clock goes behind a stand-in in the copy that already has curl behind one, with behind()'s own two checks made
+# again here: every /bin/date call site is behind the variable, and there is at least one.
+sed "s|/bin/date|\"\${WARDLATCH_DATE:-/bin/date}\"|g" "$r2/net.sh" >"$r2/clock.sh"
+[ "$(grep -o '/bin/date' "$r2/net.sh" | wc -l | tr -d ' ')" -ge 1 ] || fail "setup: /bin/date has no call site in the curl stand-in copy"
+[ "$(grep -o 'WARDLATCH_DATE:-/bin/date' "$r2/clock.sh" | wc -l | tr -d ' ')" -eq "$(grep -o '/bin/date' "$r2/net.sh" | wc -l | tr -d ' ')" ] ||
+  fail "setup: not every /bin/date call site is behind \$WARDLATCH_DATE"
+[ "$(grep -o 'WARDLATCH_CURL:-/usr/bin/curl' "$r2/clock.sh" | wc -l | tr -d ' ')" -ge 2 ] || fail "setup: the clock copy lost the curl stand-in, so these cases would reach the real network"
 cat >"$r2/clock" <<'STUB'
 #!/bin/bash
 # Stands in for /bin/date: -u +%Y%m%d gets $FAKE_DAY (nothing at all when it is "none", as a date that failed would).
