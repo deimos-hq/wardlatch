@@ -159,10 +159,14 @@ certificate refused, a network that stopped answering, or anything else) and cha
 reported (EXPOSED, exit 1) with the fix left in place and no command to restore the backup, because restoring would
 put the withdrawn roots back on a Mac whose network is already answering for someone else — the one Mac that could
 then never be fixed. On macOS every exit prints a line starting SAFE, EXPOSED or UNKNOWN, from the script's first
-command on, since its traps are set before any command runs; a run stopped by a signal (HUP, INT, QUIT or TERM) exits 2
-with a line that says what the file holds, read from the file's SHA-256, and a signal that arrives once the verdict is
-in is ignored, so it neither adds a second line nor changes the code. A signal no program can catch (SIGKILL) ends it
-with no line. It changes nothing on a Mac that is already clean, so running it twice is safe.
+command on, since its traps are set before any command but assignments and function definitions runs; a run stopped by
+a signal whose default ends a process (HUP, INT, QUIT, TERM, ABRT, PIPE, ALRM, XCPU, XFSZ, VTALRM, PROF, USR1 or USR2)
+exits 2 with a line, written to the standard output the run started with, that says what the file holds, read from the
+file's SHA-256, and a signal that arrives once the verdict is in is ignored, so it neither adds a second line nor
+changes the code. The fault signals (ILL, TRAP, EMT, FPE, BUS, SEGV, SYS) keep their default, because a trap would run
+on top of a fault bash raised itself; they and SIGKILL end it with no line. It exits 0 only after a SAFE line and 1 only
+after an EXPOSED one: a run whose standard output is closed, or whose line can't be written, ends with 2. It changes
+nothing on a Mac that is already clean, so running it twice is safe.
 *Evidence:* `test/fix-macos.check.sh` runs the script on copies of a vendored, unfixed macOS 27.2 bundle
 (`test/support/fixtures/macos-27.2-cert.pem`), so its result doesn't depend on whether the machine running it is fixed.
 It runs 76 cases, and prints and checks the count, and that every case counted as run printed its `ok` line, so a

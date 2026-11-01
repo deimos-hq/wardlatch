@@ -83,9 +83,12 @@ put the original back — and a re-test it only reads when an ordinary website l
 never reverts. Download it in Safari from
 https://www.deimoscore.com/wardlatch/#mac and run `bash ~/Downloads/wardlatch-fix-macos.sh`, or deploy it as a root
 script from Jamf, Kandji or Intune. On macOS every run prints a line starting SAFE, EXPOSED or UNKNOWN, from the
-script's first command on, and exits 0, 1 or 2 (the exit-code table is on the Mac page); a run stopped by a Ctrl-C, a
-Ctrl-\, a hangup or a termination (INT, QUIT, HUP or TERM) is included and exits 2, and only a signal no program can
-catch (`kill -9`) ends it with no line. If `/etc/ssl/cert.pem` is a
+script's first command on, and exits 0 only after a SAFE line, 1 only after an EXPOSED one, and 2 otherwise (the
+exit-code table is on the Mac page). A run stopped by a signal whose default is to end a process is included and
+exits 2: a Ctrl-C (INT), a Ctrl-\ (QUIT), a hangup or a termination (HUP, TERM), a timeout (ALRM), a CPU limit (XCPU),
+and ABRT, PIPE, XFSZ, VTALRM, PROF, USR1 and USR2. A fault signal (ILL, TRAP, EMT, FPE, BUS, SEGV or SYS) or `kill -9`
+ends it with no line, and a run whose standard output is closed, or whose line can't be written (a log on a full
+volume), ends with exit 2 and no line to read. If `/etc/ssl/cert.pem` is a
 symbolic link, it changes nothing and prints the command that fixes the file the link points to instead:
 `WARDLATCH_CERT_FILE='<that file>' bash '<the script>'`.
 

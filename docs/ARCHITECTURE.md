@@ -99,7 +99,8 @@ SHA-256 fingerprints since 0.1.10, and since 31 Oct 2026 any other certificate c
 adds checks around it:
 
 ```
-set the traps (EXIT; HUP, INT, QUIT, TERM) before any command runs
+keep the standard output it started with as descriptor 3 (closed? ──> exit 2, no line), then set the traps (EXIT;
+  HUP, INT, QUIT, TERM, ABRT, PIPE, ALRM, XCPU, XFSZ, VTALRM, PROF, USR1, USR2) before any other command runs
 refuse if not macOS, a symbolic link (printing the command for the file it points to), or missing  ──> exit 2
 snapshot the file (mktemp in $TMPDIR, cp): a copy that can't be written is told apart from a file that can't be read
 refuse a line where -----BEGIN comes after other text, a block that isn't a plain certificate, a certificate that
@@ -128,8 +129,10 @@ control again, through the new file:
   failed before and after ──> fixed in the file, not re-tested, exit 0
   loaded before, not after ──> UNKNOWN, exit 2, FIX KEPT, read by the curl code: 60 a certificate refused;
     6, 7 or 28 the network stopped answering; anything else given as it is
-once the last reading is in, and during the cleanup at exit, HUP, INT, QUIT and TERM are ignored
-a signal before that ──> exit 2, and a line saying whether the file was changed and what it holds, read from its SHA-256
+once the last reading is in, and during the cleanup at exit, those signals are ignored
+a signal before that ──> exit 2, and a line on descriptor 3 saying whether the file was changed and what it holds, read
+  from its SHA-256
+at exit: 0 only after a SAFE line, 1 only after an EXPOSED one, any other status 2 (a line that couldn't be written too)
 ```
 
 A network result never restores the backup. Restoring returns the withdrawn roots, so a revert a hostile network
@@ -137,9 +140,13 @@ could trigger would leave the Mac that most needs the fix as the one Mac that ca
 restores it by hand (`Undo:   sudo cp -p '<backup>' '<file>'`) is printed under a SAFE result, whichever reading of the
 network that SAFE came from, and under a run stopped after the file was fixed; under EXPOSED, and under every UNKNOWN
 that follows a change, the line names the backup and what it holds and prints no command to restore it. On macOS every
-exit prints a line starting SAFE, EXPOSED or UNKNOWN, from the script's first command on: its traps (EXIT, and HUP,
-INT, QUIT and TERM) are set before any command runs, and only a signal no program can catch (SIGKILL) ends it with no
-line.
+exit prints a line starting SAFE, EXPOSED or UNKNOWN, from the script's first command on: its traps are set before any
+command but assignments and function definitions runs, on EXIT and on every signal whose default ends a process except
+the fault signals, and the line of a stopped run goes to the standard output the run started with, even while its
+standard output is the cleaned file being written. The fault signals (ILL, TRAP, EMT, FPE, BUS, SEGV, SYS) keep their
+default, because when bash itself raises one a trap would run on top of the fault: they and SIGKILL end it with no line.
+It exits 0 only after a SAFE line and 1 only after an EXPOSED one; a run whose standard output is closed, or whose line
+can't be written, ends with 2.
 
 It uses `sudo` to ask for the privilege once (`sudo -v`) and for the commands that make, copy, link, rename or
 remove files beside the file or write it, and not at all when the file and its folder are writable by the user (as
