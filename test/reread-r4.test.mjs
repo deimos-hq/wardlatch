@@ -585,3 +585,17 @@ test('F2: a real openssl PKCS #12 re-wrapped BER over the cap, whose key openssl
   assert.ok(!r.rows.some((x) => x.status === 'SAFE'), `an all-clear over a ${body.length}-byte BER store openssl reads a key out of: ${JSON.stringify(r.rows).slice(0, 900)}`);
   assert.ok(JSON.stringify(r.rows).includes('PKCS #12 key store (BER)'), JSON.stringify(r.rows).slice(0, 900));
 });
+// derPastEnd()'s own contract, and the mutation gate's last mutant. Both callers check the first byte before calling,
+// so the guard below is unreachable from them -- and a mutant that drops `buf[0] !== SEQ` from it SURVIVED the whole
+// 583-test suite (M7, F2-DER-INDEFINITE.md section 7). It is not equivalent: without the guard a SET or an OCTET
+// STRING whose next byte is the indefinite marker is read as though it were a SEQUENCE, and a caller that does not
+// check the tag first would be told a file was unread. A test that can fail is worth more than a proof that it cannot.
+test('F2: derPastEnd() refuses a buffer that does not begin a SEQUENCE, whatever its next byte says', async () => {
+  const { derPastEnd } = await import('../lib/secrets.mjs');
+  // the positive control first: with the SEQUENCE tag, this shape IS this function's business
+  assert.deepEqual(derPastEnd(Buffer.from([0x30, 0x80, 0x02, 0x01, 0x03])), { unread: true }, 'the control: a SEQUENCE whose indefinite length is never terminated is unread');
+  assert.equal(derPastEnd(Buffer.from([0x31, 0x80, 0x02, 0x01, 0x03])), null, 'a SET with an indefinite length was read as a SEQUENCE');
+  assert.equal(derPastEnd(Buffer.from([0x04, 0x80, 0x41, 0x41])), null, 'a primitive OCTET STRING with an indefinite length was read as a SEQUENCE');
+  assert.equal(derPastEnd(Buffer.from([0x30])), null, 'a buffer too short to hold a header');
+  assert.equal(derPastEnd(Buffer.alloc(0)), null, 'an empty buffer');
+});
