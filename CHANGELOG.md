@@ -42,7 +42,7 @@ SECURITY.md promises for them are not open yet; the release that ships them stat
   reader does not, for each root, each shown first to be read that way by LibreSSL and to verify the root through the
   file (otherwise the case would measure nothing); a NUL byte outside any block, in a file that still holds both
   roots, so it is about a run that *did* rewrite the file; and the control that a file with no NUL byte is still
-  fixed, without which a change that refused everything would pass. *Found 31 Oct 2026, fixed 1 Nov 2026.*
+  fixed, without which a change that refused everything would pass. *Found 31 Oct 2026, fixed 1 Nov 2026 (fb4001a).*
 
 - **A compromised eMudhra intermediate, or `emSign Root TLS CA - G3`, left in the bundle read SAFE.** The incident is
   a compromise of eight CA keys, six of them TLS, in 12 certificates. Removing the two withdrawn roots clears the
@@ -70,7 +70,8 @@ SECURITY.md promises for them are not open yet; the release that ships them stat
   is left alone, and the small-bundle case. `test/incidents.test.mjs` gains the data's own checks, including that
   none of the seven is in the macOS bundle Apple ships — with the two withdrawn roots as that scan's positive
   control, since a scan that read nothing would report every key absent. The owner's decision #38, 31 Oct 2026, was
-  to add `emSign Root TLS CA - G3`: "Yes, add it." *Found 31 Oct 2026, fixed 1 Nov 2026.*
+  to add `emSign Root TLS CA - G3`: "Yes, add it." *Found 31 Oct 2026, fixed 1 Nov 2026 (4857333 the data; fb4001a the
+  fix; b749850 the refusal's first line).*
 
 - **The Mac fix's online checks could be made to measure Apple's block instead of the file.** `/usr/bin/curl` 8.7.1 is
   built with LibreSSL *and* SecureTransport, and `CURL_SSL_BACKEND` picks one at run time. The fix's `-q` keeps
@@ -84,7 +85,7 @@ SECURITY.md promises for them are not open yet; the release that ships them stat
   selects LibreSSL; the proxy variables are deliberately left alone, since they decide how the network is reached and
   not which library judges the chain. `test/fix-macos.check.sh` gains a case that runs with the variable set to
   `secure-transport`, to nothing, and to a name curl does not know, and reads back from the curl stand-in what each
-  probe was actually given. *Found 31 Oct 2026, fixed 1 Nov 2026.*
+  probe was actually given. *Found 31 Oct 2026, fixed 1 Nov 2026 (fb4001a).*
 
 - **From 3 May 2027 the Mac fix would have called every unfixed Mac safe.** `curl`'s exit 60 is
   `CURLE_PEER_FAILED_VERIFICATION`, which covers an expired certificate as well as one signed by a key the file does
@@ -98,7 +99,7 @@ SECURITY.md promises for them are not open yet; the release that ships them stat
   with the clock behind a stand-in: the day before the date, where the online reading must still be taken (the
   control); the day itself, a year later, and a clock that cannot be read, where it must not be; and an already-clean
   file on that date. The site's own one-line test already had this gate and the library pin as of 1 Nov 2026, and was
-  not changed. *Found 31 Oct 2026, fixed 1 Nov 2026.*
+  not changed. *Found 31 Oct 2026, fixed 1 Nov 2026 (fb4001a).*
 
 - **The Mac fix undid itself on what the network said.** After writing the cleaned `/etc/ssl/cert.pem`, it re-tested
   against the advisory's test host and, if that host answered and was trusted (`curl` exit 0), copied the backup back
