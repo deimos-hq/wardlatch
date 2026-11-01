@@ -325,7 +325,7 @@ test('B-e85-1: DER over the cap that cannot be named from its head is UNKNOWN, e
   assert.equal(r.code, 2, `exit ${r.code}, wanted 2: ${JSON.stringify(r.rows).slice(0, 900)}`);
   assert.ok(r.rows.some((x) => x.status === 'UNKNOWN'), JSON.stringify(r.rows).slice(0, 900));
   assert.ok(!r.rows.some((x) => x.status === 'SAFE'), `an all-clear beside a file that was not read: ${JSON.stringify(r.rows).slice(0, 900)}`);
-  assert.ok(JSON.stringify(r.rows).includes('longer than the 1 MB read'), JSON.stringify(r.rows).slice(0, 900));
+  assert.ok(JSON.stringify(r.rows).includes('runs past the bytes read (at most 1 MB)'), JSON.stringify(r.rows).slice(0, 900));
 });
 // And a real store, built by this machine's openssl and read back by it: the receipt that the shape above is the shape
 // of a file a private key can be taken out of.
@@ -389,7 +389,7 @@ test('B-e85-1: DER over the cap, deleted from the working tree, that cannot be n
   const r = json([...KEYS, '--paths', path]);
   assert.equal(r.code, 2, `exit ${r.code}, wanted 2: ${JSON.stringify(r.rows).slice(0, 900)}`);
   assert.ok(!r.rows.some((x) => x.status === 'SAFE'), JSON.stringify(r.rows).slice(0, 900));
-  assert.ok(JSON.stringify(r.rows).includes('longer than the 1 MB read'), JSON.stringify(r.rows).slice(0, 900));
+  assert.ok(JSON.stringify(r.rows).includes('runs past the bytes read (at most 1 MB)'), JSON.stringify(r.rows).slice(0, 900));
 });
 
 // ---- SN-1 at the depth floor: a folded leaf inside a venv is still "checked", and one outside is still walked -------
