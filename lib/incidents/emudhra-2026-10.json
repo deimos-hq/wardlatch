@@ -2,7 +2,7 @@
   "id": "emudhra-2026-10",
   "title": "eMudhra intermediate CA compromise",
   "date": "2026-10-20",
-  "summary": "Private keys of eight eMudhra intermediate certificate authorities were compromised. Anyone holding them could issue a certificate for any website. A client is exposed while it still trusts the roots those intermediates chain to.",
+  "summary": "Private keys of eight eMudhra intermediate certificate authorities were compromised: six of them issue TLS certificates and two sign code. Anyone holding one of the six TLS keys could issue a certificate for any website. Those six hold 12 certificates between them, two each: one issued by AAA Certificate Services, one by emSign Root TLS CA - G3. A client is exposed where it still trusts the roots those intermediates chain to and does not itself block the intermediates; a fixed Node, Go, Electron or Deno, and Apple's own trust evaluation, block them whatever trust list they read.",
   "advisory": "https://emudhra.we-have-a-problem.com/",
   "canarySource": "The 12 test hosts are the advisory's own (emudhra.we-have-a-problem.com/#check). Each serves a certificate chained to one compromised intermediate.",
   "distrustedRoots": [
