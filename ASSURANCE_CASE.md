@@ -107,18 +107,26 @@ keys and service-account files. *Evidence:* `test/wardlatch.test.mjs` and `test/
 appears in text or JSON output.
 
 **R5, output can't be forged: boundary B5.** Every name, path, version and value printed passes through one escaper,
-`lib/escape.mjs`, which writes out every character of Unicode categories Cc, Cf, Cs, Co, Cn, Zl and Zp and the whole
-tag block (U+E0000 to U+E007F): control characters (`\x1b` is shown, not obeyed), line and paragraph separators, bidi
-overrides and isolates, zero-width and tag characters, and private use. So a plugin folder named to clear its own
-line, start a line of its own or reverse what follows shows up in full, as one line. In `--json`, every `reason` is
-escaped the same way, and every other string keeps its real value with those characters written as JSON escapes, so
-none of them is in the JSON text raw. What it does not do: printable text is printed as it is, so a name can still
-say anything plain letters can say, a sentence addressed to a person or an AI agent reading the output included; the
-escaper makes the hidden visible, and cannot make a planted sentence untrue. Up to 03d95c9 it escaped control
-characters only, and the others reached the output raw. *Evidence:* `test/cli.test.mjs` plants a folder named with
-control characters and checks that none reaches the output raw; `test/reread-r2.test.mjs` (the W1 tests) plants the
-other characters in walked paths, a git author, a tracked file, a plugin folder, the trust check's environment label
-and a link, checks the text output and `--json`, and checks the escaper against every code point of those categories.
+`lib/escape.mjs`, which writes out every character of Unicode categories Cc, Cf, Cs, Co, Cn, Zl and Zp, the whole
+tag block (U+E0000 to U+E007F), every Default_Ignorable_Code_Point and U+2800: control characters (`\x1b` is shown,
+not obeyed), line and paragraph separators, bidi overrides and isolates, zero-width and tag characters, private use,
+variation selectors, the combining grapheme joiner, the Hangul fillers and the braille blank. A backslash that would
+read as the start of one of its forms is written `\\`, so a folder literally named `t\u{202e}t` and one holding a real
+U+202E print differently. So a plugin folder named to clear its own line, start a line of its own or reverse what
+follows shows up in full, as one line. In `--json`, every `reason` is escaped the same way, and every other string
+keeps its real value with those characters written as JSON escapes, so none of them is in the JSON text raw. A crash's
+message is escaped a line at a time; a real line break inside the message itself (a path holding one) still starts a
+line on stderr, under a crash that exits 2 (measured 31 Oct 2026). What it does not do: printable text is printed as
+it is, so a name can still say anything plain letters can say, a sentence addressed to a person or an AI agent reading
+the output included; the escaper makes the hidden visible, and cannot make a planted sentence untrue. Up to 03d95c9 it
+escaped control characters only, and the others reached the output raw; up to round 4 (31 Oct 2026) the
+default-ignorable characters outside those categories, and U+2800, still did. *Evidence:* `test/cli.test.mjs` plants
+a folder named with control characters and checks that none reaches the output raw; `test/reread-r2.test.mjs` (the W1
+tests) plants the other characters in walked paths, a git author, a tracked file, a plugin folder, the trust check's
+environment label and a link, checks the text output and `--json`, and checks the escaper against every code point of
+those categories; `test/reread-r3.test.mjs` checks every Default_Ignorable_Code_Point and U+2800, that the backslash
+rule decodes 20,000 built strings back to themselves, and that a printable `\x0a` in a crash's message stays on its
+line.
 
 **R6, no host shell, no dependencies: boundaries B2, B3, B4.** Every program is started with `execFile` and an
 argument list, so a file or container name is never parsed by a shell. Inside a container, the probe script is a
