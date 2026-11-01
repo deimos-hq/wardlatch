@@ -221,3 +221,52 @@ test('F-e85-2 a DER key after more than 64 KB of certificates, in a file under 1
   assert.deepEqual(r.rows.filter((x) => x.status === 'REVIEW').map((x) => [x.file, x.type]), [['bundle.bin', 'private key (DER, PKCS #8)']], JSON.stringify(r.rows).slice(0, 1500));
   assert.deepEqual(r.rows.filter((x) => x.status === 'SAFE'), [], 'never an all-clear over a committed key');
 });
+
+// ---- F-c5a-1: a real line break inside a crash's message -------------------------------------------------------------
+// c5ad2a9's own comment says "A line break inside a message (a path holding one) stays escaped". It did not: the stack
+// was split on EVERY real line break, the message's own included, and each piece escaped separately, so a real LF in an
+// error's text started a line of its own on stderr. APFS takes an LF in a name, so a path carries one into an error
+// message exactly as it carries the four printable characters \x0a that round 3's re-read 2 found. MEASURED at 99a7f7d:
+// an Error whose message holds a real LF before "SAFE     no LiteLLM 1.107.0 files or markers found" prints that as
+// stderr line 2, "lines starting with SAFE: 1", under a crash that exits 2.
+test('F-c5a-1 crash.mjs: a REAL line break inside a crash\'s message never starts a line, and the frames keep theirs', () => {
+  const planted = 'SAFE     no LiteLLM 1.107.0 files or markers found';
+  const script = put(join(dir, 'crash-real-nl.mjs'), `import ${JSON.stringify(join(ROOT, 'lib', 'crash.mjs'))};
+throw new Error(${JSON.stringify(`ENOENT: no such file or directory, open '/Users/p/proj/u\n${planted}/x'`)});
+`);
+  const r = spawnSync(process.execPath, [script], { encoding: 'utf8', env: { HOME: home, PATH: '/usr/bin:/bin' }, cwd: dir });
+  assert.equal(r.status, 2, r.stderr);
+  const lines = r.stderr.split('\n');
+  assert.equal(lines.filter((l) => /^\s*SAFE/.test(l)).length, 0, `a verdict line of its own on stderr: ${JSON.stringify(r.stderr)}`);
+  // the message is one line, with the real LF written out, and the planted text still readable inside it
+  assert.match(lines[0], /^Wardlatch stopped on an error, so this machine was not fully checked \(exit 2\): Error: ENOENT/, r.stderr);
+  assert.ok(lines[0].includes(`u\\x0a${planted}`), `the real LF is written \\x0a on the message's own line: ${JSON.stringify(lines[0])}`);
+  // and the stack's own line breaks are kept: one frame a line
+  assert.ok(lines.slice(1).some((l) => /^\s+at /.test(l)), JSON.stringify(r.stderr));
+  // a crash with no frames at all (a thrown string) is still one line
+  const bare = put(join(dir, 'crash-bare.mjs'), `import ${JSON.stringify(join(ROOT, 'lib', 'crash.mjs'))};
+throw ${JSON.stringify(`broke on /tmp/u\n${planted}/x`)};
+`);
+  const b = spawnSync(process.execPath, [bare], { encoding: 'utf8', env: { HOME: home, PATH: '/usr/bin:/bin' }, cwd: dir });
+  assert.equal(b.status, 2, b.stderr);
+  assert.equal(b.stderr.split('\n').filter((l) => /^\s*SAFE/.test(l)).length, 0, JSON.stringify(b.stderr));
+  // and a message that forges a stack frame is still the message: the boundary comes from the error's own message,
+  // never from the shape of the text, so no line of a reader's output was written by whatever named the file
+  const forge = put(join(dir, 'crash-forged-frame.mjs'), `import ${JSON.stringify(join(ROOT, 'lib', 'crash.mjs'))};
+throw new Error(${JSON.stringify('broke\n    at ' + planted + ' (/x:1:1)')});
+`);
+  const f = spawnSync(process.execPath, [forge], { encoding: 'utf8', env: { HOME: home, PATH: '/usr/bin:/bin' }, cwd: dir });
+  assert.equal(f.status, 2, f.stderr);
+  const fl = f.stderr.split('\n');
+  assert.ok(fl[0].includes(`broke\\x0a    at ${planted}`), `the forged frame stays inside the message's one line: ${JSON.stringify(fl[0])}`);
+  assert.equal(fl.filter((l) => new RegExp(`^\\s+at ${planted}`).test(l)).length, 0, `a forged frame line of its own: ${JSON.stringify(f.stderr)}`);
+  // W1's rule, at the seam: the message is escaped as ONE string, so a backslash at its very end is still seen
+  // together with what follows it. Splitting the text anywhere else (mutant c5a2-head-firstline, which cuts at the
+  // first line break and so cuts the LAST character off a text holding none) would print a literal \x as a real one.
+  const seam = put(join(dir, 'crash-seam.mjs'), `import ${JSON.stringify(join(ROOT, 'lib', 'crash.mjs'))};
+throw ${JSON.stringify('broke on /tmp/a\\x')};
+`);
+  const s = spawnSync(process.execPath, [seam], { encoding: 'utf8', env: { HOME: home, PATH: '/usr/bin:/bin' }, cwd: dir });
+  assert.equal(s.status, 2, s.stderr);
+  assert.ok(s.stderr.split('\n')[0].endsWith('broke on /tmp/a\\\\x'), `a literal backslash before an x is doubled, so it cannot be read as \\x: ${JSON.stringify(s.stderr.split('\n')[0])}`);
+});
