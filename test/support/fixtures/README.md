@@ -46,3 +46,19 @@ through a summariser. Each key value in `lib/incidents/emudhra-2026-10.json`'s `
 these certificates twice, with LibreSSL 3.3.6 and with OpenSSL 4.0.3.
 
 sha256 `489d8e0e1632412a960cbf126e1f54f9aa287c6e40d4be6250cc2f3b3ec7525c`, 14 certificates.
+
+## `emudhra-2026-10-apple-ht149555.tsv`
+
+Apple's own published list of the twelve blocked eMudhra intermediates — fingerprint, name, issuer — with its
+source, the page's published date and the date it was read in the file's own header.
+
+**Why it is here.** `lib/incidents/emudhra-2026-10.json`'s `withdrawnKeys` and the PEM above are two copies of *one*
+reading: the chains the advisory's twelve test hosts served on 31 October 2026. A test that the two agree therefore
+proves only that they agree — the fixture was its own witness. This file is a second source for the same twelve, so
+`test/incidents.test.mjs` can check the fixture against something other than itself.
+
+**It is for comparison only.** These values came through a summariser rather than from raw bytes, which is the
+weakness INTEL's V58 named, so nothing derives a value from this file. Every key in the incident file is derived
+from certificate bytes three ways (LibreSSL 3.3.6, OpenSSL 4.0.3, node's `crypto`). A summariser can drop a row or
+mangle a digit; it cannot make a wrong value agree with bytes measured three other ways — and if Apple's list and
+our bytes ever disagree in a fingerprint, a name or an issuer, that test says which.
