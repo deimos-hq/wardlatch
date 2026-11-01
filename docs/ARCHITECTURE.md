@@ -138,8 +138,11 @@ at exit: 0 only after a SAFE line, 1 only after an EXPOSED one, any other status
 A network result never restores the backup. Restoring returns the withdrawn roots, so a revert a hostile network
 could trigger would leave the Mac that most needs the fix as the one Mac that can never have it. The command that
 restores it by hand (`Undo:   sudo cp -p '<backup>' '<file>'`) is printed under a SAFE result, whichever reading of the
-network that SAFE came from, and under a run stopped after the file was fixed; under EXPOSED, and under every UNKNOWN
-that follows a change, the line names the backup and what it holds and prints no command to restore it. On macOS every
+network that SAFE came from, and under a run stopped after the file was fixed; under EXPOSED, and under every other
+UNKNOWN that follows a change, the line names the backup and prints no command to restore it. It says what the backup
+holds under a test site still trusted, under a certificate refused after the change (curl 60) and when what landed
+couldn't be put right; under a network that stopped answering (curl 6, 7 or 28), any other curl code, and the restore
+after a mismatch (whose line says the Mac still trusts the compromised keys), it gives the backup's name alone. On macOS every
 exit prints a line starting SAFE, EXPOSED or UNKNOWN, from the script's first command on: its traps are set before any
 command but assignments and function definitions runs, on EXIT and on every signal whose default ends a process except
 the fault signals, and the line of a stopped run goes to the standard output the run started with, even while its
