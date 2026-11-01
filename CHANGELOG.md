@@ -747,6 +747,14 @@ These were found by the third read of 31 Oct 2026 (03d95c9), and each fix has a 
   and 15.8.2 shipped on 26 Oct 2026. Measured on macOS 27.2, its `/etc/ssl/cert.pem` still holds both withdrawn roots,
   byte-identical to the vendored fixture, so only "the newest" was stale; the text now names those releases and says
   that Apple says the file will be updated in a future macOS update. (7c0764b)
+- **The eMudhra incident file lacked its two roots' key hashes.** Each `distrustedRoots` entry in
+  `lib/incidents/emudhra-2026-10.json` now carries `spkiSha256`, the SHA-256 of the root's SubjectPublicKeyInfo
+  (AAA Certificate Services `bd153ed7…`, emSign ECC Root CA - G3 `8d417db2…`), re-derived from the incident's own
+  certificates with two `openssl` builds and checked by a test against them. Nothing in the command reads it yet: it
+  is data for the Mac fix and for whoever matches a root by its key. (6947e7b)
+- **The Mac fix's header said nothing read from its snapshot is taken on trust.** One reading is: the control before
+  the change goes through the snapshot, and nothing bears it out (section 4 of ASSURANCE_CASE.md already said so).
+  The header now names it. A comment, so only the digest changed, with CI's pin in the same commit. (202950c)
 
 ### Development (no code in the package changes)
 
