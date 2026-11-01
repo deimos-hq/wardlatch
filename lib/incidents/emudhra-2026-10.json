@@ -141,7 +141,7 @@
     "macos-system": "Apple blocks the compromised certificates for Safari and its own apps, which use Apple's trust layer rather than a file. That block arrives automatically as certificate configuration data, not in a software update, so there is nothing to install for this layer. Keep the system updated for everything else, but a macOS update does not fix /etc/ssl/cert.pem and can undo a fix already applied to it: we measured updates to 26.7.2 (27 Oct) and 27.2 (28 Oct) each put Apple's original file back with both withdrawn roots in it. Re-apply the file fix after a system update, and see the curl line for the tools that read that file.",
     "container": "This container's image has the old trust list. Rebuild it on a fixed base (docker build --pull --no-cache), or pull the maintainer's fixed image (docker compose pull && docker compose up -d). For an image nobody maintains, mount the host's fixed bundle read-only: www.deimoscore.com/wardlatch/#homelab"
   },
-  "notCovered": "Compiled programs carry the roots of the toolchain that built them: rebuild Go programs with Go 1.27.3 or 1.26.10; update Electron apps to 44.9.1, 43.8.1 or 42.11.16; Rust: rustls-webpki 0.103.16, webpki-roots 1.0.10. Browsers: Chrome, Edge, Firefox and Safari block the intermediates through their own updates; check yours at the advisory's #check page.",
+  "notCovered": "A compiled program does not pick this change up from the system, so it has to be rebuilt or replaced: rebuild Go programs with Go 1.27.3 or 1.26.10; update Electron apps to 44.9.1, 43.8.1 or 42.11.16; Rust: rustls-webpki 0.103.16, webpki-roots 1.0.10. Browsers: Chrome, Edge, Firefox and Safari block the intermediates through their own updates; check yours at the advisory's #check page.",
   "type": "trust",
   "binaries": [
     {
@@ -161,7 +161,7 @@
         "1.26.10",
         "1.27.3"
       ],
-      "fix": "Upgrade Go to 1.27.3 or 1.26.10, then rebuild and redeploy every program built with it: a Go program carries the roots of the Go that built it."
+      "fix": "Upgrade Go to 1.27.3 or 1.26.10, then rebuild and redeploy every program built with it. A Go program reads its trust list at run time, from the operating system's store (and on macOS through Apple's verifier), rather than carrying one from the toolchain. What the toolchain does compile in is the refusal of these intermediates, which is why a rebuild is needed: Go 1.27.3 and 1.26.10 add that refusal in crypto/x509, and a program built by an older Go keeps accepting them however up to date the system store is."
     }
   ]
 }
