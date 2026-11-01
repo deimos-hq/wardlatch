@@ -409,3 +409,67 @@ test('SN-1: a folded package-folder name is treated as a package folder by the w
   const r2 = json([...LITELLM, '--paths', sp]);
   assert.deepEqual(exposedIn(r2, sp), ['cook.pth', 'litellm-1.107.0.dist-info'], JSON.stringify(r2.rows).slice(0, 900));
 });
+
+// ---- the branches the first mutant batch found held by nothing (round 5's own mutants) -------------------------------
+// M09/M10: venvOfPackages() reads venvPackages()'s rule backwards, and the walks reach it two ways the tests above do
+// not: `--paths <the package folder itself>` (RR-5) and the walk meeting a package folder before its venv. Both
+// compared the name exactly, so a folded spelling was not that venv's package folder there.
+test('SN-1: the package folder itself, under a spelling this disk folds, names its environment (venvOfPackages)', async (t) => {
+  if (!caseBlind()) return t.skip('this volume is case-sensitive');
+  const { venvOfPackages } = await files();
+  let i = 0;
+  for (const [lib, site] of [['lib', 'Site-Packages'], ['LIB', 'site-packages'], ['lib', 'SITE-PACKAGES'], ['Lib', 'Site-Packages']]) {
+    const env = join(fresh(`vop-${i++}`), '.venv');
+    const sp = litellmVenv(env, `${lib}/python3.12/${site}`);
+    assert.equal(venvOfPackages(sp), env, `${lib}/${site}: not read back as that venv's package folder`);
+    // and through the CLI, with the package folder itself named: the environment is checked
+    const r = json([...LITELLM, '--paths', sp]);
+    assert.deepEqual(exposedIn(r, sp), ['cook.pth', 'litellm-1.107.0.dist-info'], `${lib}/${site}: ${JSON.stringify(r.rows).slice(0, 900)}`);
+  }
+});
+test('SN-1: a venv\'s package folder one level up, under a folded spelling, names its environment (<venv>/Lib/site-packages)', async (t) => {
+  if (!caseBlind()) return t.skip('this volume is case-sensitive');
+  const { venvOfPackages } = await files();
+  let i = 0;
+  for (const [lib, site] of [['LIB', 'site-packages'], ['lib', 'Site-Packages'], ['LIB64', 'SITE-PACKAGES']]) {
+    const env = join(fresh(`vop2-${i++}`), '.venv');
+    const sp = litellmVenv(env, `${lib}/${site}`);
+    assert.equal(venvOfPackages(sp), env, `${lib}/${site}: not read back as that venv's package folder`);
+    const r = json([...LITELLM, '--paths', sp]);
+    assert.deepEqual(exposedIn(r, sp), ['cook.pth', 'litellm-1.107.0.dist-info'], `${lib}/${site}: ${JSON.stringify(r.rows).slice(0, 900)}`);
+  }
+});
+
+// ---- two guards: real properties, neither of which bites the mutant it was written for -------------------------------
+// Both were written to catch a surviving round-5 mutant and do not: M11 (onlyChecked()'s leaf rule compared the name
+// exactly) and M08 (onward() returning true for anything that is not a plain file) give the same output on every shape
+// I could build. They are kept because each holds a property worth holding, and the two mutants are reported as
+// SURVIVED rather than disguised as caught.
+test('a venv at the depth floor whose package folder is spelt in a folded way makes no depth-limit row', (t) => {
+  if (!caseBlind()) return t.skip('this volume is case-sensitive');
+  let i = 0;
+  for (const site of ['site-packages', 'Site-Packages', 'SITE-PACKAGES']) {
+    // five levels is the walk's floor, so the venv is met exactly there and its packages were checked
+    const root = fresh(`floor-${i++}`);
+    const env = join(root, 'a', 'b', 'c', 'd', '.venv');
+    const sp = litellmVenv(env, `lib/python3.12/${site}`);
+    const r = json([...LITELLM, '--paths', root]);
+    assert.deepEqual(exposedIn(r, sp), ['cook.pth', 'litellm-1.107.0.dist-info'], `${site}: ${JSON.stringify(r.rows).slice(0, 900)}`);
+    const depthRows = r.rows.filter((x) => x.status === 'UNKNOWN' && /level|deep/i.test(`${x.what ?? ''}${x.reason ?? ''}`));
+    assert.deepEqual(depthRows, [], `${site}: a depth-limit row for a venv whose packages were checked: ${JSON.stringify(depthRows).slice(0, 600)}`);
+  }
+});
+test('a FIFO in a venv\'s lib does not stop its packages being found, and makes no row of its own', (t) => {
+  const which = ['/usr/bin/mkfifo', '/usr/sbin/mkfifo'].find((p) => existsSync(p));
+  if (!which) return t.skip('no mkfifo on this machine');
+  const parent = fresh('fifo-lib');
+  const env = join(parent, '.venv');
+  const sp = litellmVenv(env);
+  const fifo = join(env, 'lib', 'python3.99');
+  if (spawnSync(which, [fifo], { encoding: 'utf8' }).status !== 0) return t.skip('mkfifo could not make one here');
+  const r = json([...LITELLM, '--paths', parent]);
+  assert.deepEqual(exposedIn(r, sp), ['cook.pth', 'litellm-1.107.0.dist-info'], JSON.stringify(r.rows).slice(0, 900));
+  const about = r.rows.filter((x) => JSON.stringify(x).includes('python3.99'));
+  assert.deepEqual(about, [], `a FIFO in a venv's lib made a row: ${JSON.stringify(about).slice(0, 600)}`);
+  assert.equal(r.code, 1, `exit ${r.code}: ${JSON.stringify(r.rows).slice(0, 600)}`);
+});
