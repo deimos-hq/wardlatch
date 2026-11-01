@@ -400,7 +400,7 @@ and an attacker's reading of the specification. Each fix below has a test that f
   ("a certificate with the key of AAA Certificate Services"); "removed both withdrawn roots" alone is printed only when
   the file held each root once and nothing else with their keys. The SHA-256 of each key is in the script's comment
   (AAA Certificate Services `bd153ed7…`, emSign ECC Root CA - G3 `8d417db2…`). *Found and fixed 31 Oct 2026
-  (69eef90).*
+  (69eef90).* (It compared the key as written, so the same key stored another way stayed: below.)
 - **A process running as the same user could still land its own root in the file under SAFE.** 5a0c8ff (above) took
   the cleaned file's SHA-256 from the rebuild, but every check, the list of certificates to remove and the rebuild
   itself still came from the snapshot in the user's temporary folder, and nothing tied them to the file being
@@ -413,7 +413,8 @@ and an attacker's reading of the specification. Each fix below has a test that f
   UNKNOWN, exit 2, nothing replaced. (Judged, and left open: the control read before the change still goes through the
   snapshot, so such a process could make it fail, which turns the one reading about the change into SAFE "Fixed in the
   file … nothing was re-tested online". The file is fixed and checked in that case.) *Found and fixed 31 Oct 2026
-  (5bf2a64).*
+  (5bf2a64).* (Not quite everything: the removal list was not shown complete, and the line under the 50-certificate
+  floor came from the snapshot alone: below.)
 - **"Compared again immediately before the replacement" was about 0.6 seconds before it.** f9b8cc6 (above) compared
   the file with the snapshot before `replace()`, which then made the new file and fingerprinted every certificate in
   it again (126 `openssl` calls, measured at 0.6 s) before the rename. A change to the bundle in that time — another
@@ -439,6 +440,7 @@ and an attacker's reading of the specification. Each fix below has a test that f
   and those signals are ignored once the last reading is in and during the cleanup. Each was measured with a stand-in
   that holds the moment open; in a real run the first and the third are milliseconds wide. A signal no program can
   catch (`SIGKILL`) still ends it with no line. *Found and fixed 31 Oct 2026 (e21b233, d42fed9, d0f9297).*
+  (USR1, ALRM and XCPU, and a signal while the cleaned file was written, also ended it with no line: below.)
 - **Names from the disk could carry hidden characters into the output, in text and in `--json`.** The escaper wrote
   out C0 and C1 control characters and nothing else, and `--json` escaped DEL and C1 only. A folder name holding
   U+2028 starts a line of its own in many renderers and in a language model reading the output, U+202E reverses what
@@ -449,7 +451,7 @@ and an attacker's reading of the specification. Each fix below has a test that f
   and Zp and the whole tag block, in the text output, `--list` and the version line; in `--json` every `reason` is
   escaped the same way, and every other string keeps its real value with those characters written as JSON escapes.
   It makes the hidden visible; it cannot make a planted sentence in plain letters untrue. *Found and fixed 31 Oct 2026
-  (688433f).*
+  (688433f).* (Default-ignorable characters outside those categories, and U+2800, still passed: below.)
 - **A venv given with `--paths` hid every venv inside it, and a folder or a link named `site-packages` stopped the
   walk.** d4d4c71 (above) probed a `--paths` folder that is a virtual environment *instead of* walking it, so a
   project made with `python3 -m venv .` holding `services/api/.venv`, whose bundle trusts the compromised roots, read
@@ -461,7 +463,8 @@ and an attacker's reading of the specification. Each fix below has a test that f
   `Scripts`, `include`, `Include`, `lib`, `lib64`, `Lib`, `share`, `etc`), which are checked with it and named on the
   line under every result that rests on the walk; a venv's own `site-packages` checks its venv; any other folder of
   that name is walked like any folder, and a link of that name is a link not followed. *Found and fixed 31 Oct 2026
-  (471a4ea).*
+  (471a4ea).* ("Checked with it" was untrue: nothing in `bin`, `share` or `etc` was read, and a PyPy or
+  Windows-layout venv's packages were never found: below.)
 - **A PKCS #12 store in BER, a DER key with one byte after it, and a key after a certificate were skipped with no
   row.** eb357ff (above) refused an indefinite length and allowed only line ends after the element, so such a file,
   under a name that isn't a text file's, read "SAFE no committed keys found". LibreSSL 3.3.6 and OpenSSL 4.0.3 read the
@@ -473,6 +476,7 @@ and an attacker's reading of the specification. Each fix below has a test that f
   3.8 ms; its test fails on the commit before c6a9600, and passes on 03d95c9, which never read past a certificate). A
   test now also holds the key check on git's copy of a tracked file deleted from the working tree, which a
   planted change could remove with every test green. *Found and fixed 31 Oct 2026 (5bf562b, c6a9600).*
+  (Not past a 1 MB cap: below.)
 - **A listed plugin's own folder without its main file, and a Bedrock checkout with no core, read SAFE.** A `--paths`
   folder named as a listed plugin was checked only when the plugin's main file was in it, so a backdoored Rank Math
   PRO folder whose `rank-math-pro.php` was gone, with `inc/loader.php` still carrying the indicator, read "SAFE no
