@@ -7,8 +7,8 @@
 import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, mkdirSync, mkdtempSync, rmSync, realpathSync, statSync, chmodSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { writeFileSync, readFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, realpathSync, statSync, chmodSync } from 'node:fs';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -267,4 +267,81 @@ test('SN-2 control: a venv with one bundle still has one row, naming the environ
   assert.equal(labels.length, 1, JSON.stringify(labels));
   assert.ok(labels[0].endsWith(env), `the row does not name the environment: ${labels[0]}`);
   assert.ok(!labels[0].includes(basename((await files()).SITE_NAMES[0])), `the row names a package folder where the venv has only one bundle: ${labels[0]}`);
+});
+
+// ---- B-e85-1: a DER store whose own outer element is longer than the bytes read (strict audit, BLOCKER) --------------
+// e85a3ef gave derKind() the first 1 MB of a file so that a key followed by more than a megabyte of other bytes is
+// still found. A store whose OWN outer element is longer than 1 MB was still skipped, with no row: derAt() refuses an
+// element whose declared length runs past the buffer. MEASURED at 99a7f7d (p12-probe.sh, 1 Nov 2026): a 1,866,487-byte
+// PKCS #12 holding one RSA key, which `openssl pkcs12 -nocerts -nodes` reads the key out of, read "SAFE no committed
+// keys found in the files of 1 local repository", exit 0.
+const KEYS = ['--incident', 'committed-keys-2026-10'];
+/** A git repository at `path` with `files` ({ name: Buffer|string }) committed. */
+function repoWith(path, files) {
+  mkdirSync(path, { recursive: true });
+  const g = (...a) => execFileSync('git', ['-C', path, '-c', 'commit.gpgsign=false', ...a], { stdio: 'pipe', env: { PATH: '/usr/bin:/bin', HOME: home, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.invalid', GIT_AUTHOR_DATE: '2026-10-20T12:00:00Z', GIT_COMMITTER_DATE: '2026-10-20T12:00:00Z' } });
+  g('init', '-q', '-b', 'main');
+  for (const [name, body] of Object.entries(files)) put(join(path, name), body);
+  g('add', '-A'); g('commit', '-qm', 'add');
+  return { path, g };
+}
+/** One DER element: tag, a length in the shortest form that fits, and `body` (or a `declared` length of it). */
+function tlv(tag, body, declared = body.length) {
+  let len;
+  if (declared < 0x80) len = Buffer.from([declared]);
+  else { const b = []; for (let v = declared; v > 0; v = Math.floor(v / 256)) b.unshift(v % 256); len = Buffer.from([0x80 | b.length, ...b]); }
+  return Buffer.concat([Buffer.from([tag]), len, body]);
+}
+const SEQ_TAG = 0x30, INT_TAG = 0x02, OCTETS_TAG = 0x04;
+const PKCS7_DATA_OID = Buffer.from([0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01]);
+/** A PKCS #12 key store's shape, `fill` bytes inside: SEQ { INT 3, SEQ { OID pkcs7-data, OCTET STRING } }. */
+function p12Shape(fill) {
+  const content = Buffer.concat([PKCS7_DATA_OID, tlv(OCTETS_TAG, Buffer.alloc(fill, 0x41))]);
+  return tlv(SEQ_TAG, Buffer.concat([tlv(INT_TAG, Buffer.from([3])), tlv(SEQ_TAG, content)]));
+}
+/** A DER SEQUENCE of no shape Wardlatch knows, `fill` bytes inside. */
+const unknownDer = (fill) => tlv(SEQ_TAG, Buffer.concat([tlv(INT_TAG, Buffer.from([7])), Buffer.alloc(fill, 0x42)]));
+
+test('B-e85-1: a PKCS #12 key store whose outer element is longer than the bytes read is a finding, not an all-clear', () => {
+  const big = p12Shape(1_500_000);
+  assert.ok(big.length > 1024 * 1024, `the specimen must be over the 1 MB cap to prove anything: ${big.length}`);
+  const r = json([...KEYS, '--paths', repoWith(fresh('e85-p12-big'), { 'keystore.bin': big }).path]);
+  assert.ok(!r.rows.some((x) => x.status === 'SAFE'), `an all-clear over a ${big.length}-byte key store: ${JSON.stringify(r.rows).slice(0, 900)}`);
+  assert.ok(JSON.stringify(r.rows).includes('PKCS #12 key store'), `the store is not named: ${JSON.stringify(r.rows).slice(0, 900)}`);
+});
+// The control: the same shape UNDER the cap already read as a key store by the ordinary path, so the test above cannot
+// pass by calling everything a key store, and the cap's own value is held (a 64 KB cap would send this one the new way).
+test('B-e85-1 control: the same shape under the cap still reads as a key store, by the ordinary path', () => {
+  const small = p12Shape(2000);
+  assert.ok(small.length < 1024 * 1024);
+  const r = json([...KEYS, '--paths', repoWith(fresh('e85-p12-small'), { 'keystore.bin': small }).path]);
+  assert.ok(!r.rows.some((x) => x.status === 'SAFE'), JSON.stringify(r.rows).slice(0, 700));
+  assert.ok(JSON.stringify(r.rows).includes('PKCS #12 key store'), JSON.stringify(r.rows).slice(0, 700));
+  assert.ok(!JSON.stringify(r.rows).includes('longer than the'), `the small store took the not-read path: ${JSON.stringify(r.rows).slice(0, 700)}`);
+});
+test('B-e85-1: DER over the cap that cannot be named from its head is UNKNOWN, exit 2, never part of an all-clear', () => {
+  const r = json([...KEYS, '--paths', repoWith(fresh('e85-der-unknown'), { 'keystore.bin': unknownDer(1_500_000) }).path]);
+  assert.equal(r.code, 2, `exit ${r.code}, wanted 2: ${JSON.stringify(r.rows).slice(0, 900)}`);
+  assert.ok(r.rows.some((x) => x.status === 'UNKNOWN'), JSON.stringify(r.rows).slice(0, 900));
+  assert.ok(!r.rows.some((x) => x.status === 'SAFE'), `an all-clear beside a file that was not read: ${JSON.stringify(r.rows).slice(0, 900)}`);
+  assert.ok(JSON.stringify(r.rows).includes('longer than the 1 MB read'), JSON.stringify(r.rows).slice(0, 900));
+});
+// And a real store, built by this machine's openssl and read back by it: the receipt that the shape above is the shape
+// of a file a private key can be taken out of.
+test('B-e85-1: a real openssl PKCS #12 over the cap, whose key openssl reads back, is a finding', (t) => {
+  const ssl = '/usr/bin/openssl';
+  if (!existsSync(ssl)) return t.skip('no /usr/bin/openssl on this machine');
+  const w = fresh('e85-p12-real');
+  const run = (...a) => spawnSync(ssl, a, { env: { PATH: '/usr/bin:/bin', HOME: home }, encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 });
+  if (run('req', '-x509', '-newkey', 'rsa:2048', '-keyout', join(w, 'k.pem'), '-out', join(w, 'c.pem'), '-days', '2', '-nodes', '-subj', '/CN=probe').status !== 0) return t.skip('openssl could not make a key pair here');
+  const chain = join(w, 'chain.pem');
+  writeFileSync(chain, Buffer.concat(Array.from({ length: 2600 }, () => readFileSync(join(w, 'c.pem')))));
+  if (run('pkcs12', '-export', '-inkey', join(w, 'k.pem'), '-in', join(w, 'c.pem'), '-certfile', chain, '-passout', 'pass:', '-out', join(w, 'keystore.bin')).status !== 0) return t.skip('openssl could not make a PKCS #12 here');
+  const body = readFileSync(join(w, 'keystore.bin'));
+  assert.ok(body.length > 1024 * 1024, `the store must be over the cap: ${body.length}`);
+  const back = run('pkcs12', '-in', join(w, 'keystore.bin'), '-nocerts', '-nodes', '-passin', 'pass:');
+  assert.ok(String(back.stdout).includes('PRIVATE KEY'), 'openssl cannot read a key out of this store, so it proves nothing');
+  const r = json([...KEYS, '--paths', repoWith(fresh('e85-p12-real-repo'), { 'keystore.bin': body }).path]);
+  assert.ok(!r.rows.some((x) => x.status === 'SAFE'), `an all-clear over a ${body.length}-byte store openssl reads a key out of: ${JSON.stringify(r.rows).slice(0, 900)}`);
+  assert.ok(JSON.stringify(r.rows).includes('PKCS #12 key store'), JSON.stringify(r.rows).slice(0, 900));
 });
