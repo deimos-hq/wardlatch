@@ -95,30 +95,37 @@ Probes per runtime:
 ## The Mac fix
 
 `fix/fix-macos.sh` makes the advisory's change to `/etc/ssl/cert.pem` (removing the two roots, identified by their
-SHA-256 fingerprints since 0.1.10, and since 31 Oct 2026 any other certificate carrying either root's public key) and
-adds checks around it:
+SHA-256 fingerprints since 0.1.10, and since 31 Oct 2026 any other certificate carrying either root's public key, in
+whatever encoding the certificate stores it) and adds checks around it:
 
 ```
 keep the standard output it started with as descriptor 3 (closed? ──> exit 2, no line), then set the traps (EXIT;
   HUP, INT, QUIT, TERM, ABRT, PIPE, ALRM, XCPU, XFSZ, VTALRM, PROF, USR1, USR2) before any other command runs
-refuse if not macOS, a symbolic link (printing the command for the file it points to), or missing  ──> exit 2
+refuse if not macOS, a symbolic link (printing the command for the file it points to when that name is plain: letters,
+  digits, spaces and / . _ + @ , : = ~ % -; otherwise saying it holds characters this doesn't print), or missing
+                                                                                ──> exit 2
 snapshot the file (mktemp in $TMPDIR, cp): a copy that can't be written is told apart from a file that can't be read
 refuse a line where -----BEGIN comes after other text, a block that isn't a plain certificate, a certificate that
   can't be read for its fingerprint and its key, or fewer read than certificates counted (the completeness gate)
                                                                                 ──> exit 2, nothing changed
-find each withdrawn root by its fingerprint, and any other certificate carrying one's key
-< 50 certificates?  ──> the count, and whether a withdrawn root is in it, exit 2, nothing changed
+find each withdrawn root by its fingerprint, and any other certificate carrying one's key, compared as openssl decodes
+  it (an EC key's X coordinate, an RSA key's modulus), so every encoding of the key matches
+< 50 certificates?  ──> read the file itself again ──> the count, and whether a withdrawn root is in it (or that the
+  file doesn't read as the copy did), exit 2, nothing changed
 no withdrawn root?  ──> read the file itself again ──> control, then re-test online ──> SAFE (or EXPOSED if it still
   trusts) ──> nothing changed
 build the cleaned file (each one's block and the empty line after it; a root's name lines only when they are exactly
   what this Mac's openssl prints for it); its SHA-256 taken from the rebuild itself
   check: no withdrawn root left, count = before − removed        else exit 2, nothing changed
-control: /usr/bin/curl against an ordinary website ($CONTROL_URL, www.apple.com), through the file as it is
+control: /usr/bin/curl against an ordinary website ($CONTROL_URL, www.apple.com), through the snapshot (the one reading
+  of it nothing bears out)
 sudo -v, on its own (where the interactive run asks for the password)
 backup: mktemp beside the file ──> cp ──> compare with the snapshot ──> link to the dated name (never overwrites one)
-checkbackup: the backup has the snapshot's SHA-256, holds each certificate to be removed as it was found, and cleaned
-  the same way gives the cleaned file's SHA-256                                 else exit 2, nothing replaced
-replace(): mktemp beside the file ──> cp ──> chmod 644 ──> check it there (SHA-256, count, fingerprints)
+checkbackup: the backup has the snapshot's SHA-256, reads exactly as the snapshot did (every certificate read, the same
+  withdrawn roots and key copies at the same places, the same count), and cleaned the same way gives the cleaned
+  file's SHA-256                                                                 else exit 2, nothing replaced
+replace(): mktemp beside the file ──> tee, its input opened by this run's own shell (root opens no path in $TMPDIR)
+  ──> chmod 644 ──> check it there (SHA-256, count, fingerprints)
   ──> compare the file with the snapshot again (else exit 2, nothing replaced) ──> rename
 a privileged step that fails ──> exit 2, and the line gives its own words (sudo's included)
 is the file now byte for byte the file we built (SHA-256)?

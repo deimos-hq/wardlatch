@@ -128,25 +128,32 @@ checked against an allowlist before anything runs. `package.json` declares no de
 built-ins and the project's files, no `dependencies`); `test/cli.test.mjs` (unknown options refused).
 
 **R7, the Mac fix: boundary B6.** The script works on a snapshot of the file. It finds the two roots by their SHA-256
-fingerprints, and any other certificate by either root's public key (a copy with a bit changed, or a root re-issued
-with the same key, which LibreSSL, OpenSSL and Apple's `python3` still trust), and refuses a file it can't fully
-check: a line where `-----BEGIN` comes after other text (LibreSSL starts a certificate at such a marker when it falls
-at byte 253, 506, … of the line), a certificate it can't read for its fingerprint and key, a block that isn't a plain
-certificate, or fewer read than certificates counted (the completeness gate, so a check that fails without saying so
-counts as a failure). It refuses a symbolic link, printing the command that fixes the file the link points to. It
-won't rebuild a file of fewer than 50 certificates: one holding neither withdrawn root is reported with its count and
-nothing to remove, one still holding a root is refused, and neither is told to restore anything. A file it finds
-clean is read again from the file itself before it says so. It builds the cleaned file, removing only each withdrawn
-root's own lines (its block, the one empty line after it, and its name lines only when they are exactly what this
-Mac's `openssl` prints for it), and checks it: no withdrawn root left, and exactly the count before less the
-certificates removed. It reads an ordinary website through the file as it is (the control), asks `sudo` for the
-privilege on its own, copies the file to a new name beside it, compares that copy with the snapshot, and only then
-links it to a dated backup name that nothing may already hold. The snapshot is in the user's temporary folder, where
-anything running as the user can change it, so the backup, beside the file where only its owner can change it, must
-then bear out everything read from the snapshot: the snapshot's SHA-256, each certificate to be removed as it was
-found, and the cleaned file's SHA-256 when cleaned the same way. Every write to the file goes through `replace()`: a
-new file made by `mktemp` beside `/etc/ssl/cert.pem`, checked there (its SHA-256 the cleaned file's, and the count and
-fingerprint checks again), set to 644 and, on the forward write, renamed over the old one only after the file is
+fingerprints, and any other certificate by either root's public key, compared as `openssl` decodes it (an EC key's X
+coordinate, an RSA key's modulus) so that every encoding of the key matches: a copy with a bit changed or a root
+re-issued with the same key, which LibreSSL, OpenSSL and Apple's `python3` still trust, and the same key stored another
+way (an EC point compressed or hybrid, explicit curve parameters, an RSA key labelled RSA-PSS), which LibreSSL and
+`/usr/bin/curl` trust. It refuses a file it can't fully check: a line where `-----BEGIN` comes after other text
+(LibreSSL starts a certificate at such a marker when it falls at byte 253, 506, … of the line), a certificate it can't
+read for its fingerprint and key (a key `openssl` can't decode included), a block that isn't a plain certificate, or
+fewer read than certificates counted (the completeness gate, so a check that fails without saying so counts as a
+failure). It refuses a symbolic link, printing the command that fixes the file the link points to when that file's
+name is plain, and otherwise saying the name holds characters it doesn't print. It won't rebuild a file of fewer than
+50 certificates: the file itself is read again, one holding neither withdrawn root is reported with its count and
+nothing to remove, one still holding a root is refused, one that doesn't read as the copy did is reported as that, and
+none is told to restore anything. A file it finds clean is read again from the file itself before it says so. It
+builds the cleaned file, removing only each withdrawn root's own lines (its block, the one empty line after it, and its
+name lines only when they are exactly what this Mac's `openssl` prints for it), and checks it: no withdrawn root left,
+and exactly the count before less the certificates removed. It reads an ordinary website through the snapshot (the
+control), asks `sudo` for the privilege on its own, copies the file to a new name beside it, compares that copy with
+the snapshot, and only then links it to a dated backup name that nothing may already hold. The snapshot is in the
+user's temporary folder, where anything running as the user can change it, so the backup, beside the file where only
+its owner can change it, must then bear out what was read from the snapshot: the snapshot's SHA-256, the whole reading
+made again (every certificate read, the same withdrawn roots and key copies at the same places, the same count), and
+the cleaned file's SHA-256 when cleaned the same way. The one reading it does not bear out is the control (section 4).
+Every write to the file goes through `replace()`: a new file made by `mktemp` beside `/etc/ssl/cert.pem` and written by
+`tee` from input this run's own shell opens, as the user, so root never opens a path in the user's temporary folder;
+checked there (its SHA-256 the cleaned file's, and the count and fingerprint checks again), set to 644 and, on the
+forward write, renamed over the old one only after the file is
 compared with the snapshot once more, immediately before the rename, so a change made while it ran stops it unless it
 lands in the moment between that comparison and the rename. A rename is one step, so an interruption leaves the old
 file or the new one and never half of either. A privileged step that fails is reported in its own words, sudo's
@@ -476,10 +483,14 @@ fetches.
 **What the Mac fix still cannot see** (judged, not measured). A change to the file in the moment between its last
 comparison with the snapshot and the rename is lost from the file and is in the backup neither. The control read
 before the change goes through the snapshot in the user's temporary folder, so a process running as the user can make
-it fail, which turns the one reading about the change (UNKNOWN, a certificate refused after it) into SAFE "Fixed in
-the file … nothing was re-tested online"; the file is fixed and checked in that case. And on an older macOS whose
+it fail, which turns an UNKNOWN after the change (a certificate refused, or a network that stopped answering) into SAFE
+"Fixed in the file … nothing was re-tested online"; the file is fixed and checked in that case. On an older macOS whose
 `openssl` prints a withdrawn root's entry differently from the text in that Mac's file, the entry's text lines stay
-and only the certificate goes: no withdrawn root is left, and its name is still readable in the file.
+and only the certificate goes: no withdrawn root is left, and its name is still readable in the file. When
+`WARDLATCH_CERT_FILE` names a file the user can't write in a folder the user can, root's `mktemp`, `tee`, `chmod` and
+`mv` work in a folder that user controls and can race (not the default `/etc/ssl`, which only root can write). The
+file `WARDLATCH_CERT_FILE` names is printed as given, since whoever runs the fix chose it; only a link's target is held
+to the plain-name rule. A fault signal raised inside bash, or SIGKILL, ends a run with no line (R7).
 
 **Releases 0.1.0 to 0.1.2 are not signed by the project**, and there is one maintainer and no second reviewer. A named
 successor has held admin access to the repository and co-owned the npm package since 21 October 2026, but has not yet

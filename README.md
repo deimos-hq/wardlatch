@@ -76,8 +76,9 @@ rebuild them with. Check your browser on the advisory's own page.
 ## The Mac fix
 
 `fix/fix-macos.sh` removes the two roots tied to the compromised eMudhra keys from `/etc/ssl/cert.pem` (the advisory's
-change), and any other certificate carrying either root's key, with checks around it: a file it can't fully check is
-refused unchanged, no change on a fixed Mac, a dated backup it never overwrites, a check of the new file
+change), and any other certificate carrying either root's key in whatever encoding (a copy with a bit changed, a root
+re-issued with the same key, an EC point stored compressed, a key relabelled), with checks around it: a file it can't
+fully check is refused unchanged, no change on a fixed Mac, a dated backup it never overwrites, a check of the new file
 before it replaces the old one, a check that what landed in the file is what it built — the one thing that makes it
 put the original back — and a re-test it only reads when an ordinary website loads as a control, which reports and
 never reverts. Download it in Safari from
@@ -90,7 +91,9 @@ and ABRT, PIPE, XFSZ, VTALRM, PROF, USR1 and USR2. A fault signal (ILL, TRAP, EM
 ends it with no line, and a run whose standard output is closed, or whose line can't be written (a log on a full
 volume), ends with exit 2 and no line to read. If `/etc/ssl/cert.pem` is a
 symbolic link, it changes nothing and prints the command that fixes the file the link points to instead:
-`WARDLATCH_CERT_FILE='<that file>' bash '<the script>'`.
+`WARDLATCH_CERT_FILE='<that file>' bash '<the script>'`. It prints that command only when the file's name is plain
+(letters, digits, spaces and `/ . _ + @ , : = ~ % -`); otherwise it says the name holds characters it doesn't print,
+and to set `WARDLATCH_CERT_FILE` to that file once you have checked its name.
 
 ## Privacy
 
