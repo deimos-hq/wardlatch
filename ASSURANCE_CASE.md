@@ -184,18 +184,21 @@ after an EXPOSED one: a run whose standard output is closed, or whose line can't
 nothing on a Mac that is already clean, so running it twice is safe.
 *Evidence:* `test/fix-macos.check.sh` runs the script on copies of a vendored, unfixed macOS 27.2 bundle
 (`test/support/fixtures/macos-27.2-cert.pem`), so its result doesn't depend on whether the machine running it is fixed.
-It runs 76 cases, and prints and checks the count, and that every case counted as run printed its `ok` line, so a
+It runs 94 cases, and prints and checks the count, and that every case counted as run printed its `ok` line, so a
 case that stops running can't pass as silence; one of them, `heredoc-trigger`, applies a sandbox profile of its own
 and, when the harness itself runs inside a sandbox (`WL_NESTED_SANDBOX=1`), is named as not run instead of being
 counted, as is the unreadable-file case when the harness runs as root, which can read a file of mode 000. The cases
 cover the first run, a second run, undo from the backup, empty, truncated, small, unreadable and missing files, a
-symbolic link and the refusal off macOS; a withdrawn root hidden after other text on a line, under another PEM label,
-and as a copy with the same key; copies of the script whose one network command is a stub (a network that accepts
-everything, one where nothing answers, a control that loads before the change but not after, a network that stops
-answering after it, a silent test site); interrupts, from before the first command to after the verdict, and failed
-writes at each step, a later `sudo` refusal among them; the file changing while the script runs, the new file being
-made included; the snapshot swapped by a same-user process; an administrator's lines around a withdrawn root; the
-dated backup's two guards; and what the script prints. `test/support/mojave-shapes.sh` runs five bundle shapes offline, the one-root shapes of Mojave-era Macs among them. CI runs both on macOS,
+symbolic link and the refusal off macOS, a link target whose name isn't plain among them; a withdrawn root hidden after
+other text on a line (in a UTF-8 locale too), under another PEM label, and as a copy with the same key, its key stored
+in each other encoding or not decodable; copies of the script whose one network command is a stub (a network that
+accepts everything, one where nothing answers, a control that loads before the change but not after, a network that
+stops answering after it, a silent test site); interrupts, from before the first command to after the verdict, by
+every signal it traps and while the cleaned file is written, and failed writes at each step, a later `sudo` refusal
+and a standard output that can't be written among them; the file changing while the script runs, the new file being
+made and checked included; the snapshot swapped by a same-user process, again after the backup is linked, for a small
+bundle, or to hide a root from its reads; root never given a path in the user's temporary folder; an administrator's
+lines around a withdrawn root; the dated backup's two guards; and what the script prints. `test/support/mojave-shapes.sh` runs five bundle shapes offline, the one-root shapes of Mojave-era Macs among them. CI runs both on macOS,
 and fails if the script stops matching the SHA-256 published with the download, so the file people run is the file
 that was tested.
 

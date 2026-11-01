@@ -213,7 +213,7 @@ SECURITY.md promises for them are not open yet; the release that ships them stat
   wording satisfied while telling the reader a file holding neither root looked damaged and sending them to a backup
   holding both. It now also asserts the count is named, that the file holds neither root, and that the output does
   not say "looks damaged", does not name a backup, and does not print SAFE. That took the harness from 27 cases to
-  29; it ran 60 at 03d95c9 (31 Oct 2026), and runs 76 after the third read of that day (below). *Found and fixed 30
+  29; it ran 60 at 03d95c9 (31 Oct 2026), 76 after the third read of that day, and runs 94 after the fourth (below). *Found and fixed 30
   Oct 2026 (ab95c59).*
 
 The rest of this section was found by an independent read of this release as it stood on 30 Oct (da8f5c2): five
@@ -560,7 +560,7 @@ and an attacker's reading of the specification. Each fix below has a test that f
   `test/support/mojave-shapes.sh` was moved to in this same release for the same reason; a bundle holding neither
   withdrawn root is a failure rather than a NOTE, every case counts itself, and the run prints and checks the
   total, so a case that stops running cannot pass as silence. It counted 20 cases when this landed, 60 at 03d95c9 (31
-  Oct 2026), and 76 after the third read of that day (below).
+  Oct 2026), 76 after the third read of that day, and 94 after the fourth (below).
 - **"Something other than this file is trusting the compromised keys" misdiagnosed the two likeliest causes.** When
   the fix has removed both roots and the advisory's test host is still trusted, two ordinary things look exactly
   like that: a TLS-inspecting proxy's own root added to the certificate file, which makes the proxy sign everything
@@ -684,7 +684,7 @@ These were found by the third read of 31 Oct 2026 (03d95c9), and each fix has a 
 ### Development (no code in the package changes)
 
 - **`test/fix-macos.check.sh` ran 60 cases at 03d95c9 (31 Oct 2026), where it ran 29** (76 after the third read of
-  that day: below). Thirty new cases for what the independent read found in the Mac fix, and one for `strays()`;
+  that day, and 94 after the fourth: below). Thirty new cases for what the independent read found in the Mac fix, and one for `strays()`;
   stand-ins for `cp`, `mv`, `mktemp`, `chmod` and
   `sudo` on `PATH` make a copy fail part-way, a rename pause or a file change in mid run (the real `sudo` never runs).
   Every run on macOS must now print a line starting SAFE, EXPOSED or UNKNOWN. Assertions that were wrong were
