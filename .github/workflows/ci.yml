@@ -52,11 +52,12 @@ jobs:
         with: { persist-credentials: false }
       - name: The Mac fix is the published file
         # www.deimoscore.com serves fix/fix-macos.sh as a download and prints this SHA-256 on the page and in the
-        # site's public changelog (CL-52; each earlier digest is in an earlier entry, back to CL-18, except one that
-        # CL-47 named only until it was rewritten, which CL-52 records). Any edit, even a comment, breaks that
-        # published checksum. A deliberate change to the script must update the site's download,
-        # the page's hash and the changelog record together, and this hash with them.
-        run: echo "0d183c2bfbf0bd0d585fd3f8db5ac1728893beb83bfc31c9b024696443ad16cc  fix/fix-macos.sh" | shasum -a 256 -c -
+        # site's public changelog (CL-53; each earlier digest is in an earlier entry, back to CL-18, except one that
+        # CL-47 named only until it was rewritten, which CL-52 records, and two this pin held on 31 Oct 2026 before
+        # the site had them, which CL-53 records). Any edit, even a comment, breaks that published checksum. A
+        # deliberate change to the script must update the site's download, the page's hash and the changelog record
+        # together, and this hash with them.
+        run: echo "d8a4bffd43f97449f2d92b8c5b5cb2e908f698cb09482fb3cb9e3ba2c07a97a5  fix/fix-macos.sh" | shasum -a 256 -c -
       - name: The Mac fix on copies of the vendored macOS 27.2 bundle, test/support/fixtures/macos-27.2-cert.pem (off macOS, that it refuses to run)
         run: bash test/fix-macos.check.sh
       - name: The Mac fix on the Mojave-era one-root shapes (offline, a stub for every probe)

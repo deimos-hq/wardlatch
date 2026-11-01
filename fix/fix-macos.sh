@@ -17,11 +17,13 @@
 #     built and checked and immediately before the rename (a change in the moment between that test and the rename
 #     is the one it cannot see);
 #   - and because that snapshot is in your temporary folder, where anything running as you can change it, nothing
-#     read from it is taken on trust: before replacing anything, the backup (beside the file, where only the file's
-#     owner can change it) must have the snapshot's SHA-256, read exactly as the snapshot did -- every certificate
-#     readable, the same withdrawn roots and copies at the same places and no others -- and give byte for byte the
-#     cleaned file when cleaned the same way; a file found clean, or too small to fix, is read again from the file
-#     itself;
+#     read from it is taken on trust but one reading: before replacing anything, the backup (beside the file, where
+#     only the file's owner can change it) must have the snapshot's SHA-256, read exactly as the snapshot did -- every
+#     certificate readable, the same withdrawn roots and copies at the same places and no others -- and give byte for
+#     byte the cleaned file when cleaned the same way; a file found clean, or too small to fix, is read again from the
+#     file itself. The one reading nothing bears out is the control before the change, made through the snapshot: a
+#     process running as you that made it fail would turn an UNKNOWN after the change into SAFE "Fixed in the file",
+#     with nothing claimed online;
 #   - changes nothing if the file is already clean;
 #   - refuses a bundle too small to be a trust store, and never advises putting back a copy that holds a withdrawn
 #     root: the only way back it ever names is its own backup, in the Undo line under a SAFE result or under a run
