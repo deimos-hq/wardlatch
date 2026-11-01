@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=94
+expect_cases=103
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -2895,6 +2895,267 @@ cmp -s "$d/cert.pem" "$work/original.pem" || fail "a key not decoded: the bundle
 [ "$(baks "$d/cert.pem")" -eq 0 ] || fail "a key not decoded: it wrote a backup"
 ok "a certificate whose key openssl does not decode is not counted, so the run is UNKNOWN and nothing changes"
 # ---- r4 end case
+
+# ---- r5 case: nul-byte
+# A NUL byte inside a certificate block hides a withdrawn root from this fix and not from LibreSSL, so the run said
+# SAFE, exit 0, with the root still trusted through the file (measured 1 Nov 2026 on 99a7f7d; the swarm's B-tls-1).
+# The mechanism, measured on this Mac: /bin/bash 3.2's `read` cuts a line at its first NUL and drops the rest
+# ("ab\0cd" comes back as "ab", length 2), and so does awk, while LibreSSL reads the file with BIO_gets in 253-byte
+# pieces and cuts EACH PIECE at its NUL -- so on a line longer than 253 bytes it reads every piece after the first.
+# A block can therefore carry base64 that LibreSSL decodes and no line-based reader ever sees. No earlier gate
+# catches it: the marker only ever starts a line (so '.-----BEGIN' matches 0), the counts agree, and every
+# certificate the fix does see has a fingerprint and a key, so the completeness gate passes too.
+# The shape (hide(), below) is one ordinary CERTIFICATE block whose first body line is the four base64 characters
+# that X and Y share, then a NUL, then padding to byte 253, then the rest of the WITHDRAWN root X's base64 and a "-"
+# (base64's end-of-data mark, after which LibreSSL decodes nothing more); the lines after it are the rest of an
+# innocent certificate Y's base64. A line reader sees Y. LibreSSL sees X.
+# Y is another certificate out of this same bundle, picked because its DER begins with the same three bytes as X's
+# (so the two share their first four base64 characters): nothing is generated, so the case is the same every run.
+# The oracle is libre(), which counts the certificates LibreSSL itself reads out of the file: without it this case
+# could pass by building a block LibreSSL cannot read either, which would measure nothing.
+# Apple's own file costs nothing here: it holds no NUL byte and no line over 231 bytes.
+d=$work/r5/nul; mkdir -p "$d"
+libre() { /usr/bin/openssl crl2pkcs7 -nocrl -certfile "$1" 2>/dev/null | /usr/bin/openssl pkcs7 -print_certs 2>/dev/null | grep -c '^-----BEGIN CERTIFICATE-----' || true; }
+# b64of <cert.pem> -> its DER in base64, one line
+b64of() { /usr/bin/openssl x509 -in "$1" -outform DER 2>/dev/null | /usr/bin/base64 | tr -d '\n'; }
+# hide <X.pem> <Y.pem> <out.block>: the block above. Written with printf straight to the file, because a bash string
+# cannot hold a NUL byte.
+hide() {
+  local xb yb pad
+  xb=$(b64of "$1"); yb=$(b64of "$2")
+  [ -n "$xb" ] && [ -n "$yb" ] || return 1
+  [ "${xb:0:4}" = "${yb:0:4}" ] || return 1
+  pad=$(printf '%*s' 248 '' | tr ' ' 'A')          # 4 shared characters + 1 NUL + 248 = 253 bytes exactly
+  {
+    printf -- '-----BEGIN CERTIFICATE-----\n'
+    printf '%s' "${yb:0:4}"
+    printf '\000'
+    printf '%s%s-\n' "$pad" "${xb:4}"
+    printf '%s\n' "${yb:4}" | fold -w 64
+    printf -- '-----END CERTIFICATE-----\n'
+  } >"$3"
+}
+# X and Y, by the first three bytes of their DER: Y comes out of the bundle this suite was given.
+for x in aaa ems; do
+  xder=$(b64of "$r2/$x.pem"); y=''
+  for c in "$r2/split"/*.pem; do
+    [ -e "$c" ] || continue
+    case "$(/usr/bin/openssl x509 -in "$c" -noout -fingerprint -sha256 2>/dev/null)" in
+      *=D7:A7:A0:FB:*|*=86:A1:EC:BA:*) continue ;;      # never a withdrawn root as the innocent one
+    esac
+    if [ "$(b64of "$c" | cut -c1-4)" = "${xder:0:4}" ]; then y=$c; break; fi
+  done
+  [ -n "$y" ] || fail "a NUL byte inside a block ($x): no other certificate in this bundle shares its first three DER bytes, so the case cannot be built"
+  hide "$r2/$x.pem" "$y" "$d/$x.block" || fail "a NUL byte inside a block ($x): the block could not be built"
+  cat "$r2/P.pem" "$d/$x.block" >"$d/$x.pem"
+  cp "$d/$x.pem" "$d/$x.before"
+  # The receipts that make this case about something: the file holds exactly one NUL byte; LibreSSL reads one more
+  # certificate out of it than out of the cleaned file; and that certificate is the withdrawn root, which verifies
+  # through the file. The last one is the positive control -- a refusal that could have been an acceptance.
+  [ "$(LC_ALL=C tr -cd '\000' <"$d/$x.pem" | wc -c | tr -d ' ')" -eq 1 ] || fail "a NUL byte inside a block ($x): the block does not hold exactly one NUL byte"
+  [ "$(grep -c -- '.-----BEGIN' "$d/$x.pem" || true)" -eq 0 ] || fail "a NUL byte inside a block ($x): a marker comes after other text, so the r3 gate would catch it and this case would measure nothing"
+  [ "$(certs_in "$d/$x.pem")" -eq "$(certs_in "$d/$x.before")" ] || fail "a NUL byte inside a block ($x): setup is inconsistent"
+  [ "$(libre "$d/$x.pem")" -eq $(($(libre "$r2/P.pem") + 1)) ] || fail "a NUL byte inside a block ($x): LibreSSL does not read the hidden certificate, so this case would measure nothing"
+  /usr/bin/openssl verify -CAfile "$d/$x.pem" "$r2/$x.pem" >/dev/null 2>&1 || fail "a NUL byte inside a block ($x): the withdrawn root does not verify through the file, so this case would measure nothing"
+  run "$d/$x.pem" "$offline" "$OFFLINE"
+  [ "$code" -eq 2 ] || fail "a NUL byte inside a block ($x): expected UNKNOWN, exit 2, got $code"
+  grep -q '^UNKNOWN.*NUL byte' <<<"$out" || fail "a NUL byte inside a block ($x): it did not say the file holds a NUL byte"
+  cmp -s "$d/$x.pem" "$d/$x.before" || fail "a NUL byte inside a block ($x): the bundle changed"
+  [ "$(baks "$d/$x.pem")" -eq 0 ] || fail "a NUL byte inside a block ($x): it wrote a backup"
+  # And the root is still trusted through the file, which is what the SAFE line used to deny.
+  /usr/bin/openssl verify -CAfile "$d/$x.pem" "$r2/$x.pem" >/dev/null 2>&1 || fail "a NUL byte inside a block ($x): the file changed under the refusal"
+done
+ok "a NUL byte inside a certificate block stops the run (UNKNOWN, unchanged), for each withdrawn root hidden that way"
+# A NUL byte ANYWHERE in the file is refused, not only inside a block: the reader that misses it is the same one, and
+# strip()'s awk cuts every line holding one, so a run that rewrote the file would change a line it says it keeps
+# (the swarm's F-tls-1, measured: Apple's file plus "# admin note: keep\0 this whole line" came out cut short, under
+# SAFE "removed both withdrawn roots"). The file here still holds both roots, so before the fix this was a run that
+# DID rewrite it; now nothing is written at all.
+d=$work/r5/nul-note; mkdir -p "$d"
+{ cat "$work/original.pem"; printf '# admin note: keep'; printf '\000'; printf ' this whole line\n'; } >"$d/cert.pem"
+cp "$d/cert.pem" "$d/before"
+[ "$(LC_ALL=C tr -cd '\000' <"$d/cert.pem" | wc -c | tr -d ' ')" -eq 1 ] || fail "a NUL byte outside a block: the file does not hold exactly one NUL byte"
+[ "$(bad "$d/cert.pem")" -eq 2 ] || fail "a NUL byte outside a block: the file does not hold both roots, so this case would not be about a run that rewrites it"
+run "$d/cert.pem" "$offline" "$OFFLINE"
+[ "$code" -eq 2 ] || fail "a NUL byte outside a block: expected UNKNOWN, exit 2, got $code"
+grep -q '^UNKNOWN.*NUL byte' <<<"$out" || fail "a NUL byte outside a block: it did not say the file holds a NUL byte"
+cmp -s "$d/cert.pem" "$d/before" || fail "a NUL byte outside a block: the bundle changed"
+[ "$(baks "$d/cert.pem")" -eq 0 ] || fail "a NUL byte outside a block: it wrote a backup"
+ok "a NUL byte outside any certificate block stops the run too, and the file with both roots in it is left alone"
+# The completeness gate for this pair: Apple's own file, which holds no NUL byte, is still fixed. Without this, a
+# change that refused every file would pass both cases above.
+d=$work/r5/nul-control; mkdir -p "$d"
+cp "$work/original.pem" "$d/cert.pem"
+[ "$(LC_ALL=C tr -cd '\000' <"$d/cert.pem" | wc -c | tr -d ' ')" -eq 0 ] || fail "the NUL control: the bundle this suite was given holds a NUL byte"
+run "$d/cert.pem" "$offline" "$OFFLINE"
+[ "$code" -eq 0 ] || fail "the NUL control: a file with no NUL byte should still be fixed, exit 0, got $code"
+grep -q '^SAFE' <<<"$out" || fail "the NUL control: a file with no NUL byte should still read SAFE"
+cmp -s "$d/cert.pem" "$r2/P.pem" || fail "the NUL control: the fixed file is not the advisory's removal"
+ok "a file with no NUL byte is still fixed, so the refusal above is about the NUL byte and not about every file"
+# ---- r5 end case
+
+# ---- r5 case: compromised keys
+# A bundle holding one of the compromised eMudhra INTERMEDIATES, or either "emSign Root TLS CA - G3" certificate,
+# read SAFE, exit 0, nothing changed (measured 1 Nov 2026 on 99a7f7d for all 14 certificates: the swarm's B-tls-2).
+# Removing the two roots works only for a reader that insists on a chain ending at a self-signed root in the file.
+# /usr/bin/curl 8.7.1, Apple's git and the built-in perl take EVERY CA certificate in a --cacert file as an anchor,
+# so such a file keeps trusting everything that intermediate issued; and the self-signed "emSign Root TLS CA - G3"
+# is a full anchor for every reader, python3 and the openssl CLI included.
+# One case per certificate -- 14 of them, carrying seven keys -- so "refuses the compromised keys" is measured for
+# each key the fix names, not for one canary. Each must be removed, by key, and the file must not read SAFE-unchanged.
+# The oracle that keeps this from measuring nothing: LibreSSL reads one more certificate out of the bundle than out of
+# the cleaned file before the run, and no certificate carrying that key after it -- counted by the SHA-256 of the
+# SubjectPublicKeyInfo, not by name, because a name is not what a reader trusts. (A first draft of this case counted a
+# name and read 0 every time, on the base commit too: a check that could not fail.)
+d=$work/r5/keys; mkdir -p "$d/split"
+keysrc=$root/test/support/fixtures/emudhra-2026-10-compromised-keys.pem
+[ -s "$keysrc" ] || fail "setup: $keysrc is missing"
+awk -v dd="$d/split" '/^-----BEGIN CERTIFICATE-----/{k++; f=sprintf("%s/%02d.pem", dd, k)} f{print > f} /^-----END CERTIFICATE-----/{close(f); f=""}' "$keysrc"
+nkeys=$(ls "$d/split" | wc -l | tr -d ' ')
+[ "$nkeys" -eq 14 ] || fail "setup: the compromised-key fixture holds $nkeys certificates, not 14"
+libre() { /usr/bin/openssl crl2pkcs7 -nocrl -certfile "$1" 2>/dev/null | /usr/bin/openssl pkcs7 -print_certs 2>/dev/null | grep -c '^-----BEGIN CERTIFICATE-----' || true; }
+# How many certificates LibreSSL reads out of $1 that carry the key of $2, by SPKI SHA-256.
+withkey() {
+  local want n=0 q h dd
+  want=$(/usr/bin/openssl x509 -in "$2" -pubkey -noout 2>/dev/null | /usr/bin/openssl pkey -pubin -outform DER 2>/dev/null | /usr/bin/shasum -a 256 | awk '{print $1}')
+  [ -n "$want" ] && [ "$want" != e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 ] || return 1
+  dd=$(mktemp -d)
+  /usr/bin/openssl crl2pkcs7 -nocrl -certfile "$1" 2>/dev/null | /usr/bin/openssl pkcs7 -print_certs 2>/dev/null |
+    awk -v x="$dd" '/^-----BEGIN CERTIFICATE-----/{k++; f=sprintf("%s/%03d.pem", x, k)} f{print > f} /^-----END CERTIFICATE-----/{close(f); f=""}'
+  for q in "$dd"/*.pem; do
+    [ -e "$q" ] || continue
+    h=$(/usr/bin/openssl x509 -in "$q" -pubkey -noout 2>/dev/null | /usr/bin/openssl pkey -pubin -outform DER 2>/dev/null | /usr/bin/shasum -a 256 | awk '{print $1}')
+    [ "$h" = "$want" ] && n=$((n + 1))
+  done
+  rm -rf "$dd"; echo "$n"
+}
+base=$(libre "$r2/P.pem")
+for c in "$d/split"/*.pem; do
+  nm=$(/usr/bin/openssl x509 -in "$c" -noout -subject | sed 's#.*/CN=##')
+  dd=$d/$(basename "$c" .pem); mkdir -p "$dd"
+  cat "$r2/P.pem" "$c" >"$dd/cert.pem"
+  [ "$(libre "$dd/cert.pem")" -eq $((base + 1)) ] || fail "a compromised key ($nm): LibreSSL does not read the appended certificate, so this case would measure nothing"
+  [ "$(withkey "$dd/cert.pem" "$c")" -eq 1 ] || fail "a compromised key ($nm): the bundle does not read as holding that key before the run, so this case would measure nothing"
+  run "$dd/cert.pem" "$offline" "$OFFLINE"
+  [ "$code" -eq 0 ] || fail "a compromised key ($nm): expected the file to be fixed, exit 0, got $code"
+  grep -q '^SAFE' <<<"$out" || fail "a compromised key ($nm): it did not say SAFE after removing the certificate"
+  grep -qF "the key of $nm" <<<"$out" || fail "a compromised key ($nm): the line does not name the key it removed"
+  cmp -s "$dd/cert.pem" "$r2/P.pem" || fail "a compromised key ($nm): the file is not the cleaned bundle afterwards"
+  [ "$(withkey "$dd/cert.pem" "$c")" -eq 0 ] || fail "a compromised key ($nm): LibreSSL still reads a certificate with that key out of the file"
+  [ "$(baks "$dd/cert.pem")" -eq 1 ] || fail "a compromised key ($nm): it did not keep exactly one backup"
+done
+ok "each of the 14 certificates carrying one of the seven compromised keys is removed by key, one case per certificate"
+# The completeness gate for the loop above: the cleaned bundle on its own still reads SAFE and is left alone. Without
+# it, a change that removed a certificate from every bundle, or refused every bundle, would pass all 14 cases.
+d=$work/r5/keys-control; mkdir -p "$d"
+cp "$r2/P.pem" "$d/cert.pem"
+run "$d/cert.pem" "$offline" "$OFFLINE"
+[ "$code" -eq 0 ] || fail "the compromised-key control: the cleaned bundle should read SAFE, exit 0, got $code"
+grep -q '^SAFE' <<<"$out" || fail "the compromised-key control: the cleaned bundle did not read SAFE"
+cmp -s "$d/cert.pem" "$r2/P.pem" || fail "the compromised-key control: the cleaned bundle changed"
+[ "$(baks "$d/cert.pem")" -eq 0 ] || fail "the compromised-key control: it wrote a backup"
+ok "a bundle holding none of the seven compromised keys is left alone, so the 14 cases above are about those keys"
+# And the small-bundle floor: a short bundle holding one of these keys and neither root must not read SAFE either.
+# Before 1 Nov 2026 the floor asked only whether a withdrawn ROOT was there, so this file took the "nothing to
+# remove" branch, and the already-clean branch above it would have said SAFE on a full-size one.
+d=$work/r5/keys-small; mkdir -p "$d"
+awk -v want=20 '/^-----BEGIN CERTIFICATE-----/{k++} k <= want { print }' "$r2/P.pem" >"$d/cert.pem"
+# The first certificate of the fixture: the self-signed emSign Root TLS CA - G3.
+cat "$work/r5/keys/split/01.pem" >>"$d/cert.pem"
+cp "$d/cert.pem" "$d/before"
+[ "$(certs_in "$d/cert.pem")" -lt 50 ] || fail "a compromised key in a small bundle: the bundle is not small"
+[ "$(bad "$d/cert.pem")" -eq 0 ] || fail "a compromised key in a small bundle: it holds a withdrawn root, so the case is not about the key alone"
+run "$d/cert.pem" "$offline" "$OFFLINE"
+[ "$code" -eq 2 ] || fail "a compromised key in a small bundle: expected UNKNOWN, exit 2, got $code"
+grep -q '^UNKNOWN.*the key of emSign Root TLS CA - G3' <<<"$out" || fail "a compromised key in a small bundle: it did not name the key it found"
+cmp -s "$d/cert.pem" "$d/before" || fail "a compromised key in a small bundle: the bundle changed"
+ok "a bundle too small to rebuild that holds a compromised key is UNKNOWN and names the key, not SAFE"
+# ---- r5 end case
+
+# ---- r5 case: curl backend
+# /usr/bin/curl 8.7.1 is built with LibreSSL AND SecureTransport, and CURL_SSL_BACKEND picks one at run time. The
+# fix's -q keeps ~/.curlrc out, but nothing kept the environment out, and the probes run as the person who typed the
+# command. Under SecureTransport the --cacert anchors are judged by Apple's Security framework, which blocks the
+# eMudhra certificates whatever file it is given, so the answer stops being about this file: measured 31 Oct 2026, a
+# copy of the cleaned file plus emSign Root TLS CA - G3 read EXPOSED by default and SAFE with
+# CURL_SSL_BACKEND=secure-transport, while the default curl through that file still loaded the test site (F-tls-2).
+# Two things are checked: every curl call site in the shipped script names the library, and a run with
+# CURL_SSL_BACKEND set to something else in its environment reaches curl with openssl anyway and gives the same
+# verdict. The stub reports what it was given, so the second is measured and not read off the source.
+d=$work/r5/backend; mkdir -p "$d"
+sites=$(grep -c 'CURL_SSL_BACKEND=openssl /usr/bin/curl' "$fix" || true)
+[ "$sites" -ge 2 ] || fail "the curl backend: only $sites of the curl call sites name CURL_SSL_BACKEND=openssl"
+[ "$(grep -o '/usr/bin/curl' "$fix" | wc -l | tr -d ' ')" -eq "$sites" ] || fail "the curl backend: a /usr/bin/curl call site does not name CURL_SSL_BACKEND=openssl"
+cat >"$r2/curlbe" <<'STUB'
+#!/bin/bash
+# Stands in for /usr/bin/curl and writes the backend it was given, one line per call, to $BE_LOG.
+printf '%s\n' "${CURL_SSL_BACKEND:-<unset>}" >>"$BE_LOG"
+case "$*" in *we-have-a-problem.com*) exit "${STUB_TEST:?}" ;; esac
+exit "${STUB_CONTROL:?}"
+STUB
+chmod 755 "$r2/curlbe"
+script=$r2/net.sh
+for given in secure-transport '' nonsense-backend; do
+  rm -rf "$d/run"; mkdir -p "$d/run"
+  cp "$work/original.pem" "$d/run/cert.pem"
+  : >"$d/log"
+  run "$d/run/cert.pem" WARDLATCH_CURL="$r2/curlbe" BE_LOG="$d/log" STUB_TEST=60 STUB_CONTROL=0 CURL_SSL_BACKEND="$given"
+  [ "$code" -eq 0 ] || fail "the curl backend (given '${given:-<empty>}'): expected exit 0, got $code"
+  grep -q '^SAFE     Fixed\. .* now refuses the compromised keys' <<<"$out" || fail "the curl backend (given '${given:-<empty>}'): the verdict changed"
+  [ -s "$d/log" ] || fail "the curl backend (given '${given:-<empty>}'): the stub was never called, so this measured nothing"
+  [ "$(sort -u "$d/log" | tr -d '\n')" = openssl ] || fail "the curl backend (given '${given:-<empty>}'): curl was called with $(sort -u "$d/log" | tr '\n' ' ')"
+  [ "$(wc -l <"$d/log" | tr -d ' ')" -ge 3 ] || fail "the curl backend (given '${given:-<empty>}'): only $(wc -l <"$d/log") curl calls were seen, so not every probe was covered"
+done
+script=$fix
+ok "both curl probes name CURL_SSL_BACKEND=openssl, whatever the environment sets, so they measure the file and not Apple's own block"
+# ---- r5 end case
+
+# ---- r5 case: canary expiry
+# curl's 60 is CURLE_PEER_FAILED_VERIFICATION, which an expired leaf gives too: measured on a throwaway pair, an
+# expired leaf gives 60 both through a file that trusts its root and through one that does not -- the two readings
+# this test exists to tell apart. The advisory's leaves expire 3 May 2027 01:04 UTC, so from that day a 60 would say
+# nothing and every unfixed Mac would read SAFE (F-tls-3). From then on the fix reads nothing online and says so.
+# The clock is a stand-in, so this case is the same on any day; the control is the same file with the clock before
+# the date, which must still take the online reading.
+d=$work/r5/expiry; mkdir -p "$d"
+behind /bin/date WARDLATCH_DATE "$r2/clock.sh" 1
+cat >"$r2/clock" <<'STUB'
+#!/bin/bash
+# Stands in for /bin/date: -u +%Y%m%d gets $FAKE_DAY (nothing at all when it is "none", as a date that failed would).
+case "$*" in *%Y%m%d*) [ "${FAKE_DAY:?}" = none ] && exit 1; printf '%s\n' "$FAKE_DAY"; exit 0 ;; esac
+exec /bin/date "$@"
+STUB
+chmod 755 "$r2/clock"
+script=$r2/clock.sh
+# Before the date: the online reading is taken, and the SAFE line is the one that claims it.
+rm -rf "$d/live"; mkdir -p "$d/live"; cp "$work/original.pem" "$d/live/cert.pem"
+run "$d/live/cert.pem" WARDLATCH_DATE="$r2/clock" FAKE_DAY=20270502 WARDLATCH_CURL="$r2/curl" STUB_TEST=60 STUB_CONTROL=0
+[ "$code" -eq 0 ] || fail "the canary expiry (the day before): expected exit 0, got $code"
+grep -q '^SAFE     Fixed\. .* now refuses the compromised keys' <<<"$out" || fail "the canary expiry (the day before): the online reading was not taken"
+grep -q 'prove nothing' <<<"$out" && fail "the canary expiry (the day before): it said a refusal would prove nothing"
+cmp -s "$d/live/cert.pem" "$r2/P.pem" || fail "the canary expiry (the day before): the file is not the cleaned file"
+# On and after the date, and when the clock cannot be read at all: the file is still fixed, and nothing online is
+# claimed. The curl stub would answer 60 to the test host, so a run that still read it would print the line above.
+for day in 20270503 20280101 none; do
+  rm -rf "$d/run"; mkdir -p "$d/run"; cp "$work/original.pem" "$d/run/cert.pem"
+  run "$d/run/cert.pem" WARDLATCH_DATE="$r2/clock" FAKE_DAY="$day" WARDLATCH_CURL="$r2/curl" STUB_TEST=60 STUB_CONTROL=0
+  [ "$code" -eq 0 ] || fail "the canary expiry ($day): expected the file to be fixed, exit 0, got $code"
+  grep -q '^SAFE     Fixed in the file: removed both withdrawn roots, kept 126\.' <<<"$out" || fail "the canary expiry ($day): it did not say the file was fixed without an online claim"
+  grep -q 'prove nothing' <<<"$out" || fail "the canary expiry ($day): it did not say why nothing was read online"
+  grep -q 'refuses the compromised keys' <<<"$out" && fail "the canary expiry ($day): it still claimed the file refuses the compromised keys"
+  cmp -s "$d/run/cert.pem" "$r2/P.pem" || fail "the canary expiry ($day): the file is not the cleaned file"
+  [ "$(baks "$d/run/cert.pem")" -eq 1 ] || fail "the canary expiry ($day): it did not keep exactly one backup"
+done
+# An already-clean file on and after the date: SAFE, nothing changed, and no claim about the test site.
+rm -rf "$d/clean"; mkdir -p "$d/clean"; cp "$r2/P.pem" "$d/clean/cert.pem"
+run "$d/clean/cert.pem" WARDLATCH_DATE="$r2/clock" FAKE_DAY=20270503 WARDLATCH_CURL="$r2/curl" STUB_TEST=0 STUB_CONTROL=0
+[ "$code" -eq 0 ] || fail "the canary expiry (already clean): expected exit 0, got $code"
+grep -q 'prove nothing' <<<"$out" || fail "the canary expiry (already clean): it did not say why nothing was read online"
+grep -q 'already refuses the compromised keys' <<<"$out" && fail "the canary expiry (already clean): it claimed the file refuses the compromised keys"
+cmp -s "$d/clean/cert.pem" "$r2/P.pem" || fail "the canary expiry (already clean): the file changed"
+script=$fix
+ok "from 3 May 2027, and when the clock can't be read, no verdict is taken from the test site, and the file is still fixed"
+# ---- r5 end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.
 cp "$work/original.pem" "$work/unreadable.pem"

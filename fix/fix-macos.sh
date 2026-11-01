@@ -9,7 +9,9 @@
 #     and by their public keys too, compared as openssl decodes them whatever encoding a certificate stores them in,
 #     so a copy with a bit changed, a root re-issued with the same key, or the key re-encoded is removed;
 #     and refuses a file it can't fully check: a certificate it can't read, a block that isn't a plain certificate,
-#     a -----BEGIN marker anywhere but at the start of a line, or fewer fingerprints read than certificates counted;
+#     a -----BEGIN marker anywhere but at the start of a line, a NUL byte anywhere in the file (LibreSSL reads the
+#     file in 253-byte pieces and cuts each at its NUL, so it reads bytes no line-based reader sees, and a withdrawn
+#     root can be hidden in a block that way), or fewer fingerprints read than certificates counted;
 #   - refuses a $FILE that is a symbolic link: replacing it would put a file of this script's own where the link is,
 #     so $FILE would stop following the file the link points to, and that file would be left as it is;
 #   - works on a snapshot of the file and refuses to replace it if it changed meanwhile: the backup it takes is
@@ -83,6 +85,38 @@ EMS_NAME='emSign ECC Root CA - G3'
 # (48 bytes) and the first 48 bytes of AAA's modulus, in lowercase hex as openssl prints them.
 AAA_N='be409df46ee1ea76871c4d45448ebe46c883069dc12afe181f8ee402faf3ab5d508a16310b9a06d0c57022cd492d5463'
 EMS_X='23a50cb82d12f528f3b1b2dde20212809e395f494d9fc925345974ecbb061ce7c072afe8ae2fe141548714a84ab2e87c'
+# The seven OTHER keys of this incident, which this file must not hold either. Removing the two roots above works
+# because the compromised intermediates then chain to nothing -- but only for a reader that insists on a chain
+# ending at a self-signed root in the file. /usr/bin/curl 8.7.1 does not: like curl since 7.68 on OpenSSL-style
+# backends it takes EVERY CA certificate in a --cacert file as a trust anchor, and Apple's git goes through the same
+# libcurl, as does the built-in perl. So a cert.pem holding one of the compromised intermediates keeps trusting
+# everything that intermediate issued after both roots are gone, and until 1 Nov 2026 this script looked only for
+# the two roots and said SAFE, exit 0 (the swarm's B-tls-2; measured here on 99a7f7d, and MEASURED again with
+# `openssl verify -partial_chain`: the advisory's ov-g3c leaf verifies through the cleaned file plus that one
+# intermediate, and fails through the cleaned file alone).
+#   - Six of them are the compromised TLS intermediate keys. There are 12 compromised intermediate certificates and
+#     six keys, because each intermediate was issued twice: once under emSign Root TLS CA - G3 and once under AAA
+#     Certificate Services (Sectigo's cross-sign). Matching by key covers both issues of each with one entry.
+#   - The seventh is emSign Root TLS CA - G3's own key. No root programme calls that key compromised, and it is not
+#     one of the eight: it is here because that CA vouches for six of the 12, so in a file curl reads it is an anchor
+#     for all of them. It exists as TWO certificates -- the one the advisory's hosts serve, cross-signed by emSign ECC
+#     Root CA - G3 (30:94:02:57...), and a SELF-SIGNED copy (7D:D7:8D:5F...), which is a full anchor for every reader,
+#     python3 and the openssl CLI included, with no partial chain needed. Both carry this one key (MEASURED: the same
+#     X coordinate), so one entry covers both. The owner's decision #38, 31 Oct 2026: "Yes, add it."
+# Each value is the X coordinate of the key's EC point, 48 bytes in lowercase hex as `openssl x509 -text` prints it,
+# the same form as EMS_X above, so every encoding of the point matches (compressed, hybrid, explicit parameters).
+# Each was derived from the certificate twice, with LibreSSL 3.3.6 and with OpenSSL 4.0.3, and refused if it came out
+# as the hash of no input. Apple's file holds none of the seven (MEASURED: no key match among its 128).
+# The names are for the lines this prints; the keys are what it matches on.
+WKEYS=(
+  'emSign Root TLS CA - G3|5f0fdc3fab5716c4be83f5b3061fa090e2efa0015e8637db3e3f0431f41978842fb4894f103a4f2658efd1c17432d740'
+  'EM DV TLS CA - G3B|e79ed9c04a9773c4735e51111da85ac2bd5e64ab374b80e12cbc2038ec1e4f0e3b812fc9859e1e67afb04e2f8bc97f74'
+  'EM DV TLS CA - G3C|3a7a7862c8c44d324ddd69033a6782c0efeefe4055e68a123fa0371ba3bd9194514ee172a433e3630f02bd188037d9e5'
+  'EM OV TLS CA - G3B|73897aa0eb3cfdca8b12402ffaf0abc4e1212baf8dee778ac9ee2d6db83fac280c5e05638ae7a2acd71c322a8e361cde'
+  'EM OV TLS CA - G3C|138251cd52ac9298c1c8aad977321deb97e709bd0b4ca0aca55dc8ad51dcfc9d1589a1597e3a5120e1efd631c63e1835'
+  'EM EV TLS CA - G3B|25dba85a64d397da0b1052e9ea546e487befea9c9d9d68a0c5eadcfeef75a69bb5d6fc01f42bfbca6eb40bcd64c0767e'
+  'EM EV TLS CA - G3C|2d56e829a6fb82c64a4697d960af951e9067ae91f926d34306da48a8aaeb7869b6a67e6d27426e0442aa03b36e1988df'
+)
 # Everything of -text but the public key.
 KEYTEXT=no_header,no_version,no_serial,no_signame,no_validity,no_subject,no_issuer,no_extensions,no_sigdump,no_aux
 # Nothing below runs a command until the traps are set, after the functions: see "The traps" further down.
@@ -120,12 +154,42 @@ linked() {
 
 # 0 = trusts the compromised keys, 60 = refuses them, anything else = the test site didn't answer
 # (-q: ignore ~/.curlrc, whose settings could change the answer)
-trust() { local r=0; /usr/bin/curl -q -s -o /dev/null --max-time 15 --cacert "$1" "$TEST_URL" || r=$?; echo "$r"; }
+# CURL_SSL_BACKEND=openssl: /usr/bin/curl 8.7.1 is built with BOTH LibreSSL and SecureTransport, and that variable
+# picks one at run time. -q keeps ~/.curlrc out; nothing kept the environment out, and these runs happen as the
+# person who typed the command, with their environment. Under SecureTransport the --cacert anchors are judged by
+# Apple's Security framework, which blocks the eMudhra certificates (19 and 23 Oct 2026) whatever file it is given,
+# so the answer stops being about this file at all: MEASURED 31 Oct 2026, a copy of the cleaned file plus
+# emSign Root TLS CA - G3 read EXPOSED by default and SAFE with CURL_SSL_BACKEND=secure-transport, while the default
+# curl through that same file still loaded the test site. An unknown backend name lands on SecureTransport too, so
+# the right value has to be named rather than the variable merely unset. MEASURED here: =openssl selects LibreSSL
+# (the handshake reads CAfile: /etc/ssl/cert.pem). The proxy variables are deliberately left alone: they decide how
+# the network is reached, not which library judges the chain.
+trust() { local r=0; CURL_SSL_BACKEND=openssl /usr/bin/curl -q -s -o /dev/null --max-time 15 --cacert "$1" "$TEST_URL" || r=$?; echo "$r"; }
+# The advisory's test leaves expire 3 May 2027 01:04:36 UTC (dv-g3b; ov-g3c 01:04:37, ev-g3c-aaa 02:27:42), and
+# curl's 60 is CURLE_PEER_FAILED_VERIFICATION, which an expired leaf gives too -- MEASURED on a throwaway pair: an
+# expired leaf gives 60 both through a file that trusts its root and through one that does not, the two readings
+# this test exists to tell apart. So from that date a 60 would say nothing, and every unfixed Mac would read SAFE
+# (the swarm's F-tls-3). From then on this says UNKNOWN instead of reading the code, as the lib already does
+# (bin/wardlatch.mjs: "a refusal here would prove nothing"). A date this cannot read counts as past it.
+CANARY_EXPIRES=20270503
+# Today in UTC as yyyymmdd, or a failure. Nothing but eight digits is accepted: a date command that printed a word
+# would otherwise be compared as a number, which `[` reads as an error and `set -e` turns into a silent exit.
+today() { local d; d=$(/bin/date -u +%Y%m%d 2>/dev/null) || return 1; case "$d" in [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) echo "$d" ;; *) return 1 ;; esac; }
+# 0 when the test site's own certificate is still valid, so its refusal means something; 1 when it is not, or when
+# this Mac's date can't be read.
+canary_live() { local d; d=$(today) || return 1; [ "$d" -lt "$CANARY_EXPIRES" ]; }
+# The one line that says why no online reading was taken. $1 is what the file's own state already established.
+expired_note() {
+  echo "         (The advisory's test site has its own certificate, and that expires on 3 May 2027; this Mac's date"
+  echo "         reads $(today 2>/dev/null || echo 'as something this cannot use'), so a refusal there would prove nothing and nothing was read from it.)"
+}
 # The control, read before any verdict is taken from trust(). 0 = an ordinary website loaded through this same file,
 # so the network answers and the file still validates ordinary certificates; anything else and there is no online
 # verdict to be had here -- without this, "the test site refused" and "nothing on this network answered" are the
 # same reading, and the Mac that most needs this fix is the one whose network is under someone else's control.
-control() { local r=0; /usr/bin/curl -q -s -o /dev/null --max-time 15 --cacert "$1" "$CONTROL_URL" || r=$?; echo "$r"; }
+# The same library is pinned here as in trust(), for the same reason: a control judged by Apple's Security framework
+# and a test judged by LibreSSL would not be about the same thing.
+control() { local r=0; CURL_SSL_BACKEND=openssl /usr/bin/curl -q -s -o /dev/null --max-time 15 --cacert "$1" "$CONTROL_URL" || r=$?; echo "$r"; }
 # How many lines of $2 match $1. Fails, rather than print a number, if grep could not read the file: a count that
 # came back empty was compared as if it were one, and `[` reading "" as a number is an error, not a no.
 count() { local n r=0; n=$(grep -c -- "$1" "$2" 2>/dev/null) || r=$?; if [ "$r" -gt 1 ] || [ -z "$n" ]; then return 1; fi; echo "$n"; }
@@ -135,6 +199,18 @@ count() { local n r=0; n=$(grep -c -- "$1" "$2" 2>/dev/null) || r=$?; if [ "$r" 
 # script would not see it. Measured 31 Oct 2026, after an earlier change that day (6a36187) counted only markers at the
 # start of a line on the model that LibreSSL reads nothing else: a root hidden that way stayed trusted, under SAFE.
 certs() { count '^-----BEGIN CERTIFICATE-----' "$1"; }
+# How many NUL bytes are in the file $1, counted on BYTES and not on lines, or a failure. Every line-based reader this
+# script has cuts a line at its first NUL and drops the rest: macOS's /bin/bash 3.2 `read` ("ab\0cd" comes back as
+# "ab", length 2) and awk alike (measured 1 Nov 2026). LibreSSL does not: it reads the file with BIO_gets in 253-byte
+# pieces and cuts EACH PIECE at its first NUL, so on a line longer than 253 bytes it reads every piece after the
+# first. A certificate block can therefore carry base64 that curl, git, ruby, perl and openssl decode and this script
+# never sees, and until 1 Nov 2026 a withdrawn root hidden that way stayed trusted under SAFE, exit 0 (the swarm's
+# B-tls-1, reproduced here on 99a7f7d). No earlier check sees it: the BEGIN marker still only ever starts a line, the
+# counts agree, and every certificate this does read has a fingerprint and a key, so the completeness gate passes too.
+# A length check cannot stand in for this, because awk measures the cut line: on such a file `awk 'length($0)>252'`
+# reports no line at all. So the count is taken with tr, on bytes. Apple's own file holds no NUL byte, so refusing
+# one costs it nothing.
+nuls() { local n r=0; n=$(LC_ALL=C /usr/bin/tr -cd '\000' <"$1" 2>/dev/null | wc -c) || r=$?; n=${n// /}; if [ "$r" -ne 0 ] || [ -z "$n" ]; then return 1; fi; case "$n" in *[!0-9]*) return 1 ;; esac; echo "$n"; }
 # The SHA-256 of the file $1, or of stdin when $1 is "-": 64 hex digits, or a failure, never anything else.
 # (LibreSSL prints "(stdin)= <digest>" in some versions and "<digest>" in others; the last word is the digest in both.)
 sha() {
@@ -152,7 +228,7 @@ sha() {
 # (RSA) bytes in hex, which are compared with AAA_N and EMS_X. Returns 1 when openssl couldn't read the certificate, and 2 when what it printed isn't a
 # fingerprint and a decoded key -- a key openssl can't decode can't be compared -- so the caller doesn't count it.
 classify() {
-  local o f k
+  local o f k i w
   kind=''
   # Spaces, tabs, colons and line breaks taken out by tr, so the dump's hex digits are joined up, the fingerprint is
   # 64 hex digits, and what follows it is "SubjectPublicKeyInfo...". (Taking them out in bash instead is quadratic in
@@ -170,10 +246,20 @@ classify() {
     case "$k" in
       *"$AAA_N"*) kind=AAA-KEY ;;
       *"$EMS_X"*) kind=EMS-KEY ;;
-      *) kind=- ;;
+      *) kind=-
+         # One of the seven other withdrawn keys (WKEYS): WKEY1 is the first entry, WKEY2 the second, and so on, so
+         # the kind carries which key it was without a space or a colon in it -- roots() prints these kinds in a
+         # space-separated list and strip() splits that list on spaces and colons.
+         i=0
+         for w in "${WKEYS[@]}"; do
+           i=$((i + 1))
+           case "$k" in *"${w#*|}"*) kind="WKEY$i"; break ;; esac
+         done ;;
     esac
   fi
 }
+# The name of WKEYS entry $1 (1, 2, ...), or the empty string if there is no such entry.
+wname() { local w=${WKEYS[$(($1 - 1))]:-}; [ -n "$w" ] || return 1; echo "${w%%|*}"; }
 # Prints one line for each certificate in $1 that carries a withdrawn root's key: its position (1, 2, ...) and what
 # classify() found it to be, AAA, EMS, AAA-KEY or EMS-KEY. Fails -- so the caller says UNKNOWN and changes nothing --
 # if any certificate can't be read, if anything openssl printed isn't a fingerprint and a public key, or if the number
@@ -185,7 +271,13 @@ classify() {
 # an endpoint agent, a full disk), the grep failed, its failure read as "no match", and every certificate was "not a
 # withdrawn root": measured, the run printed SAFE and exited 0 with both roots still in the file.
 roots() {
-  local n l blk='' inblk='' k=0 nfp=0 r
+  local n l blk='' inblk='' k=0 nfp=0 r z
+  # Before a single line is read: a NUL byte anywhere in the file (see nuls()). Every path that reads this file for
+  # withdrawn roots comes through here -- inspect() for the snapshot, the backup in checkbackup() and the re-reads
+  # from $FILE, built(), and the `left=$(roots "$tmp")` check on the cleaned file -- so one test here covers them all.
+  # Returns 5, which inspect() passes on, so the run can say which refusal this is.
+  z=$(nuls "$1") || return 1
+  [ "$z" -eq 0 ] || return 5
   n=$(certs "$1") || return 1
   while IFS= read -r l || [ -n "$l" ]; do
     case "$l" in
@@ -212,12 +304,15 @@ $l" ;;
 }
 # Reads $1 as the trust store this run is about, and sets $blocks, $before, $inline and $spec. Returns 0 when it could
 # be fully checked; 1 when it couldn't be read; 2 when a line holds -----BEGIN after other text; 3 when a block isn't
-# a plain certificate; 4 when a certificate couldn't be read with its fingerprint and key.
+# a plain certificate; 4 when a certificate couldn't be read with its fingerprint and key; 5 when the file holds a
+# NUL byte, which roots() refuses before it reads a line (nuls()).
 inspect() {
+  local rr=0
   blocks=$(count '^-----BEGIN ' "$1") && before=$(certs "$1") && inline=$(count '.-----BEGIN' "$1") || return 1
   [ "$inline" -eq 0 ] || return 2
   [ "$blocks" -eq "$before" ] || return 3
-  spec=$(roots "$1") || return 4
+  spec=$(roots "$1") || rr=$?
+  [ "$rr" -eq 0 ] || { [ "$rr" -eq 5 ] && return 5; return 4; }
 }
 # The $2-th certificate of $1, from its BEGIN line to its END line, as roots() hands it to openssl.
 block() { awk -v k="$2" '/^-----BEGIN CERTIFICATE-----/ { n++ } n == k { print } n == k && /^-----END CERTIFICATE-----/ { exit }' "$1"; }
@@ -235,7 +330,11 @@ entry() {
   printf '=== %s\nSHA256 Fingerprint=%s' "${r#subject= }" "$t"
 }
 # Writes $1 without the certificates listed in $2 ("position:kind ..." as roots() found them). For each one it
-# removes exactly these lines, and every other line in the file is kept, whatever it says:
+# removes exactly these lines, and every other line in the file is kept, whatever it says -- which is true because a
+# file holding a NUL byte never reaches here: awk cuts a record at its first NUL, so before 1 Nov 2026 a rewrite cut
+# every line that held one, and the sentence below was untrue of exactly those lines (the swarm's F-tls-1; measured:
+# Apple's file plus "# admin note: keep\0 this whole line" came out cut short, under a SAFE that said it had removed
+# only the roots). roots() now refuses any NUL byte, before anything is written.
 #   - its own block, from its -----BEGIN CERTIFICATE----- line to its own -----END CERTIFICATE----- line;
 #   - for the root itself (not a certificate found by its key alone),
 #     its name, when the name is directly above the block and is that root's: Apple's shape -- "=== <subject>",
@@ -319,6 +418,7 @@ writing=''    # set just BEFORE the first file is made beside $FILE: until then 
 published=''  # set once the backup has its dated name
 replaced=''   # set once the cleaned file has been renamed over $FILE
 orig='' want='' after='' backup='' naaa=0 nems=0 kaaa=0 kems=0 found=0 kind='' why='' step='' meant=''
+nwkey=0 wseen='' todrop=0 n=''   # certificates carrying one of the seven other withdrawn keys, which WKEYS they were
 snap='' tmp=''  # the two temporary files, once mktemp has named them
 SUDO='' DIR=''  # set once $FILE is known to be a file
 # The signals the traps below catch (stopped()), and that the run ignores once its answer is in (settled(), stopped()
@@ -403,22 +503,34 @@ one() {
   if [ "$2" -eq 1 ]; then s="$s and 1 other certificate with its key"; elif [ "$2" -gt 1 ]; then s="$s and $2 other certificates with its key"; fi
   echo "$s"
 }
-# The names of the withdrawn roots this file held, from what roots() found in it. Copies are counted.
+# The certificates this file held that this fix removes, by name, from what roots() found in it. Copies are counted,
+# and so are the certificates found by one of the seven other withdrawn keys: before 1 Nov 2026 this was only ever
+# called where at least one withdrawn root had been found, and with neither it would have named emSign ECC Root CA -
+# G3 for a file that did not hold it.
 held() {
-  local a e
-  a=$(one $((naaa - kaaa)) "$kaaa" "$AAA_NAME"); e=$(one $((nems - kems)) "$kems" "$EMS_NAME")
-  if [ "$naaa" -gt 0 ] && [ "$nems" -gt 0 ]; then echo "$a and $e"
-  elif [ "$naaa" -gt 0 ]; then echo "$a"
-  else echo "$e"; fi
+  local s=''
+  if [ "$naaa" -gt 0 ]; then s=$(one $((naaa - kaaa)) "$kaaa" "$AAA_NAME"); fi
+  if [ "$nems" -gt 0 ]; then s="${s:+$s and }$(one $((nems - kems)) "$kems" "$EMS_NAME")"; fi
+  if [ "$nwkey" -gt 0 ]; then s="${s:+$s and }$(wheld)"; fi
+  echo "$s"
 }
 # What this run removed, by name, and nothing it did not establish. Apple added emSign ECC Root CA - G3 after Mojave,
 # so every Mac of that era holds ONE of the two, and this says which one was removed and that this FILE did not hold
 # the other. Until 31 Oct 2026 it said "removed both withdrawn roots" whenever it removed two certificates -- two
 # copies of AAA Certificate Services included -- and "the other was already absent from this Mac", which is a claim
 # about a Mac drawn from one file.
+wheld() {
+  local n s=''
+  for n in $wseen; do s="${s:+$s, }$(wname "$n")"; done
+  if [ "$nwkey" -eq 1 ]; then echo "a certificate with the key of $s"; else echo "$nwkey certificates with the keys of $s"; fi
+}
 removed_phrase() {
-  if [ "$naaa" -gt 0 ] && [ "$nems" -gt 0 ]; then
-    if [ "$found" -eq 2 ] && [ "$((kaaa + kems))" -eq 0 ]; then echo "removed both withdrawn roots"; else echo "removed both withdrawn roots ($(held))"; fi
+  if [ "$found" -eq 0 ]; then
+    # Nothing but certificates found by one of the seven other withdrawn keys. No withdrawn root was in the file, so
+    # this must not say it removed one.
+    echo "removed $(held) (this file did not hold either withdrawn root)"
+  elif [ "$naaa" -gt 0 ] && [ "$nems" -gt 0 ]; then
+    if [ "$found" -eq 2 ] && [ "$((kaaa + kems + nwkey))" -eq 0 ]; then echo "removed both withdrawn roots"; else echo "removed both withdrawn roots ($(held))"; fi
   elif [ "$naaa" -gt 0 ]; then
     echo "removed $(held) (this file did not hold the other withdrawn root, $EMS_NAME)"
   else
@@ -605,12 +717,22 @@ case "$r" in
   3) echo "UNKNOWN  $FILE holds blocks that aren't plain certificates (such as BEGIN TRUSTED CERTIFICATE), which curl also"
      echo "         trusts and this fix can't check. Nothing changed. Run npx wardlatch@latest to test the Mac's tools."
      exit 2 ;;
+  # A NUL byte. curl, git, python3, ruby, perl and openssl read this file 253 bytes at a time and cut each piece at
+  # its first NUL, so they read bytes that a reader working line by line -- this script, and awk -- never sees. A
+  # withdrawn root can be hidden inside an ordinary-looking certificate block that way, and this fix would call the
+  # file clean. Apple's own file holds no NUL byte.
+  5) echo "UNKNOWN  $FILE holds a NUL byte, so this fix can't check it. Nothing changed. curl, git, python3, ruby, perl"
+     echo "         and openssl read this file 253 bytes at a time and cut each piece at its first NUL, so they can read"
+     echo "         a certificate out of bytes that a reader working line by line never sees -- which is how a withdrawn"
+     echo "         root can be hidden in a block that looks ordinary. Apple's own file holds no NUL byte. Take them out"
+     echo "         and run this again; or run npx wardlatch@latest to test what this Mac's tools trust."
+     exit 2 ;;
   *) echo "UNKNOWN  A certificate in $FILE couldn't be read and fingerprinted, so the file wasn't fully checked."
      echo "         Nothing changed."
      exit 2 ;;
 esac
 drop=''
-# Split on purpose: roots() prints "position kind" pairs, digits and AAA, EMS, AAA-KEY or EMS-KEY only.
+# Split on purpose: roots() prints "position kind" pairs, digits and AAA, EMS, AAA-KEY, EMS-KEY or WKEY<n> only.
 # shellcheck disable=SC2086
 set -f; set -- $spec; set +f
 while [ "$#" -ge 2 ]; do
@@ -619,6 +741,13 @@ while [ "$#" -ge 2 ]; do
     EMS) nems=$((nems + 1)) ;;
     AAA-KEY) naaa=$((naaa + 1)); kaaa=$((kaaa + 1)) ;;
     EMS-KEY) nems=$((nems + 1)); kems=$((kems + 1)) ;;
+    # One of the seven other withdrawn keys. Counted apart from the roots, because what this run says it did has to
+    # say which: these are not roots any root programme listed, and most of them are intermediates.
+    WKEY[1-9]|WKEY[1-9][0-9])
+      n=${2#WKEY}
+      wname "$n" >/dev/null || { echo "UNKNOWN  The fingerprint check named a key this doesn't know. Nothing changed; please report this."; exit 2; }
+      nwkey=$((nwkey + 1))
+      case " $wseen " in *" $n "*) ;; *) wseen="${wseen:+$wseen }$n" ;; esac ;;
     *) echo "UNKNOWN  The fingerprint check returned something this doesn't recognise. Nothing changed; please report this."; exit 2 ;;
   esac
   drop="${drop:+$drop }$1:$2"
@@ -626,6 +755,8 @@ while [ "$#" -ge 2 ]; do
 done
 [ "$#" -eq 0 ] || { echo "UNKNOWN  The fingerprint check returned something this doesn't recognise. Nothing changed; please report this."; exit 2; }
 found=$((naaa + nems))
+# Everything this run has to remove: the withdrawn roots and the certificates carrying one of the other seven keys.
+todrop=$((found + nwkey))
 
 # The one floor in this script, and the only place a number like this belongs: a judgement about the file as it was
 # found, made before anything is written into it. It names the number, because "it looks damaged" on its own tells
@@ -650,20 +781,28 @@ if [ "$before" -lt 50 ]; then
     echo "         it changed while this ran, or something changed the copy in ${TMPDIR:-/tmp}. Nothing changed. Run this again."
     exit 2
   fi
-  if [ "$found" -eq 0 ]; then
+  if [ "$todrop" -eq 0 ]; then
     echo "UNKNOWN  $FILE has $before certificates, fewer than the 50 this expects of a trust store. It holds neither"
-    echo "         withdrawn root, so this fix has nothing to remove. Something else may be wrong with it; nothing"
-    echo "         was changed. Run npx wardlatch@latest to test what this Mac's tools actually trust."
-  else
+    echo "         withdrawn root and no certificate with a compromised key, so this fix has nothing to remove."
+    echo "         Something else may be wrong with it; nothing was changed. Run npx wardlatch@latest to test what"
+    echo "         this Mac's tools actually trust."
+  elif [ "$found" -gt 0 ]; then
     echo "UNKNOWN  $FILE holds only $before certificates, fewer than the 50 this expects of a trust store, so it"
     echo "         looks damaged -- and it still holds a withdrawn root. This fix rebuilds the file it is given and"
     echo "         will not rebuild one that small. Nothing changed."
     echo "         Don't put an older copy of this file back: a copy from before this fix ran holds the withdrawn"
     echo "         roots too. A macOS update restores Apple's own cert.pem -- run this again after one."
+  else
+    # Small, no withdrawn root, but a certificate carrying one of the other seven keys: a corporate or hand-built
+    # bundle, most likely, so this does not call it damaged. It still must not read SAFE.
+    echo "UNKNOWN  $FILE has $before certificates, fewer than the 50 this expects of a trust store, so this fix will"
+    echo "         not rebuild it -- and it holds $(wheld), which curl, git and the"
+    echo "         built-in perl take as a trust anchor for everything that key signed. Nothing changed. Take those"
+    echo "         certificates out of the file yourself, then run npx wardlatch@latest to test what this Mac trusts."
   fi
   exit 2
 fi
-if [ "$found" -eq 0 ]; then
+if [ "$todrop" -eq 0 ]; then
   # That the file holds neither root is read again from $FILE itself, and the network through $FILE, not through the
   # snapshot: the snapshot is in the invoking user's temporary folder, where anything running as that user can change
   # it between one read and the next, and $FILE is what this verdict is about. Until 31 Oct 2026 a snapshot swapped
@@ -674,6 +813,13 @@ if [ "$found" -eq 0 ]; then
     echo "         way now: it changed while this ran, or something changed the copy in ${TMPDIR:-/tmp}. Nothing changed."
     echo "         Run this again."
     exit 2
+  fi
+  if ! canary_live; then
+    # Nothing online is read at all: no refusal from the test site could be told from its own certificate expiring.
+    settled
+    echo "SAFE     $FILE holds neither withdrawn root and no certificate with a compromised key. Nothing changed."
+    expired_note
+    exit 0
   fi
   c=$(control "$FILE")
   if [ "$c" -ne 0 ]; then
@@ -718,8 +864,8 @@ elif [ -n "$left" ]; then
   echo "UNKNOWN  The cleaned file still holds a withdrawn root, so it was not used. Nothing changed; $FILE is as it"
   echo "         was. Please report this."
   exit 2
-elif [ "$after" -ne $((before - found)) ]; then
-  echo "UNKNOWN  The cleaned file holds $after certificates, not the $((before - found)) there should be ($before before, $found removed),"
+elif [ "$after" -ne $((before - todrop)) ]; then
+  echo "UNKNOWN  The cleaned file holds $after certificates, not the $((before - todrop)) there should be ($before before, $todrop removed),"
   echo "         so it was not used. Nothing changed; $FILE is as it was. Please report this."
   exit 2
 fi
@@ -793,10 +939,15 @@ if [ "$landed" != "$want" ]; then
   exit 2
 fi
 
+# Past the test site's own expiry, nothing online is read: its refusal could not be told from its certificate having
+# expired (canary_live()). The file was still fixed, and what that is worth is said without an online claim.
+if ! canary_live; then
+  settled
+  echo "SAFE     Fixed in the file: $(removed_phrase), kept $after."
+  expired_note
 # Four readings, because there is a baseline to compare with, and a failure after the change is either a certificate
 # refused (60: about the change, or about the network) or a network that stopped answering (6, 7, 28: about neither).
-c=$(control "$FILE")
-if [ "$c" -eq 0 ]; then
+elif c=$(control "$FILE") && [ "$c" -eq 0 ]; then
   # The control loads through the new file: this network answers, and the new file still validates ordinary
   # certificates. So the test host's answer is about the test host, and there is a verdict to be had.
   r=$(trust "$FILE")
