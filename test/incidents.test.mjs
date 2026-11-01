@@ -166,6 +166,43 @@ test('eMudhra: the Mac fix matches exactly the seven keys the incident file name
     "the fix's key list and the incident file have drifted apart");
 });
 
+test("eMudhra: the fixture's twelve intermediates are the twelve Apple lists, by a source that is not the fixture", () => {
+  // The incident file and the fixture PEM are two copies of ONE reading -- the chains the advisory's 12 test hosts
+  // served on 31 Oct 2026 -- so the tests above prove they AGREE, not that the reading was RIGHT. This one checks
+  // the fixture against Apple's own published list (emudhra-2026-10-apple-ht149555.tsv, read 1 Nov 2026 from
+  // support.apple.com/en-us/149555, which its header records). Nothing is derived from that file: every key value
+  // is derived from certificate bytes elsewhere in this suite. Its one job is to disagree if either source is wrong.
+  const ROOT = join(DIR, '..', '..');
+  const F = join(ROOT, 'test', 'support', 'fixtures');
+  const rows = readFileSync(join(F, 'emudhra-2026-10-apple-ht149555.tsv'), 'utf8')
+    .split('\n').filter((l) => l.trim() && !l.startsWith('#'))
+    .map((l) => { const [sha256, name, issuer] = l.split('\t'); return { sha256, name, issuer }; });
+  assert.equal(rows.length, 12, "Apple's list is twelve certificates");
+  for (const r of rows) assert.match(r.sha256, /^[0-9A-F]{64}$/, r.name);
+  assert.equal(new Set(rows.map((r) => r.sha256)).size, 12, "Apple's twelve are distinct");
+  const certs = (readFileSync(join(F, 'emudhra-2026-10-compromised-keys.pem'), 'utf8')
+    .match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g) ?? []).map((p) => new X509Certificate(p));
+  assert.equal(certs.length, 14);
+  const cn = (dn) => dn.split('\n').find((l) => l.startsWith('CN='))?.slice(3);
+  const ours = new Map(certs.map((c) => [c.fingerprint256.replaceAll(':', ''), c]));
+  // Every one of Apple's twelve is in the fixture, with the same name and the same issuer.
+  for (const r of rows) {
+    const c = ours.get(r.sha256);
+    assert.ok(c, `${r.name}: Apple lists ${r.sha256} and the fixture does not hold it`);
+    assert.equal(cn(c.subject), r.name, `${r.sha256}: the name differs from Apple's`);
+    assert.equal(cn(c.issuer), r.issuer, `${r.sha256}: the issuer differs from Apple's`);
+  }
+  // And the fixture holds nothing beyond them but the two emSign Root TLS CA - G3 certificates of decision #38, so
+  // a thirteenth certificate smuggled into the fixture would fail here rather than pass as covered.
+  const extra = [...ours].filter(([fp]) => !rows.some((r) => r.sha256 === fp));
+  assert.equal(extra.length, 2, 'the fixture holds exactly two certificates Apple does not list');
+  for (const [fp, c] of extra) assert.equal(cn(c.subject), 'emSign Root TLS CA - G3', `unexpected extra ${fp}`);
+  // Six under each issuer, as Apple's page groups them: each intermediate was issued twice.
+  for (const issuer of ['emSign Root TLS CA - G3', 'AAA Certificate Services']) {
+    assert.equal(rows.filter((r) => r.issuer === issuer).length, 6, `six under ${issuer}`);
+  }
+});
+
 test('eMudhra: none of the seven keys is in the macOS bundle Apple ships, so refusing them costs that file nothing', async () => {
   const { createHash } = await import('node:crypto');
   const ROOT = join(DIR, '..', '..');
