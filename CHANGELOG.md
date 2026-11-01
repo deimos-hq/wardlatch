@@ -236,9 +236,9 @@ counted. Each fix below has a test that fails on da8f5c2 and passes after it.
   and whether the folder's own permission bits would have let this run in. On macOS it says that privacy protection
   is a common cause, which allowing the terminal Full Disk Access may lift, and that a sandbox the run is inside, or a
   security tool, refuses the same way and sudo may not lift it; it never claims to know which. Off macOS it names a
-  sandbox, a security module or a FUSE mount. As built, the rule covers EPERM: a service's folders that refuse with
-  EACCES keep the rule of 22 Oct 2026, one review line beside an all-clear, exit 0. Whether decision #32 covers them
-  too is a question the owner has not yet answered, and this entry will say so when he has. The cost, judged: on a Mac whose searched folders include ones macOS protects, a run now
+  sandbox, a security module or a FUSE mount. As built here, the rule covered EPERM only: a service's folders that
+  refuse with EACCES kept the rule of 22 Oct 2026, one review line beside an all-clear, exit 0, until the owner's
+  decision #33 made them could-not-be-tested too (below). The cost, judged: on a Mac whose searched folders include ones macOS protects, a run now
   exits 2 until the terminal has Full Disk Access or those folders are left out. Tests in
   `test/independent-read.test.mjs`: the LiteLLM case through an EPERM the test makes, the row's words, and a real
   unprivileged `sandbox-exec` run, which skips and says why when it is already inside a sandbox; the three tests that
@@ -520,7 +520,7 @@ and an attacker's reading of the specification. Each fix below has a test that f
   whose mode would let the run in was a "stated gap", a REVIEW line beside the all-clear with exit 0, on the claim
   that EPERM "cannot be forged without root". That claim was false, and decision #32 replaced the rule: see
   Security.) Everything else is as it was: a person-owned EACCES stays could-not-be-tested and exit 2, and a
-  service's EACCES folder is one review line.
+  service's EACCES folder was one review line until decision #33 (under Security) made it could-not-be-tested too.
 - **An all-clear that sits beside folders a service owns, which it couldn't open, now records how many,** as `gaps`
   next to `searched` in its receipt, so exit 0 reads "I opened these, could not open 3, here they are and here is
   what would open them" rather than listing only what was opened and leaving the reader to assume the rest was
@@ -529,7 +529,8 @@ and an attacker's reading of the specification. Each fix below has a test that f
   were stated in one review line. Those figures were measured under the stated-gap rule that decision #32 replaced,
   and before the link, depth-limit and skipped-name corrections under Security; they have not been measured again,
   and they would differ: those three folders are now could-not-be-tested rows, a link whose target was only listed
-  now counts, and so does a folder past a depth limit.
+  now counts, and so does a folder past a depth limit. (Decision #33, under Security, replaced this too: a service's
+  folders are now one UNKNOWN row, no all-clear is printed beside it, and the command no longer writes `gaps`.)
 - **`test/support/mojave-shapes.sh` was testing the live network while saying it was offline, and one of its cases
   could not fail.** Its stub `curl` was dead code: it put one on `PATH`, but the fix calls `/usr/bin/curl` by
   absolute path on purpose, so `PATH` could never shadow it. All five shapes made live requests to

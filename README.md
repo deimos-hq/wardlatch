@@ -120,10 +120,12 @@ for you to apply. What it can and can't promise, and why: [ASSURANCE_CASE.md](AS
 An unknown option, or `--paths` or `--incident` without a value, stops with exit code 2 before anything runs.
 
 Each line starts with a status: `SAFE`, `EXPOSED` (with the fix under it), `UNKNOWN` (could not be tested, with the
-reason) or `REVIEW` (something to look at, such as a new workflow file, or folders a service owns that it couldn't
-open). The exit code is **1** if anything is exposed, otherwise **2** if anything could not be tested, otherwise **0**.
-Review lines never change it. A folder it can't open counts as could-not-be-tested when a person owns it (it could hold
-their projects), and is listed in one review line when a service owns it (a database's data, certbot's keys). A folder
+reason) or `REVIEW` (something to look at, such as a new workflow file or plugin folder). The exit code is **1** if
+anything is exposed, otherwise **2** if anything could not be tested, otherwise **0**. Review lines never change it.
+A folder it can't open is could-not-be-tested whoever owns it, and no all-clear is printed beside it: a person's
+folder (it could hold their projects) gets a line of its own, and the folders a service owns (a database's data,
+certbot's keys) are grouped into one line per check (`15 folders owned by service accounts, not searched`), with each
+folder's error, mode and owner under it and the advice to run Wardlatch with sudo to include them. A folder
 the system refuses with EPERM is could-not-be-tested whoever owns it, and its line gives the error, the folder's mode
 and its owner. On macOS the commonest cause is privacy protection (Desktop, Documents, Downloads, iCloud), which
 allowing your terminal Full Disk Access (System Settings → Privacy & Security) may lift; a sandbox the run is inside,
@@ -154,15 +156,15 @@ could-not-be-tested on the same terms, since nothing else in it is searched.
 `--json` prints one object: `{ tool, version, incidents: [{ id, title, advisory }], results: [...] }`. Each result
 has `incident`, `status` and `kind` (`node`, `curl`, `python`, `macos-system`, `container`,
 `containers` when an engine can't be asked or a `DOCKER_HOST` isn't followed, `runtimes` when a trust check found nothing to test,
-`skipped` for the folders a service owns that couldn't be opened (`paths`),
 `environment` when a trust setting couldn't be given to the probes, `search` for a folder the trust check couldn't open,
 `home` when a sudo user's home folder wasn't found, `binary`, `install`, `header`, `workflow`, `secret` or `wordpress`; a virtual environment's certifi is kind `curl` with `certifi` and `env`, and the bundle `REQUESTS_CA_BUNDLE` names is kind `curl` with `caVar` and `bundle`; a WordPress row has `site`, and `plugins` when that site has more than one plugins folder; a container engine that is installed but not running is a REVIEW row with `engine` and `notRunning`; an untested Linux bundle is kind `curl` with `system` and `bundle`), the fields of that kind (such as `bin`, `version`, `trusted` and `tested` for a
 trust probe, or `file`, `line`, `type` and `masked` for a key), `reason` when it is UNKNOWN, and `fix` when there is
 something to do. A SAFE row has `searched`, what it looked at; `notSearched`, the folder names its walk skips, when it
-rests on one; and `gaps`, when there are any, the number of folders a service owns that it couldn't open. An UNKNOWN
-row for a folder the system refused, or whose path was too long, has `path` and `code` (`EPERM` or `ENAMETOOLONG`),
+rests on one. The folders a service owns that couldn't be opened are one UNKNOWN row of the check's own kind (`install`
+for the LiteLLM check, for example) with `what` (`service folders`), `paths`, and `folders`, which lists each with its
+`path`, `code`, `basis` and `remedy`. An UNKNOWN row for a folder the system refused, or whose path was too long, has `path` and `code` (`EPERM` or `ENAMETOOLONG`),
 and an EPERM row also has `basis` (the error, the mode and the owner); a depth-limit row has `what` (`depth limit`)
-and `paths`. The `skipped` row lists each folder in `folders`, with its `path`, `code`, `basis` and `remedy`.
+and `paths`.
 
 ```
 npx wardlatch@latest --json          # for CI and scripts

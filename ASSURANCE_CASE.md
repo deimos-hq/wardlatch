@@ -389,9 +389,10 @@ SAFE they couldn't support; the other checks run, untested.
 file was written. They can go stale until the next update; each source is linked so it can be checked.
 
 **REVIEW lines are leads, not verdicts.** A new workflow file or plugin folder is listed because it could be
-malicious, not because it is. Folders a service owns that Wardlatch couldn't open are listed the same way: they were
-not searched, and running with sudo includes them; a person's locked folder is UNKNOWN instead, since it could hold
-that person's projects. The committed-key scan looks for high-confidence shapes only; a key in an unusual format
+malicious, not because it is. A folder Wardlatch couldn't open is not a lead but a gap, whoever owns it: a person's
+locked folder is UNKNOWN in a line of its own, since it could hold that person's projects, and the folders a service
+owns are UNKNOWN in one line per check (owner decision #33, 31 Oct 2026; until then they were one REVIEW line beside
+an all-clear, exit 0), with running with sudo as the way to include them. The committed-key scan looks for high-confidence shapes only; a key in an unusual format
 is missed.
 
 **The workflow review reads commits by the date they claim.** git gets no date. `git log --all --format='%H %ct'`
