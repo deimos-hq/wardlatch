@@ -41,9 +41,18 @@ SHA-256 of its SubjectPublicKeyInfo as comment lines above it. No private key is
 
 **Provenance.** Read on 31 October 2026 from the chains the advisory's own 12 test hosts serve (one
 `openssl s_client -showcerts` each, read-only) and, for the self-signed `emSign Root TLS CA - G3`, from crt.sh
-entry 12478656984. The 12 fingerprints are the 12 Apple lists in HT149555, compared as raw bytes rather than
-through a summariser. Each key value in `lib/incidents/emudhra-2026-10.json`'s `withdrawnKeys` was re-derived from
-these certificates twice, with LibreSSL 3.3.6 and with OpenSSL 4.0.3.
+entry 12478656984. The 12 fingerprints are the 12 Apple lists in HT149555: compared on 31 October as raw bytes on
+both sides, the certificates the hosts served against the published list, rather than through a summariser; and
+compared again on 1 November against Apple's page as it reads today, through
+`emudhra-2026-10-apple-ht149555.tsv` below, whose own header says that side came through a summariser.
+
+**Three derivations, and which is which.** Each key value in `lib/incidents/emudhra-2026-10.json`'s `withdrawnKeys`
+was derived from these certificates **twice by hand** — LibreSSL 3.3.6 and OpenSSL 4.0.3, independent builds, both
+giving `emSign Root TLS CA - G3` a 120-byte SubjectPublicKeyInfo hashing to `c619e478…ac792fe9` for the self-signed
+and the cross-signed certificate alike — and a **third time on every run** by `test/incidents.test.mjs`, which uses
+node's own `crypto` and takes the X coordinate from the key's JWK rather than from the way `openssl` prints it. So
+"twice" is the author's two and "three ways" below counts the test's as well; they are the same seven keys, not two
+different claims.
 
 sha256 `489d8e0e1632412a960cbf126e1f54f9aa287c6e40d4be6250cc2f3b3ec7525c`, 14 certificates.
 
