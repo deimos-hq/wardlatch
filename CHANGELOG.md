@@ -481,6 +481,69 @@ and an attacker's reading of the specification. Each fix below has a test that f
   whatever is in it (with no main file its version is UNKNOWN, and the indicator is still searched for), and an
   `app/plugins` folder is checked as a plugins folder when Bedrock's config is beside it or beside its web root, or
   when it holds a folder named as a listed plugin. *Found and fixed 31 Oct 2026 (4719918).*
+- **A service's folder Wardlatch could not open rode beside SAFE as a review line, exit 0. Owner decision #33 makes it
+  could-not-be-tested, exit 2.** Decision #32 (above) covered EPERM; a folder a service owns that refused with EACCES
+  was still one REVIEW line beside the all-clear. The owner decided on 31 Oct 2026, in his words "UNKNOWN too": such
+  folders are now one UNKNOWN row per check (`15 folders owned by service accounts, not searched`), with each folder's
+  errno, mode and owner and the advice to run with sudo, no all-clear beside it, and exit 2; in `--json` the row has
+  the check's own kind, `what: "service folders"`, `paths` and `folders`. It replaces the rule of 22 Oct 2026. Measured
+  on `/private/var/spool`: SAFE and exit 0 before, UNKNOWN and exit 2 now. *Found and fixed 31 Oct 2026 (99a80ea;
+  the tests, bde26ef).*
+- **A virtual environment whose packages are not at `lib/python3*/site-packages` read SAFE.** The third read's walk
+  found a venv's packages only there, so a PyPy venv (`lib/pypy3.X/site-packages`), a Windows-layout one
+  (`Lib/site-packages`) or an older PyPy one (beside `pyvenv.cfg`) holding the LiteLLM stealer read SAFE, exit 0, and
+  a PyPy venv's certifi was never tested. They are found in every one of those layouts now. *Found and fixed 31 Oct
+  2026 (78d0dfc).* (Open, measured by this round's strict audit: the code takes any folder of a venv whose name begins
+  `lib`, in any case, as its lib folder, so a venv inside a project-venv's `libs/` is not looked for, and the line
+  under the all-clear names only `lib`, `lib64` and `Lib`.)
+- **A venv's own `bin`, `share` and `etc` were never searched, while the line under the all-clear said they were
+  "checked with it".** 471a4ea (above) skipped them, so a stealer's venv inside a project-venv's own `lib/`, `share/`,
+  `bin/` or `etc/` read SAFE, exit 0. A venv is now walked like any folder but its own package folders, which are
+  checked and not walked, and the line under the all-clear says exactly that. *Found and fixed 31 Oct 2026 (6d3a77f).*
+- **A link to a virtual environment hid any venv inside it.** The link was marked as walked, so it had no row and a
+  venv inside the linked one was never looked for. Its packages are still checked through it, and it is now a link not
+  followed, could-not-be-tested. *Found and fixed 31 Oct 2026 (835882a).*
+- **A repository inside another was not checked, and the all-clear did not say so.** The workflow, committed-keys and
+  header checks stop at the first repository. The line under each of their all-clears now says "a repository inside
+  another repository is not looked for: pass --paths with it to include it". *Found and fixed 31 Oct 2026 (fed35b6).*
+- **A DER key followed by more than 1 MB of other bytes was skipped with no row.** The key reader read files under a
+  1 MB cap before it looked at their structure. It now reads the first 1 MB, and a key in it is a key. A file whose
+  first element is anything else still claims nothing past 1 MB. *Found and fixed 31 Oct 2026 (e85a3ef).* (Open,
+  measured by this round's strict audit: a PKCS #12 store over 1 MB holding a key reads SAFE.)
+- **A loose copy of a plugins folder under any other parent read SAFE.** A `plugins` folder holding a listed plugin's
+  folder is now checked as a site's are, whatever its parent, unless it sits in a found site's own folder. *Found and
+  fixed 31 Oct 2026 (1a2b7e2).*
+- **Invisible characters outside the escaper's categories still reached the output raw.** Variation selectors,
+  U+034F, the Hangul fillers and the braille blank (U+2800) passed in text and `--json`. The escaper now also writes
+  out every Default_Ignorable_Code_Point and U+2800, and a backslash that would read as one of its forms is written
+  `\\`, so a folder literally named `t\u{202e}t` no longer prints like one holding U+202E. *Found and fixed 31 Oct 2026
+  (d0bbc4f, 6d97f7c).*
+- **A crash turned the printable `\x0a` in an error's text into a line break.** A path holding those four characters
+  could start a line of its own, such as one beginning SAFE, on stderr. The stack is now escaped a line at a time.
+  A real line break inside an error's own message still starts a line (measured 31 Oct 2026; open). *Found and fixed
+  31 Oct 2026 (c5ad2a9).*
+- **The Mac fix left a copy of emSign's key stored in another encoding, under SAFE.** 69eef90 (above) compared the key
+  as `openssl x509 -pubkey` prints it, which keeps an EC point's form and an explicit curve: a copy with the point
+  compressed or hybrid, or explicit parameters, which LibreSSL and `/usr/bin/curl` trust, stayed in the file, as did
+  an RSA key labelled RSA-PSS. The key is now compared as `openssl` decodes it. *Found and fixed 31 Oct 2026
+  (29a6460).*
+- **The Mac fix had root copy a path in the user's temporary folder.** `sudo cp` follows a link, so a process running
+  as the user that turned the cleaned file into a link to a root-only file while the run waited for the password got
+  root to copy that file beside the bundle and make it readable by everyone for a moment. The new file is now written
+  by `tee` from input the user's own shell opens. *Found and fixed 31 Oct 2026 (83e5938).*
+- **The Mac fix's backup check did not prove the removal list complete.** It checked each listed root in the backup;
+  a root hidden from the snapshot's reads was never listed, and only the check on the new file stopped it landing. The
+  backup must now read exactly as the snapshot did. And under 50 certificates, what the line says about the file is now
+  read from the file itself, not the snapshot. *Found and fixed 31 Oct 2026 (8950bb9, 2920cea).*
+- **The Mac fix could still end with no line, or with EXPOSED's exit code after a fix.** USR1, ALRM (a timeout) and
+  XCPU ended it with 158, 142 or 152 and no line, after the rename too; a signal while the cleaned file was written
+  sent its line into that file; and a verdict line that could not be written ended the run with 1. Every signal whose
+  default ends a process, except the fault signals, is now trapped; the line goes to the standard output the run
+  started with; and the run exits 0 only after SAFE and 1 only after EXPOSED. The fault signals and SIGKILL still end it
+  with no line. *Found and fixed 31 Oct 2026 (732bdf3, 44542d4, 31904f1).*
+- **The Mac fix printed a link's target inside the command it told the reader to run.** A target holding a single
+  quote broke out of the quoting, so the printed command ran a command of the link maker's choosing. A target name is
+  now printed only when it is plain. *Found and fixed 31 Oct 2026 (6b0ace6).*
 
 ### Fixed
 - **359 of the 361 folders a run called "could not be tested" on one Mac were not gaps at all, and the two
