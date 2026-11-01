@@ -136,15 +136,20 @@ that depth that holds more to walk is could-not-be-tested: one UNKNOWN line per 
 limit`, or how many) names those folders, and `--paths` with a folder nearer to them includes them. Each walk also
 skips folders by name: the WordPress walk `node_modules`, `.git` and `.venv`; the repository walk `node_modules`,
 `.venv` and `venv`; the virtual-environment and trust walks `node_modules` and `.git`, and, inside a virtual
-environment, the folders it keeps its own files in (`bin`, `Scripts`, `include`, `Include`, `lib`, `lib64`, `Lib`,
-`share`, `etc`), which are checked with it rather than searched; and all of them macOS's own Library folders. Every
-all-clear that rests on such a walk names them on the line under it (`folders named node_modules or .git, and macOS's
-own Library folders, are not searched; inside a virtual environment, the folders it keeps its own files in (…) are
-checked with it, not searched`), and the trust check, which has no all-clear, says so under its rows. The repository
-walk also stops at each repository it finds, so a repository inside another one (a clone in an ignored folder, for
-example) is not checked by the workflow, committed-keys or header checks, and the line under their all-clear does not
-say so. A link to a folder elsewhere is not followed; it is could-not-be-tested unless the same walk went through the
-folder it points to, at least as deep as following the link would have.
+environment they go into, its own package folders (`site-packages` or `dist-packages` beside its `pyvenv.cfg`, in its
+`lib`, `lib64` or `Lib` folder, or one level below that), which are checked with the environment (for the incident's
+files, and for its certifi) rather than searched for other environments; the rest of a virtual environment, its `bin`,
+`share` and `etc` included, is walked like any folder; and all of them macOS's own Library folders. Every all-clear
+that rests on such a walk names them on the line under it (`folders named node_modules or .git, and macOS's own
+Library folders, are not searched; inside a virtual environment the walk goes into, its own package folders (…) are
+checked with the environment, not searched for other environments`), and the trust check, which has no all-clear,
+says so under its rows. The repository walk also stops at each repository it finds, so a repository inside another one
+(a clone in an ignored folder, for example) is not checked by the workflow, committed-keys or header checks, and the
+line under their all-clear says so (`a repository inside another repository is not looked for: pass --paths with it to
+include it`); given with `--paths`, it is checked. A link to a folder elsewhere is not followed; it is
+could-not-be-tested unless the same walk went through the folder it points to, at least as deep as following the link
+would have. A link to a virtual environment has that environment's own packages checked through it, and is
+could-not-be-tested on the same terms, since nothing else in it is searched.
 
 `--json` prints one object: `{ tool, version, incidents: [{ id, title, advisory }], results: [...] }`. Each result
 has `incident`, `status` and `kind` (`node`, `curl`, `python`, `macos-system`, `container`,
