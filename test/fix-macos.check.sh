@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2016,SC2012  # stand-ins written in single quotes; ls only counts names this file made
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Deimos AI LLC
 #
@@ -522,7 +523,7 @@ sigrun() {
   ${reset[@]+"${reset[@]}"} env "$@" WL_MARK="$r2/mark" TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$f" bash "$s" >"$r2/sig.out" 2>"$r2/sig.err" &
   pid=$!
   set +m
-  for i in $(seq 1 300); do [ -e "$r2/mark" ] && break; /bin/sleep 0.1; done
+  for _ in $(seq 1 300); do [ -e "$r2/mark" ] && break; /bin/sleep 0.1; done
   if [ ! -e "$r2/mark" ]; then kill -KILL "$pid" 2>/dev/null || true; fail "a stopped run: the run never reached the point it is stopped at"; fi
   kill -"$sigrun_sig" "$pid" 2>/dev/null || true
   code=0; wait "$pid" || code=$?
@@ -2449,7 +2450,7 @@ derhdr() {   # $1 = hex starting at a SEQUENCE: prints the header's length in he
 respki() {   # $1 = certificate, $2 = SubjectPublicKeyInfo (DER hex), $3 = out: the certificate with that key, its signature kept
   local h old oh ol t th tl tbs after inner
   h=$(/usr/bin/openssl x509 -in "$1" -outform DER | xxd -p | tr -d '\n'); old=$(spkihex "$1")
-  read -r oh ol <<<"$(derhdr "$h")"; t=${h:$oh}; read -r th tl <<<"$(derhdr "$t")"
+  read -r oh _ <<<"$(derhdr "$h")"; t=${h:$oh}; read -r th tl <<<"$(derhdr "$t")"
   { [ "$oh" -gt 0 ] && [ "$th" -gt 0 ]; } || fail "a key in another encoding: $1 is not a certificate this can rebuild"
   tbs=${t:$th:$((tl * 2))}; after=${t:$((th + tl * 2))}
   case "$tbs" in *"$old"*"$old"*) fail "a key in another encoding: the key is in $1 twice" ;; *"$old"*) ;; *) fail "a key in another encoding: the key was not found in $1" ;; esac
@@ -2880,7 +2881,7 @@ filler=$!
 ${reset[@]+"${reset[@]}"} env TMPDIR="$work/tmp" WARDLATCH_CERT_FILE="$d/cert.pem" WARDLATCH_CURL="$r2/curl" STUB_CONTROL=0 STUB_TEST=60 \
   STUB_MARK_TEST=1 WL_MARK="$r2/mark" bash "$r2/net.sh" >"$d/fifo" 2>"$d/stderr" &
 pid=$!
-for i in $(seq 1 300); do [ -e "$r2/mark" ] && break; /bin/sleep 0.1; done
+for _ in $(seq 1 300); do [ -e "$r2/mark" ] && break; /bin/sleep 0.1; done
 if [ ! -e "$r2/mark" ]; then kill -KILL "$pid" "$filler" 2>/dev/null || true; exec 7>&-; fail "a signal while the verdict is written: the run never reached its last reading"; fi
 /bin/sleep 1
 kill -TERM "$pid" 2>/dev/null || true

@@ -269,8 +269,8 @@ classify() {
   elif [ "$f" = "${EMS//:/}" ]; then kind=EMS
   else
     case "$k" in
-      *"$AAA_N"*) kind=AAA-KEY ;;
-      *"$EMS_X"*) kind=EMS-KEY ;;
+      *"$AAA_N"*) kind='AAA-KEY' ;;
+      *"$EMS_X"*) kind='EMS-KEY' ;;
       *) kind=-
          # One of the seven other withdrawn keys (WKEYS): WKEY1 is the first entry, WKEY2 the second, and so on, so
          # the kind carries which key it was without a space or a colon in it -- roots() prints these kinds in a
@@ -378,12 +378,14 @@ strip() {
   envs=(WL_STRIP=1)
   # Split on purpose: $2 is "position:kind" pairs, digits, colons, AAA, EMS and -KEY only.
   # shellcheck disable=SC2086
+  # shellcheck disable=SC2086  # split on purpose, with globbing off
   set -f; set -- "$1" $2; set +f
   for p in "${@:2}"; do
     case "${p#*:}" in AAA|EMS) e=$(entry "$1" "${p%%:*}" "${p#*:}") || e=''; envs+=("WL_ENTRY_${p%%:*}=$e") ;; esac
   done
   # The list again, as one word for awk.
   p="${*:2}"
+  # shellcheck disable=SC2016  # the program is awk's, and its $ are awk's
   env "${envs[@]}" awk -v list="$p" -v aaa="$AAA" -v ems="$EMS" -v aname="$AAA_NAME" -v ename="$EMS_NAME" '
     BEGIN {
       n = split(list, a, " ")
@@ -460,11 +462,11 @@ SIGNALS='HUP INT QUIT TERM ABRT PIPE ALRM XCPU XFSZ VTALRM PROF USR1 USR2'
 clean() { [ -z "$snap" ] || rm -f "$snap" || true; [ -z "$tmp" ] || rm -f "$tmp" || true; [ -z "$new" ] || $SUDO rm -f "$new" || true; new=''; [ -z "$bnew" ] || $SUDO rm -f "$bnew" || true; bnew=''; strays || true; }
 strays() {
   local f
-  for f in "${TMPDIR:-/tmp}"/wardlatch.$$.*; do
+  for f in "${TMPDIR:-/tmp}/wardlatch.$$".*; do
     if [ -e "$f" ] || [ -L "$f" ]; then rm -f "$f" || true; fi
   done
   [ -n "$DIR" ] || return 0
-  for f in "$DIR"/.wardlatch-new.$$.* "$DIR"/.wardlatch-backup.$$.*; do
+  for f in "$DIR/.wardlatch-new.$$".* "$DIR/.wardlatch-backup.$$".*; do
     if [ -e "$f" ] || [ -L "$f" ]; then $SUDO rm -f "$f" || true; fi
   done
 }
@@ -681,7 +683,7 @@ replace() {
   # everyone (chmod 644, below) before the digest check removed it (the round-3 re-read, with a stand-in sudo). Now a
   # link to a file the user can't read fails here, as the user, and what is made readable is only what the user could
   # already read.
-  if step=tee && why=$($SUDO tee "$new" 2>&1 <"$1" >/dev/null) && step=chmod && why=$($SUDO chmod 644 "$new" 2>&1); then
+  if step='tee' && why=$($SUDO tee "$new" 2>&1 <"$1" >/dev/null) && step='chmod' && why=$($SUDO chmod 644 "$new" 2>&1); then
     got=$(sha "$new") || got=''
     if [ "$got" != "$expect" ] || { [ "$1" = "$tmp" ] && ! built "$new"; }; then
       $SUDO rm -f "$new" || true
@@ -698,7 +700,7 @@ replace() {
       now=$(sha "$FILE") || now=''
       if [ "$now" != "$orig" ]; then $SUDO rm -f "$new" || true; new=''; return 4; fi
     fi
-    step=mv; why=$($SUDO mv "$new" "$FILE" 2>&1) && { new=''; return 0; }
+    step='mv'; why=$($SUDO mv "$new" "$FILE" 2>&1) && { new=''; return 0; }
   fi
   $SUDO rm -f "$new" || true
   new=''
@@ -850,6 +852,7 @@ esac
 drop=''
 # Split on purpose: roots() prints "position kind" pairs, digits and AAA, EMS, AAA-KEY, EMS-KEY or WKEY<n> only.
 # shellcheck disable=SC2086
+# shellcheck disable=SC2086  # split on purpose, with globbing off
 set -f; set -- $spec; set +f
 while [ "$#" -ge 2 ]; do
   case "$2" in

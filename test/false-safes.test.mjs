@@ -138,7 +138,8 @@ const mandatoryRefusalRoot = () => {
     const escaping = links.filter((p) => { const id = fileId(realPath(p) ?? p); return !(id && listed.has(id)); });
     return { mandatory, clean: mandatory.length > 0 && person.length === 0 && escaping.length === 0 };
   };
-  for (const base of ['/private/var/protected', '/private/var/db', '/private/var', '/Library']) {
+  // not /Library: a CI Mac keeps its JDKs there, and no-real-home.cjs stops a test that walks into them
+  for (const base of ['/private/var/protected', '/private/var/db', '/private/var']) {
     let ents; try { ents = readdirSync(base, { withFileTypes: true }); } catch { continue; }
     for (const e of ents) {
       if (!e.isDirectory() || e.isSymbolicLink()) continue;

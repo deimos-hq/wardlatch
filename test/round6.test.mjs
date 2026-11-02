@@ -17,6 +17,7 @@ import { copiesMatching, tempDirs } from '../lib/binaries.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
+const ownEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(XDG_[A-Z_]+|GOENV|GOTOOLCHAIN)$/.test(k)));
 let dir, home;
 before(() => { dir = mkdtempSync(join(tmpdir(), 'wardlatch-r6-')); home = mkdtempSync(join(tmpdir(), 'wardlatch-r6-home-')); });
 after(() => { rmSync(dir, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); });
@@ -31,7 +32,7 @@ const repoWith = (name, files) => {
   return repo;
 };
 const cli = (args, env = {}, wrap = []) => {
-  const r = spawnSync(wrap[0] ?? process.execPath, [...wrap.slice(1), ...(wrap.length ? [process.execPath] : []), BIN, '--json', ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: { ...process.env, PATH: '/usr/bin:/bin', HOME: home, TMPDIR: home, ...env } });
+  const r = spawnSync(wrap[0] ?? process.execPath, [...wrap.slice(1), ...(wrap.length ? [process.execPath] : []), BIN, '--json', ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: { ...ownEnv(), PATH: '/usr/bin:/bin', HOME: home, TMPDIR: home, ...env } });
   assert.ok(r.stdout, `no output (exit ${r.status}): ${r.stderr}`);
   return { code: r.status, results: JSON.parse(r.stdout).results };
 };

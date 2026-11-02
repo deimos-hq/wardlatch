@@ -62,3 +62,15 @@ SPDX-License-Identifier = "LicenseRef-Public-CA-Certificate"
 path = "lib/incidents/emudhra-2026-10-root-emsign.pem"
 SPDX-FileCopyrightText = "eMudhra Technologies Limited (emSign ECC Root CA - G3)"
 SPDX-License-Identifier = "LicenseRef-Public-CA-Certificate"
+
+# The published npm packages, kept so `shasum -a 256 -c SHA256SUMS` can be checked in a clone.
+[[annotations]]
+path = ["wardlatch-*.tgz", "SHA256SUMS"]
+SPDX-FileCopyrightText = "2026 Deimos AI LLC"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Test fixtures: public certificates and their fingerprints, unchanged, as NOTICE says of the roots above.
+[[annotations]]
+path = ["test/support/fixtures/macos-27.2-cert.pem", "test/support/fixtures/emudhra-2026-10-compromised-keys.pem", "test/support/fixtures/emudhra-2026-10-apple-ht149555.tsv"]
+SPDX-FileCopyrightText = "The certificate authorities named in each certificate"
+SPDX-License-Identifier = "LicenseRef-Public-CA-Certificate"

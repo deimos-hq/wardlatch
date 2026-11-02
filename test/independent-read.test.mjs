@@ -143,7 +143,8 @@ const tooLong = (base, then = ':') => {
 };
 const rmTree = (p) => execFileSync('/bin/rm', ['-rf', p], { stdio: 'pipe' });
 
-test('WV-6 a folder whose full path is too long to open is "denied" with its errno, never "gone"', async () => {
+// macOS's 1,024-byte PATH_MAX is what this builds past; Linux's 4,096 stops the fixture's own `cd` first.
+test('WV-6 a folder whose full path is too long to open is "denied" with its errno, never "gone"', { skip: process.platform !== 'darwin' && 'macOS only' }, async () => {
   const { listDir, pathState } = await import('../lib/files.mjs');
   const base = fresh('wv6-unit');
   const { deep } = tooLong(base);

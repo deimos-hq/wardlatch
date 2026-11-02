@@ -86,7 +86,8 @@ fi
 
 # Mode travels with the digest: a download published with a checksum and no execute bit is still a broken
 # instruction ("run bash ~/Downloads/..."), and gate A8 names it.
-mode=$(stat -f '%Lp' "$f" 2>/dev/null || stat -c '%a' "$f")
+# GNU stat first: on Linux `stat -f` succeeds and prints the filesystem, which is not a mode.
+mode=$(stat -c '%a' "$f" 2>/dev/null || stat -f '%Lp' "$f")
 [ "$mode" = 755 ] || fail "fix/fix-macos.sh is mode $mode, expected 755"
 
 if [ "$bad" -ne 0 ]; then

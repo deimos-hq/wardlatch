@@ -17,6 +17,7 @@ import { discover } from '../lib/discover.mjs';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
 const incident = (id) => JSON.parse(readFileSync(join(ROOT, 'lib', 'incidents', `${id}.json`), 'utf8'));
+const ownEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(XDG_[A-Z_]+|GOENV|GOTOOLCHAIN)$/.test(k)));
 let dir, home, n = 0;
 before(() => { dir = mkdtempSync(join(tmpdir(), 'wardlatch-s5-')); home = mkdtempSync(join(tmpdir(), 'wardlatch-s5-home-')); });
 after(() => { rmSync(dir, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); });
@@ -25,7 +26,7 @@ const fresh = () => { const d = join(dir, `t${++n}`); mkdirSync(d, { recursive: 
 const put = (p, body) => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, body); return p; };
 const exe = (p, body) => { put(p, `#!/bin/sh\n${body}\n`); spawnSync('/bin/chmod', ['755', p]); return p; };
 const cli = (args, env = {}) => {
-  const r = spawnSync(process.execPath, [BIN, '--json', ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: { ...process.env, PATH: '/usr/bin:/bin', HOME: home, TMPDIR: home, ...env } });
+  const r = spawnSync(process.execPath, [BIN, '--json', ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: { ...ownEnv(), PATH: '/usr/bin:/bin', HOME: home, TMPDIR: home, ...env } });
   assert.ok(r.stdout, `no output (exit ${r.status}): ${r.stderr}`);
   return { code: r.status, results: JSON.parse(r.stdout).results };
 };

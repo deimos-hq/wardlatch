@@ -263,7 +263,8 @@ test('git\'s hints are never the reason shown, and too much output or a timeout 
 // how a typo with --incident exited 0 in silence, so on 2 Nov 2026 it was removed.
 test('a --paths entry that is a file is could-not-be-tested in every check, including those that don\'t search folders', () => {
   const f = put(join(dir, 'p1-file'), 'x');
-  for (const id of ['plex-2026-10', 'gitlab-2026-10', 'php-2026-10', 'github-actions-2026-10', 'litellm-2026-10']) assert.equal(sys(['--incident', id, '--paths', f]).code, 2, id);
+  // the row, not the exit code: a machine with PHP on it can exit 1 for its own reasons (a CI runner does)
+  for (const id of ['plex-2026-10', 'gitlab-2026-10', 'php-2026-10', 'github-actions-2026-10', 'litellm-2026-10']) assert.ok(sys(['--incident', id, '--paths', f]).rows.some((x) => x.status === 'UNKNOWN' && x.path === f), id);
 });
 
 // ---- from the final narrow check (76849c4) -------------------------------------------------------------------------------
