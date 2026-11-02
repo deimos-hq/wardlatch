@@ -106,6 +106,10 @@ const unknowns = (r) => r.rows.filter((x) => x.status === 'UNKNOWN');
 // user can't chown a test folder to another account): picked at run time, or the test is skipped.
 let isPersonUid;
 before(async () => { ({ isPersonUid } = await import('../lib/owners.mjs')); });
+// (Changed 31 Oct 2026, owner decision #32: a folder that refuses with EPERM is UNKNOWN whoever owns it, so a root
+// with one below it is no longer the fixture this test means. On this Mac the finder had picked
+// /private/var/db/KernelExtensionManagement, whose Staging folder System Integrity Protection refuses with EPERM; it
+// now counts only a service's lock, EACCES, and passes over a root with an EPERM anywhere below it.)
 const serviceLockedRoot = () => {
   const isPerson = (uid) => isPersonUid(uid, 'workflow');
   const ok = (d, depth) => {   // the number of service-owned locked folders below d, or -1 if anything else is locked
@@ -113,7 +117,7 @@ const serviceLockedRoot = () => {
     let n = 0;
     for (const e of ents) {
       const p = join(d, e.name); let st; try { st = statSync(p); } catch { return -1; }
-      try { readdirSync(p); } catch { if (isPerson(st.uid)) return -1; n++; continue; }
+      try { readdirSync(p); } catch (err) { if (isPerson(st.uid) || err.code === 'EPERM') return -1; n++; continue; }
       if (depth > 0) { const k = ok(p, depth - 1); if (k < 0) return -1; n += k; }
     }
     return n;
@@ -124,15 +128,20 @@ const serviceLockedRoot = () => {
   }
   return null;
 };
-test('a folder a service owns (root\'s, on this Mac) that can\'t be opened is one review line, and a clean run passes', { skip: (process.platform !== 'darwin' || AS_ROOT) && 'macOS, as a user' }, (t) => {
+// CHANGED 31 Oct 2026 by owner decision #33 ("UNKNOWN too"): a folder Wardlatch could not open because a service owns
+// it (EACCES) is could-not-be-tested, exit 2, never a REVIEW line beside SAFE; such folders are grouped in one row. This
+// test pinned the rule #33 supersedes (the 22 Oct one-review-line rule: REVIEW, a SAFE beside it, exit 0), so it was
+// wrong from the moment the owner decided, and now asserts the decision instead, on the same fixture.
+test('a folder a service owns (root\'s, on this Mac) that can\'t be opened is could-not-be-tested, in one grouped row, exit 2', { skip: (process.platform !== 'darwin' || AS_ROOT) && 'macOS, as a user' }, (t) => {
   const root = serviceLockedRoot(); if (!root) return t.skip('no suitable system folder on this machine');
   for (const id of ['wordpress-plugins-2026-10', 'github-actions-2026-10']) {
     const r = sys(['--incident', id, '--paths', root]);
-    const skipped = r.rows.find((x) => x.kind === 'skipped');
-    assert.ok(skipped && skipped.status === 'REVIEW' && skipped.paths.length, `${id} in ${root}: ${JSON.stringify(r.rows)}`);
-    assert.equal(unknowns(r).length, 0, `${id}: ${JSON.stringify(r.rows)}`);
-    assert.ok(r.rows.some((x) => x.status === 'SAFE'), `${id}: the summary line is still there beside the skipped line`);
-    assert.equal(r.code, 0, id);
+    assert.ok(!r.rows.some((x) => x.kind === 'skipped' || (x.status === 'REVIEW' && /could not be opened/.test(x.reason))), `${id}: no REVIEW line for a folder not opened: ${JSON.stringify(r.rows)}`);
+    const grouped = unknowns(r).filter((x) => x.what === 'service folders');
+    assert.equal(grouped.length, 1, `${id} in ${root}: the service-owned folders are one row: ${JSON.stringify(r.rows)}`);
+    assert.ok(grouped[0].paths.length && grouped[0].folders.every((f) => f.code === 'EACCES'), JSON.stringify(grouped[0]));
+    assert.ok(!r.rows.some((x) => x.status === 'SAFE'), `${id}: no all-clear beside a folder not searched: ${JSON.stringify(r.rows)}`);
+    assert.equal(r.code, 2, id);
   }
 });
 
@@ -143,18 +152,31 @@ test('a folder a person owns that can\'t be opened is still could-not-be-tested'
   assert.equal(r.code, 2);
 });
 
-test('a skipped-folders line never stands in for the machine\'s runtimes, and never hides a summary line', { skip: (process.platform !== 'darwin' || AS_ROOT) && 'macOS, as a user' }, () => {
+// (The fixture line changed with decision #33: the service-owned folders are one UNKNOWN row now, not a REVIEW line.)
+test('a service-folders row never stands in for the machine\'s runtimes, and never hides a summary line', { skip: (process.platform !== 'darwin' || AS_ROOT) && 'macOS, as a user' }, () => {
   const root = serviceLockedRoot(); if (!root) return;
   const t = run(['--incident', 'emudhra-2026-10', '--no-containers', '--paths', root], {}, ['--require', preload('o3-online', { online: true })]);
-  assert.ok(t.rows.some((x) => x.kind === 'skipped'), 'the fixture: a skipped line');
+  assert.ok(t.rows.some((x) => x.what === 'service folders' && x.status === 'UNKNOWN'), 'the fixture: a service-folders row');
   assert.ok(t.rows.some((x) => x.kind === 'runtimes' && x.status === 'UNKNOWN'), `no runtime found must still be its own UNKNOWN line: ${JSON.stringify(t.rows)}`);
   assert.equal(t.code, 2);
 });
 
-test('WordPress: a dot-folder in the web root (/var/www/.ssh, www-data\'s own) is not searched or reported', { skip: AS_ROOT && 'root' }, () => {
-  const root = fresh('o4-www'); lock(fresh('o4-www/.ssh'));
+// RETIRED 29 Oct 2026 (the false-safes fix), and rewritten to assert what its fixture actually builds.
+//
+// As written it was titled for www-data's .ssh under a web root, and demanded no UNKNOWN and exit 0. Its fixture was
+// never that scenario: `fresh('o4-www/.ssh')` is created by the test, so it is owned by the user running the tests, and
+// a user cannot chown a folder to another account. `lock()` is chmod 000, which this machine measures as EACCES — a
+// lock the owner chose, forgeable by anyone, and exactly the hiding place the iron law exists to catch. So the honest
+// answer for this fixture is UNKNOWN and exit 2, which is what gaps() gives it (a person-owned denial), and the old
+// assertion was pinning the defect this branch exists to remove: a dot-folder's NAME putting a person-owned EACCES
+// into the REVIEW channel, where it cannot change the exit code.
+// The scenario the title names — a dot-folder a SERVICE owns — cannot be built by an unprivileged test at all, and is
+// held instead by `serviceLockedRoot()` above, which finds a real one on this machine and skips when there is none.
+test('WordPress: a locked dot-folder in the web root that the person running owns is could-not-be-tested, exit 2', { skip: AS_ROOT && 'root' }, () => {
+  const root = fresh('o4-www'), shut = fresh('o4-www/.ssh'); lock(shut);
   const r = sys(['--incident', 'wordpress-plugins-2026-10', '--paths', root]);
-  assert.equal(unknowns(r).length, 0, JSON.stringify(r.rows)); assert.equal(r.code, 0);
+  assert.ok(unknowns(r).some((x) => x.path === shut), `a chmod 000 folder the user owns is EACCES, not macOS's refusal: ${JSON.stringify(r.rows)}`);
+  assert.equal(r.code, 2);
 });
 
 // ---- nothing to search ---------------------------------------------------------------------------------------------------
@@ -237,10 +259,12 @@ test('git\'s hints are never the reason shown, and too much output or a timeout 
   assert.equal(gitError({ code: 'ETIMEDOUT', stderr: 'hint: x' }), 'git did not finish in time');
 });
 
-test('a --paths entry that is a file is could-not-be-tested only in checks that search folders, not in Plex\'s or GitLab\'s', () => {
+// 0.1.9 (82e3eea) exempted the checks that don't search folders from this. The README never did, and the exemption was
+// how a typo with --incident exited 0 in silence, so on 2 Nov 2026 it was removed.
+test('a --paths entry that is a file is could-not-be-tested in every check, including those that don\'t search folders', () => {
   const f = put(join(dir, 'p1-file'), 'x');
-  for (const id of ['plex-2026-10', 'gitlab-2026-10', 'php-2026-10']) assert.ok(!sys(['--incident', id, '--paths', f]).rows.some((x) => x.path === f), id);
-  for (const id of ['github-actions-2026-10', 'litellm-2026-10']) assert.equal(sys(['--incident', id, '--paths', f]).code, 2, id);
+  // the row, not the exit code: a machine with PHP on it can exit 1 for its own reasons (a CI runner does)
+  for (const id of ['plex-2026-10', 'gitlab-2026-10', 'php-2026-10', 'github-actions-2026-10', 'litellm-2026-10']) assert.ok(sys(['--incident', id, '--paths', f]).rows.some((x) => x.status === 'UNKNOWN' && x.path === f), id);
 });
 
 // ---- from the final narrow check (76849c4) -------------------------------------------------------------------------------
@@ -265,16 +289,28 @@ test('a searched root that can\'t be opened is always could-not-be-tested, whoev
   }
 });
 
-test('WordPress: a site in a dot-folder (.staging) is checked; a locked dot-folder is a review line, never could-not-be-tested', { skip: AS_ROOT && 'root' }, () => {
+// SPLIT 29 Oct 2026 (the false-safes fix). The first half is the finding this branch exists for and is unchanged: a
+// site in a dot-folder is a site, and the backdoored plugin in it is EXPOSED, exit 1. Up to 558eaef a `.staging` copy
+// was passed over and the run read SAFE.
+test('WordPress: a site in a dot-folder (.staging) is checked', { skip: AS_ROOT && 'root' }, () => {
   const root = fresh('wd-root'), site = join(root, '.staging');
   put(join(site, 'wp-includes', 'version.php'), '<?php $wp_version = "6.8";');
   put(join(site, 'wp-content', 'plugins', 'seo-by-rank-math-pro', 'rank-math-pro.php'), '<?php\n/*\n * Version: 3.0.123\n */\n');
   const r = sys(['--incident', 'wordpress-plugins-2026-10', '--paths', root]);
   assert.ok(r.rows.some((x) => x.status === 'EXPOSED'), JSON.stringify(r.rows)); assert.equal(r.code, 1);
-  const www = fresh('wd-www'); lock(fresh('wd-www/.ssh'));
+});
+
+// The second half — a locked `.ssh` is "a review line, never could-not-be-tested" — is RETIRED, for the same reason as
+// the o4-www test above: `lock()` is chmod 000 on a folder the test user owns, which is EACCES, a lock anyone can set.
+// Blessing exit 0 for it is blessing the hiding place. AUDIT-26 says so in as many words about this very assertion.
+// What replaces it asserts the discrimination instead: the same fixture is UNKNOWN and exit 2, and the REVIEW channel
+// is reserved for a refusal the person running cannot have produced.
+test('WordPress: a locked dot-folder the person owns is could-not-be-tested, not a review line', { skip: AS_ROOT && 'root' }, () => {
+  const www = fresh('wd-www'), shut = fresh('wd-www/.ssh'); lock(shut);
   const w = sys(['--incident', 'wordpress-plugins-2026-10', '--paths', www]);
-  assert.equal(unknowns(w).length, 0, JSON.stringify(w.rows));
-  assert.ok(w.rows.some((x) => x.kind === 'skipped' && x.paths.includes(join(www, '.ssh'))), JSON.stringify(w.rows)); assert.equal(w.code, 0);
+  assert.ok(unknowns(w).some((x) => x.path === shut), JSON.stringify(w.rows));
+  assert.ok(!w.rows.some((x) => x.kind === 'skipped' && x.paths.includes(shut)), `a person-owned EACCES must not ride in the channel that keeps the exit code at 0: ${JSON.stringify(w.rows)}`);
+  assert.equal(w.code, 2);
 });
 
 test('a known install place that can\'t be opened (~/.local/lib, a temp folder) is could-not-be-tested, whoever owns it, and not in the receipt', { skip: (process.platform !== 'darwin' || AS_ROOT) && 'macOS (/private/var/root), as a user' }, () => {
@@ -333,11 +369,16 @@ test('on Windows a folder\'s owner can\'t be read, so it counts as a person\'s',
   assert.equal(person(0, 'workflow', { os: 'win32', self: undefined, names: new Map(), subuids: [] }), true);
 });
 
+// Status changed from REVIEW to UNKNOWN on 28 Oct 2026 with bin/wardlatch.mjs notRunRow (audit F6), for the trust check
+// as for the version checks: one rule, since it is one function. A copy that was never run is a copy that was never
+// judged, and not having looked is UNKNOWN. What this test is really about — that the later script is NAMED and is NOT
+// executed — is unchanged, and the existsSync assertion below is the part that matters most: Wardlatch must never be
+// the first thing to run an unknown script that happens to share a name.
 test('the trust check names a later node on PATH that is a script, in --json too, without running it', () => {
   const first = nodeStandIn('nr1', 'NOTHING'), second = fresh('nr2'), ran = join(dir, 'nr2-ran');
   exe(join(second, 'node'), `touch ${JSON.stringify(ran)}; echo v18.0.0`);
   const r = run(['--incident', 'emudhra-2026-10', '--no-containers', '--paths', fresh('nr-root')], { PATH: `${first}:${second}` }, ['--require', preload('nr-online', { online: true })]);
-  assert.ok(r.rows.some((x) => x.kind === 'not-run' && x.status === 'REVIEW' && x.paths.includes(join(second, 'node'))), JSON.stringify(r.rows));
+  assert.ok(r.rows.some((x) => x.kind === 'not-run' && x.status === 'UNKNOWN' && x.paths.includes(join(second, 'node'))), JSON.stringify(r.rows));
   assert.equal(existsSync(ran), false, 'the later script ran');
 });
 
@@ -394,13 +435,22 @@ test('PHP: php pointing at php8.3 (one file, two names) is judged once; a clean 
   assert.equal(r.code, 0);
 });
 
-test('PHP: php-fpm in an sbin folder off PATH is found; with no PHP anywhere, the receipt names those folders too', async () => {
+// Changed 29 Oct 2026 (AUDIT-10/13). This asserted that the receipt names '/usr/sbin'. The preload these tests run with
+// hides /usr/sbin, /usr/local and /opt from the run (test/support/hide-php-places.cjs), so to the run those folders are
+// not there and nothing was searched in them: naming them in a receipt was the AUDIT-10 defect in a second check, and
+// lib/report.mjs now refuses it. (On a machine where /usr/sbin is there, it IS in the receipt; what the old expectation
+// really stood for is below, in the reason, which still names every folder this check looks in.)
+test('PHP: php-fpm in an sbin folder off PATH is found; with no PHP anywhere, the reason names those folders and the receipt names the ones it could list', async () => {
   const { copiesMatching } = await import('../lib/binaries.mjs');
   const sbin = fresh('pv-sbin'); exe(join(sbin, 'php-fpm8.2'), 'echo "PHP 8.2.1 (fpm-fcgi)"');
   assert.deepEqual(copiesMatching('^php(?:-fpm|-cgi)?(?:\\d+(?:\\.\\d+)?)?$', fresh('pv-path'), [sbin]).run, [join(sbin, 'php-fpm8.2')]);
-  const r = php(['--incident', 'php-2026-10'], { PATH: fresh('pv-none') });
+  const none = fresh('pv-none');
+  const r = php(['--incident', 'php-2026-10'], { PATH: none });
   const safe = r.rows.find((x) => x.status === 'SAFE');
-  assert.ok(safe && safe.searched.includes('/usr/sbin') && /or in \/usr\/sbin/.test(safe.reason), JSON.stringify(r.rows));
+  assert.ok(safe && /or in \/usr\/sbin/.test(safe.reason), JSON.stringify(r.rows));
+  assert.ok(safe.searched.includes(none), `the one folder it could list is not in the receipt: ${JSON.stringify(safe)}`);
+  assert.deepEqual(safe.searched.filter((s) => /^\/(?:usr\/sbin|usr\/local|opt)(?:\/|$)/.test(s)), [],
+    `the receipt names a folder this run was told is not there: ${JSON.stringify(safe)}`);
 });
 
 // ---- from the strict check of 82a57b5 -----------------------------------------------------------------------------------

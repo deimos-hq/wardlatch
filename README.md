@@ -16,7 +16,7 @@
 
 When a certificate authority's keys leak, browsers update within hours. The rest of your machine doesn't. curl, Node,
 Python and every project's own certificate bundle each keep their own list of who to trust, and each has to be fixed
-on its own. Wardlatch tells you which ones still trust the leaked keys, and checks this week's other leaks too.
+on its own. Wardlatch tells you which ones still trust the compromised keys, and checks this week's other leaks too.
 
 ```
 npx wardlatch@latest
@@ -70,23 +70,67 @@ Two checks keep the answer honest:
   controls come first: a normal site must open, and a self-signed one must be refused, or the result is "couldn't
   test". `--no-containers` skips them. Nothing is written into a container.
 
-Compiled programs (Go, Rust, Electron) carry the trust list of the toolchain that built them; Wardlatch prints what to
-rebuild them with. Check your browser on the advisory's own page.
+Whether a compiled program follows this fix turns on where its trust list lives, not on which language built it.
+Some carry a copy of their own, and for those the system fix changes nothing — only a rebuild or an app update does.
+An Electron app is one: its bundled Chromium and Node each carry a list, and both withdrawn roots are compiled into
+the Electron frameworks we measured, so removing them from `/etc/ssl/cert.pem` leaves those apps trusting them. So is
+Rust built against `webpki-roots`, which describes itself as "a compiled-in copy of the root certificates trusted by
+Mozilla". Others read the system store at run time and do follow the fix: Rust through `rustls-native-certs` or
+`native-tls`, and Go. Go is worth saying plainly, because it is both — a Go program reads the OS store as it runs (on
+macOS through Apple's verifier), so it picks the removal up, and yet it still has to be rebuilt, because what a fixed
+Go compiles in is the *refusal* of these intermediates and not a list of roots. Wardlatch prints what to rebuild or
+update in each case. Check your browser on the advisory's own page.
 
 ## The Mac fix
 
-`fix/fix-macos.sh` removes the two roots tied to the leaked eMudhra keys from `/etc/ssl/cert.pem` (the advisory's
-change) with checks around it: no change on a fixed Mac, a dated backup it never overwrites, a check of the new file
-before it replaces the old one, a re-test, and a restore on a wrong result. Download it in Safari from
+`fix/fix-macos.sh` removes the two roots tied to the compromised eMudhra keys from `/etc/ssl/cert.pem` (the advisory's
+change), and any other certificate carrying either root's key in whatever encoding (a copy with a bit changed, a root
+re-issued with the same key, an EC point stored compressed, a key relabelled). It also removes any certificate
+carrying one of seven **other** keys of this incident: the six compromised TLS intermediate keys (12 certificates,
+because each intermediate was issued twice, under `emSign Root TLS CA - G3` and under `AAA Certificate Services`) and
+`emSign Root TLS CA - G3`'s own key, which exists both cross-signed and self-signed. Removing the two roots is enough
+only for a reader that insists on a chain ending at a self-signed root in the file; `/usr/bin/curl`, Apple's `git` and
+the built-in `perl` take *every* CA certificate in the file as a trust anchor, so one of those intermediates left in
+the bundle keeps trusting everything it issued. There are checks around all of it: a file it can't
+fully check is refused unchanged — a certificate it can't read, a block that isn't a plain certificate, a `-----BEGIN`
+marker anywhere but at the start of a line, a NUL byte anywhere in the file, or fewer fingerprints read than
+certificates counted — no change on a fixed Mac, a dated backup it never overwrites, a check of the new file
+before it replaces the old one, a check that what landed in the file is what it built — the one thing that makes it
+put the original back — and a re-test it only reads when an ordinary website loads as a control, which reports and
+never reverts. The re-test names the library it measures with (`CURL_SSL_BACKEND=openssl`), because the built-in
+`curl` is built with both LibreSSL and Apple's Security framework and the variable picks one at run time: under
+Apple's, the answer is about Apple's own block of these certificates rather than about this file. A *refusal* from
+the test site is only read as one when the same probe, through the file as it was, accepted that site — a file
+holding a withdrawn root had to be accepted, so a refusal of it means the probe can no longer tell the two files
+apart and nothing online is claimed. An *accepted* test site is read on any date, with any clock, because a chain
+cannot verify through an expired certificate: that is EXPOSED, and nothing gates it. Where no such control can be
+built — on a file that already holds neither root, so there is nothing the test site ought to accept — the site's
+own expiry, 3 May 2027, is used instead, and from then a refusal there claims nothing. The file is still fixed
+either way. Download it in Safari from
 https://www.deimoscore.com/wardlatch/#mac and run `bash ~/Downloads/wardlatch-fix-macos.sh`, or deploy it as a root
-script from Jamf, Kandji or Intune.
+script from Jamf, Kandji or Intune. On macOS every run prints a line starting SAFE, EXPOSED or UNKNOWN, from the
+script's first command on, and exits 0 only after a SAFE line, 1 only after an EXPOSED one, and 2 otherwise (the
+exit-code table is on the Mac page). A run stopped by a signal whose default is to end a process is included and
+exits 2: a Ctrl-C (INT), a Ctrl-\ (QUIT), a hangup or a termination (HUP, TERM), a timeout (ALRM), a CPU limit (XCPU),
+and ABRT, PIPE, XFSZ, VTALRM, PROF, USR1 and USR2. A fault signal (ILL, TRAP, EMT, FPE, BUS, SEGV or SYS) or `kill -9`
+ends it with no line, and a run whose standard output is closed, or whose line can't be written (a log on a full
+volume), ends with exit 2 and no line to read. If `/etc/ssl/cert.pem` is a
+symbolic link, it changes nothing and prints the command that fixes the file the link points to instead:
+`WARDLATCH_CERT_FILE='<that file>' bash '<the script>'`. It prints that command only when the file's name is plain
+(letters, digits, spaces and `/ . _ + @ , : = ~ % -`); otherwise it says the name holds characters it doesn't print,
+and to set `WARDLATCH_CERT_FILE` to that file once you have checked its name.
 
 ## Privacy
 
 Wardlatch runs on your machine. It sends nothing anywhere: no telemetry, no results, no machine details. The only
 network traffic is TLS connections to the incident's public test hosts and two control sites (the advisory's own
 page, and a self-signed test site for containers), and your own container engine, wherever the current docker context points, or a local socket `DOCKER_HOST` names (`--no-containers` skips it; a
-remote `DOCKER_HOST` is not followed, since whoever starts Wardlatch can set it to any host). It changes nothing on your system; each result comes with the fix
+remote `DOCKER_HOST` is not followed, since whoever starts Wardlatch can set it to any host). If you use a proxy, the
+probes are given it as your own programs are: `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` (in either
+case), and the curl probe also uses a proxy your curl start-up file names, so a runtime that uses one
+connects to the proxy, not to the test host. The curl probe reads your
+curl start-up file (`~/.curlrc`) as your own curl does, because a line in it can change what curl trusts, so a header
+you set there goes to the test hosts too, as it does with every request your curl makes. It changes nothing on your system; each result comes with the fix
 for you to apply. What it can and can't promise, and why: [ASSURANCE_CASE.md](ASSURANCE_CASE.md).
 
 ## Reference
@@ -95,7 +139,7 @@ for you to apply. What it can and can't promise, and why: [ASSURANCE_CASE.md](AS
 |---|---|
 | *(none)* | Check this machine against every current incident. |
 | `--incident <id>` | Only that incident; repeat it for several. `--list` prints the ids. |
-| `--paths <folder>` | Where to look for Python environments, git repositories and WordPress sites; repeat it for several. Default: `~/Development`, `~/code`, `~/src`, `~/projects`, `~/Projects`, `~/dev`, `~/work`, `~/Sites`, `/var/www`, `/srv/www` and `/Library/WebServer/Documents`. A folder given here that isn't there, or isn't a folder, is an UNKNOWN line. |
+| `--paths <folder>` | Where to look for Python environments, git repositories and WordPress sites; repeat it for several. Default: `~/Development`, `~/code`, `~/src`, `~/projects`, `~/Projects`, `~/dev`, `~/work`, `~/Sites`, `/var/www`, `/srv/www` and `/Library/WebServer/Documents`. A folder given here that isn't there, or isn't a folder, is an UNKNOWN line. Checks that read fixed places (GitLab's and Plex's version files, the programs on `PATH`) don't search it, and their all-clear says so by name. On every other check a folder given here is always searched, and when it is a virtual environment, its `lib` or `site-packages` folder, a `wp-content` or plugins folder (Bedrock's `app/plugins` included), or the folder of one of the plugins an incident lists (with its main file or without), it is examined as that too: the trust check probes that environment's `certifi`, the LiteLLM check reads its `site-packages`, and the WordPress check reads those plugins. |
 | `--no-containers` | Skip Docker and Podman: running containers, and the local image list. |
 | `--json` | Machine-readable output instead of lines (below). |
 | `--list` | The incidents it knows: id, date, title. |
@@ -104,19 +148,53 @@ for you to apply. What it can and can't promise, and why: [ASSURANCE_CASE.md](AS
 An unknown option, or `--paths` or `--incident` without a value, stops with exit code 2 before anything runs.
 
 Each line starts with a status: `SAFE`, `EXPOSED` (with the fix under it), `UNKNOWN` (could not be tested, with the
-reason) or `REVIEW` (something to look at, such as a new workflow file, or folders a service owns that it couldn't
-open). The exit code is **1** if anything is exposed, otherwise **2** if anything could not be tested, otherwise **0**.
-Review lines never change it. A folder it can't open counts as could-not-be-tested when a person owns it (it could hold
-their projects), and is listed in one review line when a service owns it (a database's data, certbot's keys).
+reason) or `REVIEW` (something to look at, such as a new workflow file or plugin folder). The exit code is **1** if
+anything is exposed, otherwise **2** if anything could not be tested, otherwise **0**. Review lines never change it.
+A folder it can't open is could-not-be-tested whoever owns it, and no all-clear is printed beside it: a person's
+folder (it could hold their projects) gets a line of its own, and the folders a service owns (a database's data,
+certbot's keys) are grouped into one line per check (`15 folders owned by service accounts, not searched`), with each
+folder's error, mode and owner under it and the advice to run Wardlatch with sudo to include them. A folder
+the system refuses with EPERM is could-not-be-tested whoever owns it, and its line gives the error, the folder's mode
+and its owner. On macOS the commonest cause is privacy protection (Desktop, Documents, Downloads, iCloud), which
+allowing your terminal Full Disk Access (System Settings → Privacy & Security) may lift; a sandbox the run is inside,
+or a security tool, refuses the same way, sudo may not lift it, and the line doesn't claim to know which it was. A
+folder whose full path is longer than the system lets a program open (ENAMETOOLONG) is could-not-be-tested too.
+
+The checks that search folders go a fixed depth below each folder searched: 5 levels for WordPress sites, virtual
+environments and the trust check, 4 for git repositories (the workflow, committed-keys and header checks). A folder at
+that depth that holds more to walk is could-not-be-tested: one UNKNOWN line per check (`1 folder past the depth
+limit`, or how many) names those folders, and `--paths` with a folder nearer to them includes them. Each walk also
+skips folders by name: the WordPress walk `node_modules`, `.git` and `.venv`; the repository walk `node_modules`,
+`.venv` and `venv`; the virtual-environment and trust walks `node_modules` and `.git`, and, inside a virtual
+environment they go into, its own package folders (`site-packages` or `dist-packages` beside its `pyvenv.cfg`, in its
+`lib`, `lib64` or `Lib` folder, or one level below that, under those names or any spelling this disk opens them by),
+which are checked with the environment
+(for the incident's files, and for its certifi) rather than searched for other environments; the rest of a virtual
+environment, its `bin`,
+`share` and `etc` included, is walked like any folder; and all of them macOS's own Library folders. Every all-clear
+that rests on such a walk names them on the line under it (`folders named node_modules or .git, and macOS's own
+Library folders, are not searched; inside a virtual environment the walk goes into, its own package folders (…) are
+checked with the environment, not searched for other environments`), and the trust check, which has no all-clear,
+says so under its rows. The repository walk also stops at each repository it finds, so a repository inside another one
+(a clone in an ignored folder, for example) is not checked by the workflow, committed-keys or header checks, and the
+line under their all-clear says so (`a repository inside another repository is not looked for: pass --paths with it to
+include it`); given with `--paths`, it is checked. A link to a folder elsewhere is not followed; it is
+could-not-be-tested unless the same walk went through the folder it points to, at least as deep as following the link
+would have. A link to a virtual environment has that environment's own packages checked through it, and is
+could-not-be-tested on the same terms, since nothing else in it is searched.
 
 `--json` prints one object: `{ tool, version, incidents: [{ id, title, advisory }], results: [...] }`. Each result
 has `incident`, `status` and `kind` (`node`, `curl`, `python`, `macos-system`, `container`,
 `containers` when an engine can't be asked or a `DOCKER_HOST` isn't followed, `runtimes` when a trust check found nothing to test,
-`skipped` for the folders a service owns that couldn't be opened (`paths`),
 `environment` when a trust setting couldn't be given to the probes, `search` for a folder the trust check couldn't open,
 `home` when a sudo user's home folder wasn't found, `binary`, `install`, `header`, `workflow`, `secret` or `wordpress`; a virtual environment's certifi is kind `curl` with `certifi` and `env`, and the bundle `REQUESTS_CA_BUNDLE` names is kind `curl` with `caVar` and `bundle`; a WordPress row has `site`, and `plugins` when that site has more than one plugins folder; a container engine that is installed but not running is a REVIEW row with `engine` and `notRunning`; an untested Linux bundle is kind `curl` with `system` and `bundle`), the fields of that kind (such as `bin`, `version`, `trusted` and `tested` for a
 trust probe, or `file`, `line`, `type` and `masked` for a key), `reason` when it is UNKNOWN, and `fix` when there is
-something to do.
+something to do. A SAFE row has `searched`, what it looked at; `notSearched`, the folder names its walk skips, when it
+rests on one. The folders a service owns that couldn't be opened are one UNKNOWN row of the check's own kind (`install`
+for the LiteLLM check, for example) with `what` (`service folders`), `paths`, and `folders`, which lists each with its
+`path`, `code`, `basis` and `remedy`. An UNKNOWN row for a folder the system refused, or whose path was too long, has `path` and `code` (`EPERM` or `ENAMETOOLONG`),
+and an EPERM row also has `basis` (the error, the mode and the owner); a depth-limit row has `what` (`depth limit`)
+and `paths`.
 
 ```
 npx wardlatch@latest --json          # for CI and scripts
@@ -139,12 +217,12 @@ To work on it: `git clone`, then `npm test`. Nothing to install.
 
 `npx wardlatch@latest` checks all of them; `--incident <id>` checks only the ones named.
 
-- `emudhra-2026-10`: eMudhra intermediate CA compromise, 20 Oct 2026 ([advisory](https://emudhra.we-have-a-problem.com/)). Real TLS probes per runtime, plus cloudflared (fixed in 2026.10.2) and the Go toolchain (1.27.3 / 1.26.10).
+- `emudhra-2026-10`: eMudhra intermediate CA compromise, 20 Oct 2026 ([advisory](https://emudhra.we-have-a-problem.com/)). Eight CA keys, six of them TLS, in 12 certificates. Real TLS probes per runtime, plus cloudflared (fixed in 2026.10.2) and the Go toolchain (1.27.3 / 1.26.10). The incident file also carries the seven keys a bundle must not hold besides the two withdrawn roots: the six compromised TLS intermediate keys and `emSign Root TLS CA - G3`'s own, which the Mac fix matches by key so that both of that CA's certificates — the cross-signed one the advisory's hosts serve and the self-signed copy — are covered at once.
 - `ovhcloud-cli-2026-10`: OVHcloud CLI v0.11.0 to v0.15.0 swapped for a secret-stealer on 19 Oct ([OVHcloud's advisory](https://github.com/ovh/ovhcloud-cli/security/advisories/GHSA-862f-55f5-vmvw)). Never runs the program: compares the installed file with the five compromised builds OVHcloud published, and looks for the `envchecker-` folder the stealer leaves in the temp directory.
 - `php-2026-10`: two critical PHP flaws (CVE-2026-109618 and CVE-2026-109619), fixed on 21 Oct in 8.5.12, 8.4.27, 8.3.36 and 8.2.35 ([report](https://blog.qualys.com/vulnerabilities-threat-research/2026/10/20/php-announces-critical-security-release-for-two-vulnerabilities)). Flags an installed PHP older than its line's fix, or on a line with no fix: `php`, and versioned programs beside it (`php8.1`, `php-fpm8.1`, `php-cgi8.3`) on your `PATH`, in the `sbin` folders, and in macOS Homebrew's `php@*`, Remi, cPanel and Plesk install folders.
 - `github-actions-2026-10`: credential-stealing workflow files planted in tens of thousands of repositories since 7 Oct ([report](https://thehackernews.com/2026/10/credential-stealing-github-actions.html)). Lists workflow files added to your local repositories by commits dated on or after 30 Aug 2026 00:00 UTC (git's committer date), to review: the sources say to check from 31 Aug, and the earliest related commit one of them names was made on 30 Aug at 00:30 UTC. Each review line shows the commit, its committer date (in UTC) and its author; a file added more than once in the window (added, deleted and added again) gets a line for each commit that added it, newest first. A change to a workflow file that already existed isn't listed; the check lists added files, as the campaign added them. Every commit on every branch is read, whatever its date, so a commit back-dated on top can't hide the ones beneath it; a workflow whose own commit claims a date before 30 Aug isn't listed, since whoever makes a commit sets its date. A shallow clone is UNKNOWN, wherever its history is cut, since a commit's date can't show that nothing is below the cut: run `git fetch --unshallow` in it first, or in CI check out with `fetch-depth: 0` (`actions/checkout` fetches one commit unless told otherwise). Review lines don't change the exit code.
 
-- `committed-keys-2026-10`: keys committed to code, the lesson of the TiDB Cloud breach ([PingCAP](https://www.pingcap.com/trust-hub/security/security-update-october-2026/)). Scans the files your local git repositories track (not submodules, and not a repository nested inside another one) for cloud keys, private keys, service-account files and GitHub, npm, Slack and Stripe tokens. A finding shows the type, file and line, never the key. Lines marked `secrets-ok`, `gitleaks:allow` or `pragma: allowlist secret` are skipped, and so is a key with a placeholder word right next to it (`example`, `fake`, `dummy`, AWS's documented example key). Current files only: for history, use gitleaks or trufflehog.
+- `committed-keys-2026-10`: keys committed to code, the lesson of the TiDB Cloud breach ([PingCAP](https://www.pingcap.com/trust-hub/security/security-update-october-2026/)). Scans the files your local git repositories track (not submodules, and not a repository nested inside another one) for cloud keys, private keys, service-account files and GitHub, npm, Slack and Stripe tokens. Private keys kept in DER, the binary form (PKCS #1, PKCS #8, encrypted PKCS #8, SEC1 and DSA), and PKCS #12 key stores are found by their structure, whatever the file is called; a DER certificate holds no secret and is not reported. A finding shows the type, file and line, never the key. Lines marked `secrets-ok`, `gitleaks:allow` or `pragma: allowlist secret` are skipped, and so is a key with a placeholder word right next to it (`example`, `fake`, `dummy`, AWS's documented example key). Current files only: for history, use gitleaks or trufflehog.
 - `identity-headers-2026-10`: agents that tell websites who you are (reported 21 Oct 2026: a coding agent sent its user's personal data in HTTP headers because the sites it fetched asked agents to identify their users). Looks for your own name or email, or any email address, in the header settings your tools send with every request: `~/.curlrc` and `~/.wgetrc`, git's `http.extraHeader` and `http.userAgent`, npm's `user-agent`, the headers in coding agents' and MCP clients' config files (Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, Gemini CLI, Codex, and each repository's `.mcp.json`), and `*_HEADERS` / `*_USER_AGENT` variables. Your name and email are read from your own git config to compare against; they are never printed or sent, and a finding shows the file and header name, never the value. A header that goes to every site (curl, wget, git's global setting) is EXPOSED; one that goes to a single service is REVIEW. Not covered: an agent that adds your details itself because a page asked it to.
 
 - `wordpress-plugins-2026-10`: Rank Math PRO 3.0.123 shipped with a backdoor (15 to 16 Oct; clean 3.0.124) and stolen UpdraftCentral keys were used to plant backdoor plugins from 18 Oct ([Patchstack](https://patchstack.com/articles/updraftcentral-key-compromise-wordpress-backdoors/)). Finds WordPress installs under the folders searched (and `/var/www`), flags Rank Math PRO 3.0.123 and the attack's indicator, UpdraftPlus before 1.26.13 / 2.26.13, and lists plugin folders added since 18 Oct to review. Run it on the server.

@@ -17,12 +17,12 @@ These are its security requirements: what a user can rely on.
 | # | Requirement | Why it matters |
 |---|---|---|
 | **R1** | **Never SAFE without evidence.** A line says SAFE only after a control has shown the check could have seen exposure; otherwise it says "could not be tested" (UNKNOWN), and the exit code is 2, not 0. | A security check that says SAFE when it couldn't know is worse than no check: people stop looking. |
-| **R2** | **Sends nothing about the user.** The only network traffic is TLS connections to the incident's public test hosts and two control sites (the advisory's page, and a self-signed test site for containers). | People run it on work machines and servers. It must not become a leak while looking for one. |
+| **R2** | **Sends nothing about the user.** The only network traffic is TLS connections to the incident's public test hosts and two control sites (the advisory's page, and a self-signed test site for containers), and the person's own container engine (`--no-containers` skips it), through the person's proxy when a runtime uses one, as their own programs do; a curl probe's request also carries what the person's curl start-up file adds to it (section 3). | People run it on work machines and servers. It must not become a leak while looking for one. |
 | **R3** | **The command changes nothing.** No file, setting, package or container is written, moved or deleted. | A diagnostic must be safe to run anywhere, including in CI and on production servers. |
 | **R4** | **Never prints a secret it finds.** A committed key is reported by type, file, line and a mask. | Output is pasted into tickets and chats. |
 | **R5** | **What it reads can't forge what it prints.** Names from the disk, git and containers can't hide or rewrite a line. | The things being checked may be under an attacker's control (a compromised WordPress site, a cloned repository). |
 | **R6** | **No host shell, no dependencies.** Programs are started with argument lists; the code is Node's standard library and this repository. | Removes command injection and a supply chain from a tool meant for supply-chain incidents. |
-| **R7** | **The Mac fix leaves `/etc/ssl/cert.pem` intact or correctly cleaned, never worse**, with a backup it never overwrites, and puts the original back if the result is wrong. | It runs as root on a file every built-in tool on the Mac depends on. |
+| **R7** | **The Mac fix leaves `/etc/ssl/cert.pem` intact or correctly cleaned, never worse**, with a backup it never overwrites, and puts the original back only when what landed in the file is not what it built — never on a network result. | It runs as root on a file every built-in tool on the Mac depends on. |
 
 What a user **cannot** expect: a SAFE covers the runtimes Wardlatch found, for the incidents it knows, at the moment
 it ran, and nothing more. It fixes nothing (except the Mac fix, when run). It does not check browsers, compiled
@@ -35,7 +35,7 @@ integrity of `/etc/ssl/cert.pem` when the Mac fix runs.
 
 **Adversaries considered:**
 
-- **Whoever holds the leaked keys** (the incident's attacker). The reason the tool exists. They would prefer the
+- **Whoever holds the compromised keys** (the incident's attacker). The reason the tool exists. They would prefer the
   machine to stay exposed and to be reported SAFE.
 - **Hostile content in the places Wardlatch looks**: a cloned repository from a stranger, a compromised WordPress
   site with planted plugins, a container running somebody else's image. Wardlatch reads all of these, and some of
@@ -86,9 +86,17 @@ roots are exactly the advisory's, by SHA-256 fingerprint, so the positive contro
 **R2, sends nothing: boundary B1.** Only `lib/probe.mjs` opens connections, and the containers' probe script makes
 its requests from inside the container to the same hosts. The probes send a plain `GET /` and add nothing from the
 machine: a request carries only what any request from that runtime carries (the machine's address, and the runtime's
-default User-Agent, which names it and its version). Responses are discarded (`-o /dev/null`, `r.resume()`), and only
-success or failure is read. The reachability handshake sends no request at all. There is no telemetry code. *Evidence:* `test/conventions.test.mjs`
-fails if any other shipped module imports a network module or calls `fetch`.
+default User-Agent, which names it and its version). A curl probe also carries whatever the person's curl start-up
+file (`~/.curlrc`, or the one `CURL_HOME` or `XDG_CONFIG_HOME` points to) adds to every request, a header for one,
+because it reads that file as their own curl does: a line in it can change what curl trusts (`insecure`, `cacert`), and
+a probe that skipped it could read SAFE for a curl that accepts anything (`test/review4-0.1.9.test.mjs`, test 2, holds
+it to reading the file). Responses are discarded (`-o /dev/null`, `r.resume()`), and only
+success or failure is read. The reachability handshake sends no request at all. The probes are given the person's
+proxy settings (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY`, in either case: `lib/run.mjs`), and the curl
+probe uses a proxy its start-up file names, on purpose: a runtime behind a proxy reaches the test hosts through it, as
+the person's programs do, so with a proxy in use a probe whose runtime uses it connects to the proxy, not to the test
+host. There is no telemetry code. *Evidence:* `test/conventions.test.mjs` fails if any other shipped module imports a
+network module or calls `fetch`; `test/review2-0.1.9.test.mjs` holds that a probe keeps `HTTPS_PROXY` and `no_proxy`.
 
 **R3, changes nothing.** The shipped code imports no file-writing function, opens files only read-only, and the
 container probe only runs a request. *Evidence:* `test/conventions.test.mjs` fails on any import of a write, delete,
@@ -98,10 +106,27 @@ rename, copy or chmod function in `bin/` or `lib/`, and on any `open` without `O
 keys and service-account files. *Evidence:* `test/wardlatch.test.mjs` and `test/cli.test.mjs` assert the key never
 appears in text or JSON output.
 
-**R5, output can't be forged: boundary B5.** Every name printed passes through one function that escapes control
-characters (`\x1b` is shown, not obeyed), so a plugin folder named to clear its own line shows up in full. `--json`
-output is escaped by `JSON.stringify`. *Evidence:* `test/cli.test.mjs` plants such a folder and checks that no raw
-control character reaches the output.
+**R5, output can't be forged: boundary B5.** Every name, path, version and value printed passes through one escaper,
+`lib/escape.mjs`, which writes out every character of Unicode categories Cc, Cf, Cs, Co, Cn, Zl and Zp, the whole
+tag block (U+E0000 to U+E007F), every Default_Ignorable_Code_Point and U+2800: control characters (`\x1b` is shown,
+not obeyed), line and paragraph separators, bidi overrides and isolates, zero-width and tag characters, private use,
+variation selectors, the combining grapheme joiner, the Hangul fillers and the braille blank. A backslash that would
+read as the start of one of its forms is written `\\`, so a folder literally named `t\u{202e}t` and one holding a real
+U+202E print differently. So a plugin folder named to clear its own line, start a line of its own or reverse what
+follows shows up in full, as one line. In `--json`, every `reason` is escaped the same way, and every other string
+keeps its real value with those characters written as JSON escapes, so none of them is in the JSON text raw. A crash's
+message is escaped a line at a time; a real line break inside the message itself (a path holding one) still starts a
+line on stderr, under a crash that exits 2 (measured 31 Oct 2026). What it does not do: printable text is printed as
+it is, so a name can still say anything plain letters can say, a sentence addressed to a person or an AI agent reading
+the output included; the escaper makes the hidden visible, and cannot make a planted sentence untrue. Up to 33641f9 it
+escaped control characters only, and the others reached the output raw; up to round 4 (31 Oct 2026) the
+default-ignorable characters outside those categories, and U+2800, still did. *Evidence:* `test/cli.test.mjs` plants
+a folder named with control characters and checks that none reaches the output raw; `test/reread-r2.test.mjs` (the W1
+tests) plants the other characters in walked paths, a git author, a tracked file, a plugin folder, the trust check's
+environment label and a link, checks the text output and `--json`, and checks the escaper against every code point of
+those categories; `test/reread-r3.test.mjs` checks every Default_Ignorable_Code_Point and U+2800, that the backslash
+rule decodes 20,000 built strings back to themselves, and that a printable `\x0a` in a crash's message stays on its
+line.
 
 **R6, no host shell, no dependencies: boundaries B2, B3, B4.** Every program is started with `execFile` and an
 argument list, so a file or container name is never parsed by a shell. Inside a container, the probe script is a
@@ -110,15 +135,105 @@ checked against an allowlist before anything runs. `package.json` declares no de
 `test/conventions.test.mjs` (only `execFile`/`execFileSync`, no `shell: true`, no `eval`, imports only `node:`
 built-ins and the project's files, no `dependencies`); `test/cli.test.mjs` (unknown options refused).
 
-**R7, the Mac fix: boundary B6.** The script refuses a file that looks damaged (fewer than 50 certificates), writes
-the cleaned copy to a fresh `mktemp` file and checks it before using it (the two roots gone, every other certificate
-still there, at least 50 left), makes a dated backup and refuses to overwrite an existing one, copies the clean file
-in and sets 644, then re-tests with `/usr/bin/curl` and restores the backup if the file still trusts the test host.
-It changes nothing on a Mac that is already clean, so running it twice is safe. *Evidence:* CI runs
-`test/fix-macos.check.sh` on macOS against copies of the runner's real `/etc/ssl/cert.pem`: the original, a second
-run, undo from the backup, an empty file, a truncated file and a missing file, plus the refusal on Linux. CI also
-fails if the script stops matching the SHA-256 published with the download, so the file people run is the file that
-was tested.
+**R7, the Mac fix: boundary B6.** The script works on a snapshot of the file. It finds the two roots by their SHA-256
+fingerprints, and any other certificate by either root's public key, compared as `openssl` decodes it (an EC key's X
+coordinate, an RSA key's modulus) so that every encoding of the key matches: a copy with a bit changed or a root
+re-issued with the same key, which LibreSSL, OpenSSL and Apple's `python3` still trust, and the same key stored another
+way (an EC point compressed or hybrid, explicit curve parameters, an RSA key labelled RSA-PSS), which LibreSSL and
+`/usr/bin/curl` trust. It removes, the same way and by key, any certificate carrying one of seven **other** keys of
+this incident: the six compromised TLS intermediate keys (12 certificates, each intermediate issued both under
+`emSign Root TLS CA - G3` and under `AAA Certificate Services`) and `emSign Root TLS CA - G3`'s own key, which covers
+both of that CA's certificates, the cross-signed one and the self-signed copy. Removing the two roots alone is enough
+only for a reader that requires a chain ending at a self-signed root in the file; `/usr/bin/curl` since 7.68 on
+OpenSSL-style backends, Apple's `git` through the same libcurl, and the built-in `perl` take every CA certificate in
+the file as a trust anchor, so one of those intermediates left behind keeps trusting everything it issued, and a
+self-signed `emSign Root TLS CA - G3` is a full anchor for `python3` and the `openssl` CLI too. It refuses a file it
+can't fully check: a line where `-----BEGIN` comes after other text
+(LibreSSL starts a certificate at such a marker when it falls at byte 253, 506, … of the line), a NUL byte anywhere in
+the file (LibreSSL reads the file in 253-byte pieces and cuts each at its first NUL, so it reads bytes that `bash
+read` and `awk` — which cut the whole line there — never see, and a withdrawn root can be hidden inside an
+ordinary-looking block that way), a certificate it can't
+read for its fingerprint and key (a key `openssl` can't decode included), a block that isn't a plain certificate, or
+fewer read than certificates counted (the completeness gate, so a check that fails without saying so counts as a
+failure). It refuses a symbolic link, printing the command that fixes the file the link points to when that file's
+name is plain, and otherwise saying the name holds characters it doesn't print. It won't rebuild a file of fewer than
+50 certificates: the file itself is read again, one holding neither withdrawn root nor a compromised key is reported
+with its count and nothing to remove, one still holding a root is refused, one holding a compromised key is refused
+and that key is named, one that doesn't read as the copy did is reported as that, and
+none is told to restore anything. A file it finds clean is read again from the file itself before it says so. It
+builds the cleaned file, removing only each withdrawn root's own lines (its block, the one empty line after it, and its
+name lines only when they are exactly what this Mac's `openssl` prints for it; for a certificate found by its key
+alone, only the block and the empty line after it, since no name above it is that root's), and checks it: no withdrawn
+root left, and exactly the count before less the certificates removed. Every other line in the file is kept, whatever
+it says — which holds because a file with a NUL byte in it never reaches the rewrite: `awk` cuts a record at its
+first NUL, so before 1 November 2026 a rewrite silently cut every line that held one. It reads an ordinary website through the snapshot (the
+control), asks `sudo` for the privilege on its own, copies the file to a new name beside it, compares that copy with
+the snapshot, and only then links it to a dated backup name that nothing may already hold. The snapshot is in the
+user's temporary folder, where anything running as the user can change it, so the backup, beside the file where only
+its owner can change it, must then bear out what was read from the snapshot: the snapshot's SHA-256, the whole reading
+made again (every certificate read, the same withdrawn roots and key copies at the same places, the same count), and
+the cleaned file's SHA-256 when cleaned the same way. The one reading it does not bear out is the control (section 4).
+Every write to the file goes through `replace()`: a new file made by `mktemp` beside `/etc/ssl/cert.pem` and written by
+`tee` from input this run's own shell opens, as the user, so root never opens a path in the user's temporary folder;
+checked there (its SHA-256 the cleaned file's, and the count and fingerprint checks again), set to 644 and, on the
+forward write, renamed over the old one only after the file is
+compared with the snapshot once more, immediately before the rename, so a change made while it ran stops it unless it
+lands in the moment between that comparison and the rename. A rename is one step, so an interruption leaves the old
+file or the new one and never half of either. A privileged step that fails is reported in its own words, sudo's
+included. It then compares the file's SHA-256 with
+the cleaned file's and restores the backup, through `replace()` too, if the two differ. That comparison of two local
+files is the **only** thing that makes it put the original back. It then reads the control again, and re-tests with
+`/usr/bin/curl` only if the control loads: without the control, "the test host refused" and "nothing on this network
+answered" are one reading. Both the control and the re-test name the library they measure with,
+`CURL_SSL_BACKEND=openssl`: the built-in `curl` is built with LibreSSL *and* SecureTransport and that variable picks
+one at run time, and under SecureTransport the `--cacert` anchors are judged by Apple's Security framework, which
+blocks these certificates whatever file it is given — so the answer would be about Apple's block and not about this
+file. An unknown backend name selects SecureTransport too, so the library is named rather than the variable merely
+cleared. A refusal from the test site (`curl` 60) is read as a refusal only against a control that shows the test site can
+still tell the two files apart, because `curl`'s 60 is `CURLE_PEER_FAILED_VERIFICATION`, which an expired leaf gives
+through a file that trusts its root and through one that does not alike. On the path that fixes the file that
+control is the test site read through the file as it *was*, which still held a withdrawn root and so had to be
+accepted: a 0 there is the receipt, and it is re-earned on every run rather than assumed until a date. On the
+already-clean path the file holds neither root, so nothing in the run's hands is something the test site ought to
+accept, no control can be built, and the test site's own expiry date (3 May 2027 01:04 UTC) is used instead — the
+same second-best `canaryNotAfter` gives a container, which has no forced-roots control either. In both cases the
+file is still fixed and nothing online is claimed when the receipt is missing.
+
+An accepted test site (`curl` 0) is a different reading and is gated by nothing. Exit 0 means the chain verified,
+which an expired leaf cannot do, so it proves exposure on any date and with any clock: it is reported `EXPOSED`,
+exit 1, regardless of the control, the expiry and whether the date can be read at all. Until 1 Nov 2026 a dated
+gate suppressed both readings together and an exposed Mac read `SAFE`, exit 0. A control that loaded before the change and fails after it is reported by its curl code (a
+certificate refused, a network that stopped answering, or anything else) and changes nothing. A wrong re-test is
+reported (EXPOSED, exit 1) with the fix left in place and no command to restore the backup, because restoring would
+put the withdrawn roots back on a Mac whose network is already answering for someone else — the one Mac that could
+then never be fixed. On macOS every exit prints a line starting SAFE, EXPOSED or UNKNOWN, from the script's first
+command on, since its traps are set before any command but assignments and function definitions runs; a run stopped by
+a signal whose default ends a process (HUP, INT, QUIT, TERM, ABRT, PIPE, ALRM, XCPU, XFSZ, VTALRM, PROF, USR1 or USR2)
+exits 2 with a line, written to the standard output the run started with, that says what the file holds, read from the
+file's SHA-256, and a signal that arrives once the verdict is in is ignored, so it neither adds a second line nor
+changes the code. The fault signals (ILL, TRAP, EMT, FPE, BUS, SEGV, SYS) keep their default, because a trap would run
+on top of a fault bash raised itself; they and SIGKILL end it with no line. It exits 0 only after a SAFE line and 1 only
+after an EXPOSED one: a run whose standard output is closed, or whose line can't be written, ends with 2. It changes
+nothing on a Mac that is already clean, so running it twice is safe.
+*Evidence:* `test/fix-macos.check.sh` runs the script on copies of a vendored, unfixed macOS 27.2 bundle
+(`test/support/fixtures/macos-27.2-cert.pem`), so its result doesn't depend on whether the machine running it is fixed.
+It runs 105 cases, and prints and checks the count, and that every case counted as run printed its `ok` line, so a
+case that stops running can't pass as silence; one of them, `heredoc-trigger`, applies a sandbox profile of its own
+and, when the harness itself runs inside a sandbox (`WL_NESTED_SANDBOX=1`), is named as not run instead of being
+counted, as is the unreadable-file case when the harness runs as root, which can read a file of mode 000. The cases
+cover the first run, a second run, undo from the backup, empty, truncated, small, unreadable and missing files, a
+symbolic link and the refusal off macOS, a link target whose name isn't plain among them; a withdrawn root hidden after
+other text on a line (in a UTF-8 locale too), under another PEM label, and as a copy with the same key, its key stored
+in each other encoding or not decodable; copies of the script whose one network command is a stub (a network that
+accepts everything, one where nothing answers, a control that loads before the change but not after, a network that
+stops answering after it, a silent test site); interrupts, from before the first command to after the verdict, by
+every signal it traps and while the cleaned file is written, and failed writes at each step, a later `sudo` refusal
+and a standard output that can't be written among them; the file changing while the script runs, the new file being
+made and checked included; the snapshot swapped by a same-user process, again after the backup is linked, for a small
+bundle, or to hide a root from its reads; root never given a path in the user's temporary folder; an administrator's
+lines around a withdrawn root; the dated backup's two guards; and what the script prints. `test/support/mojave-shapes.sh` runs five bundle shapes offline, the one-root shapes of Mojave-era Macs among them. CI runs both on macOS,
+and fails if the script stops matching the SHA-256 published with the download, so the file people run is the file
+that was tested.
 
 ### Secure design principles
 
@@ -129,8 +244,8 @@ was tested.
 | Complete mediation | Every trust result passes through the controls in `check()` / `checkContainer()`; there is no path from a probe to SAFE that skips them. |
 | Open design | All of it is public, including the test hosts; nothing depends on an attacker not knowing how it works. There are no secrets in it. |
 | Separation of privilege | Looking and changing are separate programs: the command can't change the system, and the Mac fix must be run on purpose, with the user's password. |
-| Least privilege | The command runs as the user and never asks for root. The Mac fix uses `sudo` only for the commands that write, and not at all on a writable copy. |
-| Least common mechanism | Nothing shared between users or runs: no cache, no state, no daemon. The Mac fix's temporary file comes from `mktemp` and is removed on exit. |
+| Least privilege | The command runs as the user and never asks for root. The Mac fix uses `sudo` only to ask for the privilege and for the commands that write beside or to the file, and not at all on a writable copy. |
+| Least common mechanism | Nothing shared between users or runs: no cache, no state, no daemon. The Mac fix's temporary files come from `mktemp` and are removed when it exits, after a Ctrl-C, a hangup or a termination too. |
 | Psychological acceptability | Four plain statuses, a fix under every problem, exit codes for CI, and the README's privacy promise in one paragraph. |
 | Limited attack surface | No listening socket, no network input beyond connection results, no dependencies, nothing written. |
 | Input validation with allowlists | Options against a fixed list; `--incident` against the shipped ids; versions only as digits and dots from a known pattern; the container tool name as a single word; incident data checked by tests. |
@@ -144,10 +259,10 @@ was tested.
 | Improper certificate validation (CWE-295) | The probes and Wardlatch's own TLS | Verification on everywhere except the reachability handshake, which sends nothing and decides only "up or not"; enforced by test |
 | Exposure of sensitive information (CWE-200, CWE-532) | Key findings, output, network | Keys masked; nothing sent; tests on text and JSON output |
 | Improper neutralization of escape sequences (CWE-150) | Names printed to a terminal | One escaping function for every printed name; test with a planted name |
-| Uncontrolled resource consumption (CWE-400) | Huge trees, huge files, pipes, hung programs | Depth limits (4 to 5 levels), file-size caps (512 MB for the key scan, read in pieces past 8 MB; 2 MB for plugin files; what a cap leaves unread is UNKNOWN), only regular files read and pipes opened non-blocking, a 4,000-file cap per plugin, a timeout on every child process and connection |
+| Uncontrolled resource consumption (CWE-400) | Huge trees, huge files, pipes, hung programs | Depth limits (4 to 5 levels; a folder at a limit that holds more to walk is reported as could-not-be-tested, not passed over), file-size caps (512 MB for the key scan, read in pieces past 8 MB; 2 MB for plugin files; what a cap leaves unread is UNKNOWN), only regular files read and pipes opened non-blocking, a 4,000-file cap per plugin, a timeout on every child process and connection |
 | Path traversal and symlink attacks (CWE-22, CWE-59) | Writing outside a folder | Nothing is written. Directory walks don't follow symlinked folders |
 | Untrusted search path (CWE-426) | Running programs by name | By design for `PATH` (it checks what the user runs); see section 4 for virtual environments |
-| Race conditions (CWE-367) | A scanned file swapped between its size check and its read; the Mac fix's temporary and backup files | The command checks and reads a file through one read-only, non-blocking descriptor (`lib/files.mjs`). The Mac fix uses `mktemp`, checks the backup name is free first, and writes the file in place with one `cp` after its checks |
+| Race conditions (CWE-367) | A scanned file swapped between its size check and its read; the Mac fix's temporary and backup files | The command checks and reads a file through one read-only, non-blocking descriptor (`lib/files.mjs`). The Mac fix makes each file beside `/etc/ssl/cert.pem` with `mktemp`, which refuses a name anything already holds, a symbolic link included; gives the backup its dated name with `link`, which refuses a taken name; compares the backup with the snapshot it checked, and requires the backup to bear out everything read from the snapshot; checks the new file where it will be renamed from, in the bundle's own folder, and compares the file with the snapshot again immediately before the rename; and replaces the file by a rename, in one step (a change in the moment between that comparison and the rename is the one it cannot see) |
 | Supply chain (CWE-1357) | Dependencies, CI | No dependencies; every GitHub Action pinned by full commit SHA; Dependabot proposes updates through review |
 
 ### Three rules the tests enforce (0.1.9)
@@ -325,9 +440,10 @@ SAFE they couldn't support; the other checks run, untested.
 file was written. They can go stale until the next update; each source is linked so it can be checked.
 
 **REVIEW lines are leads, not verdicts.** A new workflow file or plugin folder is listed because it could be
-malicious, not because it is. Folders a service owns that Wardlatch couldn't open are listed the same way: they were
-not searched, and running with sudo includes them; a person's locked folder is UNKNOWN instead, since it could hold
-that person's projects. The committed-key scan looks for high-confidence shapes only; a key in an unusual format
+malicious, not because it is. A folder Wardlatch couldn't open is not a lead but a gap, whoever owns it: a person's
+locked folder is UNKNOWN in a line of its own, since it could hold that person's projects, and the folders a service
+owns are UNKNOWN in one line per check (owner decision #33, 31 Oct 2026; until then they were one REVIEW line beside
+an all-clear, exit 0), with running with sudo as the way to include them. The committed-key scan looks for high-confidence shapes only; a key in an unusual format
 is missed.
 
 **The workflow review reads commits by the date they claim.** git gets no date. `git log --all --format='%H %ct'`
@@ -399,10 +515,26 @@ document, the CHANGELOG and the README must state that limit.
 `test/incidents.test.mjs` holds the start of every incident's window (`since`, `addedSince`) to an explicit UTC
 instant.
 
-**The Mac fix finds the two roots by the header lines macOS writes above each certificate** (`=== …/CN=…`). If Apple
-changed that format, the script would find no root to remove; it then re-tests online, and reports EXPOSED if the file
-still trusts the test host. If the test host were also down at that moment, it would report the file as clean without
-having been able to check. The script also trusts `/usr/bin/curl` for the re-test.
+**The Mac fix's re-test is worth no more than the two hosts it can reach.** It finds the two roots by their SHA-256
+fingerprints and their public keys, so how macOS writes the name lines above them cannot hide one (that it read the
+name lines was the limit here until 0.1.10). What is left is the re-test, and what the next paragraph names. It reads the advisory's test host only after an ordinary
+website has loaded through the same file as a control, and if either host does not answer it says so and claims no
+online result: a file it cleaned and checked is then reported as fixed *in the file*, never as re-tested. A network
+that answers for both hosts can still make the re-test say the wrong thing — what it cannot do is make the script
+undo the fix, which is why the re-test may report and never reverts. The script trusts `/usr/bin/curl` for both
+fetches.
+
+**What the Mac fix still cannot see** (judged, not measured). A change to the file in the moment between its last
+comparison with the snapshot and the rename is lost from the file and is in the backup neither. The control read
+before the change goes through the snapshot in the user's temporary folder, so a process running as the user can make
+it fail, which turns an UNKNOWN after the change (a certificate refused, or a network that stopped answering) into SAFE
+"Fixed in the file … nothing was re-tested online"; the file is fixed and checked in that case. On an older macOS whose
+`openssl` prints a withdrawn root's entry differently from the text in that Mac's file, the entry's text lines stay
+and only the certificate goes: no withdrawn root is left, and its name is still readable in the file. When
+`WARDLATCH_CERT_FILE` names a file the user can't write in a folder the user can, root's `mktemp`, `tee`, `chmod` and
+`mv` work in a folder that user controls and can race (not the default `/etc/ssl`, which only root can write). The
+file `WARDLATCH_CERT_FILE` names is printed as given, since whoever runs the fix chose it; only a link's target is held
+to the plain-name rule. A fault signal raised inside bash, or SIGKILL, ends a run with no line (R7).
 
 **Releases 0.1.0 to 0.1.2 are not signed by the project**, and there is one maintainer and no second reviewer. A named
 successor has held admin access to the repository and co-owned the npm package since 21 October 2026, but has not yet

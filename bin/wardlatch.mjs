@@ -6,22 +6,23 @@
 // Runs locally. Sends nothing anywhere except TLS connections to those test hosts and two control sites. Changes nothing.
 // A free tool from Deimos AI LLC · Apache-2.0
 import '../lib/crash.mjs';
-import { join, dirname, delimiter, isAbsolute, resolve } from 'node:path';
+import { join, dirname, basename, delimiter, isAbsolute, resolve } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { discover } from '../lib/discover.mjs';
-import { check, reachable } from '../lib/probe.mjs';
+import { discover, NOT_WALKED as TRUST_NOT_WALKED } from '../lib/discover.mjs';
+import { canaryExpired, check, reachable } from '../lib/probe.mjs';
 import { droppedNodeOptions } from '../lib/run.mjs';
 import { checkBinaryAll, findOnPath, tmpTraces, tempDirs } from '../lib/binaries.mjs';
-import { checkVersionFiles, sitePackagesDirs, checkSitePackages, localImageDigests, checkImages } from '../lib/installs.mjs';
+import { checkVersionFiles, sitePackagesDirs, checkSitePackages, localImageDigests, checkImages, NOT_WALKED as VENV_NOT_WALKED } from '../lib/installs.mjs';
 import { listContainers, checkContainer, engineHost } from '../lib/containers.mjs';
-import { reposUnder, workflowsAddedSince, windowStart } from '../lib/workflows.mjs';
+import { reposUnder, workflowsAddedSince, windowStart, NOT_WALKED as REPO_NOT_WALKED, NESTED_SAID } from '../lib/workflows.mjs';
 import { scanRepo } from '../lib/secrets.mjs';
-import { wordpressUnder, checkSite } from '../lib/wordpress.mjs';
+import { wordpressUnder, checkSite, checkPluginsFolder, NOT_WALKED as WP_NOT_WALKED } from '../lib/wordpress.mjs';
 import { scanHeaders } from '../lib/headers.mjs';
-import { pathState, readText, listDir } from '../lib/files.mjs';
+import { pathState, readText, listDir, denialCode, mandatoryRefusal, statBits, epermCauses, VENV_PACKAGES_SAID } from '../lib/files.mjs';
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
-import { safe, withdrawUnreceipted } from '../lib/report.mjs';
+import { safe, saw, withdrawUnreceipted } from '../lib/report.mjs';
+import { escapeHidden, escapeJsonHidden } from '../lib/escape.mjs';
 
 // npx puts the current project's node_modules/.bin, and each parent folder's, first on PATH. Wardlatch finds git,
 // python3, node, curl, php, go and the container engines on PATH and runs some of them, so a project could otherwise
@@ -45,9 +46,11 @@ const LIB = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib');
 const VERSION = JSON.parse(readText(join(LIB, '..', 'package.json'), 1024 * 1024)).version;
 const args = process.argv.slice(2);
 const flag = (f) => args.includes(f);
-// Names shown come from the disk, git and container engines, and can carry terminal control characters (a planted
-// plugin folder could try to erase its own line). They are printed escaped, never interpreted.
-const clean = (s) => String(s).replace(/[\u0000-\u001f\u007f-\u009f]/g, (ch) => `\\x${ch.charCodeAt(0).toString(16).padStart(2, '0')}`);
+// Names shown come from the disk, git, container engines and the incident data, and can carry terminal control
+// characters (a planted plugin folder could try to erase its own line), line separators, bidi overrides, zero-width and
+// tag characters (an instruction an agent reads and a person cannot see). They are printed escaped, never interpreted:
+// lib/escape.mjs says which characters, and why. Up to this fix this escaped C0 and C1 controls only (W1).
+const clean = escapeHidden;
 
 // Every option is a known one, and an option that takes a value has one: a typo is refused, not quietly ignored.
 const FLAGS = ['-h', '--help', '--list', '--json', '--no-containers'];
@@ -79,7 +82,7 @@ a local socket is). Changes nothing.`);
   process.exit(0);
 }
 const incidents = (listDir(join(LIB, 'incidents')).entries ?? []).map((e) => e.name).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readText(join(LIB, 'incidents', f), 4 * 1024 * 1024))).sort((a, b) => b.date.localeCompare(a.date));
-if (flag('--list')) { for (const i of incidents) console.log(`${i.id}  ${i.date}  ${i.title}`); process.exit(0); }
+if (flag('--list')) { for (const i of incidents) console.log(clean(`${i.id}  ${i.date}  ${i.title}`)); process.exit(0); }
 // --incident is repeatable, like --paths: every one named is checked (0.1.8 checked only the first)
 const ids = args.filter((a, i) => args[i - 1] === '--incident');
 const unknownId = ids.find((id) => !incidents.some((i) => i.id === id));
@@ -99,7 +102,7 @@ const HOME = (() => {
     // a name with a slash or .. can't be a home folder's name (a directory user can be ada@corp.example)
     const h = /^[\w.@-]+$/.test(u) && !u.includes('..') ? (platform() === 'darwin' ? `/Users/${u}` : `/home/${u}`) : '';
     if (h && pathState(h) === 'dir') return h;
-    sudoHomeMissing = `run under sudo by ${clean(u)}, whose home folder was not found${h ? ` at ${h}` : ''}: root's home (${homedir()}) was searched instead. Run Wardlatch without sudo, or pass --paths`;
+    sudoHomeMissing = `run under sudo by ${u}, whose home folder was not found${h ? ` at ${h}` : ''}: root's home (${homedir()}) was searched instead. Run Wardlatch without sudo, or pass --paths`;
   }
   return homedir();
 })();
@@ -129,11 +132,41 @@ const all = [];
 // With no --paths and none of the usual folders there (a fresh server, a CI runner), there is nothing of the kind to look
 // in: SAFE, and the receipt lists the folders looked for (owner, 22 Oct; 0.1.9's first cut said UNKNOWN, exit 2, and
 // whether a machine passed depended on whether an empty ~/Development happened to exist).
-function allClear(results, inc, kind, text, searched) {
-  if (searched.length) { const row = { incident: inc.id, kind, ...safe(searched), reason: text }; results.push(row); print(row.status, text); return; }
+// safe() withdraws a receipt that does not hold and says which entry failed, so the reason it hands back is printed,
+// not the all-clear's own words: an UNKNOWN line must never read like a clean one (lib/report.mjs).
+// (Up to owner decision #33, 31 Oct 2026, folders a service owns that the run could not open were "stated gaps": a REVIEW
+// line beside the all-clear, which kept the exit code at 0 and carried their count in its receipt. Every folder the run
+// could not open is now UNKNOWN, so an all-clear never sits beside one, and there is no count to carry.)
+// `notSearched`: the folder names the walk behind this all-clear never enters (each walker's NOT_WALKED, and macOS's own
+// Library). They are part of the receipt: up to this fix node_modules, .git, .venv and venv hid whole trees with no
+// word, while docs/ARCHITECTURE.md said no name decides a walk (WV-4). The two sentences that are not names (a venv's
+// own package folders; a repository inside another, which the repository walk stops before) are said after them.
+const LIBRARY = 'macOS\'s own Library';
+const namesSaid = (names) => {
+  const n = names.filter((x) => x !== LIBRARY && x !== VENV_PACKAGES_SAID && x !== NESTED_SAID);
+  return `folders named ${n.length > 1 ? `${n.slice(0, -1).join(', ')} or ${n.at(-1)}` : n[0]}, and ${LIBRARY} folders, are not searched${names.includes(VENV_PACKAGES_SAID) ? `; ${VENV_PACKAGES_SAID} are checked with the environment, not searched for other environments` : ''}${names.includes(NESTED_SAID) ? `; ${NESTED_SAID} is not looked for: pass --paths with it to include it` : ''}`;
+};
+// They are said on the line under the all-clear, so its own sentence stays the one a reader (and a script) knows.
+// `asked`: { why } for a check that doesn't search the --paths folders at all. The person named those folders, and up
+// to this fix nothing said what became of them, so a reader couldn't tell a folder searched and clean from one that
+// played no part (AUDIT-11). They can't go in the receipt: nothing opened them, and a receipt names what was looked at
+// (lib/report.mjs). They go in the sentence under the all-clear, and in `pathsNotSearched` for --json.
+const pathsSaid = (list, why) => `${list.length === 1 ? 'the folder' : `the ${list.length} folders`} given with --paths ${list.length === 1 ? 'was' : 'were'} not searched (${list.slice(0, 3).map(short).join(', ')}${list.length > 3 ? `, and ${list.length - 3} more` : ''}): ${why}`;
+
+function allClear(results, inc, kind, text, searched, notSearched, asked) {
+  const askedPaths = asked && explicitPaths ? roots.filter((r) => !missingRoots.includes(r)) : [];
+  if (searched.length) {
+    const row = { incident: inc.id, kind, ...safe(searched, { reason: text, ...(notSearched?.length ? { notSearched } : {}), ...(askedPaths.length ? { pathsNotSearched: askedPaths } : {}) }) };
+    results.push(row); print(row.status, row.reason);
+    if (row.status === 'SAFE' && askedPaths.length) note('2', pathsSaid(askedPaths, asked.why));
+    if (row.status === 'SAFE' && notSearched?.length) note('2', namesSaid(notSearched));
+    return;
+  }
   if (!explicitPaths) {
     const reason = `none of the usual folders exist here (${roots.map(short).join(', ')}), so there was nothing to search: pass --paths for a folder elsewhere`;
-    const row = { incident: inc.id, kind, ...safe(roots.map((r) => `looked for ${r}`)), reason }; results.push(row); print(row.status, reason); return;
+    // nothing was opened, because none of these folders is there: "I looked for it and it was not there" is evidence of
+    // absence, which a reader checks by looking for it too — not a place, so it is declared (lib/report.mjs saw())
+    const row = { incident: inc.id, kind, ...safe(roots.map((r) => saw(`looked for ${r}`)), { reason }) }; results.push(row); print(row.status, row.reason); return;
   }
   const reason = `none of the folders given with --paths exist (${roots.map(short).join(', ')}), so nothing was searched`;
   results.push({ incident: inc.id, kind, status: 'UNKNOWN', reason });
@@ -143,50 +176,138 @@ function allClear(results, inc, kind, text, searched) {
 // container, must never stand in for them)
 const RUNTIME_KINDS = ['node', 'curl', 'python', 'macos-system'];
 const hostRowsOf = (results) => results.filter((r) => RUNTIME_KINDS.includes(r.kind)).length;
-// rows that count for a summary line: a skipped-folders line is information beside it, never instead of it
+// rows that count for a summary line: a skipped-folders line is information beside it, never instead of it (no row has
+// been 'skipped' since decision #33: the service-folders row that replaced it is UNKNOWN, and counts)
 const counted = (results) => results.filter((r) => r.kind !== 'skipped');
-// later copies on PATH that are scripts, and so were not run (lib/binaries.mjs copiesToRun): a REVIEW line, in --json
-// too, so a reader can tell a copy went unchecked; it doesn't change the exit code
+// Later copies on PATH that are scripts, and so were not run (lib/binaries.mjs copiesToRun): UNKNOWN, in --json too, so
+// a reader can tell a copy went unchecked, and so the exit code says 2 rather than 0.
+//
+// DECIDED 28 Oct 2026 (audit F6, owner's call), previously an open question. The audit reproduced it: a fixed php first
+// on PATH and a vulnerable one second behind a wrapper script printed "SAFE php 8.5.12" and exited 0 with 8.3.6
+// installed. Both sides were real. Against: a later copy is SHADOWED, the first is what runs, and UNKNOWN exits 2 on
+// any machine with a wrapper script behind a real binary. For: shadowed is not uninstalled, PATH differs under cron, a
+// service and CI, and this is the same ignorance lib/binaries.mjs:187 already calls UNKNOWN when the program IS run and
+// will not say its version. The iron law settles it — not having looked is UNKNOWN, never SAFE — and the cost of being
+// wrong is asymmetric: a needless exit 2 is an inconvenience, a SAFE over an installed vulnerable copy is the failure
+// this tool exists to prevent. The verdict must not depend on PATH order while the same two programs are installed.
+// test/contract-0.1.9.test.mjs R6 pinned the old behaviour and was changed with this.
 function notRunRow(results, inc, what, paths) {
   if (!paths.length) return;
   const reason = `${what}: ${paths.length === 1 ? 'a later copy' : 'later copies'} on PATH ${paths.length === 1 ? 'is a script' : 'are scripts'}, not ${paths.length === 1 ? 'a program' : 'programs'}, so Wardlatch did not run ${paths.length === 1 ? 'it' : 'them'} and ${paths.length === 1 ? 'its' : 'their'} version was not checked: ${paths.map(short).join(', ')}`;
-  results.push({ incident: inc.id, kind: 'not-run', status: 'REVIEW', paths, reason });
-  print('REVIEW', 'copies on PATH not run'); note('2', reason);
+  results.push({ incident: inc.id, kind: 'not-run', status: 'UNKNOWN', paths, reason });
+  print('UNKNOWN', 'copies on PATH not run'); note('2', reason);
 }
 
 // Folders that couldn't be opened: the one rule for every check (owner, 22 Oct 2026). Every source of them comes here.
 //   - a searched root (a --paths folder, or a usual folder that exists) that can't be opened: UNKNOWN;
 //   - `found`: something already found whose own folders can't be read (a virtual environment's lib): UNKNOWN;
 //   - a folder below a root, owned by a person (this user, or a login account), could hold that person's projects or
-//     sites: UNKNOWN; owned by a service (root, a database, a container, certbot), it holds that service's data: one
-//     REVIEW line per check listing them, which doesn't change the exit code (lib/owners.mjs says which is which).
+//     sites: UNKNOWN, a row each; owned by a service (root, a database, a container, certbot): UNKNOWN too, grouped in
+//     one row per check that lists them (owner decision #33, 31 Oct 2026, "UNKNOWN too"; lib/owners.mjs says which is
+//     which). From 22 Oct to that decision the service's folders were one REVIEW line beside SAFE, exit 0: measured on
+//     /private/var/spool, 15 folders root and _postfix own read SAFE, exit 0. The person's are a row each because each
+//     may be a project of theirs; the service's are one row because a server has dozens, and one line says it as truly.
 //   - `review`: folders a check knows to be private by their place (a locked dot-folder under a web root: www-data's
-//     .ssh), listed in the REVIEW line whoever owns them.
+//     .ssh), in the same grouped row whoever owns them.
+//   - a folder that refuses with EPERM, whoever owns it: UNKNOWN, always (owner decision #32, 31 Oct 2026: "Yes,
+//     UNKNOWN"). From 4209d15 to this fix it was a "stated gap" in the REVIEW line beside SAFE, exit 0, on the claim
+//     that EPERM was macOS's privacy protection and could not be forged without root. An unprivileged sandbox
+//     (sandbox-exec, the kind coding agents run tools in) gives exactly that EPERM, and a venv holding the LiteLLM
+//     stealer inside such a folder read SAFE, exit 0, where it is EXPOSED ×2, exit 1. Its row says the errno, the mode
+//     and the owner, and never claims to know which mechanism refused (lib/files.mjs mandatoryRefusal()).
 // Up to e0e1c35 every locked folder was UNKNOWN, and any server with docker or certbot exited 2.
-// `searchesRoots`: whether this check searches the --paths folders at all (Plex's and GitLab's look only in their own
-// install places: a --paths folder that isn't there is nothing to them)
-function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, review = [] } = {}) {
-  for (const d of searchesRoots ? missingRoots : []) {
+// A --paths folder that isn't there is UNKNOWN on every check, including those that don't search the folders: the
+// person named it, and a typo that exits 0 is one nobody sees. A folder that IS there and plays no part is not a gap:
+// allClear() names it instead.
+// `deep`: the folders the walk's depth cap stopped at with more below them, `levels` that cap: one UNKNOWN row. Up to this
+// fix the caps were silent, and a site one level past one read SAFE with no row (WV-7).
+function gaps(results, inc, kind, dirs, { found = [], review = [], links = [], deep = [], levels } = {}) {
+  for (const d of missingRoots) {
     const reason = `given with --paths, but ${pathState(d) === 'gone' ? 'not there' : 'not a folder'}, so it was not searched`;
     results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason });
     print('UNKNOWN', short(d)); note('33', reason);
   }
   // on macOS a folder can be closed by privacy protection (Desktop, Documents, Downloads, iCloud), which sudo doesn't open
   const how = platform() === 'darwin' ? 'run Wardlatch with sudo if it belongs to another user, or allow your terminal Full Disk Access (System Settings → Privacy & Security) if macOS is protecting it' : 'run Wardlatch with sudo to include it';
-  const unknown = (d, reason) => { results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason }); print('UNKNOWN', short(d)); note('33', reason); };
-  const skipped = [];
-  for (const d of [...new Set(found)]) unknown(d, `found, but could not be read, so it was not checked: ${how}`);
+  const unknown = (d, reason, extra = {}) => { results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, ...extra, reason }); print('UNKNOWN', short(d)); note('33', reason); };
+  // BASIS, per folder: the errno and the mode, so a reader can check the claim with one `ls -ld`
+  const basisOf = (d, code) => {
+    const st = statBits(d);
+    const mode = st ? `mode 0${st.mode.toString(8).padStart(3, '0')}` : 'mode unknown';
+    const owner = st && st.uid === process.getuid?.() ? 'owner you' : `owner ${ownerName(d)}`;
+    return { code: code ?? 'readable now', basis: `${code ?? 'readable now'}, ${mode}, ${owner}` };
+  };
+  // An EPERM is UNKNOWN whoever owns the folder (owner decision #32). What the row says is true on every platform: the
+  // system refused, with the basis; on macOS privacy protection is a common cause and Full Disk Access may lift it,
+  // but a sandbox around this run refuses the same way, so the row never says which it was. The same words as every
+  // other row about an EPERM (lib/files.mjs epermCauses()).
+  const MAYBE = epermCauses();
+  // → { reason, extra } for the errnos that are UNKNOWN whoever owns the folder, with what is true of each; else null.
+  // EPERM: owner decision #32. ENAMETOOLONG: the folder is there (the walk listed its name) and its full path is longer
+  // than the system takes, so no one opens it by that path; up to this fix it read as "not there" (WV-6).
+  const refusal = (d, code, lead) => {
+    if (code === 'ENAMETOOLONG') return { extra: { code }, reason: `${lead}: its full path is longer than this system lets a program open (ENAMETOOLONG, ${Buffer.byteLength(d)} bytes), so it could not be read` };
+    if (code !== 'EPERM') return null;
+    const b = basisOf(d, code);
+    return { extra: { code: b.code, basis: b.basis }, reason: `${lead}: the system refused it (${b.basis})${mandatoryRefusal(d, code) ? ', although its permission bits would let this run in' : ''}. ${MAYBE}` };
+  };
+  const cannot = (d, lead) => {
+    const r = refusal(d, denialCode(d), lead);
+    if (r) { unknown(d, r.reason, r.extra); return; }
+    unknown(d, `${lead}: ${how}`);
+  };
+  const skipped = [], why = new Map();   // the stated gaps, and the errno each was judged on
+  for (const d of [...new Set(found)]) cannot(d, 'found, but could not be read, so it was not checked');
+  // A link to a folder somewhere else is not followed: a link can point into a loop, or outside what was asked for. Up
+  // to this fix a walker stepped over one in silence, so a site, a virtual environment or a repository behind a link
+  // was never looked at and the run still read SAFE — the receipt named the folders it did open, and every one of them
+  // was true. "I chose not to look" now lands where "I could not look" already did.
+  // (a link whose target the same walk listed never reaches here: lib/files.mjs unwalkedLinks)
+  for (const d of [...new Set(links)].filter((x) => !found.includes(x))) {
+    // the installs check reads a linked venv's own package folders through the link (lib/installs.mjs), and says so
+    if (kind === 'install' && pathState(join(d, 'pyvenv.cfg')) === 'file') unknown(d, 'is a link to a virtual environment somewhere else: its own packages were checked through it, and nothing else in it was searched, since links are not followed: pass --paths with the folder it points to, to include it');
+    else unknown(d, 'is a link to a folder somewhere else, so it was not followed: pass --paths with the folder it points to, to include it');
+  }
+  const past = [...new Set(deep)];
+  if (past.length) {
+    const one = past.length === 1;
+    const reason = `${past.length} folder${one ? ' is' : 's are'} deeper than this check walks (${levels ?? 'the'} levels below the folders searched), so ${one ? 'it was' : 'they were'} not searched: ${past.slice(0, 3).map(short).join(', ')}${past.length > 3 ? `, and ${past.length - 3} more` : ''}. Pass --paths with a folder nearer to ${one ? 'it' : 'them'} to include ${one ? 'it' : 'them'}`;
+    results.push({ incident: inc.id, kind, status: 'UNKNOWN', what: 'depth limit', paths: past, reason });
+    print('UNKNOWN', `${past.length} folder${one ? '' : 's'} past the depth limit`); note('33', reason);
+  }
   // a searched root itself (a --paths folder, or /var/www) that can't be opened is always UNKNOWN: it was asked for
   for (const d of [...new Set(dirs)].filter((x) => !found.includes(x))) {
-    if (lockedRoots.includes(d) || roots.includes(d) || ownedByPerson(d, kind)) unknown(d, `could not be opened, so it was not searched: ${how}`);
-    else skipped.push(d);
+    // A root is NEVER a stated gap, whatever the errno: the person asked about it by name, and the only honest answer
+    // to "is this folder clean?" that could not be opened is "I do not know" (test/release-0.1.9.test.mjs:260).
+    // the errno is read ONCE per folder and carried: reading it again for the basis below could disagree with the
+    // channel it decided, and a row whose stated basis contradicts its own placement is worse than no basis at all
+    const code = denialCode(d);
+    // EPERM (owner decision #32) or a path too long to open: UNKNOWN, whoever owns it and whether or not it was asked for
+    const special = refusal(d, code, 'could not be opened, so it was not searched');
+    if (special) { unknown(d, special.reason, special.extra); continue; }
+    if (lockedRoots.includes(d) || roots.includes(d)) { unknown(d, `could not be opened, so it was not searched: ${how}`); continue; }
+    if (ownedByPerson(d, kind)) { unknown(d, `could not be opened, so it was not searched: ${how}`); continue; }
+    skipped.push(d); why.set(d, code);
   }
-  skipped.push(...review.filter((d) => !skipped.includes(d)));
+  for (const d of review) {
+    if (skipped.includes(d)) continue;
+    const code = denialCode(d);
+    const special = refusal(d, code, 'could not be opened, so it was not searched');
+    if (special) { unknown(d, special.reason, special.extra); continue; }
+    skipped.push(d); why.set(d, code);
+  }
   if (skipped.length) {
-    const list = skipped.slice(0, 8).map((d) => `${short(d)} (${ownerName(d)})`).join(', ') + (skipped.length > 8 ? `, and ${skipped.length - 8} more` : '');
-    const reason = `${skipped.length} folder${skipped.length === 1 ? '' : 's'} owned by service accounts, or private by ${skipped.length === 1 ? 'its' : 'their'} place, could not be opened and ${skipped.length === 1 ? 'was' : 'were'} not searched: ${list}. Run Wardlatch with sudo to include ${skipped.length === 1 ? 'it' : 'them'}`;
-    results.push({ incident: inc.id, kind: 'skipped', status: 'REVIEW', paths: skipped, reason });
-    print('REVIEW', 'folders not searched'); note('2', reason);
+    // Owner decision #33: could-not-be-tested, exit 2, in ONE row for them all, with the basis per folder (the errno, the
+    // mode, the owner) so a reader can check each with one `ls -ld`. Only a service's folders, or ones private by their
+    // place, reach here (never an EPERM: decision #32). The row is the check's own kind, so it counts as a result: an
+    // all-clear is never printed beside it, as it is never printed beside a person's folder that could not be opened.
+    const SUDO = 'run with `sudo` to include it';
+    const folders = skipped.map((d) => { const b = basisOf(d, why.get(d) ?? null); return { path: d, code: b.code, basis: b.basis, remedy: SUDO }; });
+    const say = (list) => list.slice(0, 8).map((f) => `${short(f.path)} (${f.basis})`).join(', ') + (list.length > 8 ? `, and ${list.length - 8} more` : '');
+    const one = folders.length === 1;
+    const reason = `${folders.length} folder${one ? '' : 's'} owned by service accounts, or private by ${one ? 'its' : 'their'} place, could not be opened, so ${one ? 'it was' : 'they were'} not searched: ${say(folders)}. Run Wardlatch with sudo to include ${one ? 'it' : 'them'}`;
+    results.push({ incident: inc.id, kind, status: 'UNKNOWN', what: 'service folders', paths: skipped, folders, reason });
+    print('UNKNOWN', `${folders.length} folder${one ? '' : 's'} owned by service accounts, not searched`); note('33', reason);
   }
 }
 
@@ -208,7 +329,7 @@ function hostVarsRow(results, inc, what) {
 }
 
 if (!json) {
-  console.log(`${c('1', 'Wardlatch')} ${VERSION} · ${chosen.length} incident${chosen.length > 1 ? 's' : ''} · runs locally, sends nothing but test connections, changes nothing`);
+  console.log(`${c('1', 'Wardlatch')} ${clean(VERSION)} · ${chosen.length} incident${chosen.length > 1 ? 's' : ''} · runs locally, sends nothing but test connections, changes nothing`);
 }
 
 for (const inc of chosen) {
@@ -279,8 +400,8 @@ for (const inc of chosen) {
     const impostors = canaries.filter((x) => x.impostor);
     if (impostors.length) note('33', `${impostors.length} test host${impostors.length === 1 ? '' : 's'} answered with a certificate from "${impostors[0].impostor}", not the compromised chain: something on this network (a TLS-inspecting firewall, a DNS filter) is in the way, and those hosts were not used`);
     const rootsPem = join(LIB, 'incidents', inc.rootsPem);
-    const deniedVenvs = [...lockedRoots], foundUnread = [], notRun = [], untested = [];
-    for (const rt of discover({ roots: searchable, denied: deniedVenvs, found: foundUnread, notRun, untested })) {
+    const deniedVenvs = [...lockedRoots], foundUnread = [], notRun = [], untested = [], links = [], deep = [];
+    for (const rt of discover({ roots: searchable, denied: deniedVenvs, found: foundUnread, notRun, untested, links, deep })) {
       const r = await check(rt, canaries, { rootsPem, controlUrl: inc.advisory });
       const row = { incident: inc.id, ...rt, ...r, fix: r.status === 'EXPOSED' ? fixFor(rt) : undefined };
       results.push(row);
@@ -290,7 +411,7 @@ for (const inc of chosen) {
       if (r.note) note('2', r.note);
       if (row.fix) note('2', `fix: ${row.fix}`);
     }
-    gaps(results, inc, 'search', deniedVenvs, { found: foundUnread });
+    gaps(results, inc, 'search', deniedVenvs, { found: foundUnread, links, deep, levels: 5 });
     // found, but not tested (lib/discover.mjs says why): UNKNOWN, never dropped
     for (const u of untested) {
       results.push({ incident: inc.id, kind: 'curl', status: 'UNKNOWN', ...u.fields, reason: u.reason });
@@ -299,7 +420,7 @@ for (const inc of chosen) {
     notRunRow(results, inc, 'trust', notRun);
     // the test hosts' certificates expire: after that a container (which has no forced-roots control) would read every
     // refusal as SAFE, so containers are UNKNOWN once the incident's notAfter has passed
-    const expired = inc.canaryNotAfter && Date.now() > Date.parse(inc.canaryNotAfter);
+    const expired = canaryExpired(inc);
     if (expired) note('33', `the test hosts' certificates expired on ${inc.canaryNotAfter}: containers can't be tested against them`);
     hostVarsRow(results, inc, 'containers');
     // Running containers keep their image's trust list, whatever the host has.
@@ -319,6 +440,7 @@ for (const inc of chosen) {
     }
     const down = canaries.filter((x) => !x.up).length;
     if (down) note('33', `${down} of ${canaries.length} test hosts did not answer`);
+    if (searchable.length) note('2', `virtual environments were looked for in ${searchable.length} folder${searchable.length === 1 ? '' : 's'}, 5 levels deep; ${namesSaid([...TRUST_NOT_WALKED, LIBRARY, VENV_PACKAGES_SAID])}`);
   }
   // A trust check that found nothing to test is not an all-clear: possible anywhere, and always so for the machine itself
   // on Windows, whose program names discover() doesn't look for (a container row must not hide that). Up to 0.1.6
@@ -335,8 +457,10 @@ for (const inc of chosen) {
   // every copy of each program on PATH (a fixed one first used to hide a vulnerable one behind it); a program that
   // isn't there gets its own receipt row naming PATH (go and cloudflared in the trust incident used to get none)
   // on Windows (not supported) program checks look in macOS and Linux places only: not checked, never "not found"
+  if (inc.type === 'binaries') gaps(results, inc, 'binary', []);
   for (const rule of platform() === 'win32' ? [] : inc.binaries ?? []) {
-    const rows = checkBinaryAll(rule);
+    const listed = [];
+    const rows = checkBinaryAll(rule, undefined, { listed });
     notRunRow(results, inc, rule.binary, rows.notRun ?? []);
     for (const r of rows) {
       const row = { incident: inc.id, kind: 'binary', binary: rule.binary, ...r, fix: r.status !== 'SAFE' ? rule.fix : undefined };
@@ -345,9 +469,13 @@ for (const inc of chosen) {
       if (r.reason) note({ EXPOSED: '31', SAFE: '2' }[r.status] ?? '33', r.reason);
       if (r.status === 'EXPOSED') note('2', `fix: ${rule.fix}`);
     }
-    // the receipt names every place looked in: PATH, and a rule's extraDirs (PHP's sbin folders, where php-fpm lives)
+    // The reason names where this check looks, including a rule's extraDirs (PHP's sbin folders, where php-fpm lives).
+    // The receipt names the folders it actually listed. Up to 0.1.10 the receipt was the extraDirs as written, so the
+    // php all-clear's receipt carried thirteen folders that are not on this machine and five glob patterns
+    // (/opt/homebrew/opt/php@*/bin) that are not paths at all — the AUDIT-10 defect in a second check, found by
+    // building the rule that now refuses it. PATH itself is one setting, not a place, so it stays declared.
     const extra = rule.binaryNames ? rule.extraDirs ?? [] : [];
-    if (!rows.length) allClear(results, inc, 'binary', `${rule.binary} not found on PATH${extra.length ? ` or in ${extra.join(', ')}` : ''} (searched: ${short(process.env.PATH ?? '')})`, [`PATH: ${process.env.PATH ?? ''}`, ...extra, ...(rule.tmpTrace ? tempDirs() : [])]);
+    if (!rows.length && !(inc.type === 'binaries' && missingRoots.length)) allClear(results, inc, 'binary', `${rule.binary} not found on PATH${extra.length ? ` or in ${extra.join(', ')}` : ''} (searched: ${short(process.env.PATH ?? '')})`, [saw(`PATH: ${process.env.PATH ?? ''}`), ...new Set(listed), ...(rule.tmpTrace ? tempDirs() : [])], undefined, { why: 'this check reads the programs on PATH and the temp directories, and --paths does not add to them' });
   }
 
   // A repository git could not read (a partial clone missing what git would have to fetch, an ownership refusal, a
@@ -369,19 +497,31 @@ for (const inc of chosen) {
       else if (r.status === 'REVIEW' && inc.reviewFix) note('2', `check: ${inc.reviewFix}`);
     };
     // what was looked at, for the all-clear's receipt; folders that couldn't be opened, for UNKNOWN rows
-    const searched = [], denied = [], foundUnread = [];
+    const searched = [], denied = [], foundUnread = [], links = [], deep = [];
+    let lookedFor = '';
     if (inc.versionFiles) {
       const v = inc.versionFiles;
-      for (const r of checkVersionFiles(v)) show(r, `${v.product}${r.label ? ` (${r.label})` : ''} ${r.version}  ${short(r.path)}`, v.fix);
-      searched.push(v.lookedIn);
+      const reached = [];
+      for (const r of checkVersionFiles(v, { reached })) show(r, `${v.product}${r.label ? ` (${r.label})` : ''} ${r.version}  ${short(r.path)}`, v.fix);
+      // The places the walk reached, never the incident file's sentence about them. `lookedIn` is prose — "GitLab's
+      // version files under /opt/gitlab and /home/git/gitlab" — and up to 0.1.10 it WAS the whole receipt behind the
+      // all-clear: on a machine with no GitLab it named two folders that are not there and nothing had been opened,
+      // so a reader had nothing to check and the receipt rule could not tell (AUDIT-10). It is a description, which
+      // belongs in the sentence a reader is given, so it moved to the reason below.
+      searched.push(...new Set(reached));
+      lookedFor = v.lookedIn;
     }
     if (inc.sitePackages) {
       // an explicit --paths that doesn't exist is a search of nothing: UNKNOWN, not an all-clear for that part
       if (explicitPaths && !searchable.length) show({ status: 'UNKNOWN', reason: `none of the folders given with --paths exist (${roots.map(short).join(', ')}), so no virtual environment there was searched` }, 'folders given with --paths');
       denied.push(...lockedRoots);
-      const dirs = sitePackagesDirs({ roots: searchable, denied, found: foundUnread });
+      const walked = [];
+      const dirs = sitePackagesDirs({ roots: searchable, denied, found: foundUnread, links, walked, deep });
       for (const r of checkSitePackages(inc.sitePackages, dirs)) show(r, `${r.what}  ${short(r.dir)}`, inc.sitePackages.fix);
-      searched.push(...dirs);
+      // the folders the person asked about as well as the environments found in them: a --paths folder with no virtual
+      // environment in it left nothing in the receipt, so the all-clear could not be read as having searched the one
+      // place the reader named (AUDIT-11)
+      searched.push(...dirs, ...walked.filter((r) => !dirs.includes(r)));
     }
     if (inc.tmpTrace) {
       const temps = tempDirs();
@@ -389,7 +529,8 @@ for (const inc of chosen) {
       const tempsDenied = [];
       for (const t of tmpTraces(inc.tmpTrace, temps, tempsDenied)) show({ status: 'EXPOSED', path: t, reason: 'the malware ran on this machine: it leaves this marker each time it runs' }, short(t), inc.tmpFix ?? inc.sitePackages?.fix);
       foundUnread.push(...tempsDenied);
-      searched.push(...temps);
+      // and one that isn't there was not searched either: it is no more a place this run opened than a denied one
+      searched.push(...temps.filter((t) => !tempsDenied.includes(t) && pathState(t) === 'dir'));
     }
     if (inc.dockerDigests && !flag('--no-containers')) {
       hostVarsRow(results, inc, 'images');
@@ -405,16 +546,17 @@ for (const inc of chosen) {
         }
         // permission denied, no answer, too much output: the images exist but weren't seen, which is not SAFE
         if (list.error) { show({ status: 'UNKNOWN', engine: e, reason: `${list.error}, so its local images were not checked` }, `${e} images`); continue; }
-        byEngine[e] = list; searched.push(`${list.length} ${e} image${list.length === 1 ? '' : 's'}`);
+        // the engine's own list of its images: read from the engine, not from a place on disk, so it is declared
+        byEngine[e] = list; searched.push(saw(`${list.length} ${e} image${list.length === 1 ? '' : 's'}`));
       }
       for (const r of checkImages(inc, byEngine)) show(r, `${r.engine} image ${r.what}`, inc.dockerFix);
     }
-    gaps(results, inc, 'install', denied, { found: foundUnread, searchesRoots: Boolean(inc.sitePackages) });
+    gaps(results, inc, 'install', denied, { found: foundUnread, links, deep, levels: 5 });
     // nothing found in any part that could be looked at: the all-clear names every folder it searched. An engine that
     // couldn't be asked keeps its own UNKNOWN row (and the exit code at 2) beside it, and one that isn't running its
     // REVIEW row; a finding or another gap doesn't.
     const onlyEngineGaps = counted(results).every((r) => r.engine && (r.status === 'UNKNOWN' || r.notRunning));
-    if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean));
+    if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked${lookedFor ? ` for ${lookedFor},` : ''} in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean), inc.sitePackages ? [...VENV_NOT_WALKED, LIBRARY, VENV_PACKAGES_SAID] : undefined, inc.sitePackages ? undefined : { why: `this check reads ${inc.versionFiles?.product ?? 'the product'}'s own version files at the paths its installers use, and --paths does not add to them` });
   }
 
   // the window's start: an explicit UTC instant, or the review is UNKNOWN (up to 0.1.9 a bare date read SAFE: see
@@ -423,8 +565,8 @@ for (const inc of chosen) {
   if (start.error) { results.push({ incident: inc.id, kind: 'workflow', status: 'UNKNOWN', reason: start.error }); print('UNKNOWN', 'workflow review'); note('33', start.error); }
   if (inc.type === 'workflows' && !start.error) {
     let repos = 0;
-    const denied = [...lockedRoots];
-    for (const repo of reposUnder(searchable, 4, denied)) {
+    const denied = [...lockedRoots], links = [], deep = [];
+    for (const repo of reposUnder(searchable, 4, denied, links, { deep, bare: true })) {
       const added = workflowsAddedSince(repo, inc.since);
       // read, but the window isn't all here or a commit's time can't be read (a shallow repository, wherever it is cut;
       // a committer time that isn't a whole number): UNKNOWN with that reason, not as a repository git couldn't read
@@ -436,16 +578,16 @@ for (const inc of chosen) {
         print('REVIEW', `${short(repo)}/${w.file}`, c('2', `  added ${w.commit}`));
       }
     }
-    gaps(results, inc, 'workflow', denied);
+    gaps(results, inc, 'workflow', denied, { links, deep, levels: 4 });
     // the all-clear names the instant and the date compared: up to 0.1.9 it said "since 2026-09-01", a day git read as
     // 1 Sep at the run's time of day
     if (counted(results).some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.fix}`);
-    else if (!counted(results).length) allClear(results, inc, 'workflow', `no workflow files added in commits dated on or after ${start.label} (committer date) in ${repoCount(repos)}`, searchable);
+    else if (!counted(results).length) allClear(results, inc, 'workflow', `no workflow files added in commits dated on or after ${start.label} (committer date) in ${repoCount(repos)}`, searchable, [...REPO_NOT_WALKED, LIBRARY, NESTED_SAID]);
   }
   if (inc.type === 'secrets') {
     let repos = 0;
-    const denied = [...lockedRoots];
-    for (const repo of reposUnder(searchable, 4, denied)) {
+    const denied = [...lockedRoots], links = [], deep = [];
+    for (const repo of reposUnder(searchable, 4, denied, links, { deep })) {
       const hits = scanRepo(repo);
       if (hits.own) { results.push({ incident: inc.id, kind: 'secret', status: 'UNKNOWN', repo, reason: hits.error }); print('UNKNOWN', short(repo)); note('33', hits.error); continue; }
       if (hits.error) { unread('secret', repo, hits.error); continue; }
@@ -456,27 +598,37 @@ for (const inc of chosen) {
         print('REVIEW', `${short(repo)}/${h.file}:${h.line}`, c('2', `  ${h.type} ${h.masked}`));
       }
     }
-    gaps(results, inc, 'secret', denied);
+    gaps(results, inc, 'secret', denied, { links, deep, levels: 4 });
     if (counted(results).some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.fix}`);
-    else if (!counted(results).length) allClear(results, inc, 'secret', `no committed keys found in the files of ${repoCount(repos)} (current files; history needs gitleaks or trufflehog)`, searchable);
+    else if (!counted(results).length) allClear(results, inc, 'secret', `no committed keys found in the files of ${repoCount(repos)} (current files; history needs gitleaks or trufflehog)`, searchable, [...REPO_NOT_WALKED, LIBRARY, NESTED_SAID]);
   }
   if (inc.type === 'wordpress') {
     const denied = [...lockedRoots];
-    const privateDot = [], coreOnly = [];
-    const sites = wordpressUnder(searchable, 5, denied, privateDot, coreOnly);
+    const privateDot = [], coreOnly = [], links = [], loose = [], deep = [];
+    const sites = wordpressUnder(searchable, 5, denied, privateDot, coreOnly, links, { loose, deep, names: inc.rules.map((x) => x.plugin) });
     for (const core of coreOnly) {
       const reason = 'WordPress core is here, but no plugins folder is where WordPress, a moved wp-content, Bedrock or its wp-config.php puts one, so its plugins were not checked: pass --paths for the folder that holds them';
       results.push({ incident: inc.id, kind: 'wordpress', site: core, status: 'UNKNOWN', what: 'plugins folder', reason });
       print('UNKNOWN', `${short(core)} · plugins folder`); note('33', reason);
     }
-    for (const site of sites) for (const f of checkSite(site, inc.rules, inc.addedSince)) {
+    const show = (where, f) => {
       results.push({ incident: inc.id, kind: 'wordpress', ...f, fix: f.fix ?? (f.status === 'REVIEW' ? inc.reviewFix : undefined) });
-      print(f.status, `${short(site)} · ${f.what}`, f.reason ? c('2', `  ${f.reason}`) : '');
+      print(f.status, `${short(where)} · ${f.what}`, f.reason ? c('2', `  ${f.reason}`) : '');
       if (f.status === 'EXPOSED') note('2', `fix: ${f.fix}`);
+    };
+    for (const site of sites) for (const f of checkSite(site, inc.rules, inc.addedSince)) show(site, f);
+    // a plugins folder with no core found to use it (given with --paths, or a copy of a content folder), and a folder
+    // given with --paths that is one listed plugin's own folder: checked, never passed over (WV-1), with or without its
+    // main file (up to this fix only with it, so a backdoored copy missing rank-math-pro.php read SAFE: R2-N7)
+    for (const p of loose) for (const f of checkPluginsFolder(p, inc.rules, inc.addedSince)) show(p, f);
+    for (const r of searchable) {
+      const own = inc.rules.filter((x) => basename(r) === x.plugin);
+      if (own.length && !loose.includes(dirname(r))) for (const f of checkPluginsFolder(dirname(r), own)) show(r, f);
     }
-    gaps(results, inc, 'wordpress', denied, { review: privateDot });
+    gaps(results, inc, 'wordpress', denied, { review: privateDot, links, deep, levels: 5 });
     // sites found with none of the listed plugins are named as found (up to b03e7be this said "no WordPress installs found")
-    if (!counted(results).length) allClear(results, inc, 'wordpress', sites.length ? `${sites.length} WordPress install${sites.length === 1 ? '' : 's'} found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched; none has any of the listed plugins` : `no WordPress installs found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched (run it on the server, or pass --paths)`, searchable);
+    const looseSaid = loose.length ? `; ${loose.length} plugins folder${loose.length === 1 ? '' : 's'} with no WordPress core beside ${loose.length === 1 ? 'it' : 'them'} checked, with none of the listed plugins` : '';
+    if (!counted(results).length) allClear(results, inc, 'wordpress', `${sites.length ? `${sites.length} WordPress install${sites.length === 1 ? '' : 's'} found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched; none has any of the listed plugins` : `no WordPress installs found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched (run it on the server, or pass --paths)`}${looseSaid}`, [...searchable, ...loose], [...WP_NOT_WALKED, LIBRARY]);
     else if (counted(results).some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.reviewFix}`);
   }
   if (inc.type === 'headers') {
@@ -490,9 +642,13 @@ for (const inc of chosen) {
       results.push({ incident: inc.id, kind: 'header', status: f.status, file: f.file, where: f.where, carries: f.carries, to: f.to, fix: inc.fix });
       print(f.status, `${short(f.file)} · ${f.where}`, c('2', `  carries ${f.carries}, ${f.to}`));
     }
-    gaps(results, inc, 'header', [...lockedRoots, ...h.denied]);
+    gaps(results, inc, 'header', [...lockedRoots, ...h.denied], { links: h.links, deep: h.deep, levels: 4 });
     if (h.findings.length) note('2', `fix: ${inc.fix}`);
-    else if (!counted(results).length) allClear(results, inc, 'header', `no name or email in the ${h.settings} header setting${h.settings === 1 ? '' : 's'} found in ${h.read} file${h.read === 1 ? '' : 's'} and the environment`, [...h.files, 'the environment']);
+    // The receipt is the settings files that were read and the folders that were walked for a repository's own
+    // settings — places a reader can open. Up to 0.1.10 it also carried the words "the environment", and on a machine
+    // with no settings file that phrase was the whole receipt behind "no name or email in the 0 header settings found
+    // in 0 files": nothing to go and check (AUDIT-10). The environment is still read, and the reason still says so.
+    else if (!counted(results).length) allClear(results, inc, 'header', `no name or email in the ${h.settings} header setting${h.settings === 1 ? '' : 's'} found in ${h.read} file${h.read === 1 ? '' : 's'} and the environment`, [...h.files, ...searchable.filter((r) => !h.denied.includes(r))], searchable.length ? [...REPO_NOT_WALKED, LIBRARY, NESTED_SAID] : undefined);
     if (h.notUsed.length) note('2', `${h.notUsed.length} settings file${h.notUsed.length === 1 ? '' : 's'} this user can't open (so its tools can't read ${h.notUsed.length === 1 ? 'it' : 'them'} either): ${h.notUsed.slice(0, 4).map(short).join(', ')}${h.notUsed.length > 4 ? ', …' : ''}`);
     if (!h.id.name && !h.id.email) note('2', 'no git name or email is set, so only email-shaped values were looked for');
     note('2', `not covered: ${inc.notCovered}`);
@@ -508,10 +664,16 @@ for (const r of withdrawUnreceipted(all)) { print('UNKNOWN', `the SAFE line for 
 const count = { SAFE: 0, EXPOSED: 0, UNKNOWN: 0, REVIEW: 0 };
 for (const r of all) if (r.status in count) count[r.status]++;
 const n = (s) => count[s];
-// JSON.stringify escapes control characters below 0x20 but passes DEL and C1 (0x7f-0x9f) through; names from the disk can
-// carry them, so they are escaped too, as the text output does
-if (json) console.log(JSON.stringify({ tool: 'wardlatch', version: VERSION, incidents: chosen.map((i) => ({ id: i.id, title: i.title, advisory: i.advisory })), results: all }, null, 1)
-  .replace(/[\u007f-\u009f]/g, (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`));
+// JSON.stringify escapes control characters below 0x20 and passes everything else through: DEL and C1, U+2028, bidi
+// overrides, zero-width and tag characters. Two rules, so that --json is as safe to hand an agent as the text is (W1):
+//   - a `reason`, at any depth, is prose a reader is given, and is escaped exactly as the text output is (\u{202e} in the
+//     value itself);
+//   - every other string keeps its real value (a path field must still name the real file), and every hidden character
+//     in it is written as a JSON escape, so the JSON text holds none raw and JSON.parse gives the real value back.
+// lib/escape.mjs says which characters count as hidden. Up to this fix only DEL and C1 were escaped, and only the second way.
+const prose = (v) => (Array.isArray(v) ? v.map(prose) : v && typeof v === 'object'
+  ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, k === 'reason' && typeof x === 'string' ? clean(x) : prose(x)])) : v);
+if (json) console.log(escapeJsonHidden(JSON.stringify(prose({ tool: 'wardlatch', version: VERSION, incidents: chosen.map((i) => ({ id: i.id, title: i.title, advisory: i.advisory })), results: all }), null, 1)));
 else {
   console.log(`\n${count.SAFE} safe · ${n('EXPOSED')} exposed · ${n('UNKNOWN')} could not be tested${n('REVIEW') ? ` · ${n('REVIEW')} to review` : ''}`);
   const trust = chosen.find((i) => i.type === 'trust');

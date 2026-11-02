@@ -11,14 +11,14 @@ import { spawnSync, execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, chmodSync, symlinkSync, utimesSync, statSync, existsSync, readFileSync } from 'node:fs';
 import os, { tmpdir } from 'node:os';
 import { syncBuiltinESMExports } from 'node:module';
-import { join, dirname } from 'node:path';
+import { join, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseGitConfig, identityFrom, carries, headersInJson, headersInRc, headersInToml, stripJsonc, places, scanHeaders } from '../lib/headers.mjs';
 import { listContainers, checkContainer } from '../lib/containers.mjs';
 import { check } from '../lib/probe.mjs';
 import { droppedNodeOptions } from '../lib/run.mjs';
 import { checkBinaryAll, copiesToRun, goToolchain, judgeVersion } from '../lib/binaries.mjs';
-import { readCapped, eachPiece, isNativeProgram } from '../lib/files.mjs';
+import { readCapped, eachPiece, isNativeProgram, isSystemFolder } from '../lib/files.mjs';
 import { scanText } from '../lib/secrets.mjs';
 import { sitePackagesDirs, checkSitePackages } from '../lib/installs.mjs';
 import { reposUnder } from '../lib/workflows.mjs';
@@ -304,12 +304,23 @@ test('--no-containers, and incidents without image digests, never ask the contai
   }
 });
 
+// Changed 29 Oct 2026 with the AUDIT-10 fix. This test used to pin the receipt as [versionFiles.lookedIn] — the
+// incident file's own sentence, "GitLab's version files under /opt/gitlab and /home/git/gitlab". That sentence was the
+// whole receipt behind the all-clear on a machine with no GitLab: it named two folders that were not there, nothing had
+// been opened, and a reader had nothing to go and check. The receipt is now the places the walk actually reached, so
+// what this test holds is the property the old expectation only stood in for, and holds it for whatever the walk finds
+// on the machine running the test: one SAFE row, exit 0, and every entry in its receipt a place that is there.
 test('Plex and GitLab with an existing --paths folder are SAFE, with a receipt naming where they looked', () => {
   // bin/wardlatch.mjs:373 (the version files' places go into the receipt)
   for (const id of ['plex-2026-10', 'gitlab-2026-10']) {
     const r = run(['--incident', id, '--paths', fresh('v373-root')], {}, { name: 'v373' });
-    assert.deepEqual(r.rows.map((x) => [x.status, x.searched]), [['SAFE', [incident(id).versionFiles.lookedIn]]], id);
+    assert.deepEqual(r.rows.map((x) => x.status), ['SAFE'], id);
     assert.equal(r.code, 0, id);
+    const [{ searched }] = r.rows;
+    assert.ok(searched.length, `${id}: no receipt: ${JSON.stringify(r.rows)}`);
+    for (const s of searched) assert.ok(isAbsolute(s) && existsSync(s), `${id}: the receipt entry ${JSON.stringify(s)} is not a place that is there: ${JSON.stringify(searched)}`);
+    // and the incident's description of where it looks is still shown, in the sentence a reader is given
+    assert.ok(r.rows[0].reason.includes(incident(id).versionFiles.lookedIn), `${id}: ${r.rows[0].reason}`);
   }
 });
 
@@ -355,11 +366,13 @@ test('a folder where a tracked file was is not a gap: SAFE, exit 0', () => {
 
 // ---- discovery of runtimes ---------------------------------------------------------------------------------------------
 const curlDir = () => { const d = fresh('disc-curl'); exe(join(d, 'curl'), 'echo "curl 8.0.0"'); return d; };
-// the virtual environments discover() found under `roots`, tested (env rows) or not (untested)
+// the virtual environments discover() found under `roots`, tested (env rows) or not (untested), and the folders past its
+// depth cap (`deep`, shown only when there are any). Every gap list is passed: since R2-N9 a walk given no list for a gap
+// it found throws, and this helper used to leave `deep` out, which the walk then had to stay silent about.
 const discovered = (name, roots) => lib(name, `const { discover } = await import(L + '/discover.mjs');
-const untested = [];
-const out = discover({ roots: ${JSON.stringify(roots)}, pathEnv: ${JSON.stringify(curlDir())}, untested });
-console.log(JSON.stringify({ envs: out.filter((r) => r.env).map((r) => r.env).sort(), untested: untested.map((u) => u.env) }));`);
+const untested = [], deep = [], links = [], denied = [], found = [], notRun = [];
+const out = discover({ roots: ${JSON.stringify(roots)}, pathEnv: ${JSON.stringify(curlDir())}, untested, deep, links, denied, found, notRun });
+console.log(JSON.stringify({ envs: out.filter((r) => r.env).map((r) => r.env).sort(), untested: untested.map((u) => u.fields?.env ?? u.env ?? null), ...(deep.length ? { deep } : {}) }));`);
 
 test('a virtual environment without certifi gives no row; one with certifi does', () => {
   // lib/discover.mjs:28 (no certifi bundle, no row)
@@ -368,38 +381,57 @@ test('a virtual environment without certifi gives no row; one with certifi does'
   assert.deepEqual(discovered('d28', [root]), { envs: [join(root, 'withca', '.venv')], untested: [] });
 });
 
-test('discovery doesn\'t follow links or go into node_modules', () => {
-  // lib/discover.mjs:79 (links, node_modules, .git and macOS's own folders are skipped)
+// Changed 28 Oct 2026 with lib/discover.mjs (audit AUDIT-1). The link is still NOT followed — that part of this test's
+// name is unchanged and still right — but it is now NAMED as untested instead of stepped over in silence. The old
+// assertion was `untested: []`, which is to say: a virtual environment behind a link was neither tested nor mentioned,
+// and the run still read SAFE. Not following is a choice; not saying so is the defect.
+test('discovery doesn\'t follow links or go into node_modules, and says so for the link', () => {
+  // lib/discover.mjs:79 (node_modules, .git and macOS's own folders are skipped; a link is reported, not followed)
   const root = fresh('d79-root'), elsewhere = fresh('d79-elsewhere');
   venv(join(root, 'node_modules', 'pkg', '.venv')); venv(join(elsewhere, 'venv')); symlinkSync(join(elsewhere, 'venv'), join(root, 'linked'));
   venv(join(root, 'proj', '.venv'));
-  assert.deepEqual(discovered('d79', [root]), { envs: [join(root, 'proj', '.venv')], untested: [] });
+  assert.deepEqual(discovered('d79', [root]), {
+    envs: [join(root, 'proj', '.venv')],
+    untested: [join(root, 'linked')],   // the link, reported because what is behind it was not tested
+  });
 });
 
 test('the search depths: a virtual environment six folders down, a repository four down, a site five down', () => {
   // lib/discover.mjs:75, lib/workflows.mjs:16 and lib/wordpress.mjs:16 (each walk lists the folder at depth 0)
   const v = fresh('d75-root');
+  // each one past the cap is not found, and is reported as past it (WV-7); the walks are given their gap lists, which
+  // they have had since WV-7 and which a caller may no longer leave out (R2-N9)
   venv(join(v, '1', '2', '3', '4', '5', 'v6')); venv(join(v, '1', '2', '3', '4', '5', '6', 'v7'));
-  assert.deepEqual(discovered('d75', [v]), { envs: [join(v, '1', '2', '3', '4', '5', 'v6')], untested: [] });
+  assert.deepEqual(discovered('d75', [v]), { envs: [join(v, '1', '2', '3', '4', '5', 'v6')], untested: [], deep: [join(v, '1', '2', '3', '4', '5', '6')] });
   const g = fresh('w16-root');
   mkdirSync(join(g, '1', '2', '3', '4', '.git'), { recursive: true }); mkdirSync(join(g, '1', '2', '3', 'x', '5', '.git'), { recursive: true });
-  assert.deepEqual(reposUnder([g], 4), [join(g, '1', '2', '3', '4')]);
+  const gDeep = [];
+  assert.deepEqual(reposUnder([g], 4, [], [], { deep: gDeep }), [join(g, '1', '2', '3', '4')]);
+  assert.deepEqual(gDeep, [join(g, '1', '2', '3', 'x', '5')]);
   const w = fresh('wp16-root');
   const site = (p) => { put(join(p, 'wp-includes', 'version.php'), '<?php\n'); mkdirSync(join(p, 'wp-content'), { recursive: true }); };
   site(join(w, '1', '2', '3', '4', '5')); site(join(w, '1', '2', '3', '4', 'x', '6'));
-  assert.deepEqual(wordpressUnder([w], 5), [join(w, '1', '2', '3', '4', '5')]);
+  const wDeep = [];
+  assert.deepEqual(wordpressUnder([w], 5, [], [], [], [], { deep: wDeep, loose: [] }), [join(w, '1', '2', '3', '4', '5')]);
+  assert.deepEqual(wDeep, [join(w, '1', '2', '3', '4', 'x', '6')]);
 });
 
 test('the OS\'s own trust: the macOS system row, and the Linux store row only with a bundle and a curl', () => {
   // lib/discover.mjs:66 to :72 (the macos-system row on macOS; the Linux bundle, curl and row)
   const nscurl = exe(join(fresh('os-nscurl'), 'nscurl'), 'exit 0'), bundle = put(join(fresh('os-bundle'), 'ca.crt'), '-----BEGIN CERTIFICATE-----\n');
   const map = { '/usr/bin/nscurl': nscurl, '/etc/ssl/certs/ca-certificates.crt': bundle };
+  // `untested` is passed (since R2-N9 a walk given no list for an entry it has throws): with a bundle and no curl, the
+  // bundle goes there unless a python3 tests it, and this test used to leave it out, so that entry went nowhere
   const system = (name, platform, pathEnv) => lib(name, `const { discover } = await import(L + '/discover.mjs');
-console.log(JSON.stringify(discover({ roots: [], pathEnv: ${JSON.stringify(pathEnv)} }).filter((r) => r.kind === 'macos-system' || r.system).map((r) => [r.kind, r.bin ?? null, r.args ?? null])));`, { platform, map: platform === 'darwin' ? { '/usr/bin/nscurl': nscurl } : map });
-  assert.deepEqual(system('os-mac', 'darwin', ''), [['macos-system', '/usr/bin/nscurl', null]]);
+const untested = [];
+const out = discover({ roots: [], pathEnv: ${JSON.stringify(pathEnv)}, untested });
+console.log(JSON.stringify({ rows: out.filter((r) => r.kind === 'macos-system' || r.system).map((r) => [r.kind, r.bin ?? null, r.args ?? null]), python: out.some((r) => r.kind === 'python'), untested: untested.map((u) => u.fields?.bundle ?? null) }));`, { platform, map: platform === 'darwin' ? { '/usr/bin/nscurl': nscurl } : map });
+  assert.deepEqual(system('os-mac', 'darwin', '').rows, [['macos-system', '/usr/bin/nscurl', null]]);
   const curl = curlDir();
-  assert.deepEqual(system('os-linux', 'linux', curl), [['curl', join(curl, 'curl'), ['--cacert', '/etc/ssl/certs/ca-certificates.crt']]]);
-  assert.deepEqual(system('os-linux', 'linux', fresh('os-no-curl')), [], 'no curl, no row');
+  assert.deepEqual(system('os-linux', 'linux', curl).rows, [['curl', join(curl, 'curl'), ['--cacert', '/etc/ssl/certs/ca-certificates.crt']]]);
+  const noCurl = system('os-linux', 'linux', fresh('os-no-curl'));
+  assert.deepEqual(noCurl.rows, [], 'no curl, no row');
+  assert.ok(noCurl.python || noCurl.untested.includes('/etc/ssl/certs/ca-certificates.crt'), `and the bundle is not dropped: ${JSON.stringify(noCurl)}`);
 });
 
 // ---- program checks ----------------------------------------------------------------------------------------------------
@@ -453,15 +485,42 @@ test('a virtual environment three levels under the home folder is found, and its
   assert.deepEqual(checkSitePackages(incident('litellm-2026-10').sitePackages, dirs).map((x) => [x.status, x.what]), [['EXPOSED', 'cook.pth']]);
 });
 
-test('virtual environments inside node_modules, .git or the Trash are not looked at, and a locked node_modules is no gap', () => {
-  // lib/installs.mjs:136 (node_modules, .git and macOS's own folders are skipped)
+test('virtual environments inside node_modules or .git are not looked at; one in a folder merely named .Trash IS', () => {
+  // lib/installs.mjs:136 (node_modules and .git are skipped). The .Trash case changed with the isSystemFolder fix:
+  // up to then any folder with that name, under any parent on any platform, was stepped over in silence, so
+  // `mkdir .Trash` hid a whole tree from every walk and the run still read SAFE. No folder named .Trash is skipped by
+  // its name any more, macOS's real Trash included (the isSystemFolder unit test below asserts it): a project folder
+  // that happens to carry the name is searched, exactly as a project folder named Library is, and the real Trash is
+  // walked, and could-not-be-tested if it refuses (owner decision #32).
   const root = fresh('i136-root');
-  for (const p of ['node_modules/pkg/.venv', '.git/x/.venv', '.Trash/old/.venv']) venv(join(root, p), { certifi: false });
+  for (const p of ['node_modules/pkg/.venv', '.git/x/.venv']) venv(join(root, p), { certifi: false });
+  const hidden = venv(join(root, '.Trash', 'old', '.venv'), { certifi: false });
   const keep = venv(join(root, 'proj', '.venv'), { certifi: false });
   if (!AS_ROOT) { mkdirSync(join(root, 'web', 'node_modules'), { recursive: true }); lock(join(root, 'web', 'node_modules')); }
   const denied = [];
-  assert.deepEqual(sitePackagesDirs({ roots: [root], patterns: [], home: '', denied }), [keep]);
+  assert.deepEqual(sitePackagesDirs({ roots: [root], patterns: [], home: '', denied }).sort(), [hidden, keep].sort());
   assert.deepEqual(denied, []);
+});
+
+// Changed 29 Oct 2026 (AUDIT-5, and the false-safes fix). This test pinned the place-gated NAME rule: .Trash under a
+// home folder and .Trashes at a volume root were system folders, skipped by name wherever macOS keeps one. The gate
+// made the hiding place smaller and left it standing — and it was wrong about the real article, measured the same day:
+// a modern *.photoslibrary has no Contents directory, so the bundle-marker arm returned false for Photos and true for
+// Photo Booth Library only by accident. Nothing is skipped by name any more except macOS's own Library, which keeps
+// its place gate (a project folder called Library is searched: ca530b7). The Trash and the photo libraries are walked,
+// and an EPERM they answer with is could-not-be-tested, exit 2, whoever owns them (owner decision #32, 31 Oct 2026;
+// lib/files.mjs mandatoryRefusal() now only chooses the words of that row).
+test('isSystemFolder gates only macOS\'s own Library, and never decides by a folder\'s name', () => {
+  if (process.platform !== 'darwin') return;
+  // literal paths, not homedir(): this file preloads no-real-home.cjs, so homedir() is a temp folder here
+  for (const [name, parent] of [['.Trash', '/Users/someone'], ['.Trashes', '/Volumes/Backup'],
+    ['.Trash', '/Users/someone/proj'], ['.Trashes', '/srv/www/site'], ['evil.photoslibrary', '/Users/someone/src'],
+    ['Photo Booth Library', '/Users/someone/Pictures'], ['Photos Library.photoslibrary', '/Users/someone/Pictures']]) {
+    assert.equal(isSystemFolder(name, parent), false, `${parent}/${name}: no name decides a walk`);
+  }
+  // the one arm that remains is gated on its place AND on macOS's own folders being inside it
+  assert.equal(isSystemFolder('Library', '/'), true, '/Library, with macOS\'s own folders in it');
+  assert.equal(isSystemFolder('Library', '/srv/www/site'), false, 'a project folder called Library is searched');
 });
 
 // ---- WordPress ---------------------------------------------------------------------------------------------------------

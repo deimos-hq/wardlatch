@@ -1114,7 +1114,13 @@ test('wordpress: 1.0.0\'s $root_dir line in a Bedrock 1.1+ config moves the cont
   for (const [i, line] of ["define('WP_CONTENT_DIR', $root_dir . CONTENT_DIR);", "Config::define('WP_CONTENT_DIR', $root_dir . Config::get('CONTENT_DIR'));"].entries()) {
     const sb = bedrockSite(`t81-${i}`, { app: `<?php\nConfig::define('CONTENT_DIR', '/app');\n${line}\n` });
     plugin(join(dirname(sb.web), 'app', 'plugins'), 'updraftplus', 'updraftplus.php', '1.26.12');
-    assert.equal(wp(sb.root).code, 2, line);
+    // The point: never read as stock, never SAFE. The config's doubt is its own UNKNOWN row. The exit code is not pinned
+    // to 2: the fixture's 1.26.12 copy sits in the folder the $root_dir line points the content folder at, a Bedrock
+    // app/plugins beside Bedrock's config, which is checked as a plugins folder in its own right once Bedrock checkouts
+    // are (R2-N7), and is then EXPOSED, exit 1, which is true.
+    const r = wp(sb.root);
+    assert.ok(unknowns(r).some((x) => /names a setting that moves the plugins folder/.test(x.reason)), `${line}: ${show(r)}`);
+    assert.notEqual(r.code, 0, line);
   }
 });
 

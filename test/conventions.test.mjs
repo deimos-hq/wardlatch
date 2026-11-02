@@ -7,6 +7,7 @@ import './support/no-real-home.cjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -20,7 +21,11 @@ const FILES = walk(ROOT);
 const read = (f) => readFileSync(join(ROOT, f), 'utf8');
 const SHIPPED = FILES.filter((f) => /^(bin|lib)\/[^/]+\.mjs$/.test(f));        // the code users run
 const SOURCE = FILES.filter((f) => /\.(mjs|sh|ya?ml)$/.test(f) && f !== 'fix/fix-macos.sh');
-const VERBATIM = ['LICENSE', 'LICENSES/Apache-2.0.txt'];                       // licence texts stay exactly as published
+const VERBATIM = [
+  // Apple's shipped /etc/ssl/cert.pem, vendored so the fix's tests do not require the machine running them to be
+  // vulnerable. It is byte-identical to OpenBSD rev 1.22.2.1 and carries 223 lines with trailing spaces. Those
+  // bytes are the point: reformat it and it stops being evidence of what Apple ships.
+  'test/support/fixtures/macos-27.2-cert.pem','LICENSE', 'LICENSES/Apache-2.0.txt'];                       // licence texts stay exactly as published
 const TEXT = FILES.filter((f) => (/\.(mjs|sh|ya?ml|md|json|toml|txt|pem)$/.test(f) || ['NOTICE', '.gitignore'].includes(f)) && !VERBATIM.includes(f));
 const imports = (src) => [...src.matchAll(/^\s*import\b[^'"]*?from\s*['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)/gm)].map((m) => m[1] ?? m[2]);
 const named = (src, mod) => [...src.matchAll(new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*'${mod}'`, 'g'))].flatMap((m) => m[1].split(',').map((s) => s.trim().split(/\s+as\s+/)[0]).filter(Boolean));
@@ -117,5 +122,28 @@ test('no test asks where the real home folder is: no test file takes homedir or 
     const src = read(f), code = src.replace(/(^|\s)\/\/.*$/gm, '$1');
     assert.deepEqual(named(src, 'node:os').filter((x) => ['homedir', 'userInfo'].includes(x)), [], f);
     assert.doesNotMatch(code, /\b(?:homedir|userInfo)\s*\(/, f);
+  }
+});
+
+test('SHA256SUMS is a checkable receipt: every line names a file in the repository, with its real digest', () => {
+  // docs/RELEASING.md tells people to run `sha256sum -c SHA256SUMS`. Until 29 Oct 2026 the committed file was the
+  // 0.1.9 release asset: one of its two lines named wardlatch-v0.1.9.tar.gz, which is not in the repository, so
+  // the check could not pass in a clone, and it omitted wardlatch-0.1.10.tgz, which is committed. A receipt with
+  // an uncheckable line and a missing current entry is worse than none.
+  const lines = read('SHA256SUMS').split('\n').filter((l) => l.trim() && !l.startsWith('#'));
+  assert.ok(lines.length >= 1, 'SHA256SUMS lists nothing');
+  const listed = new Set();
+  for (const line of lines) {
+    const m = /^([0-9a-f]{64}) {2}(\S.*)$/.exec(line);
+    assert.ok(m, `SHA256SUMS: not a digest line: ${line}`);
+    const [, digest, name] = m;
+    assert.ok(FILES.includes(name), `SHA256SUMS names ${name}, which is not in the repository`);
+    const actual = createHash('sha256').update(readFileSync(join(ROOT, name))).digest('hex');
+    assert.equal(actual, digest, `SHA256SUMS: ${name}`);
+    listed.add(name);
+  }
+  // and every tarball committed here is listed, so a release that adds one cannot leave it out
+  for (const f of FILES.filter((f) => /^wardlatch-[0-9.]+\.tgz$/.test(f))) {
+    assert.ok(listed.has(f), `${f} is committed but not listed in SHA256SUMS`);
   }
 });

@@ -102,3 +102,119 @@ test('regression: the copyable macOS fix runs awk with sudo, so a root-only back
     assert.doesNotMatch(t, /(?<!sudo) awk '/, 'no awk without sudo');
   }
 });
+
+// ---- round 5: the seven other withdrawn keys (decision #38, and the compromised intermediates) -------------------
+// The eMudhra incident is a compromise of eight CA keys, six of them TLS, in 12 certificates. Removing the two
+// withdrawn ROOTS clears them only for a reader that insists on a chain ending at a self-signed root in the file;
+// /usr/bin/curl, Apple's git and the built-in perl take every CA certificate in a --cacert file as a trust anchor, so
+// one of those intermediates left in a bundle keeps trusting everything it issued, and the Mac fix said SAFE, exit 0
+// (measured 1 Nov 2026 on edc4d71, for all 14 certificates). "emSign Root TLS CA - G3", which issued six of the 12,
+// also exists as a SELF-SIGNED certificate, a full anchor for every reader; the owner's decision #38 was to add it.
+// These tests stand in front of that gap: they fail on edc4d71, where neither the data nor the fix's list existed.
+test('eMudhra: the seven other withdrawn keys are the keys their certificates hold, derived from the certificates', async () => {
+  const { createHash } = await import('node:crypto');
+  const ROOT = join(DIR, '..', '..');
+  const inc = incidents.find((i) => i.id === 'emudhra-2026-10');
+  const pem = readFileSync(join(ROOT, 'test', 'support', 'fixtures', 'emudhra-2026-10-compromised-keys.pem'), 'utf8');
+  const certs = (pem.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g) ?? []).map((p) => new X509Certificate(p));
+  assert.equal(certs.length, 14, 'the fixture holds the 12 intermediates and both emSign Root TLS CA - G3 certificates');
+  assert.ok(Array.isArray(inc.withdrawnKeys) && inc.withdrawnKeys.length === 7, 'seven keys');
+  // The SHA-256 of no input at all. A key hash that comes out as this one means nothing was hashed, and a check that
+  // accepted it would be a check that measured nothing.
+  const EMPTY = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+  const seen = new Set();
+  for (const k of inc.withdrawnKeys) {
+    assert.match(k.spkiSha256, /^[0-9a-f]{64}$/, k.name);
+    assert.notEqual(k.spkiSha256, EMPTY, `${k.name}: the hash of no input`);
+    assert.match(k.ecX, /^[0-9a-f]{96}$/, `${k.name}: the X coordinate is 48 bytes of lowercase hex`);
+    assert.ok(Array.isArray(k.certificates) && k.certificates.length === 2, `${k.name}: two certificates carry this key`);
+    // Every certificate the entry names is in the fixture and carries this key -- hashed here by node's own crypto,
+    // a second derivation of the values the commit derived with LibreSSL 3.3.6 and OpenSSL 4.0.3.
+    for (const fp of k.certificates) {
+      const c = certs.find((x) => x.fingerprint256 === fp);
+      assert.ok(c, `${k.name}: no certificate in the fixture has fingerprint ${fp}`);
+      const spki = createHash('sha256').update(c.publicKey.export({ type: 'spki', format: 'der' })).digest('hex');
+      assert.equal(spki, k.spkiSha256, `${k.name}: ${fp} carries another key`);
+      // The X coordinate, from the key's own JWK, independently of how openssl prints it.
+      const x = Buffer.from(c.publicKey.export({ format: 'jwk' }).x, 'base64url').toString('hex');
+      assert.equal(x, k.ecX, `${k.name}: ${fp}'s X coordinate`);
+      assert.ok(!seen.has(fp), `${fp} is named by two entries`);
+      seen.add(fp);
+    }
+  }
+  // Every certificate in the fixture is covered, and no entry is there for nothing: the completeness gate. Without
+  // it, six of the seven entries could be missing and every assertion above would still pass.
+  assert.equal(seen.size, 14, 'the seven keys cover all 14 certificates');
+  assert.equal(new Set(inc.withdrawnKeys.map((k) => k.spkiSha256)).size, 7, 'the seven keys are distinct');
+  // They are keys, not the two withdrawn roots: distrustedRoots drives the probe's forced-roots control and has one
+  // PEM file and one canary group per entry, so the two lists must not overlap.
+  for (const k of inc.withdrawnKeys) {
+    assert.ok(!inc.distrustedRoots.some((r) => r.spkiSha256 === k.spkiSha256), `${k.name} is also in distrustedRoots`);
+  }
+});
+
+test('eMudhra: the Mac fix matches exactly the seven keys the incident file names, in the same order', () => {
+  const ROOT = join(DIR, '..', '..');
+  const inc = incidents.find((i) => i.id === 'emudhra-2026-10');
+  const fix = readFileSync(join(ROOT, 'fix', 'fix-macos.sh'), 'utf8');
+  // The WKEYS array, as the script declares it: one 'name|X coordinate' per line.
+  const block = fix.match(/^WKEYS=\(\n([\s\S]*?)^\)$/m);
+  assert.ok(block, 'fix/fix-macos.sh declares a WKEYS array');
+  const got = [...block[1].matchAll(/^\s*'([^|']+)\|([0-9a-f]{96})'\s*$/gm)].map((m) => ({ name: m[1], ecX: m[2] }));
+  assert.equal(got.length, 7, 'seven entries in WKEYS');
+  assert.deepEqual(got, inc.withdrawnKeys.map((k) => ({ name: k.name, ecX: k.ecX })),
+    "the fix's key list and the incident file have drifted apart");
+});
+
+test("eMudhra: the fixture's twelve intermediates are the twelve Apple lists, by a source that is not the fixture", () => {
+  // The incident file and the fixture PEM are two copies of ONE reading -- the chains the advisory's 12 test hosts
+  // served on 31 Oct 2026 -- so the tests above prove they AGREE, not that the reading was RIGHT. This one checks
+  // the fixture against Apple's own published list (emudhra-2026-10-apple-ht149555.tsv, read 1 Nov 2026 from
+  // support.apple.com/en-us/149555, which its header records). Nothing is derived from that file: every key value
+  // is derived from certificate bytes elsewhere in this suite. Its one job is to disagree if either source is wrong.
+  const ROOT = join(DIR, '..', '..');
+  const F = join(ROOT, 'test', 'support', 'fixtures');
+  const rows = readFileSync(join(F, 'emudhra-2026-10-apple-ht149555.tsv'), 'utf8')
+    .split('\n').filter((l) => l.trim() && !l.startsWith('#'))
+    .map((l) => { const [sha256, name, issuer] = l.split('\t'); return { sha256, name, issuer }; });
+  assert.equal(rows.length, 12, "Apple's list is twelve certificates");
+  for (const r of rows) assert.match(r.sha256, /^[0-9A-F]{64}$/, r.name);
+  assert.equal(new Set(rows.map((r) => r.sha256)).size, 12, "Apple's twelve are distinct");
+  const certs = (readFileSync(join(F, 'emudhra-2026-10-compromised-keys.pem'), 'utf8')
+    .match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g) ?? []).map((p) => new X509Certificate(p));
+  assert.equal(certs.length, 14);
+  const cn = (dn) => dn.split('\n').find((l) => l.startsWith('CN='))?.slice(3);
+  const ours = new Map(certs.map((c) => [c.fingerprint256.replaceAll(':', ''), c]));
+  // Every one of Apple's twelve is in the fixture, with the same name and the same issuer.
+  for (const r of rows) {
+    const c = ours.get(r.sha256);
+    assert.ok(c, `${r.name}: Apple lists ${r.sha256} and the fixture does not hold it`);
+    assert.equal(cn(c.subject), r.name, `${r.sha256}: the name differs from Apple's`);
+    assert.equal(cn(c.issuer), r.issuer, `${r.sha256}: the issuer differs from Apple's`);
+  }
+  // And the fixture holds nothing beyond them but the two emSign Root TLS CA - G3 certificates of decision #38, so
+  // a thirteenth certificate smuggled into the fixture would fail here rather than pass as covered.
+  const extra = [...ours].filter(([fp]) => !rows.some((r) => r.sha256 === fp));
+  assert.equal(extra.length, 2, 'the fixture holds exactly two certificates Apple does not list');
+  for (const [fp, c] of extra) assert.equal(cn(c.subject), 'emSign Root TLS CA - G3', `unexpected extra ${fp}`);
+  // Six under each issuer, as Apple's page groups them: each intermediate was issued twice.
+  for (const issuer of ['emSign Root TLS CA - G3', 'AAA Certificate Services']) {
+    assert.equal(rows.filter((r) => r.issuer === issuer).length, 6, `six under ${issuer}`);
+  }
+});
+
+test('eMudhra: none of the seven keys is in the macOS bundle Apple ships, so refusing them costs that file nothing', async () => {
+  const { createHash } = await import('node:crypto');
+  const ROOT = join(DIR, '..', '..');
+  const inc = incidents.find((i) => i.id === 'emudhra-2026-10');
+  const apple = readFileSync(join(ROOT, 'test', 'support', 'fixtures', 'macos-27.2-cert.pem'), 'utf8');
+  const certs = (apple.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g) ?? []).map((p) => new X509Certificate(p));
+  // The scan has to be complete before "absent" means anything: 128 certificates in, 128 keys hashed out.
+  assert.equal(certs.length, 128, 'the vendored macOS bundle holds 128 certificates');
+  const keys = certs.map((c) => createHash('sha256').update(c.publicKey.export({ type: 'spki', format: 'der' })).digest('hex'));
+  assert.equal(keys.filter((h) => /^[0-9a-f]{64}$/.test(h)).length, 128, "every certificate's key was hashed");
+  for (const k of inc.withdrawnKeys) assert.ok(!keys.includes(k.spkiSha256), `${k.name} is in Apple's own bundle`);
+  // The positive control for the scan: the two withdrawn roots ARE in it, and this same scan finds them. Without
+  // this, a scan that read nothing would report every key absent.
+  for (const r of inc.distrustedRoots) assert.ok(keys.includes(r.spkiSha256), `${r.name} was not found in Apple's bundle`);
+});

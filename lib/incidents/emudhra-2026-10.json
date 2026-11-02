@@ -2,19 +2,88 @@
   "id": "emudhra-2026-10",
   "title": "eMudhra intermediate CA compromise",
   "date": "2026-10-20",
-  "summary": "Private keys of eight eMudhra intermediate certificate authorities were compromised. Anyone holding them could issue a certificate for any website. A client is exposed while it still trusts the roots those intermediates chain to.",
+  "summary": "Private keys of eight eMudhra intermediate certificate authorities were compromised: six of them issue TLS certificates and two sign code. Anyone holding one of the six TLS keys could issue a certificate for any website. Those six hold 12 certificates between them, two each: one issued by AAA Certificate Services, one by emSign Root TLS CA - G3. A client is exposed where it still trusts the roots those intermediates chain to and does not itself block the intermediates; a fixed Node, Go, Electron or Deno, and Apple's own trust evaluation, block them whatever trust list they read.",
   "advisory": "https://emudhra.we-have-a-problem.com/",
   "canarySource": "The 12 test hosts are the advisory's own (emudhra.we-have-a-problem.com/#check). Each serves a certificate chained to one compromised intermediate.",
   "distrustedRoots": [
     {
       "name": "AAA Certificate Services (Comodo, via the Sectigo cross-sign)",
-      "sha256": "D7:A7:A0:FB:5D:7E:27:31:D7:71:E9:48:4E:BC:DE:F7:1D:5F:0C:3E:0A:29:48:78:2B:C8:3E:E0:EA:69:9E:F4"
+      "sha256": "D7:A7:A0:FB:5D:7E:27:31:D7:71:E9:48:4E:BC:DE:F7:1D:5F:0C:3E:0A:29:48:78:2B:C8:3E:E0:EA:69:9E:F4",
+      "spkiSha256": "bd153ed7b0434f6886b17bce8bbe84ed340c7132d702a8f4fa318f756ecbd6f3"
     },
     {
       "name": "emSign ECC Root CA - G3",
-      "sha256": "86:A1:EC:BA:08:9C:4A:8D:3B:BE:27:34:C6:12:BA:34:1D:81:3E:04:3C:F9:E8:A8:62:CD:5C:57:A3:6B:BE:6B"
+      "sha256": "86:A1:EC:BA:08:9C:4A:8D:3B:BE:27:34:C6:12:BA:34:1D:81:3E:04:3C:F9:E8:A8:62:CD:5C:57:A3:6B:BE:6B",
+      "spkiSha256": "8d417db2dd8bf5e3084d1e3f196d583849d81bdd4c00c70b9d39369e96b8c782"
     }
   ],
+  "withdrawnKeys": [
+    {
+      "name": "emSign Root TLS CA - G3",
+      "spkiSha256": "c619e4780ed8e0abeda24ad732567de4383a7ea941338f6d1a7d1b49ac792fe9",
+      "ecX": "5f0fdc3fab5716c4be83f5b3061fa090e2efa0015e8637db3e3f0431f41978842fb4894f103a4f2658efd1c17432d740",
+      "certificates": [
+        "7D:D7:8D:5F:4F:13:45:9A:83:DF:F9:AB:BB:A6:2E:DB:AF:6F:2D:10:2B:F2:57:FD:71:2F:4D:9F:27:46:ED:8D",
+        "30:94:02:57:92:03:9A:68:AF:6E:55:36:86:41:0B:DA:B7:C0:D4:A3:6B:90:84:CB:A6:42:02:E3:5D:6E:BB:DD"
+      ],
+      "why": "The CA that issued six of the 12 compromised intermediates. Its own key is not among the eight compromised ones, but a bundle holding either of its two certificates vouches for all six: curl, git and the built-in perl take every CA certificate in a --cacert file as a trust anchor, and the self-signed copy is a full anchor for every reader. Both certificates carry this one key, so matching by key covers both."
+    },
+    {
+      "name": "EM DV TLS CA - G3B",
+      "spkiSha256": "ebed6475c2c2d80fcb199f3fe8dd6e6b3ce60b77eb15d4e42c3dec0c6f5b5105",
+      "ecX": "e79ed9c04a9773c4735e51111da85ac2bd5e64ab374b80e12cbc2038ec1e4f0e3b812fc9859e1e67afb04e2f8bc97f74",
+      "certificates": [
+        "42:C4:AC:CD:12:C4:F5:95:97:92:5E:1A:08:A7:A9:01:02:60:85:43:80:93:08:D5:0E:C4:27:E1:18:BA:14:93",
+        "45:A8:83:F3:49:AE:DF:D5:F3:A6:49:B5:49:8F:FB:12:17:12:BA:8B:44:8F:3F:2A:91:DB:C5:A7:66:FC:DD:BE"
+      ]
+    },
+    {
+      "name": "EM DV TLS CA - G3C",
+      "spkiSha256": "49dd353dc2b919a3770645117d0e60c16115e7d1bc259eefe734b00ea434fe5f",
+      "ecX": "3a7a7862c8c44d324ddd69033a6782c0efeefe4055e68a123fa0371ba3bd9194514ee172a433e3630f02bd188037d9e5",
+      "certificates": [
+        "01:64:D7:CE:AE:5B:B9:09:C2:72:AF:15:1F:F4:4B:11:77:AE:9B:47:D9:42:4B:94:F1:D9:55:8C:30:93:4D:19",
+        "62:B7:F9:86:82:63:F7:2F:69:11:FC:78:CE:AF:72:C1:97:91:58:B7:36:8B:F6:48:68:3B:B2:AA:39:B0:2E:72"
+      ]
+    },
+    {
+      "name": "EM OV TLS CA - G3B",
+      "spkiSha256": "43bffa19d6ef651451f6841e019931e96f6f2eaeff28ab4b6f1ce4576de2717b",
+      "ecX": "73897aa0eb3cfdca8b12402ffaf0abc4e1212baf8dee778ac9ee2d6db83fac280c5e05638ae7a2acd71c322a8e361cde",
+      "certificates": [
+        "5F:1D:ED:4D:D5:90:AF:74:63:12:90:CF:07:3B:12:2A:2A:AC:6A:1F:A4:79:77:8A:0B:D4:35:79:BD:83:26:99",
+        "98:B8:96:62:5C:0C:23:0A:DE:EC:3E:B2:CF:6A:AD:50:01:EC:F9:15:6A:68:64:4E:82:37:4C:E5:83:3B:C2:5B"
+      ]
+    },
+    {
+      "name": "EM OV TLS CA - G3C",
+      "spkiSha256": "63ecefee431d49523bc1136c4e72d0206a477086caf606cd5cf025686c109cf8",
+      "ecX": "138251cd52ac9298c1c8aad977321deb97e709bd0b4ca0aca55dc8ad51dcfc9d1589a1597e3a5120e1efd631c63e1835",
+      "certificates": [
+        "74:85:B5:1C:0E:D1:92:87:8F:A1:D2:F9:48:FB:52:9A:E1:84:2C:C5:08:6C:4B:67:F7:BE:5B:20:39:DE:94:89",
+        "CB:6E:15:16:5A:C8:02:E9:B3:F9:93:F1:6C:25:D4:1F:4E:81:C2:1E:BD:E7:1A:E1:B0:12:AC:00:BF:9C:7C:3F"
+      ]
+    },
+    {
+      "name": "EM EV TLS CA - G3B",
+      "spkiSha256": "e0254c7fcdc265e2f0f8a428dabb75ab4ae039b4872d62f5ee57f0877d5a8a41",
+      "ecX": "25dba85a64d397da0b1052e9ea546e487befea9c9d9d68a0c5eadcfeef75a69bb5d6fc01f42bfbca6eb40bcd64c0767e",
+      "certificates": [
+        "57:94:80:AE:A1:66:29:0B:D3:C6:43:58:9E:79:5F:C0:D0:E5:4E:86:50:5D:18:0F:1D:FF:99:EF:D3:19:95:12",
+        "E7:56:8F:E6:E1:23:31:F4:FD:7D:E6:1D:A4:C7:55:9D:0F:8E:B1:92:A2:18:D4:74:1A:3B:A7:51:84:33:38:38"
+      ]
+    },
+    {
+      "name": "EM EV TLS CA - G3C",
+      "spkiSha256": "5c0660a2b164910d8ff589c18e14552e9e0ec237dcefe2cb736d41a4811f81a0",
+      "ecX": "2d56e829a6fb82c64a4697d960af951e9067ae91f926d34306da48a8aaeb7869b6a67e6d27426e0442aa03b36e1988df",
+      "certificates": [
+        "43:2E:C2:5F:0D:28:DE:90:06:D9:7B:F7:52:F1:7B:BB:2C:D4:1F:66:99:33:FC:B0:72:D9:A1:14:8D:02:61:F3",
+        "FD:9D:5C:2D:BB:D4:99:5A:B6:9B:8D:50:C4:39:D9:52:7B:00:52:91:99:C2:FD:01:B2:17:4E:B5:8F:07:02:1F"
+      ]
+    }
+  ],
+  "withdrawnKeysNote": "Seven keys that a bundle must not hold, over and above the two withdrawn roots in distrustedRoots. Six of them are the compromised TLS intermediate keys: six keys in 12 certificates, because each intermediate was issued twice, once under emSign Root TLS CA - G3 and once under AAA Certificate Services (Sectigo's cross-sign). The seventh is emSign Root TLS CA - G3's own key. These are keys, not trust anchors any root programme listed, so they are not in distrustedRoots: that array drives the probe's forced-roots control and has one PEM file and one canary group per entry. spkiSha256 is the SHA-256 of the SubjectPublicKeyInfo as it ships; ecX is the X coordinate of the EC point (48 bytes, lowercase hex), which every encoding of the point carries and which is what fix/fix-macos.sh compares. Each value was derived from the certificate twice, with LibreSSL 3.3.6 and with OpenSSL 4.0.3, and refused if it came out as the SHA-256 of no input (e3b0c442...).",
   "rootsPem": "emudhra-2026-10-roots.pem",
   "canaries": [
     "dv-g3b",
@@ -60,7 +129,7 @@
   "canaryIssuer": "^EM (DV|OV|EV) TLS CA - G3[BC]$",
   "canaryNotAfter": "2027-05-03",
   "fixes": {
-    "curl:/usr/bin/curl:darwin": "macOS's built-in curl, git, python3 and openssl read /etc/ssl/cert.pem, which no macOS release has updated yet (the newest, 27.0.1, 26.7.1 and 15.8.1, shipped on 28 Sep 2026); updating macOS does not fix it. Easiest: download Wardlatch's Mac fix in Safari (www.deimoscore.com/wardlatch/#mac), which checks its own work and keeps a backup. Or the advisory's fix (backs the file up first, asks for your Mac password): sudo cp /etc/ssl/cert.pem /etc/ssl/cert.pem.bak && sudo awk '/^(###|===) /{skip=0} /^=== .*\\/CN=(AAA Certificate Services|emSign ECC Root CA - G3)$/{skip=1} !skip' /etc/ssl/cert.pem.bak | sudo tee /etc/ssl/cert.pem > /dev/null",
+    "curl:/usr/bin/curl:darwin": "macOS's built-in curl, git, python3 and openssl read /etc/ssl/cert.pem, which no macOS release has updated yet (the newest, 27.2, 26.7.2 and 15.8.2, shipped on 26 Oct 2026; Apple says the file will be updated in a future macOS update); updating macOS does not fix it yet. Easiest: download Wardlatch's Mac fix in Safari (www.deimoscore.com/wardlatch/#mac), which checks its own work and keeps a backup. Or the advisory's fix (backs the file up first, asks for your Mac password): sudo cp /etc/ssl/cert.pem /etc/ssl/cert.pem.bak && sudo awk '/^(###|===) /{skip=0} /^=== .*\\/CN=(AAA Certificate Services|emSign ECC Root CA - G3)$/{skip=1} !skip' /etc/ssl/cert.pem.bak | sudo tee /etc/ssl/cert.pem > /dev/null",
     "python:/usr/bin/python3:darwin": "Apple's built-in Python reads /etc/ssl/cert.pem too, as do the built-in git and openssl. Apply the same fix as for macOS curl (see the curl line), or use a Python whose certifi is 2026.10.19 or newer.",
     "curl:linux": "Update your distribution's ca-certificates package (Debian 12: 20250419~deb12u2, Debian 13: 20250419+deb13u1). Until it ships, see the advisory's Linux workaround.",
     "python:linux": "Update your distribution's ca-certificates package; Python's default context reads the system store.",
@@ -69,10 +138,10 @@
     "python-certifi": "Upgrade certifi in this environment to 2026.10.19 or newer: pip install -U certifi (uv: uv lock --upgrade-package certifi).",
     "requests-ca-bundle": "REQUESTS_CA_BUNDLE points requests and pip at a bundle that still trusts the distrusted roots. Remove the AAA Certificate Services and emSign ECC Root CA - G3 certificates from that file, or point REQUESTS_CA_BUNDLE at an updated bundle (certifi 2026.10.19 or newer, or your distribution's updated store).",
     "python": "Upgrade the CA bundle this Python uses. python.org builds: pip install -U certifi (2026.10.19+) or run 'Install Certificates.command'.",
-    "macos-system": "Install the latest macOS update (System Settings → General → Software Update). Apple blocks the compromised certificates through its updates; Safari and Apple's apps use this layer.",
+    "macos-system": "Apple blocks the compromised certificates for Safari and its own apps, which use Apple's trust layer rather than a file. That block arrives automatically as certificate configuration data, not in a software update, so there is nothing to install for this layer. Keep the system updated for everything else, but a macOS update does not fix /etc/ssl/cert.pem and can undo a fix already applied to it: we measured updates to 26.7.2 (27 Oct) and 27.2 (28 Oct) each put Apple's original file back with both withdrawn roots in it. Re-apply the file fix after a system update, and see the curl line for the tools that read that file.",
     "container": "This container's image has the old trust list. Rebuild it on a fixed base (docker build --pull --no-cache), or pull the maintainer's fixed image (docker compose pull && docker compose up -d). For an image nobody maintains, mount the host's fixed bundle read-only: www.deimoscore.com/wardlatch/#homelab"
   },
-  "notCovered": "Compiled programs carry the roots of the toolchain that built them: rebuild Go programs with Go 1.27.3 or 1.26.10; update Electron apps to 44.9.1, 43.8.1 or 42.11.16; Rust: rustls-webpki 0.103.16, webpki-roots 1.0.10. Browsers: Chrome, Edge, Firefox and Safari block the intermediates through their own updates; check yours at the advisory's #check page.",
+  "notCovered": "A compiled program does not pick this change up from the system, so it has to be rebuilt or replaced: rebuild Go programs with Go 1.27.3 or 1.26.10; update Electron apps to 44.9.1, 43.8.1 or 42.11.16; Rust: rustls-webpki 0.103.16, webpki-roots 1.0.10. Browsers: Chrome, Edge, Firefox and Safari block the intermediates through their own updates; check yours at the advisory's #check page.",
   "type": "trust",
   "binaries": [
     {
@@ -92,7 +161,7 @@
         "1.26.10",
         "1.27.3"
       ],
-      "fix": "Upgrade Go to 1.27.3 or 1.26.10, then rebuild and redeploy every program built with it: a Go program carries the roots of the Go that built it."
+      "fix": "Upgrade Go to 1.27.3 or 1.26.10, then rebuild and redeploy every program built with it. A Go program reads its trust list at run time, from the operating system's store (and on macOS through Apple's verifier), rather than carrying one from the toolchain. What the toolchain does compile in is the refusal of these intermediates, which is why a rebuild is needed: Go 1.27.3 and 1.26.10 add that refusal in crypto/x509, and a program built by an older Go keeps accepting them however up to date the system store is."
     }
   ]
 }

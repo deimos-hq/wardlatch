@@ -1,0 +1,8 @@
+# The packed tarballs committed in this repository, so `shasum -a 256 -c SHA256SUMS` is checkable in a clone.
+# Each release also publishes its own SHA256SUMS as a release asset, covering the release files (including the
+# source tarball GitHub builds from the tag, which is not in the repository); verify a download against that one.
+# Until 29 Oct 2026 this file was the 0.1.9 release asset, so it named wardlatch-v0.1.9.tar.gz, which is not here
+# and cannot be checked, and omitted wardlatch-0.1.10.tgz, which is.
+5bb9b1eb74dd206733aa7e88d53258901c055109ac24560df74c0d041db77917  wardlatch-0.1.7.tgz
+738c55f3b700a0d4f5949739c556e631970b29733fdf99577e4ac30e0cce29e3  wardlatch-0.1.9.tgz
+d9d73c94db830add31d6af47b2ac664e34ad33bfb16bb0426b494b4dbb9d9eb6  wardlatch-0.1.10.tgz
