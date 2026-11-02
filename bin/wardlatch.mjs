@@ -10,7 +10,7 @@ import { join, dirname, basename, delimiter, isAbsolute, resolve } from 'node:pa
 import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { discover, NOT_WALKED as TRUST_NOT_WALKED } from '../lib/discover.mjs';
-import { check, reachable } from '../lib/probe.mjs';
+import { canaryExpired, check, reachable } from '../lib/probe.mjs';
 import { droppedNodeOptions } from '../lib/run.mjs';
 import { checkBinaryAll, findOnPath, tmpTraces, tempDirs } from '../lib/binaries.mjs';
 import { checkVersionFiles, sitePackagesDirs, checkSitePackages, localImageDigests, checkImages, NOT_WALKED as VENV_NOT_WALKED } from '../lib/installs.mjs';
@@ -147,10 +147,18 @@ const namesSaid = (names) => {
   return `folders named ${n.length > 1 ? `${n.slice(0, -1).join(', ')} or ${n.at(-1)}` : n[0]}, and ${LIBRARY} folders, are not searched${names.includes(VENV_PACKAGES_SAID) ? `; ${VENV_PACKAGES_SAID} are checked with the environment, not searched for other environments` : ''}${names.includes(NESTED_SAID) ? `; ${NESTED_SAID} is not looked for: pass --paths with it to include it` : ''}`;
 };
 // They are said on the line under the all-clear, so its own sentence stays the one a reader (and a script) knows.
-function allClear(results, inc, kind, text, searched, notSearched) {
+// `asked`: { why } for a check that doesn't search the --paths folders at all. The person named those folders, and up
+// to this fix nothing said what became of them, so a reader couldn't tell a folder searched and clean from one that
+// played no part (AUDIT-11). They can't go in the receipt: nothing opened them, and a receipt names what was looked at
+// (lib/report.mjs). They go in the sentence under the all-clear, and in `pathsNotSearched` for --json.
+const pathsSaid = (list, why) => `${list.length === 1 ? 'the folder' : `the ${list.length} folders`} given with --paths ${list.length === 1 ? 'was' : 'were'} not searched (${list.slice(0, 3).map(short).join(', ')}${list.length > 3 ? `, and ${list.length - 3} more` : ''}): ${why}`;
+
+function allClear(results, inc, kind, text, searched, notSearched, asked) {
+  const askedPaths = asked && explicitPaths ? roots.filter((r) => !missingRoots.includes(r)) : [];
   if (searched.length) {
-    const row = { incident: inc.id, kind, ...safe(searched, { reason: text, ...(notSearched?.length ? { notSearched } : {}) }) };
+    const row = { incident: inc.id, kind, ...safe(searched, { reason: text, ...(notSearched?.length ? { notSearched } : {}), ...(askedPaths.length ? { pathsNotSearched: askedPaths } : {}) }) };
     results.push(row); print(row.status, row.reason);
+    if (row.status === 'SAFE' && askedPaths.length) note('2', pathsSaid(askedPaths, asked.why));
     if (row.status === 'SAFE' && notSearched?.length) note('2', namesSaid(notSearched));
     return;
   }
@@ -208,12 +216,13 @@ function notRunRow(results, inc, what, paths) {
 //     stealer inside such a folder read SAFE, exit 0, where it is EXPOSED ×2, exit 1. Its row says the errno, the mode
 //     and the owner, and never claims to know which mechanism refused (lib/files.mjs mandatoryRefusal()).
 // Up to e0e1c35 every locked folder was UNKNOWN, and any server with docker or certbot exited 2.
-// `searchesRoots`: whether this check searches the --paths folders at all (Plex's and GitLab's look only in their own
-// install places: a --paths folder that isn't there is nothing to them)
+// A --paths folder that isn't there is UNKNOWN on every check, including those that don't search the folders: the
+// person named it, and a typo that exits 0 is one nobody sees. A folder that IS there and plays no part is not a gap:
+// allClear() names it instead.
 // `deep`: the folders the walk's depth cap stopped at with more below them, `levels` that cap: one UNKNOWN row. Up to this
 // fix the caps were silent, and a site one level past one read SAFE with no row (WV-7).
-function gaps(results, inc, kind, dirs, { found = [], searchesRoots = true, review = [], links = [], deep = [], levels } = {}) {
-  for (const d of searchesRoots ? missingRoots : []) {
+function gaps(results, inc, kind, dirs, { found = [], review = [], links = [], deep = [], levels } = {}) {
+  for (const d of missingRoots) {
     const reason = `given with --paths, but ${pathState(d) === 'gone' ? 'not there' : 'not a folder'}, so it was not searched`;
     results.push({ incident: inc.id, kind, status: 'UNKNOWN', path: d, reason });
     print('UNKNOWN', short(d)); note('33', reason);
@@ -411,7 +420,7 @@ for (const inc of chosen) {
     notRunRow(results, inc, 'trust', notRun);
     // the test hosts' certificates expire: after that a container (which has no forced-roots control) would read every
     // refusal as SAFE, so containers are UNKNOWN once the incident's notAfter has passed
-    const expired = inc.canaryNotAfter && Date.now() > Date.parse(inc.canaryNotAfter);
+    const expired = canaryExpired(inc);
     if (expired) note('33', `the test hosts' certificates expired on ${inc.canaryNotAfter}: containers can't be tested against them`);
     hostVarsRow(results, inc, 'containers');
     // Running containers keep their image's trust list, whatever the host has.
@@ -448,6 +457,7 @@ for (const inc of chosen) {
   // every copy of each program on PATH (a fixed one first used to hide a vulnerable one behind it); a program that
   // isn't there gets its own receipt row naming PATH (go and cloudflared in the trust incident used to get none)
   // on Windows (not supported) program checks look in macOS and Linux places only: not checked, never "not found"
+  if (inc.type === 'binaries') gaps(results, inc, 'binary', []);
   for (const rule of platform() === 'win32' ? [] : inc.binaries ?? []) {
     const listed = [];
     const rows = checkBinaryAll(rule, undefined, { listed });
@@ -465,7 +475,7 @@ for (const inc of chosen) {
     // (/opt/homebrew/opt/php@*/bin) that are not paths at all — the AUDIT-10 defect in a second check, found by
     // building the rule that now refuses it. PATH itself is one setting, not a place, so it stays declared.
     const extra = rule.binaryNames ? rule.extraDirs ?? [] : [];
-    if (!rows.length) allClear(results, inc, 'binary', `${rule.binary} not found on PATH${extra.length ? ` or in ${extra.join(', ')}` : ''} (searched: ${short(process.env.PATH ?? '')})`, [saw(`PATH: ${process.env.PATH ?? ''}`), ...new Set(listed), ...(rule.tmpTrace ? tempDirs() : [])]);
+    if (!rows.length && !(inc.type === 'binaries' && missingRoots.length)) allClear(results, inc, 'binary', `${rule.binary} not found on PATH${extra.length ? ` or in ${extra.join(', ')}` : ''} (searched: ${short(process.env.PATH ?? '')})`, [saw(`PATH: ${process.env.PATH ?? ''}`), ...new Set(listed), ...(rule.tmpTrace ? tempDirs() : [])], undefined, { why: 'this check reads the programs on PATH and the temp directories, and --paths does not add to them' });
   }
 
   // A repository git could not read (a partial clone missing what git would have to fetch, an ownership refusal, a
@@ -541,12 +551,12 @@ for (const inc of chosen) {
       }
       for (const r of checkImages(inc, byEngine)) show(r, `${r.engine} image ${r.what}`, inc.dockerFix);
     }
-    gaps(results, inc, 'install', denied, { found: foundUnread, searchesRoots: Boolean(inc.sitePackages), links, deep, levels: 5 });
+    gaps(results, inc, 'install', denied, { found: foundUnread, links, deep, levels: 5 });
     // nothing found in any part that could be looked at: the all-clear names every folder it searched. An engine that
     // couldn't be asked keeps its own UNKNOWN row (and the exit code at 2) beside it, and one that isn't running its
     // REVIEW row; a finding or another gap doesn't.
     const onlyEngineGaps = counted(results).every((r) => r.engine && (r.status === 'UNKNOWN' || r.notRunning));
-    if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked${lookedFor ? ` for ${lookedFor},` : ''} in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean), inc.sitePackages ? [...VENV_NOT_WALKED, LIBRARY, VENV_PACKAGES_SAID] : undefined);
+    if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked${lookedFor ? ` for ${lookedFor},` : ''} in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean), inc.sitePackages ? [...VENV_NOT_WALKED, LIBRARY, VENV_PACKAGES_SAID] : undefined, inc.sitePackages ? undefined : { why: `this check reads ${inc.versionFiles?.product ?? 'the product'}'s own version files at the paths its installers use, and --paths does not add to them` });
   }
 
   // the window's start: an explicit UTC instant, or the review is UNKNOWN (up to 0.1.9 a bare date read SAFE: see

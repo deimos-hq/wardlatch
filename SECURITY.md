@@ -84,9 +84,11 @@ Every deadline above used to bind us only to someone else. That is the wrong way
 than anyone, so most defects in it will be found by us, and the ones we find are the ones no outside clock is
 counting. A defect we find in our own tools gets the same 72 hours, the same 7 days, the same advisory and the
 same changelog entry, and the dates we found it and shipped it are stated. If we hold one longer than that, the
-record says for how long and why. Where this stands on 31 Oct 2026: the defects under Security in "Unreleased" in
-[CHANGELOG.md](CHANGELOG.md), which we found ourselves from 29 to 31 October, each say the day they were found, but
-none has an advisory yet, draft or published, and none has shipped, so no shipped date can be stated yet.
+record says for how long and why. Where this stands on 2 Nov 2026: the defects under Security in "Unreleased" in
+[CHANGELOG.md](CHANGELOG.md), which we found ourselves from 29 October, each say the day they were found. None has an
+advisory yet, draft or published, and none has shipped. The 72 hours passed on 1 Nov for those found on 29 Oct, because
+the work of fixing them ran ahead of the paperwork and a posting freeze held every release; that is the reason, and it
+is not a good one.
 
 If a fix is not possible or not worth its risk, the advisory says so and explains the workaround, rather than staying
 quiet.
@@ -112,7 +114,7 @@ GitHub release; 0.1.3 and every release since went through it. How to check one:
 [docs/RELEASING.md](docs/RELEASING.md#verifying-a-release).
 
 `fix/fix-macos.sh` in this repository has SHA-256
-`072f60803f68e418b67c1ffdce2c28f196500745664e79a431506a16be5e1d1f`. CI pins that hash and also checks that the
+`265b204b13dcdda16d08286ea5fef312ca1d0fcbaee88e9109b000e7d2764697`. CI pins that hash and also checks that the
 hash printed here, the pin and the file itself are one string, so a change to the script fails CI until all
 three move together (`test/digest-chain.sh`).
 

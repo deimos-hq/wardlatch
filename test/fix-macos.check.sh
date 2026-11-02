@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=104
+expect_cases=105
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -2916,6 +2916,60 @@ cmp -s "$d/cert.pem" "$work/original.pem" || fail "a key not decoded: the bundle
 [ "$(baks "$d/cert.pem")" -eq 0 ] || fail "a key not decoded: it wrote a backup"
 ok "a certificate whose key openssl does not decode is not counted, so the run is UNKNOWN and nothing changes"
 # ---- r4 end case
+
+# ---- r6 case: zero-ungated
+# Panel seat 1, 2 Nov 2026 (F1). Round 5 took the date off curl's 0 and left the 0 inside the control's `if`, so when
+# an ordinary website failed for any reason the test site was never read, and a Mac whose curl verifies the advisory's
+# chain read SAFE, exit 0. A network did what the date had done. The live script (0.1.10) reads the test site first and
+# has no such gate, so this was new in round 5. A 0 means the chain verified: it needs no control, and nothing here
+# may stand in front of it. The 60 still needs the control, and that half is asserted below too.
+d=$work/r6zero; mkdir -p "$d"
+sed 's|/usr/bin/curl|"${WARDLATCH_CURL:-/usr/bin/curl}"|g' "$fix" >"$d/stubbed.sh"
+cmp -s "$fix" "$d/stubbed.sh" && fail "zero-ungated: the stub replaced nothing, so this would test the real network"
+cat >"$d/curl" <<'STUB'
+#!/bin/bash
+# The test host gets $STUB_TEST, or the next of $STUB_TESTS, the last repeating. Every read of it is logged.
+case "$*" in
+  *we-have-a-problem.com*)
+    echo read >>"$STUB_LOG"
+    [ -n "${STUB_TESTS:-}" ] || exit "${STUB_TEST:?}"
+    n=$(grep -c . "$STUB_LOG"); i=1; last=
+    for a in $STUB_TESTS; do last=$a; [ "$i" -eq "$n" ] && exit "$a"; i=$((i + 1)); done
+    exit "$last" ;;
+  *) exit "${STUB_CONTROL:?}" ;;
+esac
+STUB
+chmod +x "$d/curl"
+script=$d/stubbed.sh
+cp "$work/original.pem" "$d/clean.pem"
+: >"$d/log0"
+run "$d/clean.pem" WARDLATCH_CURL="$d/curl" STUB_LOG="$d/log0" STUB_TESTS="0 60" STUB_CONTROL=0
+[ "$code" -eq 0 ] || fail "zero-ungated: could not build the cleaned file, exit $code"
+for c in 60 7 6 28 47; do
+  # the already-clean path, control failing, test site verified: EXPOSED, on the very reading that used to be skipped
+  : >"$d/log"
+  run "$d/clean.pem" WARDLATCH_CURL="$d/curl" STUB_LOG="$d/log" STUB_TEST=0 STUB_CONTROL="$c"
+  [ "$code" -eq 1 ] || fail "zero-ungated: already clean, control $c, test site 0: expected EXPOSED, exit 1, got $code"
+  grep -q '^EXPOSED ' <<<"$out" || fail "zero-ungated: already clean, control $c: no EXPOSED line"
+  grep -q 'wardlatch: verdict=EXPOSED' <<<"$out" || fail "zero-ungated: already clean, control $c: the trailer does not say EXPOSED"
+  [ -s "$d/log" ] || fail "zero-ungated: already clean, control $c: the test site was never read"
+  # the control for this case: the same control failure with a REFUSAL stays SAFE. The 60 is the reading it gates.
+  : >"$d/log"
+  run "$d/clean.pem" WARDLATCH_CURL="$d/curl" STUB_LOG="$d/log" STUB_TEST=60 STUB_CONTROL="$c"
+  [ "$code" -eq 0 ] || fail "zero-ungated: already clean, control $c, test site 60: a refusal must not become a finding, got exit $code"
+  grep -q "reason=control-$c " <<<"$out" || fail "zero-ungated: already clean, control $c, test site 60: the trailer lost its reason"
+done
+for c in 60 7; do
+  # the fix path, control failing before and after the write, test site still verifying through the cleaned file
+  mkdir -p "$d/fix$c"; cp "$work/original.pem" "$d/fix$c/cert.pem"
+  : >"$d/log"
+  run "$d/fix$c/cert.pem" WARDLATCH_CURL="$d/curl" STUB_LOG="$d/log" STUB_TEST=0 STUB_CONTROL="$c"
+  [ "$code" -eq 1 ] || fail "zero-ungated: fix path, control $c, test site 0: expected EXPOSED, exit 1, got $code"
+  grep -q '^EXPOSED ' <<<"$out" || fail "zero-ungated: fix path, control $c: no EXPOSED line"
+  cmp -s "$d/fix$c/cert.pem" "$d/clean.pem" || fail "zero-ungated: fix path, control $c: the fix was not kept"
+done
+script=$fix
+ok "a 0 from the test site is EXPOSED whatever the control says, on both paths, and the control still gates the 60"
 
 # ---- r5 case: nul-byte
 # A NUL byte inside a certificate block hides a withdrawn root from this fix and not from LibreSSL, so the run said

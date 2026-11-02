@@ -638,19 +638,19 @@ control_note() {
       echo "         failing to answer: something signed that website's"
     fi
     echo "         certificate with a root this file doesn't hold, which is what a network inspecting TLS looks like."
-    echo "         Worth finding out what, because it judges every site this Mac visits. Nothing was read from the"
-    echo "         advisory's test site.)"
+    echo "         Worth finding out what, because it judges every site this Mac visits. The advisory's test site"
+    echo "         was still asked, and a 0 would have been reported, but a refusal from it proves nothing here.)"
   elif [ -n "$2" ] && { [ "$1" -eq 60 ] || [ "$2" -eq 60 ]; }; then
     # One read refused a certificate and the other did not get that far, so neither "refused" nor "didn't load"
     # describes both. Said as the two readings rather than as one word for them.
     echo "         (An ordinary website's certificate was refused through this file on one of the two reads"
     echo "         (curl 60) and it didn't load at all on the other (curl $([ "$1" -eq 60 ] && echo "$2" || echo "$1")),"
-    echo "         so nothing was re-tested online.)"
+    echo "         so the test site's refusal proves nothing here.)"
   elif [ -n "$2" ]; then
-    echo "         (An ordinary website didn't load before this change (curl $2) or after it (curl $1), so nothing"
-    echo "         was re-tested online.)"
+    echo "         (An ordinary website didn't load before this change (curl $2) or after it (curl $1), so the test"
+    echo "         site's refusal proves nothing here.)"
   else
-    echo "         (An ordinary website didn't load either (curl $1), so nothing was re-tested online.)"
+    echo "         (An ordinary website didn't load either (curl $1), so the test site's refusal proves nothing here.)"
   fi
 }
 # Puts the bytes of $1 into $FILE in one step, and the ONLY thing in this script that writes to $FILE: a copy into
@@ -945,17 +945,25 @@ if [ "$todrop" -eq 0 ]; then
   # The date therefore stays here, and governs the 60 ALONE. Curl's 0 is read on every date, because 0 means the
   # chain verified and an expired leaf cannot verify: it needs no control, it cannot go stale, and until
   # 1 Nov 2026 this path threw it away with the 60 and called an exposed Mac SAFE, exit 0.
+  # So the test site is read first, before the control is asked anything. Until 2 Nov 2026 the read sat inside the
+  # control's `if`: a control that failed for any reason skipped it, and an exposed Mac read SAFE, exit 0.
   tre='-' tos=not-tested
-  c=$(control "$FILE")
-  if [ "$c" -ne 0 ]; then
+  r=$(trust "$FILE")
+  if [ "$r" -eq 0 ]; then
     settled
+    tos=trusted
+    echo "EXPOSED  $FILE holds neither root but still trusts the test site. Nothing changed; please report this."
+    trailer EXPOSED trusted - 0 "$before"
+    meant=1; exit 1
+  fi
+  c=$(control "$FILE")
+  settled
+  if [ "$c" -ne 0 ]; then
     tre=control-$c
     echo "SAFE     $FILE no longer holds the two roots. Nothing changed."
     notchecked
     control_note "$c" ''
   else
-    r=$(trust "$FILE")
-    settled
     case "$r" in
       60) if canary_live; then
             tos=refused
@@ -968,10 +976,6 @@ if [ "$todrop" -eq 0 ]; then
             notchecked
             expired_note
           fi ;;
-      0)  tos=trusted
-          echo "EXPOSED  $FILE holds neither root but still trusts the test site. Nothing changed; please report this."
-          trailer EXPOSED trusted - 0 "$before"
-          meant=1; exit 1 ;;
       *)  tre=test-$r
           echo "SAFE     $FILE no longer holds the two roots. Nothing changed."
           notchecked
@@ -1114,10 +1118,28 @@ fi
 # There is no date gate on this path any more; t0 above is the control that replaced it, and what it gates is the
 # 60 alone. $tre is the reason the trailer prints, $tos what it says about the online reading.
 tre='-' tos=not-tested
+# The test site first, and the 0 before anything else is consulted: a 0 is self-certifying, and until 2 Nov 2026 this
+# read sat inside the control's `if`, so a control that failed for any reason hid it.
+r=$(trust "$FILE")
+if [ "$r" -eq 0 ]; then
+  settled
+  tos=trusted
+  echo "EXPOSED  Fixed in the file ($(removed_phrase), kept $after), but the advisory's test site is"
+  echo "         still trusted. Two ordinary things look exactly like this, and both are likelier than"
+  echo "         anything stranger. A TLS-inspecting proxy's own root may have been added to this file (or to"
+  echo "         whichever file your tools read): the proxy then signs everything, and that site loads"
+  echo "         whatever this file holds. Or the test site may have re-issued its certificate from an"
+  echo "         ordinary CA, in which case it now loads for everyone and tests nothing. Rule those two out"
+  echo "         before you go looking for something else on this Mac that trusts the compromised keys. The"
+  echo "         fix was kept either way: putting the original back would put"
+  echo "         $(held) back. Please report this."
+  echo "         Backup: $backup (the file as it was; it holds $(held))"
+  trailer EXPOSED trusted - "$todrop" "$after"
+  meant=1; exit 1
+fi
 if c=$(control "$FILE") && [ "$c" -eq 0 ]; then
   # The control loads through the new file: this network answers, and the new file still validates ordinary
-  # certificates. So the test host's answer is about the test host, and there is a verdict to be had.
-  r=$(trust "$FILE")
+  # certificates. So the test host's refusal is about the test host, and there is a verdict to be had.
   settled
   case "$r" in
     60) if [ "$t0" -eq 0 ]; then
@@ -1137,19 +1159,6 @@ if c=$(control "$FILE") && [ "$c" -eq 0 ]; then
           echo "         something may be answering for it. Nothing here shows the test site can still tell a file"
           echo "         that trusts the compromised keys from one that refuses them, so nothing was read from it.)"
         fi ;;
-    0)  tos=trusted
-        echo "EXPOSED  Fixed in the file ($(removed_phrase), kept $after), but the advisory's test site is"
-        echo "         still trusted. Two ordinary things look exactly like this, and both are likelier than"
-        echo "         anything stranger. A TLS-inspecting proxy's own root may have been added to this file (or to"
-        echo "         whichever file your tools read): the proxy then signs everything, and that site loads"
-        echo "         whatever this file holds. Or the test site may have re-issued its certificate from an"
-        echo "         ordinary CA, in which case it now loads for everyone and tests nothing. Rule those two out"
-        echo "         before you go looking for something else on this Mac that trusts the compromised keys. The"
-        echo "         fix was kept either way: putting the original back would put"
-        echo "         $(held) back. Please report this."
-        echo "         Backup: $backup (the file as it was; it holds $(held))"
-        trailer EXPOSED trusted - "$todrop" "$after"
-        meant=1; exit 1 ;;
     *)  tre=test-$r
         echo "SAFE     Fixed in the file: $(removed_phrase), kept $after."
         notchecked
@@ -1175,8 +1184,8 @@ else
       case "$c" in 6) why="the name didn't resolve" ;; 7) why="no connection was made" ;; *) why="no answer in time" ;; esac
       echo "UNKNOWN  Fixed in the file ($(removed_phrase), kept $after), but this network stopped answering:"
       echo "         an ordinary website loaded through the old file (curl 0), then not through the new one (curl $c:"
-      echo "         $why). That is not a certificate being refused, so it says nothing about the change, and nothing"
-      echo "         was re-tested online. Run this again to re-test."
+      echo "         $why). That is not a certificate being refused, so it says nothing about the change, and the test"
+      echo "         site's refusal proves nothing here. Run this again to re-test."
       kept_say
       exit 2 ;;
     60)
@@ -1199,7 +1208,7 @@ else
       echo "UNKNOWN  Fixed in the file ($(removed_phrase), kept $after), but an ordinary website that"
       echo "         loaded through the old file (curl 0) failed through the new one with curl $c, which is neither a"
       echo "         certificate refused (60) nor a network that stopped answering (6, 7, 28). This run"
-      echo "         reads nothing into it, and re-tested nothing online. Please report this."
+      echo "         reads nothing into it, and the test site's refusal proves nothing here. Please report this."
       kept_say
       exit 2 ;;
   esac

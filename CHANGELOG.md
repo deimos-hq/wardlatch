@@ -19,6 +19,29 @@ SECURITY.md promises for them are not open yet; the release that ships them stat
 
 ### Security
 
+- **A failed control could hide the only EXPOSED the Mac fix can print (never released).** Round 5 took the date off
+  curl's 0 and left the 0 inside the control's `if`, so when the ordinary website failed for any reason (a DNS block, a
+  firewall, a timeout, an inspecting proxy) the test site was not read, and a Mac whose curl verified the advisory's
+  chain read `SAFE`, exit 0. 0.1.10 reads the test site first and never had this. The test site is now read before the
+  control on both paths, the 0 is `EXPOSED` whatever the control says, and the control gates the 60 alone, as the
+  script's comments already claimed. `test/fix-macos.check.sh` gains the case, with the 60 as its control. *Found and
+  fixed 2 Nov 2026 by the four-seat panel.*
+
+- **A committed private key written with non-minimal DER lengths was skipped with no row.** `derKind()` reads the common
+  encodings and LibreSSL reads more; a key rewritten with a five-byte length, or a two-byte version number, was neither
+  found nor counted as unread, so the repository read `SAFE`, exit 0. A file that begins as a DER element and is not
+  read as one is now UNKNOWN, on the working tree and on git's copy of a deleted file, whatever it is called.
+  `test/round6.test.mjs`. *Found and fixed 2 Nov 2026 by the four-seat panel.*
+
+- **The containers' date gate failed open.** A missing or unreadable `canaryNotAfter` meant "not expired", so containers
+  were probed past the real expiry and every refusal read `SAFE`. Latent: today's value parses. It now closes, and
+  `test/round6.test.mjs` pins it. *Found and fixed 2 Nov 2026 by the four-seat panel.*
+
+- **A `--paths` folder that isn't there said nothing on the checks that don't search it, and exited 0.** The README
+  promised an UNKNOWN line. It is one now, on every check. A folder that is there and plays no part is named under the
+  all-clear as not searched, and in `pathsNotSearched` with `--json`, never in the receipt (AUDIT-11). *Found 29 Oct
+  2026, fixed 2 Nov 2026.*
+
 - **A NUL byte hid a withdrawn root from the Mac fix, and not from the tools the fix is about.** macOS's
   `/bin/bash` 3.2 `read` cuts a line at its first NUL byte and drops the rest of it, and so does `awk`
   (measured: `printf 'ab\0cd\n'` comes back from `read` as `ab`, length 2). LibreSSL does not: it reads the file
@@ -885,7 +908,7 @@ These were found by the third read of 31 Oct 2026 (03d95c9), and each fix has a 
   adds nothing, and a sentinel holds the end, so `plain()` sees whatever the name really holds and a name with a line
   break in it is never printed. Only whoever can create the link can do this, which for `/etc/ssl` is root. Found
   31 Oct 2026, fixed 1 Nov 2026. The script's digest changes with it:
-  `072f60803f68e418b67c1ffdce2c28f196500745664e79a431506a16be5e1d1f`, pinned in `ci.yml` in the same commit. The
+  `265b204b13dcdda16d08286ea5fef312ca1d0fcbaee88e9109b000e7d2764697`, pinned in `ci.yml` in the same commit. The
   site's download, the hash on its page and its changelog record have **not** been updated and must be, together,
   before this script is published (SECURITY.md, step 4).
 

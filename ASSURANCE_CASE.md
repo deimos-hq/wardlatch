@@ -217,7 +217,7 @@ after an EXPOSED one: a run whose standard output is closed, or whose line can't
 nothing on a Mac that is already clean, so running it twice is safe.
 *Evidence:* `test/fix-macos.check.sh` runs the script on copies of a vendored, unfixed macOS 27.2 bundle
 (`test/support/fixtures/macos-27.2-cert.pem`), so its result doesn't depend on whether the machine running it is fixed.
-It runs 104 cases, and prints and checks the count, and that every case counted as run printed its `ok` line, so a
+It runs 105 cases, and prints and checks the count, and that every case counted as run printed its `ok` line, so a
 case that stops running can't pass as silence; one of them, `heredoc-trigger`, applies a sandbox profile of its own
 and, when the harness itself runs inside a sandbox (`WL_NESTED_SANDBOX=1`), is named as not run instead of being
 counted, as is the unreadable-file case when the harness runs as root, which can read a file of mode 000. The cases

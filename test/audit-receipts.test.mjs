@@ -34,6 +34,14 @@ const rows = (args, env = {}) => {
   return JSON.parse(r.stdout).results;
 };
 
+// the same run without --json: the lines a person reads. A fact that is in --json and not on the lines is a fact the
+// person running the tool does not have.
+const lines = (args, env = {}) => {
+  const r = spawnSync(process.execPath, [BIN, ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: { ...ownEnv(), PATH: '/usr/bin:/bin', HOME: home, TMPDIR: home, ...env } });
+  assert.ok(r.stdout, `no output (exit ${r.status}): ${r.stderr}`);
+  return r.stdout;
+};
+
 test('AUDIT-10 an all-clear\'s receipt can be a sentence about folders that are not on this machine', () => {
   const empty = join(dir, 'empty-10'); mkdirSync(empty, { recursive: true });
   // the incidents' own words, pushed into the receipt whatever expand() found
@@ -50,14 +58,38 @@ test('AUDIT-10 an all-clear\'s receipt can be a sentence about folders that are 
   }
 });
 
-test('AUDIT-11 no all-clear names the --paths folder the person asked about, so a reader cannot tell it was searched', () => {
+test('AUDIT-11 every all-clear says what became of the folder the person asked about with --paths: searched, or named as not searched', () => {
   const asked = join(dir, 'asked-11');
   mkdirSync(join(asked, 'project'), { recursive: true });
-  for (const id of ['litellm-2026-10', 'gitlab-2026-10', 'plex-2026-10']) {
+  // One case from each family that produces an all-clear: a check that searches the --paths folders (litellm walks
+  // them for virtual environments), two that read fixed install places (GitLab's and Plex's version files), and one
+  // that reads PATH (ovhcloud). The folder is the same in all four, and the reader's question is the same in all
+  // four: was the place I named looked at?
+  for (const id of ['litellm-2026-10', 'gitlab-2026-10', 'plex-2026-10', 'ovhcloud-cli-2026-10']) {
     const safeRows = rows(['--incident', id, '--no-containers', '--paths', asked]).filter((r) => r.status === 'SAFE');
     assert.ok(safeRows.length, `${id}: expected an all-clear`);
-    assert.ok(safeRows.some((r) => r.searched.some((s) => String(s).includes(asked))),
-      `${id}: the folder given with --paths (${asked}) is nowhere in the all-clear's receipt: ${JSON.stringify(safeRows.map((r) => r.searched))}`);
+    for (const r of safeRows) {
+      const searched = r.searched.some((s) => String(s).includes(asked));
+      const said = [].concat(r.pathsNotSearched ?? []).map(String);
+      // Exactly one of the two, never neither and never both. Neither is the defect: the person named a folder and the
+      // all-clear is silent about it, so a reader cannot tell it from a folder that was searched and found clean.
+      // Both would be worse -- a receipt claiming a place the same row says was not searched.
+      assert.ok(searched || said.includes(asked),
+        `${id}: the folder given with --paths (${asked}) is neither in the all-clear's receipt nor named as not searched: searched=${JSON.stringify(r.searched)} pathsNotSearched=${JSON.stringify(r.pathsNotSearched ?? null)}`);
+      assert.ok(!(searched && said.includes(asked)),
+        `${id}: the same folder is in the receipt and in pathsNotSearched: ${JSON.stringify(r)}`);
+      // and a folder named as not searched is NOT a receipt entry under another name: lib/report.mjs's rule is that a
+      // receipt names what was opened, and nothing opened this one (AUDIT-10 is the same rule from the other side).
+      for (const s of said) assert.ok(!r.searched.map(String).includes(s), `${id}: ${s} is claimed as looked at too`);
+    }
+    // the lines a person reads, not only --json: the sentence has to name the folder and say it was not searched
+    const notSearched = safeRows.filter((r) => [].concat(r.pathsNotSearched ?? []).map(String).includes(asked));
+    if (notSearched.length) {
+      const out = lines(['--incident', id, '--no-containers', '--paths', asked]);
+      assert.match(out, /given with --paths was not searched/,
+        `${id}: --json says the folder was not searched and the printed lines do not: ${out}`);
+      assert.ok(out.includes(asked), `${id}: the printed lines do not name the folder: ${out}`);
+    }
   }
 });
 
