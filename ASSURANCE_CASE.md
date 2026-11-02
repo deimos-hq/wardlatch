@@ -189,10 +189,20 @@ answered" are one reading. Both the control and the re-test name the library the
 one at run time, and under SecureTransport the `--cacert` anchors are judged by Apple's Security framework, which
 blocks these certificates whatever file it is given — so the answer would be about Apple's block and not about this
 file. An unknown backend name selects SecureTransport too, so the library is named rather than the variable merely
-cleared. And neither reading is taken at all once the advisory's test site's own certificate has expired
-(3 May 2027 01:04 UTC), or when this Mac's date cannot be read: `curl`'s 60 is `CURLE_PEER_FAILED_VERIFICATION`,
-which an expired leaf gives through a file that trusts its root and through one that does not alike, so a refusal
-from then on would prove nothing. The file is still fixed; nothing online is claimed. A control that loaded before the change and fails after it is reported by its curl code (a
+cleared. A refusal from the test site (`curl` 60) is read as a refusal only against a control that shows the test site can
+still tell the two files apart, because `curl`'s 60 is `CURLE_PEER_FAILED_VERIFICATION`, which an expired leaf gives
+through a file that trusts its root and through one that does not alike. On the path that fixes the file that
+control is the test site read through the file as it *was*, which still held a withdrawn root and so had to be
+accepted: a 0 there is the receipt, and it is re-earned on every run rather than assumed until a date. On the
+already-clean path the file holds neither root, so nothing in the run's hands is something the test site ought to
+accept, no control can be built, and the test site's own expiry date (3 May 2027 01:04 UTC) is used instead — the
+same second-best `canaryNotAfter` gives a container, which has no forced-roots control either. In both cases the
+file is still fixed and nothing online is claimed when the receipt is missing.
+
+An accepted test site (`curl` 0) is a different reading and is gated by nothing. Exit 0 means the chain verified,
+which an expired leaf cannot do, so it proves exposure on any date and with any clock: it is reported `EXPOSED`,
+exit 1, regardless of the control, the expiry and whether the date can be read at all. Until 1 Nov 2026 a dated
+gate suppressed both readings together and an exposed Mac read `SAFE`, exit 0. A control that loaded before the change and fails after it is reported by its curl code (a
 certificate refused, a network that stopped answering, or anything else) and changes nothing. A wrong re-test is
 reported (EXPOSED, exit 1) with the fix left in place and no command to restore the backup, because restoring would
 put the withdrawn roots back on a Mac whose network is already answering for someone else — the one Mac that could

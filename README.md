@@ -91,9 +91,14 @@ before it replaces the old one, a check that what landed in the file is what it 
 put the original back — and a re-test it only reads when an ordinary website loads as a control, which reports and
 never reverts. The re-test names the library it measures with (`CURL_SSL_BACKEND=openssl`), because the built-in
 `curl` is built with both LibreSSL and Apple's Security framework and the variable picks one at run time: under
-Apple's, the answer is about Apple's own block of these certificates rather than about this file. And from
-3 May 2027, when the advisory's test site's own certificate expires, no verdict is taken from it at all: a refusal
-then would prove nothing, so the file is still fixed and nothing online is claimed. Download it in Safari from
+Apple's, the answer is about Apple's own block of these certificates rather than about this file. A *refusal* from
+the test site is only read as one when the same probe, through the file as it was, accepted that site — a file
+holding a withdrawn root had to be accepted, so a refusal of it means the probe can no longer tell the two files
+apart and nothing online is claimed. An *accepted* test site is read on any date, with any clock, because a chain
+cannot verify through an expired certificate: that is EXPOSED, and nothing gates it. Where no such control can be
+built — on a file that already holds neither root, so there is nothing the test site ought to accept — the site's
+own expiry, 3 May 2027, is used instead, and from then a refusal there claims nothing. The file is still fixed
+either way. Download it in Safari from
 https://www.deimoscore.com/wardlatch/#mac and run `bash ~/Downloads/wardlatch-fix-macos.sh`, or deploy it as a root
 script from Jamf, Kandji or Intune. On macOS every run prints a line starting SAFE, EXPOSED or UNKNOWN, from the
 script's first command on, and exits 0 only after a SAFE line, 1 only after an EXPOSED one, and 2 otherwise (the

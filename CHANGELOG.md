@@ -91,14 +91,43 @@ SECURITY.md promises for them are not open yet; the release that ships them stat
   not trust — measured on a throwaway pair, an expired leaf gives 60 through a file that trusts its root and through
   one that does not alike, which are the two readings this test exists to tell apart. The advisory's test leaves
   expire 3 May 2027 01:04:36 UTC, so from that day "refuses the compromised keys" would have been printed for a file
-  that still held both roots, and the EXPOSED branches could never have fired again. The fix now reads the clock
-  before it reads anything into exit 60: on and after that date, or when this Mac's date cannot be read at all, it
-  takes no verdict from the test site, says why in one line, and still fixes the file — the same rule the library
-  already applied (`bin/wardlatch.mjs`, "a refusal here would prove nothing"). `test/fix-macos.check.sh` gains a case
-  with the clock behind a stand-in: the day before the date, where the online reading must still be taken (the
-  control); the day itself, a year later, and a clock that cannot be read, where it must not be; and an already-clean
-  file on that date. The site's own one-line test already had this gate and the library pin as of 1 Nov 2026, and was
-  not changed. *Found 31 Oct 2026, fixed 1 Nov 2026.*
+  that still held both roots, and the EXPOSED branches could never have fired again.
+
+  **The first fix for this was itself a false SAFE, and this entry is the second.** It read the clock and, on or
+  after that date — or whenever this Mac's date could not be read at all, which counts as past it — stopped reading
+  the test site entirely. But exit 60 is not the only reading the test site gives. Exit **0** means the chain
+  *verified*, which an expired leaf cannot do: measured again on 1 Nov 2026 on a throwaway CA on loopback, one fresh
+  server per reading, a valid leaf gives 0 through a bundle that trusts its CA and 60 through one that does not,
+  while an expired leaf gives 60 through **both**. So expiry poisons the 60 and leaves the 0 exactly as sound as it
+  ever was. The date gate discarded both, so a Mac that *was* exposed read `SAFE`, exit 0 — from 3 May 2027, and
+  from the day it shipped on any Mac whose clock is dead or years fast. The harness's own canary case asserted that
+  SAFE as correct, which is why the suite was green over it. Found by the 1 Nov 2026 four-seat panel and two
+  independent re-reads.
+
+  What is in place now. On the path that fixes the file the date is **gone**, replaced by a positive control that
+  cannot go stale: the test site is read once through the file as it *was* — which still held a withdrawn root, so
+  the site's own chain had to be accepted — and once through the cleaned file. A 0 through the old file establishes
+  in one reading that the host answered, that its leaf is still valid, that nothing is answering for it, and that
+  the probe can still tell a trusting file from a refusing one; only then is a 60 through the new file read as a
+  refusal. The 0 through the new file is `EXPOSED`, exit 1, on every date and gated by nothing at all. This is the
+  mechanism `lib/probe.mjs` already used against this very class, and `canaryNotAfter` remains a date only where a
+  control is impossible — for containers, which "ha[ve] no forced-roots control" (`bin/wardlatch.mjs`), and for this
+  fix's **already-clean** path, where the file holds neither withdrawn root, so nothing in the run's hands is
+  something the test site ought to accept and there is no control to be had. There the date stays, over the 60
+  alone; the 0 is `EXPOSED` there too, on every date. Net: past 3 May 2027 a live canary makes the 60 readable
+  again, which the gate lost outright, and a dead canary stops a 60 being read as a refusal *today*, which the date
+  never covered.
+
+  `test/fix-macos.check.sh` now drives the test host from a list rather than one answer, because the fix reads it
+  twice on the fix path and a single answer cannot tell the two readings apart — which is exactly the blind spot
+  that let this through. Its cases: a live canary before the date and at the date, a year later and with no readable
+  clock; `STUB_TEST=0` at the date and with no clock, which must be EXPOSED, exit 1; a dead canary at 60, 28 and 7;
+  and the already-clean path's 0 against its 60. The site's own one-line test has the same gate and the same defect
+  in its own form — past the date, and whenever the date is unreadable (it reads an unreadable date as `99999999`),
+  it prints `UNKNOWN` without probing the test site at all, so it discards the 0 too. It is honest about having
+  nothing, because it has no file verdict to fall back on, but it should still probe and still report a 0. It is a
+  site artefact under the posting freeze and **was not changed**. *Found 31 Oct 2026; first fix 1 Nov 2026, found
+  defective and fixed again the same day.*
 
 - **The Mac fix undid itself on what the network said.** After writing the cleaned `/etc/ssl/cert.pem`, it re-tested
   against the advisory's test host and, if that host answered and was trusted (`curl` exit 0), copied the backup back
