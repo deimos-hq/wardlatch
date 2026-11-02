@@ -14,9 +14,9 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 ## [0.1.12] - 2026-11-02
 
 We found every defect under Security below ourselves, on 2 November 2026, in a second read of 0.1.11 made after it
-shipped and three reviews of this release's drafts. Each could read `SAFE` where something was wrong. If 0.1.11 or
+shipped, three reviews of this release's drafts, and a differential against 0.1.11 over about 250,000 generated cases. Each could read `SAFE` where something was wrong. If 0.1.11 or
 earlier said `SAFE`, run this version. The Mac fix download doesn't change. The advisories SECURITY.md promises for these
-defects, and for those in 0.1.11, are not open yet. `test/seat6.test.mjs` to `test/seat9.test.mjs` hold the tests. Two of seat 6's, I4-H2 and R11, pass on 0.1.11: they pin fixes already made. There is no test for the Linux
+defects, and for those in 0.1.11, are not open yet. `test/seat6.test.mjs` to `test/seat10.test.mjs` hold the tests. Two of seat 6's, I4-H2 and R11, pass on 0.1.11: they pin fixes already made. There is no test for the Linux
 link name.
 
 ### Security
@@ -66,8 +66,10 @@ link name.
   `0.1.0`, read UNKNOWN, exit 2, and no longer does.
 
 - **Header forms read `SAFE`.** In TOML, `--header` or `http_headers` in an inline table, a dotted key split by a quote, a
-  quoted key holding `=`, a `]` or a quoted word in a comment, multi-line strings and escapes: the file is now read by a
-  small tokenizer in place of line by line. A multi-line string never closed is UNKNOWN, as broken JSON is. In git config, a
+  quoted key holding `=`, a `]` or a quoted word in a comment, multi-line strings and escapes: a small tokenizer now reads
+  the file beside the line reader, and a row from either counts, so a file a strict parser gives up on loses nothing. Text
+  inside a multi-line string can therefore be a REVIEW line. A file with a multi-line string never closed and no header the
+  line reader can see is UNKNOWN, as broken JSON is. In git config, a
   value continued by a backslash on a file's last line with no line end, quotes inside a value (`ada"@"example.org`), and a
   CR or U+2028 inside one. A FIFO at `.mcp.json` in a project with no `.git`. A project file in a repository's subfolder is
   still not read, in this release or earlier.
