@@ -1131,7 +1131,7 @@ if [ "$found" -gt 0 ]; then
   sed "s|^trap stopped HUP INT TERM\$|# (the old shape: a trap on EXIT alone)|" "$work/atwrite.sh" >"$work/atwrite-exitonly.sh"
   cmp -s "$work/atwrite.sh" "$work/atwrite-exitonly.sh" && fail "an interrupt: the signal trap was not found, so this case proves nothing"
   interrupt() {   # $1 = script copy, $2 = bundle. Interrupts it at the write; sets $code and $out.
-    local pid i
+    local pid
     rm -rf "$work/tmp"; mkdir "$work/tmp"
     rm -f "$work/at-the-write"
     set -m
@@ -1139,7 +1139,7 @@ if [ "$found" -gt 0 ]; then
       bash "$1" >"$work/interrupt.out" 2>&1 &
     pid=$!
     set +m
-    for i in $(seq 1 200); do [ -e "$work/at-the-write" ] && break; /bin/sleep 0.1; done
+    for _ in $(seq 1 200); do [ -e "$work/at-the-write" ] && break; /bin/sleep 0.1; done
     [ -e "$work/at-the-write" ] || fail "an interrupt: the run never reached the write, so there was nothing to interrupt"
     kill -INT "$pid" 2>/dev/null || true
     code=0; wait "$pid" || code=$?
