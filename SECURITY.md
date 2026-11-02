@@ -111,6 +111,13 @@ through the release workflow, which attaches a Sigstore attestation of its sourc
 GitHub release; 0.1.3 and every release since went through it. How to check one:
 [docs/RELEASING.md](docs/RELEASING.md#verifying-a-release).
 
-`fix/fix-macos.sh` in this repository is byte-identical to the download on www.deimoscore.com, whose page prints its
-SHA-256 (`d8a4bffd43f97449f2d92b8c5b5cb2e908f698cb09482fb3cb9e3ba2c07a97a5`). CI pins that hash, so a change to the
-script fails CI until the pin, the download and the printed checksum change together.
+`fix/fix-macos.sh` in this repository has SHA-256
+`a9b1cdb0c1b86435205f79f4fb1e5b7d1c58a11502ee23c51aaba7a2effe3af5`. CI pins that hash and also checks that the
+hash printed here, the pin and the file itself are one string, so a change to the script fails CI until all
+three move together (`test/digest-chain.sh`).
+
+**This is ahead of the download.** Under the posting freeze the script in this repository has moved and
+www.deimoscore.com has not, so the page's published checksum is for an older file and the digest above is not
+yet the download's. Check the file you downloaded against the checksum on the page you downloaded it from, not
+against this one. When a change ships, the download, the page's hash, a new entry in the site's public record
+naming its predecessor, the changelog, the pin and this line all move together.

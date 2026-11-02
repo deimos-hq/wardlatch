@@ -51,13 +51,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with: { persist-credentials: false }
       - name: The Mac fix is the published file
-        # www.deimoscore.com serves fix/fix-macos.sh as a download and prints this SHA-256 on the page and in the
-        # site's public changelog (CL-53; each earlier digest is in an earlier entry, back to CL-18, except one that
-        # CL-47 named only until it was rewritten, which CL-52 records, and two this pin held on 31 Oct 2026 before
-        # the site had them, which CL-53 records). Any edit, even a comment, breaks that published checksum. A
-        # deliberate change to the script must update the site's download, the page's hash and the changelog record
-        # together, and this hash with them.
-        run: echo "464e3bbecdb421397b0dd6781e919d0d1b90b3c893bfdded389764f4fc6d5d2a  fix/fix-macos.sh" | shasum -a 256 -c -
+        # THIS PIN RUNS AHEAD OF THE SITE, under the posting freeze. www.deimoscore.com serves fix/fix-macos.sh as
+        # a download and prints its SHA-256 on the page and in the site's public changelog, but it does not yet
+        # serve or print the digest below: the newest site branch on the maintainer's machine serves 50e1e41d
+        # (release 0.1.10, 27 Oct) and the highest Record entry for this file, CL-53, records d8a4bffd (the
+        # round-4 script). Each earlier digest is in an earlier entry, back to CL-18, except one that CL-47 named
+        # only until it was rewritten, which CL-52 records.
+        #
+        # Until 1 Nov 2026 this comment said the site prints THIS digest and that CL-53 records the values this
+        # pin has held. Both became false the moment the pin moved to 464e3bbe (b749850) and neither was noticed:
+        # 464e3bbe appears on no site branch and in no Record entry, and CL-53 records d8a4bffd. A comment that
+        # asserts the published state is itself a claim, and it was wrong in the file that is this project's own
+        # mechanical guard for exactly this invariant.
+        #
+        # Any edit to the script, even a comment, breaks the published checksum. A deliberate change must update
+        # the site's download, the page's hash, a new Record entry naming its predecessor and the changelog
+        # together, and this hash and SECURITY.md's printed digest with them. The step below checks the three
+        # copies that live in THIS repository; the site's are the owner's to ship and nothing here can see them.
+        run: echo "a9b1cdb0c1b86435205f79f4fb1e5b7d1c58a11502ee23c51aaba7a2effe3af5  fix/fix-macos.sh" | shasum -a 256 -c -
       - name: The digest chain agrees -- the file, the pin above and the digest SECURITY.md prints
         # The step above compares the script to ONE number in ONE file; every other copy of that number was
         # unguarded prose, and the chain drifted twice in forty-eight hours (bb4f9b8 fixed SECURITY.md on 31 Oct
