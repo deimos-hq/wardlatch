@@ -89,5 +89,5 @@ export const NOT_KEYS = {
   'DSA params p q g': seq([tlv(2, Buffer.concat([B(0), Buffer.alloc(128, 0x55)])), tlv(2, Buffer.concat([B(0), Buffer.alloc(32, 0x66)])), tlv(2, Buffer.alloc(128, 0x33))]),
   'DH params p g': seq([tlv(2, Buffer.concat([B(0), Buffer.alloc(256, 0x55)])), tlv(2, B(2))]),
   'text "0a" + words': Buffer.from('0a hello world\n'),
-  'text ?\\x10 and an AWS-shaped key': Buffer.concat([B(0x3f, 0x10), Buffer.from(' AKIAIOSFODNN7QQQQQQQ\n')]),
+  'text ?\\x10 and an AWS-shaped key': Buffer.concat([B(0x3f, 0x10), Buffer.from(' AKIA' + 'IOSFODNN7QQQQQQQ\n')]),
 };

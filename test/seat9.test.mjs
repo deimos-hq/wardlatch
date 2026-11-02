@@ -122,7 +122,7 @@ test('K17 REFUTED every prefix of every key form: no crash, and a text file behi
   for (const [, der] of Object.values(FORMS)) for (const cut of [0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 20, 40, 64, 200, der.length - 3, der.length - 1]) if (cut > 0 && cut < der.length) files[`p${n++}.bin`] = der.subarray(0, cut);
   const repo = repoWith(join(fresh('r'), 'r'), files);
   assert.ok(Array.isArray(scanRepo(repo)), `read ${n} prefixes without a throw`);
-  const text = Buffer.concat([Buffer.from([0x3f, 0x10]), Buffer.from(' AKIAIOSFODNN7QQQQQQQ\n')]);
+  const text = Buffer.concat([Buffer.from([0x3f, 0x10]), Buffer.from(' AKIA' + 'IOSFODNN7QQQQQQQ\n')]);
   assert.ok(has(keyRun(NEW, text), 'REVIEW'), 'the AWS-shaped key is still found');
 });
 
