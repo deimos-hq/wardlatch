@@ -127,8 +127,8 @@ SECURITY.md promises for them are not open yet; the release that ships them stat
   in its own form — past the date, and whenever the date is unreadable (it reads an unreadable date as `99999999`),
   it prints `UNKNOWN` without probing the test site at all, so it discards the 0 too. It is honest about having
   nothing, because it has no file verdict to fall back on, but it should still probe and still report a 0. It is a
-  site artefact under the posting freeze and **was not changed**. *Found 31 Oct 2026; first fix 1 Nov 2026, found
-  defective and fixed again the same day.*
+  site artefact under the posting freeze and **was not changed**. *Found 31 Oct 2026; first fix 1 Nov 2026 (fb4001a), found
+  defective and fixed again the same day (ccaa63c).*
 
 - **The Mac fix undid itself on what the network said.** After writing the cleaned `/etc/ssl/cert.pem`, it re-tested
   against the advisory's test host and, if that host answered and was trusted (`curl` exit 0), copied the backup back
@@ -885,7 +885,7 @@ These were found by the third read of 31 Oct 2026 (03d95c9), and each fix has a 
   adds nothing, and a sentinel holds the end, so `plain()` sees whatever the name really holds and a name with a line
   break in it is never printed. Only whoever can create the link can do this, which for `/etc/ssl` is root. Found
   31 Oct 2026, fixed 1 Nov 2026. The script's digest changes with it:
-  `bf0ac69c230796104a2547e9cffaba55a03ee27766d31659d6a60fff19856e07`, pinned in `ci.yml` in the same commit. The
+  `072f60803f68e418b67c1ffdce2c28f196500745664e79a431506a16be5e1d1f`, pinned in `ci.yml` in the same commit. The
   site's download, the hash on its page and its changelog record have **not** been updated and must be, together,
   before this script is published (SECURITY.md, step 4).
 

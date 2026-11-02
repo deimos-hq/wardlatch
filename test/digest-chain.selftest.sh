@@ -20,8 +20,11 @@ cases=0 oks=0
 ok() { cases=$((cases + 1)); oks=$((oks + 1)); echo "ok: $*"; }
 fail() { echo "FAIL: $*"; exit 1; }
 
-# A throwaway root whose three files agree. The script copy is a stand-in, not the real one: this is about the
+# A throwaway root whose four files agree. The script copy is a stand-in, not the real one: this is about the
 # check, not about the fix, and a copy keeps the real digest out of the expected values.
+# CHANGELOG.md is here because the check reads it. It is built holding a historical digest that is NOT the
+# file's, on a line that says nothing about ci.yml -- which is what a real changelog looks like and what the
+# changelog leg must tolerate, so the control proves the leg is about staleness and not about digests existing.
 build() {
   rm -rf "$work/r"; mkdir -p "$work/r/fix" "$work/r/.github/workflows"
   printf '#!/bin/bash\n# a stand-in for fix/fix-macos.sh\necho hello\n' >"$work/r/fix/fix-macos.sh"
@@ -33,6 +36,8 @@ build() {
     printf '        run: echo "%s  fix/fix-macos.sh" | shasum -a 256 -c -\n' "$d"
   } >"$work/r/.github/workflows/ci.yml"
   printf 'Some prose.\n\nSHA-256 (`%s`). CI pins that hash.\n' "$d" >"$work/r/SECURITY.md"
+  printf '# Changelog\n\n- an older release shipped `%s`, kept published because a download has no update channel.\n' \
+    1111111111111111111111111111111111111111111111111111111111111111 >"$work/r/CHANGELOG.md"
 }
 
 # Runs the check on the throwaway root. Sets $code and $out.
@@ -95,6 +100,24 @@ printf '%s\n' "$out" | sed 's/^/    | /'
 grep -q 'did not give a 64-digit hex digest' <<<"$out" || fail "M7: it did not name the broken instrument"
 ok "M7 CAUGHT: a shasum that prints nothing fails closed instead of comparing two empty strings"
 
+# ---- M8. CHANGELOG.md naming a stale digest as the pinned one. The live defect of 2 Nov 2026: the round-5
+# merge moved the script, the pin and SECURITY.md to a new digest and left one changelog entry saying the OLD
+# one was "pinned in `ci.yml` in the same commit". That entry also tells the publisher to move the site's hash
+# together with it, so a stale digest there is a wrong published hash waiting to happen -- and this check
+# reported no failure, because its universe was three files and CHANGELOG.md was not one of them.
+build; printf '\n- the fix is `%s`, pinned in `ci.yml` in the same commit.\n' \
+  0000000000000000000000000000000000000000000000000000000000000000 >>"$work/r/CHANGELOG.md"; chk
+[ "$code" -ne 0 ] || fail "M8: a changelog naming a stale digest as the pinned one passed"
+grep -q 'CHANGELOG.md names' <<<"$out" || fail "M8: the failure did not name CHANGELOG.md"
+ok "M8 CAUGHT: CHANGELOG.md calling a digest the pinned one when it is not the file's"
+
+# ---- M8b. M8's control, and the reason the leg is written the way it is. SECURITY.md promises every digest
+# the Mac fix has ever had stays published, so old digests belong in old entries forever. A leg that merely
+# banned digests from the changelog would forbid that. The CORRECT digest beside the same words must pass.
+build; printf '\n- the fix is `%s`, pinned in `ci.yml` in the same commit.\n' "$d" >>"$work/r/CHANGELOG.md"; chk
+[ "$code" -eq 0 ] || fail "M8b: the correct digest beside those words was rejected, so the leg forbids the history SECURITY.md requires: $out"
+ok "M8b CONTROL: the correct digest on a ci.yml line is accepted, so the leg is about staleness, not about digests existing"
+
 echo "$cases cases ran; $oks said ok"
 [ "$cases" -eq "$oks" ] || fail "a case was counted without saying ok"
-[ "$cases" -eq 8 ] || fail "$cases cases ran, expected 8 (1 control + 7 mutants). If you added one, change this number."
+[ "$cases" -eq 10 ] || fail "$cases cases ran, expected 10 (1 control + 7 mutants + M8 and its control M8b). If you added one, change this number."

@@ -12,7 +12,7 @@
 # 464e3bbe... and SECURITY.md told the reader d8a4bffd..., a digest that belonged to neither. Four reviewers were
 # reading that tree at the time. A hand-coordinated invariant with a one-way check is not a mechanism; this is.
 #
-# It runs offline, reads nothing but these three files, and writes nothing.
+# It runs offline, reads nothing but these four files, and writes nothing.
 # Usage: bash test/digest-chain.sh [root]      (root defaults to this repository; a copy is for the self-test)
 set -euo pipefail
 
@@ -60,6 +60,28 @@ fi
 if [ -n "$sec_digest" ]; then
   [ "$sec_digest" = "$actual" ] || fail "SECURITY.md prints $sec_digest and fix/fix-macos.sh hashes $actual"
   [ "$sec_digest" = "$pin" ] || fail "SECURITY.md prints $sec_digest and the pin in $ci is $pin"
+fi
+
+# CHANGELOG.md, on a rule of its own. Its universe cannot be "exactly one digest": SECURITY.md promises that
+# every SHA-256 this file has ever had stays published, because a download has no update channel, so old
+# digests belong in old entries and always will. What must never appear is an entry printing a digest while
+# saying that digest is the one ci.yml pins -- that sentence is a claim about the CURRENT pin, and it is read
+# as an instruction, since the same entry tells the publisher to move the site's hash "together" with it.
+# This leg exists because exactly that was live at the round-5 merge: CHANGELOG.md printed
+# bf0ac69c... beside "pinned in `ci.yml` in the same commit" while the script, the pin and SECURITY.md had
+# all moved to 072f6080..., and this check reported no failure because its universe was three files and
+# CHANGELOG.md was not one of them. A gate that cannot see a file cannot speak for it.
+chg=$root/CHANGELOG.md
+if [ -r "$chg" ]; then
+  claimed=$(grep 'ci\.yml' "$chg" | grep -o '[0-9a-f]\{64\}' | sort -u | grep -v "^$actual$" || true)
+  n=$(printf '%s\n' "$claimed" | grep -c . || true)
+  if [ "$n" -ne 0 ]; then
+    for d in $claimed; do
+      fail "CHANGELOG.md names $d on a line about ci.yml, and fix/fix-macos.sh hashes $actual: an entry that says a digest is the pinned one is read as an instruction to publish it"
+    done
+  fi
+else
+  fail "$chg is not readable, so the changelog's leg of the chain cannot be checked"
 fi
 
 # Mode travels with the digest: a download published with a checksum and no execute bit is still a broken
