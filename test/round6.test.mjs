@@ -52,14 +52,15 @@ test('F2 a key in DER that the parser cannot read is a gap, never skipped in sil
   const repo = repoWith('f2', { 'minimal.p12': key, 'longform.p12': longForm, 'wide.p12': wideVersion });
   const found = scanRepo(repo);
   assert.ok(found.some((h) => h.file === 'minimal.p12' && !h.unread), 'the positive control: the minimal key must be a finding');
-  for (const f of ['longform.p12', 'wide.p12']) assert.ok(found.some((h) => h.file === f && h.unread), `${f} left no row: ${JSON.stringify(found.map((h) => h.file))}`);
+  // A finding, since 2 Nov 2026: the reader takes these forms now (seats 7 and 9). What matters is that neither is silent.
+  for (const f of ['longform.p12', 'wide.p12']) assert.ok(found.some((h) => h.file === f), `${f} left no row: ${JSON.stringify(found.map((h) => h.file))}`);
 });
 
 test('F2 the same two, deleted from the working tree but still tracked: git\'s copy is held to the same rule', () => {
   const repo = repoWith('f2-gone', { 'longform.p12': longForm, 'wide.p12': wideVersion });
   rmSync(join(repo, 'longform.p12')); rmSync(join(repo, 'wide.p12'));
   const found = scanRepo(repo);
-  for (const f of ['longform.p12', 'wide.p12']) assert.ok(found.some((h) => h.file === f && h.unread), `${f} left no row`);
+  for (const f of ['longform.p12', 'wide.p12']) assert.ok(found.some((h) => h.file === f), `${f} left no row`);
 });
 
 test('F2 its control: a binary that does not begin like DER is still skipped, or every picture would be UNKNOWN', () => {

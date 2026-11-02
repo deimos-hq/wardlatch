@@ -563,6 +563,8 @@ for (const inc of chosen) {
     // REVIEW row; a finding or another gap doesn't.
     const onlyEngineGaps = counted(results).every((r) => r.engine && (r.status === 'UNKNOWN' || r.notRunning));
     if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked${lookedFor ? ` for ${lookedFor},` : ''} in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean), inc.sitePackages ? [...VENV_NOT_WALKED, LIBRARY, VENV_PACKAGES_SAID, ...macKept] : undefined, inc.sitePackages ? undefined : { why: `this check reads ${inc.versionFiles?.product ?? 'the product'}'s own version files at the paths its installers use, and --paths does not add to them` });
+    // the all-clear says this itself; with any other row the same line goes under them (seat 9)
+    if (macKept.length && counted(results).length) note('2', `macOS keeps ${macKept.map(short).join(', ')} to itself, so ${macKept.length === 1 ? 'it was' : 'they were'} not searched`);
   }
 
   // the window's start: an explicit UTC instant, or the review is UNKNOWN (up to 0.1.9 a bare date read SAFE: see
@@ -611,7 +613,7 @@ for (const inc of chosen) {
   if (inc.type === 'wordpress') {
     const denied = [...lockedRoots];
     const privateDot = [], coreOnly = [], links = [], loose = [], deep = [];
-    const sites = wordpressUnder(searchable, 5, denied, privateDot, coreOnly, links, { loose, deep, names: inc.rules.map((x) => x.plugin), mains: Object.fromEntries(inc.rules.map((x) => [x.plugin, x.mainFile])) });
+    const sites = wordpressUnder(searchable, 5, denied, privateDot, coreOnly, links, { loose, deep, names: inc.rules.map((x) => x.plugin), mains: inc.rules.map((x) => x.mainFile) });
     for (const core of coreOnly) {
       const reason = 'WordPress core is here, but no plugins folder is where WordPress, a moved wp-content, Bedrock or its wp-config.php puts one, so its plugins were not checked: pass --paths for the folder that holds them';
       results.push({ incident: inc.id, kind: 'wordpress', site: core, status: 'UNKNOWN', what: 'plugins folder', reason });
@@ -628,18 +630,20 @@ for (const inc of chosen) {
     // main file (up to this fix only with it, so a backdoored copy missing rank-math-pro.php read SAFE: R2-N7)
     for (const p of loose) for (const f of checkPluginsFolder(p, inc.rules, inc.addedSince)) show(p, f);
     // A folder given with --paths that is a listed plugin's: its parent is checked for those plugins, once, however many of
-    // them were named, or three paths at three copies counted nine rows (seat 8). A link names what it points at: --paths
-    // current, with current -> seo-by-rank-math-pro (seat 7's D7b).
+    // them were named, or three paths at three copies counted nine rows (seat 8). A link counts by its own name or what
+    // it points at (seat 7's D7b).
     const asked = new Map();
+    const listedAt = (p) => inc.rules.filter((x) => basename(p) === x.plugin || isCopyName(basename(p), x.plugin) || pathState(join(p, x.mainFile)) === 'file');
     for (const r of searchable) {
-      const real = realPath(r) ?? r, parent = dirname(real);
-      const own = inc.rules.filter((x) => basename(real) === x.plugin || isCopyName(basename(real), x.plugin));
-      if (!own.length || loose.includes(parent)) continue;
-      const a = asked.get(parent) ?? { r, rules: new Set() };
-      for (const x of own) a.rules.add(x);
-      asked.set(parent, a);
+      // the name given first, then what it points at, so a link named as the plugin isn't lost to its target's name (seat 9's W1)
+      const p = [r, realPath(r) ?? r].find((x) => listedAt(x).length);
+      if (!p || loose.includes(dirname(p))) continue;
+      const a = asked.get(dirname(p)) ?? { r, rules: new Set(), names: [] };
+      for (const x of listedAt(p)) a.rules.add(x);
+      a.names.push(basename(p));
+      asked.set(dirname(p), a);
     }
-    for (const [parent, a] of asked) for (const f of checkPluginsFolder(parent, [...a.rules])) show(a.r, f);
+    for (const [parent, a] of asked) for (const f of checkPluginsFolder(parent, [...a.rules], undefined, a.names)) show(a.r, f);
     gaps(results, inc, 'wordpress', denied, { review: privateDot, links, deep, levels: 5 });
     // sites found with none of the listed plugins are named as found (up to b03e7be this said "no WordPress installs found")
     const looseSaid = loose.length ? `; ${loose.length} plugins folder${loose.length === 1 ? '' : 's'} with no WordPress core using ${loose.length === 1 ? 'it' : 'them'} checked, with none of the listed plugins` : '';

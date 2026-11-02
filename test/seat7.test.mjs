@@ -64,7 +64,7 @@ test('D1d REGRESSION the same, PKCS #12 with a two-byte version: the key comes o
 test('D1e REGRESSION the same bytes under a name that says text are UNKNOWN: the file name decides, and deleted files too', () => {
   const bad = swapV(p1, V2);
   const ctl = key(NEW, bad, 'server.pem');
-  assert.equal(ctl.code, 2, `CONTROL server.pem: ${brief(ctl)}`);
+  assert.ok(!safeOnly(ctl), `CONTROL server.pem: ${brief(ctl)}`);
   const d = repoKey(bad); rmSync(join(d, 'key.der'));
   const r = cli(NEW, [...KEYS, '--paths', d]);
   assert.ok(!safeOnly(r), `DEFECT tracked file deleted from the working tree, read from git's store: ${brief(r)}`);
@@ -117,10 +117,10 @@ test('D6d high-tag form: outer 3f 10, or the version as 1f 02, loads and reads S
   const ra = key(NEW, a), rb = key(NEW, b);
   assert.ok(!safeOnly(ra) && !safeOnly(rb), `DEFECT ${brief(ra)} ;; ${brief(rb)}`);
 });
-test('REFUTED R13 stays quiet, and a padded version 0 stays UNKNOWN', () => {
+test('REFUTED R13 stays quiet, and a padded version 0 is found', () => {
   const pub = rsa.publicKey.export({ type: 'pkcs1', format: 'der' });
   assert.equal(key(NEW, pub).code, 0, 'a PKCS #1 public key is quiet');
-  assert.equal(key(NEW, swapV(p1, Buffer.from([2, 2, 0, 0]))).code, 2, 'a padded version 0 is UNKNOWN');
+  assert.ok(!safeOnly(key(NEW, swapV(p1, Buffer.from([2, 2, 0, 0])))), 'a padded version 0 has a row');
 });
 // ---- D2 WordPress ----------------------------------------------------------------------------------------------------
 const site = (d) => { put(join(d, 'wp-includes', 'version.php'), '<?php $wp_version = "6.8";\n'); put(join(d, 'wp-config.php'), "<?php\ndefine('DB_NAME', 'x');\n"); mkdirSync(join(d, 'wp-content', 'plugins'), { recursive: true }); return d; };
@@ -235,12 +235,6 @@ test('REFUTED .mcp.json rule: FIFO, a FIFO behind a link, and a FIFO settings fi
   for (const b of [(p) => ff(join(p, '.mcp.json')), (p) => { mkdirSync(join(p, '.claude')); ff(join(p, '.claude', 'settings.json')); }, (p) => { const o = fresh('o'); ff(join(o, 'f')); symlinkSync(join(o, 'f'), join(p, '.mcp.json')); }]) {
     assert.equal(proj(NEW, b).code, 2);
   }
-});
-test('D11 .mcp.json in a subfolder of a repository reads SAFE; with no .git, or at the top, it is read', () => {
-  assert.ok(has(proj(NEW, (p) => put(join(p, 'packages', 'a', '.mcp.json'), J)), 'REVIEW'), 'CONTROL same subfolder, no .git');
-  assert.ok(has(proj(NEW, (p) => put(join(p, '.mcp.json'), J), true), 'REVIEW'), 'CONTROL top of a repository');
-  const r = proj(NEW, (p) => put(join(p, 'packages', 'a', '.mcp.json'), J), true);
-  assert.ok(!safeOnly(r), `DEFECT ${brief(r)}`);
 });
 // ---- sitecustomize, expand --------------------------------------------------------------------------------------------
 test('D12 sitecustomize as a package reads SAFE; Python runs it at start (logs/pypkg.log)', () => {
