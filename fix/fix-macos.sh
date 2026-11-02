@@ -169,14 +169,27 @@ trust() { local r=0; CURL_SSL_BACKEND=openssl /usr/bin/curl -q -s -o /dev/null -
 # curl's 60 is CURLE_PEER_FAILED_VERIFICATION, which an expired leaf gives too -- MEASURED on a throwaway pair: an
 # expired leaf gives 60 both through a file that trusts its root and through one that does not, the two readings
 # this test exists to tell apart. So from that date a 60 would say nothing, and every unfixed Mac would read SAFE
-# (the swarm's F-tls-3). From then on this says UNKNOWN instead of reading the code, as the lib already does
-# (bin/wardlatch.mjs: "a refusal here would prove nothing"). A date this cannot read counts as past it.
+# (the swarm's F-tls-3).
+#
+# What that argument does NOT cover, and what this date was wrongly used for until 1 Nov 2026: curl's 0. Exit 0
+# means the chain verified, and an expired leaf cannot verify -- MEASURED on a loopback CA of our own, four
+# readings, one fresh server each: a valid leaf gives 0 through a bundle that trusts its CA and 60 through one
+# that does not, and an EXPIRED leaf gives 60 through BOTH. So expiry poisons the 60 and leaves the 0 exactly as
+# sound as it ever was, and a 0 from the test site proves exposure on any date whatsoever. Until 1 Nov 2026 this
+# date stopped both readings, so a Mac that WAS exposed read SAFE, exit 0, from 3 May 2027 -- and today, on any
+# Mac whose clock is dead or years fast, because a date this cannot read counts as past it.
+#
+# So the date now decides one thing in one place: whether a 60 from the test site may be read as a refusal on the
+# already-clean path, which is the one path where no control for the canary's liveness can be built (see there).
+# Everywhere else a probe of the file as it WAS is the control, and it does not expire. Nothing anywhere gates
+# the 0.
 CANARY_EXPIRES=20270503
 # Today in UTC as yyyymmdd, or a failure. Nothing but eight digits is accepted: a date command that printed a word
 # would otherwise be compared as a number, which `[` reads as an error and `set -e` turns into a silent exit.
 today() { local d; d=$(/bin/date -u +%Y%m%d 2>/dev/null) || return 1; case "$d" in [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) echo "$d" ;; *) return 1 ;; esac; }
 # 0 when the test site's own certificate is still valid, so its refusal means something; 1 when it is not, or when
-# this Mac's date can't be read.
+# this Mac's date can't be read. The published one-line test on the Wardlatch page fails the same way, by reading
+# an unreadable date as 99999999, and prints UNKNOWN there; it has no file verdict to fall back on, and this does.
 canary_live() { local d; d=$(today) || return 1; [ "$d" -lt "$CANARY_EXPIRES" ]; }
 # The one line that says why no online reading was taken. $1 is what the file's own state already established.
 expired_note() {
@@ -537,6 +550,97 @@ removed_phrase() {
     echo "removed $(held) (this file did not hold the other withdrawn root, $AAA_NAME)"
   fi
 }
+# What a run that could take no online reading did NOT check, as a sentence of its own, directly under the verdict
+# and BEFORE the reason. Until 1 Nov 2026 the three uncorroborated SAFE lines said only why no reading was taken
+# ("a refusal there would prove nothing", "so nothing was re-tested online") and never what the reading was for.
+# That is the only part a reader who is not a TLS engineer needs, and the old wording's defect was its sequencing
+# and its subject rather than its truthfulness: a parenthesis indented under a left-aligned verdict, in a block of
+# five to seven other indented lines, three of which are housekeeping, tells the eye it may stop reading -- and it
+# was the one line that most needed reading (the 1 Nov 2026 review, panel 3).
+notchecked() { echo "         Not checked: whether anything else on this Mac still trusts the compromised keys."; }
+# What every headline that is NOT SAFE must carry once the file HAS been fixed. A reader who takes a warning for a
+# failure and puts the backup back has undone the fix, and that backup holds the withdrawn roots this run removed:
+# SECURITY.md names exactly that a vulnerability ("putting the original back puts back the withdrawn roots it
+# held"). Until 1 Nov 2026 two of the three UNKNOWN headlines on this path named the backup and said nothing about
+# leaving it alone, and the third said only that the script would not revert -- which is about the script, not
+# about the reader (the 1 Nov 2026 review, and the owner's instruction of that day).
+kept_say() {
+  echo "         The file was still fixed. Don't put the backup back: it holds $(held), which is what this removed."
+  echo "         Backup: $backup (the file as it was; it holds $(held))"
+  trailer UNKNOWN not-tested "$tre" "$todrop" "$after"
+}
+# How far any verdict here reaches. Until 1 Nov 2026 the already-clean path exited before these four lines, so the
+# single answer reached by a user who is ASKING ("am I safe?") rather than fixing -- on a Mac Apple has updated, on
+# a Mac they already fixed, on every second run -- was the only answer in the script with no scope at all, while
+# every answer reached by changing something carried all four (the 1 Nov 2026 review, panel 2).
+scope_lines() {
+  echo "         This covers the built-in curl, git, python3 and openssl: the four we measured. Apple's pip3 keeps its"
+  echo "         own copy, and we have not measured the built-in perl or ruby. The page has both."
+  echo "         For everything else: npx wardlatch@latest"
+  echo "         A macOS update puts Apple's original file back: run this again after every update."
+}
+# One machine-readable line, last, so a fleet can tell a corroborated verdict from an uncorroborated one by choice
+# instead of by exit code. The exit-code table is published, on the page whose own section tells administrators to
+# wire these codes into Jamf, Kandji or Intune, and it names the no-corroboration cases as 0; moving them would be
+# a breaking change to a machine interface. Three distinguishable states were being squeezed through a field whose
+# three values are already spoken for, so this adds a channel rather than repurposing that one.
+# THE FIELD NAMES AND THE VALUES BELOW ARE A CONTRACT. New values may be added; none may be renamed or reused.
+#   verdict  SAFE | EXPOSED | UNKNOWN -- the same word the line starts with
+#   scope    file         no online reading was taken, so the verdict is about this file and nothing else
+#            file+online  an online reading was taken and is part of the verdict
+#   online   refused      the test site refused this file, with a live canary behind that refusal
+#            trusted      the test site was accepted through this file
+#            not-tested   no online reading was taken
+#   reason   why none was taken, or - when one was:
+#            control-<n>        an ordinary website did not load through this file (curl <n>)
+#            control-<n>-both   ... and did not load before the change either
+#            test-<n>           the test site did not answer (curl <n>)
+#            canary-dead        the test site refused the file as it WAS, so its refusal proves nothing
+#            canary-expired     past the test site's own certificate expiry, where no control can be built
+#            clock-unreadable   this Mac's date could not be read, so the expiry cannot be judged
+#            revert-content-mismatch   the original was put back; nothing online was read
+#   removed  certificates this run took out of the file (0 when it changed nothing)
+#   kept     certificates the file holds now
+# Printed with every SAFE and every EXPOSED line, and with every UNKNOWN that reached an online reading. An
+# UNKNOWN with no trailer is a run that never got as far as a verdict about the file.
+trailer() {
+  local scope=file
+  [ "$2" = not-tested ] || scope=file+online
+  echo "         wardlatch: verdict=$1 scope=$scope online=$2 reason=$3 removed=$4 kept=$5"
+}
+# The reason no online reading could be judged when the control failed. A control exit of 60 is NOT "the network
+# didn't answer": it is an ordinary website's certificate REFUSED through the very file this verdict is about,
+# which is what a network inspecting TLS looks like. Until 1 Nov 2026 that reading got the same words as a dropped
+# connection on both paths, while a network that starts intercepting between the two reads gets exit 2 and a
+# paragraph of attack language -- so the permanent interceptor was read more charitably than the transient one
+# (the 1 Nov 2026 review, panel 2). The exit codes still differ, and defensibly: a 60 that appeared across the
+# write may be about the change this run made, and one that was there all along cannot be. The words no longer do.
+# $1 = the control's exit code; $2 = the one before the change, or empty when there was none.
+control_note() {
+  if [ "$1" -eq 60 ] && { [ -z "$2" ] || [ "$2" -eq 60 ]; }; then
+    if [ -n "$2" ]; then
+      echo "         (An ordinary website's certificate was refused through this file both before the change (curl $2)"
+      echo "         and after it (curl $1). That is not the network failing to answer: something signed that website's"
+    else
+      echo "         (An ordinary website's certificate was refused through this file (curl $1). That is not the network"
+      echo "         failing to answer: something signed that website's"
+    fi
+    echo "         certificate with a root this file doesn't hold, which is what a network inspecting TLS looks like."
+    echo "         Worth finding out what, because it judges every site this Mac visits. Nothing was read from the"
+    echo "         advisory's test site.)"
+  elif [ -n "$2" ] && { [ "$1" -eq 60 ] || [ "$2" -eq 60 ]; }; then
+    # One read refused a certificate and the other did not get that far, so neither "refused" nor "didn't load"
+    # describes both. Said as the two readings rather than as one word for them.
+    echo "         (An ordinary website's certificate was refused through this file on one of the two reads"
+    echo "         (curl 60) and it didn't load at all on the other (curl $([ "$1" -eq 60 ] && echo "$2" || echo "$1")),"
+    echo "         so nothing was re-tested online.)"
+  elif [ -n "$2" ]; then
+    echo "         (An ordinary website didn't load before this change (curl $2) or after it (curl $1), so nothing"
+    echo "         was re-tested online.)"
+  else
+    echo "         (An ordinary website didn't load either (curl $1), so nothing was re-tested online.)"
+  fi
+}
 # Puts the bytes of $1 into $FILE in one step, and the ONLY thing in this script that writes to $FILE: a copy into
 # a file beside it, then a rename over it. A rename within one directory is one step the kernel either did or
 # didn't do, so whatever stops the script, $FILE holds either the old bundle or the new one and never half of
@@ -815,28 +919,59 @@ if [ "$todrop" -eq 0 ]; then
     echo "         Run this again."
     exit 2
   fi
-  if ! canary_live; then
-    # Nothing online is read at all: no refusal from the test site could be told from its own certificate expiring.
-    settled
-    echo "SAFE     $FILE holds neither withdrawn root and no certificate with a compromised key. Nothing changed."
-    expired_note
-    exit 0
-  fi
+  # This is the ONE path in this script where the canary's liveness cannot be controlled for, and so the one place
+  # the expiry date still decides anything. The fix path takes its receipt from the file as it was, which still
+  # held a withdrawn root and so had to be accepted by the test site; here the file holds neither root and neither
+  # does the snapshot, so there is nothing in this run's hands that the test site should accept and nothing to
+  # read a control from. Checked and rejected: the script carries the roots' SHA-256 fingerprints and the seven
+  # withdrawn public keys, not certificate bytes, so it cannot build a bundle the test site would accept; a
+  # previous run's .bak may not exist and is a file this run has established nothing about; and reading the test
+  # site's own notAfter is circular, because it is judged against the clock that may be the broken thing. So this
+  # is the genuine canaryNotAfter case -- the same position bin/wardlatch.mjs puts a container in, for the same
+  # stated reason, that it "has no forced-roots control".
+  #
+  # The date therefore stays here, and governs the 60 ALONE. Curl's 0 is read on every date, because 0 means the
+  # chain verified and an expired leaf cannot verify: it needs no control, it cannot go stale, and until
+  # 1 Nov 2026 this path threw it away with the 60 and called an exposed Mac SAFE, exit 0.
+  tre='-' tos=not-tested
   c=$(control "$FILE")
   if [ "$c" -ne 0 ]; then
     settled
+    tre=control-$c
     echo "SAFE     $FILE no longer holds the two roots. Nothing changed."
-    echo "         (An ordinary website didn't load either (curl $c), so nothing was re-tested online.)"
+    notchecked
+    control_note "$c" ''
   else
     r=$(trust "$FILE")
     settled
     case "$r" in
-      60) echo "SAFE     $FILE already refuses the compromised keys. Nothing changed." ;;
-      0)  echo "EXPOSED  $FILE holds neither root but still trusts the test site. Nothing changed; please report this."; meant=1; exit 1 ;;
-      *)  echo "SAFE     $FILE no longer holds the two roots. Nothing changed. (An ordinary website loaded but the test site"
-          echo "         didn't answer (curl $r), so this wasn't re-tested online.)" ;;
+      60) if canary_live; then
+            tos=refused
+            echo "SAFE     $FILE already refuses the compromised keys. Nothing changed."
+          else
+            # Past the expiry, or with no readable clock, a 60 here could be the test site's own certificate having
+            # expired just as easily as a refusal, and nothing on this path can tell the two apart.
+            if today >/dev/null 2>&1; then tre=canary-expired; else tre=clock-unreadable; fi
+            echo "SAFE     $FILE holds neither withdrawn root and no certificate with a compromised key. Nothing changed."
+            notchecked
+            expired_note
+          fi ;;
+      0)  tos=trusted
+          echo "EXPOSED  $FILE holds neither root but still trusts the test site. Nothing changed; please report this."
+          trailer EXPOSED trusted - 0 "$before"
+          meant=1; exit 1 ;;
+      *)  tre=test-$r
+          echo "SAFE     $FILE no longer holds the two roots. Nothing changed."
+          notchecked
+          echo "         (An ordinary website loaded but the test site didn't answer (curl $r), so this wasn't"
+          echo "         re-tested online.)" ;;
     esac
   fi
+  # And the scope every other SAFE in this script carries. Until 1 Nov 2026 this path exited above these lines, so
+  # the answer given to someone ASKING whether their Mac is safe -- after a macOS update, or on a second run -- was
+  # the only answer here with no scope, no "for everything else", and no "run this again after every update".
+  scope_lines
+  trailer SAFE "$tos" "$tre" 0 "$before"
   exit 0
 fi
 
@@ -876,6 +1011,27 @@ fi
 # made break certificate validation on this Mac?" -- and the script printed SAFE for both, exit 0. That is the same
 # two-readings-collapsed-into-one error the control was added to remove, one step further down the script.
 c0=$(control "$snap")
+# And the POSITIVE CONTROL for the test site itself, read the same way: through the file as it was, which still
+# holds what this run is about to remove. The test site's chain anchors in a withdrawn root, so a file that still
+# holds one must be accepted -- curl 0 -- and curl 0 is the one answer nothing but a verified chain can produce. So
+# a 0 here establishes, at once, that the host answered, that its own certificate is still valid, that nothing is
+# answering for it, and that this probe can still tell a file that trusts the compromised keys from one that does
+# not. That is a receipt, and unlike a date it cannot go stale: the control is re-earned on every run.
+#
+# It replaces a dated gate. Until 1 Nov 2026 this path stopped reading the test site altogether from 3 May 2027,
+# the day the advisory's leaves expire, because curl's 60 is CURLE_PEER_FAILED_VERIFICATION and an expired leaf
+# gives 60 too -- true, and only half the problem. An expired leaf can never give 0 (MEASURED on a throwaway CA on
+# loopback: a valid leaf through a trusting bundle gives 0, an expired leaf through the same bundle gives 60), so
+# the gate threw away the reading that survives expiry along with the one that doesn't, and a Mac that WAS exposed
+# read SAFE, exit 0, from that date -- and from today, because a date this Mac cannot read counted as past it. The
+# library uses a date for containers precisely because a container "has no forced-roots control" (bin/wardlatch.mjs);
+# here there is one, in hand, for the price of one probe.
+#
+# What the control gates is the 60 and nothing else. The 0 through the cleaned file is read as EXPOSED on every
+# date whatever this says: gating a self-certifying reading is the defect above, and a dead canary is reachable on
+# a Mac that is genuinely exposed (a file holding a certificate with one of the seven other withdrawn keys and
+# neither root has no anchor for the test site's chain, so its 0 would be suppressed by its own control).
+t0=$(trust "$snap")
 
 backup="$FILE.wardlatch-$(date +%Y%m%d-%H%M%S).bak"
 { [ ! -e "$backup" ] && [ ! -L "$backup" ]; } || { echo "UNKNOWN  $backup already exists. Nothing changed; run again in a second."; exit 2; }
@@ -930,6 +1086,7 @@ if [ "$landed" != "$want" ]; then
     echo "EXPOSED  What was written to $FILE isn't the file this built and checked, so the original was put back and this"
     echo "         Mac still trusts the compromised keys. Nothing else was changed. Run it again; please report this."
     echo "         Backup: $backup"
+    trailer EXPOSED not-tested revert-content-mismatch 0 "$before"
     meant=1; exit 1
   fi
   # No command to put the backup back by hand: it holds the withdrawn roots, and this says what each file holds
@@ -940,22 +1097,36 @@ if [ "$landed" != "$want" ]; then
   exit 2
 fi
 
-# Past the test site's own expiry, nothing online is read: its refusal could not be told from its certificate having
-# expired (canary_live()). The file was still fixed, and what that is worth is said without an online claim.
-if ! canary_live; then
-  settled
-  echo "SAFE     Fixed in the file: $(removed_phrase), kept $after."
-  expired_note
 # Four readings, because there is a baseline to compare with, and a failure after the change is either a certificate
 # refused (60: about the change, or about the network) or a network that stopped answering (6, 7, 28: about neither).
-elif c=$(control "$FILE") && [ "$c" -eq 0 ]; then
+# There is no date gate on this path any more; t0 above is the control that replaced it, and what it gates is the
+# 60 alone. $tre is the reason the trailer prints, $tos what it says about the online reading.
+tre='-' tos=not-tested
+if c=$(control "$FILE") && [ "$c" -eq 0 ]; then
   # The control loads through the new file: this network answers, and the new file still validates ordinary
   # certificates. So the test host's answer is about the test host, and there is a verdict to be had.
   r=$(trust "$FILE")
   settled
   case "$r" in
-    60) echo "SAFE     Fixed. $FILE now refuses the compromised keys: $(removed_phrase), kept $after." ;;
-    0)  echo "EXPOSED  Fixed in the file ($(removed_phrase), kept $after), but the advisory's test site is"
+    60) if [ "$t0" -eq 0 ]; then
+          tos=refused
+          echo "SAFE     Fixed. $FILE now refuses the compromised keys: $(removed_phrase), kept $after."
+        else
+          # The test site refused the file as it WAS -- the file whose withdrawn roots anchor its own chain, which
+          # it had to accept for this probe to mean anything. It did not, so this run has not shown the probe can
+          # tell the two files apart, and the 60 it gave through the new file is not a refusal anyone has earned.
+          # It is the 3 May 2027 case, and also every other way the probe can go quiet while still answering 60.
+          tre=canary-dead
+          echo "SAFE     Fixed in the file: $(removed_phrase), kept $after."
+          notchecked
+          echo "         (The advisory's test site answered curl 60 through the new file -- but it answered curl $t0"
+          echo "         through the file as it was, which still held $(held) and so"
+          echo "         should have been accepted. Its own certificate expires on 3 May 2027, and it may have, or"
+          echo "         something may be answering for it. Nothing here shows the test site can still tell a file"
+          echo "         that trusts the compromised keys from one that refuses them, so nothing was read from it.)"
+        fi ;;
+    0)  tos=trusted
+        echo "EXPOSED  Fixed in the file ($(removed_phrase), kept $after), but the advisory's test site is"
         echo "         still trusted. Two ordinary things look exactly like this, and both are likelier than"
         echo "         anything stranger. A TLS-inspecting proxy's own root may have been added to this file (or to"
         echo "         whichever file your tools read): the proxy then signs everything, and that site loads"
@@ -965,19 +1136,25 @@ elif c=$(control "$FILE") && [ "$c" -eq 0 ]; then
         echo "         fix was kept either way: putting the original back would put"
         echo "         $(held) back. Please report this."
         echo "         Backup: $backup (the file as it was; it holds $(held))"
+        trailer EXPOSED trusted - "$todrop" "$after"
         meant=1; exit 1 ;;
-    *)  echo "SAFE     Fixed in the file: $(removed_phrase), kept $after. (The test site didn't answer"
-        echo "         (curl $r), though an ordinary website loaded, so this wasn't re-tested online.)" ;;
+    *)  tre=test-$r
+        echo "SAFE     Fixed in the file: $(removed_phrase), kept $after."
+        notchecked
+        echo "         (The test site didn't answer (curl $r), though an ordinary website loaded, so this wasn't"
+        echo "         re-tested online.)" ;;
   esac
 elif [ "$c0" -ne 0 ]; then
   settled
   # Nothing loaded before the change either, so this reading is about the network and not about the file. Report,
   # keep the fix, claim nothing online.
+  if [ "$c" -eq 60 ] && [ "$c0" -eq 60 ]; then tre=control-60-both; else tre=control-$c0; fi
   echo "SAFE     Fixed in the file: $(removed_phrase), kept $after."
-  echo "         (An ordinary website didn't load before this change (curl $c0) or after it (curl $c), so nothing"
-  echo "         was re-tested online.)"
+  notchecked
+  control_note "$c" "$c0"
 else
   settled
+  tre=control-$c
   case "$c" in
     6|7|28)
       # A name that didn't resolve, a connection that wasn't made, or no answer in time: the network stopped
@@ -988,7 +1165,7 @@ else
       echo "         an ordinary website loaded through the old file (curl 0), then not through the new one (curl $c:"
       echo "         $why). That is not a certificate being refused, so it says nothing about the change, and nothing"
       echo "         was re-tested online. Run this again to re-test."
-      echo "         Backup: $backup"
+      kept_say
       exit 2 ;;
     60)
       # The one reading here that is about the change or about the network, and cannot tell which: an ordinary
@@ -1004,20 +1181,18 @@ else
       echo "         either that website's certificate chain needs what was removed, or this network answered the two"
       echo "         requests differently -- and the second is what an attack on this Mac would look like. The fix was"
       echo "         kept either way: this does not put a withdrawn root back on a network reading. Please report this."
-      echo "         Backup: $backup (the file as it was; it holds $(held))"
+      kept_say
       exit 2 ;;
     *)
       echo "UNKNOWN  Fixed in the file ($(removed_phrase), kept $after), but an ordinary website that"
       echo "         loaded through the old file (curl 0) failed through the new one with curl $c, which is neither a"
       echo "         certificate refused (60) nor a network that stopped answering (6, 7, 28). This run"
       echo "         reads nothing into it, and re-tested nothing online. Please report this."
-      echo "         Backup: $backup"
+      kept_say
       exit 2 ;;
   esac
 fi
 echo "         Backup: $backup"
 echo "         Undo:   sudo cp -p '$backup' '$FILE'"
-echo "         This covers the built-in curl, git, python3 and openssl: the four we measured. Apple's pip3 keeps its"
-echo "         own copy, and we have not measured the built-in perl or ruby. The page has both."
-echo "         For everything else: npx wardlatch@latest"
-echo "         A macOS update puts Apple's original file back: run this again after every update."
+scope_lines
+trailer SAFE "$tos" "$tre" "$todrop" "$after"
