@@ -19,7 +19,7 @@ import { reposUnder, workflowsAddedSince, windowStart, NOT_WALKED as REPO_NOT_WA
 import { scanRepo } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite, checkPluginsFolder, isCopyName, NOT_WALKED as WP_NOT_WALKED } from '../lib/wordpress.mjs';
 import { scanHeaders } from '../lib/headers.mjs';
-import { pathState, readText, listDir, realPath, denialCode, mandatoryRefusal, statBits, epermCauses, VENV_PACKAGES_SAID } from '../lib/files.mjs';
+import { pathState, readText, listDir, realPath, entriesByMetadata, denialCode, mandatoryRefusal, statBits, epermCauses, VENV_PACKAGES_SAID } from '../lib/files.mjs';
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
 import { safe, saw, withdrawUnreceipted } from '../lib/report.mjs';
 import { escapeHidden, escapeJsonHidden } from '../lib/escape.mjs';
@@ -142,10 +142,16 @@ const all = [];
 // word, while docs/ARCHITECTURE.md said no name decides a walk (WV-4). The two sentences that are not names (a venv's
 // own package folders; a repository inside another, which the repository walk stops before) are said after them.
 const LIBRARY = 'macOS\'s own Library';
+// What macOS kept to itself: how much was left unsearched, where the disk says, and what would search it.
+const keptSaid = (kept) => {
+  const named = kept.map((p) => { const n = entriesByMetadata(p); return n === null ? short(p) : `${short(p)} (${n} item${n === 1 ? '' : 's'})`; });
+  const trash = kept.some((p) => basename(p) === '.Trash');
+  return `macOS keeps ${named.join(', ')} to itself, so ${kept.length === 1 ? 'it was' : 'they were'} not searched: give this terminal Full Disk Access and run again to search ${kept.length === 1 ? 'it' : 'them'}${trash ? ', or empty the Trash' : ''}`;
+};
 const namesSaid = (names) => {
-  const n = names.filter((x) => x !== LIBRARY && x !== VENV_PACKAGES_SAID && x !== NESTED_SAID && !isAbsolute(x));
-  const kept = names.filter((x) => isAbsolute(x)).map(short);
-  return `folders named ${n.length > 1 ? `${n.slice(0, -1).join(', ')} or ${n.at(-1)}` : n[0]}, and ${LIBRARY} folders, are not searched${names.includes(VENV_PACKAGES_SAID) ? `; ${VENV_PACKAGES_SAID} are checked with the environment, not searched for other environments` : ''}${names.includes(NESTED_SAID) ? `; ${NESTED_SAID} is not looked for: pass --paths with it to include it` : ''}${kept.length ? `; macOS keeps ${kept.join(', ')} to itself, so ${kept.length === 1 ? 'it was' : 'they were'} not searched` : ''}`;
+  const said = names.filter((x) => x.startsWith('macOS keeps'));
+  const n = names.filter((x) => x !== LIBRARY && x !== VENV_PACKAGES_SAID && x !== NESTED_SAID && !said.includes(x));
+  return `folders named ${n.length > 1 ? `${n.slice(0, -1).join(', ')} or ${n.at(-1)}` : n[0]}, and ${LIBRARY} folders, are not searched${names.includes(VENV_PACKAGES_SAID) ? `; ${VENV_PACKAGES_SAID} are checked with the environment, not searched for other environments` : ''}${names.includes(NESTED_SAID) ? `; ${NESTED_SAID} is not looked for: pass --paths with it to include it` : ''}${said.length ? `; ${said[0]}` : ''}`;
 };
 // They are said on the line under the all-clear, so its own sentence stays the one a reader (and a script) knows.
 // `asked`: { why } for a check that doesn't search the --paths folders at all. The person named those folders, and up
@@ -562,9 +568,9 @@ for (const inc of chosen) {
     // couldn't be asked keeps its own UNKNOWN row (and the exit code at 2) beside it, and one that isn't running its
     // REVIEW row; a finding or another gap doesn't.
     const onlyEngineGaps = counted(results).every((r) => r.engine && (r.status === 'UNKNOWN' || r.notRunning));
-    if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked${lookedFor ? ` for ${lookedFor},` : ''} in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean), inc.sitePackages ? [...VENV_NOT_WALKED, LIBRARY, VENV_PACKAGES_SAID, ...macKept] : undefined, inc.sitePackages ? undefined : { why: `this check reads ${inc.versionFiles?.product ?? 'the product'}'s own version files at the paths its installers use, and --paths does not add to them` });
+    if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked${lookedFor ? ` for ${lookedFor},` : ''} in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean), inc.sitePackages ? [...VENV_NOT_WALKED, LIBRARY, VENV_PACKAGES_SAID, ...(macKept.length ? [keptSaid(macKept)] : [])] : undefined, inc.sitePackages ? undefined : { why: `this check reads ${inc.versionFiles?.product ?? 'the product'}'s own version files at the paths its installers use, and --paths does not add to them` });
     // the all-clear says this itself; with any other row the same line goes under them (seat 9)
-    if (macKept.length && counted(results).length) note('2', `macOS keeps ${macKept.map(short).join(', ')} to itself, so ${macKept.length === 1 ? 'it was' : 'they were'} not searched`);
+    if (macKept.length && counted(results).length) note('2', keptSaid(macKept));
   }
 
   // the window's start: an explicit UTC instant, or the review is UNKNOWN (up to 0.1.9 a bare date read SAFE: see

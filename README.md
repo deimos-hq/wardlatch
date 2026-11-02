@@ -152,7 +152,8 @@ reason) or `REVIEW` (something to look at, such as a new workflow file or plugin
 anything is exposed, otherwise **2** if anything could not be tested, otherwise **0**. Review lines never change it.
 A folder it can't open is could-not-be-tested whoever owns it, and no all-clear is printed beside it (the quick look round
 the home folder leaves out `~/.Trash` and, in `~/Pictures`, `Photo Booth Library` and `*.photoslibrary` when they refuse with
-EPERM, and the all-clear names them): a person's
+EPERM, and the line under the result names them, says how many items went unsearched, and how to search them; one that
+holds nothing is proven empty from its own metadata and isn't mentioned): a person's
 folder (it could hold their projects) gets a line of its own, and the folders a service owns (a database's data,
 certbot's keys) are grouped into one line per check (`15 folders owned by service accounts, not searched`), with each
 folder's error, mode and owner under it and the advice to run Wardlatch with sudo to include them. A folder

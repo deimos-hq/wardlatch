@@ -267,3 +267,21 @@ for (const [sub, re] of [['.Trash', /\.Trash/], ['Pictures/anything.photoslibrar
     assert.match(JSON.stringify(r.rows.flatMap((x) => [x.reason, ...(x.notSearched ?? [])])), re, 'nothing in the row names it');
   });
 }
+
+// A folder's own metadata survives the refusal: listing is refused, stat is not, and on APFS size and nlink count its entries.
+for (const [sub, re] of [['.Trash', /\.Trash \(1 item\)/], ['Pictures/anything.photoslibrary', /photoslibrary \(1 item\)/]]) {
+  test(`a refused ~/${sub} says how many items were not searched, and how to search them`, { skip: process.platform !== 'darwin' }, (t) => {
+    const h = planted(sub), r = sandboxed(h, join(h, sub));
+    if (!r) return t.skip('a sandbox cannot be applied here (this run is already inside one)');
+    const said = JSON.stringify(r.rows.flatMap((x) => [x.reason, ...(x.notSearched ?? [])]));
+    assert.match(said, re, said.slice(0, 300));
+    assert.match(said, /Full Disk Access/);
+  });
+}
+test('a refused ~/.Trash with nothing in it is proven empty, so nothing is said to be unsearched', { skip: process.platform !== 'darwin' }, (t) => {
+  const h = fresh('h'), d = join(h, '.Trash'); mkdirSync(d);
+  const r = sandboxed(h, d);
+  if (!r) return t.skip('a sandbox cannot be applied here (this run is already inside one)');
+  assert.equal(r.code, 0);
+  assert.doesNotMatch(JSON.stringify(r.rows.flatMap((x) => [x.reason, ...(x.notSearched ?? [])])), /\.Trash/);
+});
