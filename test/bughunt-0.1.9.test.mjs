@@ -681,7 +681,9 @@ test('wordpress: a core with no plugins folder on disk but a wp-config.php that 
   put(join(s, 'wp-includes', 'version.php'), '<?php $wp_version = "6.8.3";'); put(join(s, 'wp-config.php'), "<?php\ndefine('WP_PLUGIN_DIR', __DIR__ . '/plugs');\n");
   plugin(join(s, 'plugs'), 'updraftplus', 'updraftplus.php', '1.26.12');
   const r = wp(root);
-  assert.ok(unknowns(r).some((x) => /moves the plugins folder/.test(x.reason)), show(r)); assert.equal(r.code, 2);
+  // Exit 1 since 2 Nov 2026: plugs/ holds the plugin with its main file, so it is found whatever the folder is called, and
+  // the doubt about the config stays beside it (seat 7's D7). It read UNKNOWN alone before.
+  assert.ok(unknowns(r).some((x) => /moves the plugins folder/.test(x.reason)), show(r)); assert.equal(r.code, 1);
 });
 
 test('wordpress: one plugins folder reached two ways (wp-content linked to the core\'s) is checked once, with no plugins field', () => {
@@ -1086,7 +1088,10 @@ const STOCK100 = "<?php\n$root_dir = dirname(dirname(__FILE__));\ndefine('CONTEN
 test('wordpress: Bedrock 1.0.0 (app/, config/ and wp/ side by side): stock reads app/ and reports the leftover beside it; a moved CONTENT_DIR or WP_PLUGIN_DIR in its config is UNKNOWN', () => {
   // Changed 2 Nov 2026. This asserted exit 0, with the unfixed 1.26.12 in content/plugins beside a stock site: that is the
   // gap seat 6's R4 is about. A leftover the config doesn't claim is on the web server all the same, as backup/plugins is.
-  assert.equal(wp(bedrock100('t78a', STOCK100)).code, 1);
+  const stock = wp(bedrock100('t78a', STOCK100));
+  assert.equal(stock.code, 1);
+  assert.ok(stock.rows.some((x) => x.status === 'SAFE' && /updraftplus 1\.26\.13/.test(x.what)), show(stock));
+  assert.ok(stock.rows.some((x) => x.status === 'EXPOSED' && /updraftplus 1\.26\.12/.test(x.what)), show(stock));
   assert.equal(wp(bedrock100('t78b', STOCK100.replace("'/app'", "'/content'"))).code, 2);
   assert.equal(wp(bedrock100('t78c', STOCK100, "<?php\ndefine('WP_PLUGIN_DIR', '/srv/p');\n")).code, 2);
 });

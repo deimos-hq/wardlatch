@@ -19,7 +19,7 @@ import { reposUnder, workflowsAddedSince, windowStart, NOT_WALKED as REPO_NOT_WA
 import { scanRepo } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite, checkPluginsFolder, isCopyName, NOT_WALKED as WP_NOT_WALKED } from '../lib/wordpress.mjs';
 import { scanHeaders } from '../lib/headers.mjs';
-import { pathState, readText, listDir, denialCode, mandatoryRefusal, statBits, epermCauses, VENV_PACKAGES_SAID } from '../lib/files.mjs';
+import { pathState, readText, listDir, realPath, denialCode, mandatoryRefusal, statBits, epermCauses, VENV_PACKAGES_SAID } from '../lib/files.mjs';
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
 import { safe, saw, withdrawUnreceipted } from '../lib/report.mjs';
 import { escapeHidden, escapeJsonHidden } from '../lib/escape.mjs';
@@ -143,8 +143,9 @@ const all = [];
 // own package folders; a repository inside another, which the repository walk stops before) are said after them.
 const LIBRARY = 'macOS\'s own Library';
 const namesSaid = (names) => {
-  const n = names.filter((x) => x !== LIBRARY && x !== VENV_PACKAGES_SAID && x !== NESTED_SAID);
-  return `folders named ${n.length > 1 ? `${n.slice(0, -1).join(', ')} or ${n.at(-1)}` : n[0]}, and ${LIBRARY} folders, are not searched${names.includes(VENV_PACKAGES_SAID) ? `; ${VENV_PACKAGES_SAID} are checked with the environment, not searched for other environments` : ''}${names.includes(NESTED_SAID) ? `; ${NESTED_SAID} is not looked for: pass --paths with it to include it` : ''}`;
+  const n = names.filter((x) => x !== LIBRARY && x !== VENV_PACKAGES_SAID && x !== NESTED_SAID && !isAbsolute(x));
+  const kept = names.filter((x) => isAbsolute(x)).map(short);
+  return `folders named ${n.length > 1 ? `${n.slice(0, -1).join(', ')} or ${n.at(-1)}` : n[0]}, and ${LIBRARY} folders, are not searched${names.includes(VENV_PACKAGES_SAID) ? `; ${VENV_PACKAGES_SAID} are checked with the environment, not searched for other environments` : ''}${names.includes(NESTED_SAID) ? `; ${NESTED_SAID} is not looked for: pass --paths with it to include it` : ''}${kept.length ? `; macOS keeps ${kept.join(', ')} to itself, so ${kept.length === 1 ? 'it was' : 'they were'} not searched` : ''}`;
 };
 // They are said on the line under the all-clear, so its own sentence stays the one a reader (and a script) knows.
 // `asked`: { why } for a check that doesn't search the --paths folders at all. The person named those folders, and up
@@ -266,6 +267,8 @@ function gaps(results, inc, kind, dirs, { found = [], review = [], links = [], d
   for (const d of [...new Set(links)].filter((x) => !found.includes(x))) {
     // the installs check reads a linked venv's own package folders through the link (lib/installs.mjs), and says so
     if (kind === 'install' && pathState(join(d, 'pyvenv.cfg')) === 'file') unknown(d, 'is a link to a virtual environment somewhere else: its own packages were checked through it, and nothing else in it was searched, since links are not followed: pass --paths with the folder it points to, to include it');
+    // a target this run can't reach may not be a folder at all, and --paths would meet the same refusal (seat 8)
+    else if (pathState(d) === 'denied') unknown(d, 'is a link this run could not follow to its end, so what it leads to was not looked at');
     else unknown(d, 'is a link to a folder somewhere else, so it was not followed: pass --paths with the folder it points to, to include it');
   }
   const past = [...new Set(deep)];
@@ -490,14 +493,17 @@ for (const inc of chosen) {
     // Read-only: versions from the product's own files, dropped files in site-packages by hash, local image digests.
     // Nothing found is run (lib/installs.mjs).
     const show = (r, what, fix) => {
-      results.push({ incident: inc.id, kind: 'install', ...r, fix: r.status === 'EXPOSED' ? fix : r.status === 'REVIEW' ? inc.reviewFix : undefined });
+      // reviewFix is advice about a file on this machine. A row about an image is not one: until 2 Nov 2026 a moved Docker
+      // tag told a healthy machine to rotate every secret (seat 8).
+      const review = r.engine ? undefined : inc.reviewFix;
+      results.push({ incident: inc.id, kind: 'install', ...r, fix: r.status === 'EXPOSED' ? fix : r.status === 'REVIEW' ? review : undefined });
       print(r.status, what);
       if (r.reason) note({ EXPOSED: '31', SAFE: '2' }[r.status] ?? '33', r.reason);
       if (r.status === 'EXPOSED') note('2', `fix: ${fix}`);
-      else if (r.status === 'REVIEW' && inc.reviewFix) note('2', `check: ${inc.reviewFix}`);
+      else if (r.status === 'REVIEW' && review) note('2', `check: ${review}`);
     };
     // what was looked at, for the all-clear's receipt; folders that couldn't be opened, for UNKNOWN rows
-    const searched = [], denied = [], foundUnread = [], links = [], deep = [];
+    const searched = [], denied = [], foundUnread = [], links = [], deep = [], macKept = [];
     let lookedFor = '';
     if (inc.versionFiles) {
       const v = inc.versionFiles;
@@ -516,7 +522,7 @@ for (const inc of chosen) {
       if (explicitPaths && !searchable.length) show({ status: 'UNKNOWN', reason: `none of the folders given with --paths exist (${roots.map(short).join(', ')}), so no virtual environment there was searched` }, 'folders given with --paths');
       denied.push(...lockedRoots);
       const walked = [];
-      const dirs = sitePackagesDirs({ roots: searchable, denied, found: foundUnread, links, walked, deep });
+      const dirs = sitePackagesDirs({ roots: searchable, denied, found: foundUnread, links, walked, deep, kept: macKept });
       for (const r of checkSitePackages(inc.sitePackages, dirs)) show(r, `${r.what}  ${short(r.dir)}`, inc.sitePackages.fix);
       // the folders the person asked about as well as the environments found in them: a --paths folder with no virtual
       // environment in it left nothing in the receipt, so the all-clear could not be read as having searched the one
@@ -556,7 +562,7 @@ for (const inc of chosen) {
     // couldn't be asked keeps its own UNKNOWN row (and the exit code at 2) beside it, and one that isn't running its
     // REVIEW row; a finding or another gap doesn't.
     const onlyEngineGaps = counted(results).every((r) => r.engine && (r.status === 'UNKNOWN' || r.notRunning));
-    if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked${lookedFor ? ` for ${lookedFor},` : ''} in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean), inc.sitePackages ? [...VENV_NOT_WALKED, LIBRARY, VENV_PACKAGES_SAID] : undefined, inc.sitePackages ? undefined : { why: `this check reads ${inc.versionFiles?.product ?? 'the product'}'s own version files at the paths its installers use, and --paths does not add to them` });
+    if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked${lookedFor ? ` for ${lookedFor},` : ''} in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean), inc.sitePackages ? [...VENV_NOT_WALKED, LIBRARY, VENV_PACKAGES_SAID, ...macKept] : undefined, inc.sitePackages ? undefined : { why: `this check reads ${inc.versionFiles?.product ?? 'the product'}'s own version files at the paths its installers use, and --paths does not add to them` });
   }
 
   // the window's start: an explicit UTC instant, or the review is UNKNOWN (up to 0.1.9 a bare date read SAFE: see
@@ -605,7 +611,7 @@ for (const inc of chosen) {
   if (inc.type === 'wordpress') {
     const denied = [...lockedRoots];
     const privateDot = [], coreOnly = [], links = [], loose = [], deep = [];
-    const sites = wordpressUnder(searchable, 5, denied, privateDot, coreOnly, links, { loose, deep, names: inc.rules.map((x) => x.plugin) });
+    const sites = wordpressUnder(searchable, 5, denied, privateDot, coreOnly, links, { loose, deep, names: inc.rules.map((x) => x.plugin), mains: Object.fromEntries(inc.rules.map((x) => [x.plugin, x.mainFile])) });
     for (const core of coreOnly) {
       const reason = 'WordPress core is here, but no plugins folder is where WordPress, a moved wp-content, Bedrock or its wp-config.php puts one, so its plugins were not checked: pass --paths for the folder that holds them';
       results.push({ incident: inc.id, kind: 'wordpress', site: core, status: 'UNKNOWN', what: 'plugins folder', reason });
@@ -621,13 +627,22 @@ for (const inc of chosen) {
     // given with --paths that is one listed plugin's own folder: checked, never passed over (WV-1), with or without its
     // main file (up to this fix only with it, so a backdoored copy missing rank-math-pro.php read SAFE: R2-N7)
     for (const p of loose) for (const f of checkPluginsFolder(p, inc.rules, inc.addedSince)) show(p, f);
+    // A folder given with --paths that is a listed plugin's: its parent is checked for those plugins, once, however many of
+    // them were named, or three paths at three copies counted nine rows (seat 8). A link names what it points at: --paths
+    // current, with current -> seo-by-rank-math-pro (seat 7's D7b).
+    const asked = new Map();
     for (const r of searchable) {
-      const own = inc.rules.filter((x) => basename(r) === x.plugin || isCopyName(basename(r), x.plugin));
-      if (own.length && !loose.includes(dirname(r))) for (const f of checkPluginsFolder(dirname(r), own)) show(r, f);
+      const real = realPath(r) ?? r, parent = dirname(real);
+      const own = inc.rules.filter((x) => basename(real) === x.plugin || isCopyName(basename(real), x.plugin));
+      if (!own.length || loose.includes(parent)) continue;
+      const a = asked.get(parent) ?? { r, rules: new Set() };
+      for (const x of own) a.rules.add(x);
+      asked.set(parent, a);
     }
+    for (const [parent, a] of asked) for (const f of checkPluginsFolder(parent, [...a.rules])) show(a.r, f);
     gaps(results, inc, 'wordpress', denied, { review: privateDot, links, deep, levels: 5 });
     // sites found with none of the listed plugins are named as found (up to b03e7be this said "no WordPress installs found")
-    const looseSaid = loose.length ? `; ${loose.length} plugins folder${loose.length === 1 ? '' : 's'} with no WordPress core beside ${loose.length === 1 ? 'it' : 'them'} checked, with none of the listed plugins` : '';
+    const looseSaid = loose.length ? `; ${loose.length} plugins folder${loose.length === 1 ? '' : 's'} with no WordPress core using ${loose.length === 1 ? 'it' : 'them'} checked, with none of the listed plugins` : '';
     if (!counted(results).length) allClear(results, inc, 'wordpress', `${sites.length ? `${sites.length} WordPress install${sites.length === 1 ? '' : 's'} found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched; none has any of the listed plugins` : `no WordPress installs found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched (run it on the server, or pass --paths)`}${looseSaid}`, [...searchable, ...loose], [...WP_NOT_WALKED, LIBRARY]);
     else if (counted(results).some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.reviewFix}`);
   }

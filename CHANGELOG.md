@@ -14,9 +14,11 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 ## [0.1.12] - 2026-11-02
 
 We found every defect under Security below ourselves, on 2 November 2026, in a second read of 0.1.11 made after it
-shipped. Each could read `SAFE` where something was wrong. If 0.1.11 or earlier said `SAFE`, run this version. The Mac
-fix download doesn't change. The advisories SECURITY.md promises for these defects, and for those in 0.1.11, are not open
-yet. `test/seat6.test.mjs` holds a test for each, every one failing on 0.1.11.
+shipped and two reviews of this release's first draft. Each could read `SAFE` where something was wrong. If 0.1.11 or
+earlier said `SAFE`, run this version. The Mac fix download doesn't change. The advisories SECURITY.md promises for these
+defects, and for those in 0.1.11, are not open yet. `test/seat6.test.mjs`, `test/seat7.test.mjs` and `test/seat8.test.mjs`
+hold the tests. Two of seat 6's, I4-H2 and R11, pass on 0.1.11: they pin fixes already made. There is no test for the Linux
+link name.
 
 ### Security
 
@@ -27,33 +29,50 @@ yet. `test/seat6.test.mjs` holds a test for each, every one failing on 0.1.11.
 - **A link to a folder the run couldn't reach was dropped with no row.** All four walks asked whether a link led to a
   folder, and a locked target is neither a folder nor gone. A venv, repository or WordPress site behind one read `SAFE`,
   exit 0, while the same link reachable read UNKNOWN. On Linux a link with a name that isn't valid UTF-8 fell in the same
-  hole. It is UNKNOWN now.
+  hole. Below the folders searched it is UNKNOWN now, and so is a link to a file behind a locked folder, which the run
+  can't tell from one. In the quick look round the home folder only a link named like a venv is reported.
 
-- **0.1.11 put a name back in charge of a verdict.** Its quick look round the home folder left out `.Trash`,
-  `Photo Booth Library` and `*.photoslibrary` by name at any depth, so a locked `~/Documents/clients.photoslibrary`
-  holding a stealer read `SAFE` and the same folder called `work` read UNKNOWN. Now only `~/.Trash`, and those two in
-  `~/Pictures`, are left out, and only when macOS itself refuses them (EPERM). Those three are still not searched.
+- **The quick look missed a venv it could not enter.** `~/app/.venv` as a link to a locked target, or a folder of mode
+  0644, read `SAFE`. It is UNKNOWN now.
 
-- **The temp-folder fix in 0.1.11 stopped a level short.** With `/private/var/folders`, or a level below it, refused, the
-  run read `SAFE`, exit 0, with `T` gone from what it looked at. Those levels are UNKNOWN now.
+- **0.1.11 put a name back in charge of a verdict.** Its quick look left out `.Trash`, `Photo Booth Library` and
+  `*.photoslibrary` by name at any depth, so a locked `~/Documents/clients.photoslibrary` holding a stealer read `SAFE` and
+  the same folder called `work` read UNKNOWN. Now only `~/.Trash`, and `Photo Booth Library` and any `*.photoslibrary` in
+  `~/Pictures`, are left out, and only on EPERM, which macOS gives there and a sandbox or security tool can give too.
+  When they are refused they are not searched, and the all-clear says so by name.
+
+- **The temp-folder fix in 0.1.11 stopped short.** With `/private/var/folders`, or the level below it, refused, the run
+  read `SAFE`, exit 0, with `T` gone from what it looked at. Those levels are UNKNOWN now, as is the per-user folder through
+  `T`'s row. Inside a sandbox that refuses them this can read UNKNOWN where nothing is wrong: it is a place not looked at.
 
 - **A `sitecustomize.py` changed by one byte read `SAFE`.** The published file was `EXPOSED` and anything else had no row,
-  by an option that silenced the line. It is a REVIEW line now, and the option is gone. The owner's decision, 2 Nov 2026.
+  by an option that silenced the line. It is a REVIEW line now, and the option is gone. A file of that name inside a
+  site-packages turns that check's SAFE into REVIEW, exit 0. Homebrew's own is one folder up and isn't read. A
+  `sitecustomize/` package, which Python runs the same way, is a REVIEW line too. The owner's decision, 2 Nov 2026.
 
-- **WordPress leftovers read `SAFE`.** `<site>/content/plugins` beside a stock site is checked now, as `backup/plugins`
-  was. A copy of a listed plugin named with a space or a prefix (`plugin copy`, `plugin 2`, `old-plugin`) is that plugin,
-  in the live plugins folder too, where it had only an "added" REVIEW line. A copy with its main file gone has its
-  indicator searched. `--paths` naming a copy is checked as the exact name is.
+- **WordPress leftovers read `SAFE`.** `<site>/content/plugins` beside a stock site is checked now, as `backup/plugins` was,
+  and so is a folder under any other parent that holds a listed plugin with its main file (`wp-content/upgrade`,
+  `backup/old`). A folder holding a listed plugin's main file is that plugin, whatever it is called (`rank-math-pro`, a
+  pasted version number, a change of case), in the live plugins folder too, where it had only an "added" REVIEW line. A
+  folder with the plugin's name in it, set off by anything but a letter or digit (`plugin copy`, `plugin 2`, `old-plugin`)
+  and without the main file has its indicator searched and is a REVIEW line. A link at a copy's name counts. `--paths`
+  naming a copy, or a link to the plugin, is checked as the exact name is.
 
-- **An encrypted PKCS #8 key with non-minimal lengths read `SAFE`.** LibreSSL loads one. 0.1.11's entry on non-minimal keys
-  left this out. It is UNKNOWN now.
+- **Private keys in forms LibreSSL loads read `SAFE`.** An encrypted PKCS #8 key with non-minimal lengths, however long; a
+  constructed OCTET STRING; an outer `3f 10` or a version `1f 02`; a short key with no NUL byte and a small version. 0.1.11's
+  entry on non-minimal keys left these out. They are found or UNKNOWN now.
 
-- **Three header forms read `SAFE`.** `--header` in a TOML inline table, a git value continued by a backslash on a file's
-  last line with no line end, and a FIFO at `.mcp.json` in a project with no `.git`.
+- **Header forms read `SAFE`.** In TOML, `--header` or `http_headers` in an inline table, a quoted key holding `=`, a `]` or a
+  quoted word in a comment, a triple-quoted value and a `\u0040` escape: the file is now read by a small tokenizer in place of
+  line by line. In git config, a value continued by a backslash on a file's last line with no line end, and quotes inside
+  a value (`ada"@"example.org`). A FIFO at `.mcp.json` in a project with no `.git`, and a project file in a repository's
+  subfolder, three levels down.
 
 ### Fixed
 
-- A PKCS #1 public key in DER read UNKNOWN, exit 2, for an ordinary public key. It stays quiet now.
+- A PKCS #1 public key in DER read UNKNOWN, exit 2, for an ordinary public key. It stays quiet now, on its whole shape: two
+  INTEGERs, a modulus and a small exponent.
+- A `--paths` folder that is a plugin's now checks its parent once, however many were named.
 - `test/round6.test.mjs` failed in place of skipping inside a sandbox.
 - `test/fix-macos.check.sh` said it is safe on your own Mac, and on a Mac with a network it contacts the advisory's test
   host. Its header says so now, and how to keep it offline.

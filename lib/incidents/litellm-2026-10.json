@@ -3,7 +3,7 @@
   "type": "installs",
   "title": "LiteLLM 1.107.0 (PyPI and Docker) shipped a credential stealer",
   "date": "2026-10-21",
-  "summary": "LiteLLM's release pipeline was hijacked on 21 October 2026. litellm==1.107.0 on PyPI (all seven wheels, 11:39 to 13:23 UTC) and the Docker images v1.107.0, latest, main-latest and main-stable (from 11:46 UTC; until 13:51 on GHCR and 14:20 on Docker Hub) carried a credential stealer that runs on every Python start. Earlier versions are not affected, per LiteLLM. Wardlatch never starts Python for this check: it looks for the litellm-1.107.0.dist-info folder and the files the wheels drop into site-packages (cook.pth, cook.py, and sitecustomize.py by SHA-256), the stealer's markers in /tmp, and the compromised image digests and tags.",
+  "summary": "LiteLLM's release pipeline was hijacked on 21 October 2026. litellm==1.107.0 on PyPI (all seven wheels, 11:39 to 13:23 UTC) and the Docker images v1.107.0, latest, main-latest and main-stable (from 11:46 UTC; until 13:51 on GHCR and 14:20 on Docker Hub) carried a credential stealer that runs on every Python start. Earlier versions are not affected, per LiteLLM. Wardlatch never starts Python for this check: it looks for the litellm-1.107.0.dist-info folder and the files the wheels drop into site-packages (cook.pth, cook.py, and sitecustomize.py by SHA-256, and a REVIEW line for any other file of that name), the stealer's markers in /tmp, and the compromised image digests and tags.",
   "advisory": "https://docs.litellm.ai/blog/security-incident-oct-21-2026",
   "sitePackages": {
     "iocFiles": [
