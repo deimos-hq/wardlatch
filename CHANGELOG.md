@@ -15,8 +15,8 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 We found every defect under Security below ourselves, on 2 November 2026, in a second read of 0.1.11 made after it
 shipped, three reviews of this release's drafts, and a differential against 0.1.11 over about 250,000 generated cases. Each could read `SAFE` where something was wrong. If 0.1.11 or
-earlier said `SAFE`, run this version. The Mac fix download doesn't change. The advisories SECURITY.md promises for these
-defects, and for those in 0.1.11, are not open yet. `test/seat6.test.mjs` to `test/seat10.test.mjs` hold the tests. Two of seat 6's, I4-H2 and R11, pass on 0.1.11: they pin fixes already made. There is no test for the Linux
+earlier said `SAFE`, run this version. The Mac fix download doesn't change. The advisories, published on 2 Nov 2026: GHSA-qg36-5mwx-mvpf for these
+defects, and GHSA-c2fw-7h9h-g6qr and GHSA-j6fm-jfg3-q89q for those in 0.1.11. `test/seat6.test.mjs` to `test/seat10.test.mjs` hold the tests. Two of seat 6's, I4-H2 and R11, pass on 0.1.11: they pin fixes already made. There is no test for the Linux
 link name.
 
 ### Security
@@ -94,7 +94,7 @@ We found every defect under Security below ourselves, in reviews of our own work
 and each entry ends with the day it was found and the day it was fixed (dates in US Pacific time, as the commits record
 them). The fixes to the command ship in this package. The Mac fix download changes only when the site serves the new
 script and its digest together (SECURITY.md, step 4), so a copy downloaded before then has none of its fixes. The
-advisories SECURITY.md promises for these defects are not open yet.
+advisories, published on 2 Nov 2026, are GHSA-c2fw-7h9h-g6qr for the command and GHSA-j6fm-jfg3-q89q for the Mac fix.
 
 ### Security
 
