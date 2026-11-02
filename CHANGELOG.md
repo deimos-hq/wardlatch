@@ -19,6 +19,24 @@ SECURITY.md promises for them are not open yet; the release that ships them stat
 
 ### Security
 
+- **Folders Wardlatch could not open were passed over in four more places, and each read `SAFE`.** All four are in 0.1.10
+  too. A folder name that isn't valid UTF-8 read as not there, on Linux, and everything under it was skipped, in every
+  walker. A folder the quick look round the home folder could not open was skipped with no row, so a stealer in
+  `~/Documents` read `SAFE`, exit 0, on a terminal without access to it; it is UNKNOWN now, except `.Trash` and the two
+  Photos libraries, which macOS keeps to itself on every Mac. A settings file the system refused with EPERM was counted
+  as not used, when the person's own tools may read it; it is UNKNOWN now. This user's own per-user temp folder that
+  could not be listed was dropped; it is UNKNOWN now. And a `PATH` folder that can be entered but not listed hid
+  `php8.1`; for a rule with several names it is UNKNOWN now. `test/round6.test.mjs`. *Found and fixed 2 Nov 2026.*
+
+- **Known false `SAFE`s not fixed in this release, found 2 Nov 2026.** All are read from a rule or a parser, and each
+  was reproduced. The git config parser misses `[http] extraHeader = ...` on one line, a value continued with a
+  backslash, and a space before a `;` inside quotes. WordPress: a compromised copy under a folder beside a core, or in
+  a plugin folder with another name (`plugins.bak`, `name-3.0.123`), or at `Version: 3.0.123.0`, is not matched. An
+  image with no repository (`<none>`) and a known-bad digest is dropped. The LiteLLM rule's tag list is narrower than
+  its own text. A `--target` pip layout, a bare repository, `.mcp.json` outside a git repository, and a TOML `args`
+  array are not read. `--paths` with a folder nearer to any of these does not help; treat a `SAFE` on them as not
+  having looked.
+
 - **A failed control could hide the only EXPOSED the Mac fix can print (never released).** Round 5 took the date off
   curl's 0 and left the 0 inside the control's `if`, so when the ordinary website failed for any reason (a DNS block, a
   firewall, a timeout, an inspecting proxy) the test site was not read, and a Mac whose curl verified the advisory's

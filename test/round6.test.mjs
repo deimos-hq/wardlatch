@@ -4,7 +4,7 @@
 import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { generateKeyPairSync } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -12,6 +12,8 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scanRepo } from '../lib/secrets.mjs';
 import { canaryExpired } from '../lib/probe.mjs';
+import { pathState, listDir } from '../lib/files.mjs';
+import { copiesMatching, tempDirs } from '../lib/binaries.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
@@ -28,8 +30,8 @@ const repoWith = (name, files) => {
   git(repo, 'add', '-A'); git(repo, 'commit', '-q', '-m', 'x');
   return repo;
 };
-const cli = (args) => {
-  const r = spawnSync(process.execPath, [BIN, '--json', ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: { ...process.env, PATH: '/usr/bin:/bin', HOME: home, TMPDIR: home } });
+const cli = (args, env = {}, wrap = []) => {
+  const r = spawnSync(wrap[0] ?? process.execPath, [...wrap.slice(1), ...(wrap.length ? [process.execPath] : []), BIN, '--json', ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: { ...process.env, PATH: '/usr/bin:/bin', HOME: home, TMPDIR: home, ...env } });
   assert.ok(r.stdout, `no output (exit ${r.status}): ${r.stderr}`);
   return { code: r.status, results: JSON.parse(r.stdout).results };
 };
@@ -90,4 +92,78 @@ test('--paths: a folder that is not there is could-not-be-tested on the checks t
   // its control: a folder that IS there, and plays no part, must not cost an exit 2
   const here = join(dir, 'here'); mkdirSync(here, { recursive: true });
   assert.equal(cli(['--incident', 'gitlab-2026-10', '--no-containers', '--paths', here]).code, 0);
+});
+
+// ---- seat 5, the same day: the modules seat 1 did not reach. Each of these reads SAFE on 0.1.10 too.
+const asRoot = process.getuid?.() === 0;
+const realpathOf = (p) => spawnSync('/bin/realpath', [p], { encoding: 'utf8' }).stdout.trim() || p;
+
+test('seat 5 F1: a path built from a name that could not be decoded is unread, never "not there"', () => {
+  const odd = join(dir, 'caf\uFFFD');
+  assert.equal(pathState(odd), 'denied');
+  assert.ok(listDir(odd).denied, 'listDir must say denied');
+  // the control: an ordinary name that isn't there stays gone, or every missing folder would be UNKNOWN
+  assert.equal(pathState(join(dir, 'plain-gone')), 'gone');
+  assert.ok(listDir(join(dir, 'plain-gone')).gone);
+});
+
+test('seat 5 F2: a folder the home look cannot open is could-not-be-tested, not a stealer read as SAFE', { skip: asRoot }, () => {
+  const h = join(dir, 's5f2-home');
+  const sp = join(h, 'Documents', 'proj', '.venv', 'lib', 'python3.12', 'site-packages');
+  mkdirSync(join(sp, 'litellm-1.107.0.dist-info'), { recursive: true });
+  writeFileSync(join(sp, 'litellm-1.107.0.dist-info', 'METADATA'), 'Metadata-Version: 2.1\nName: litellm\nVersion: 1.107.0\n');
+  writeFileSync(join(sp, 'cook.pth'), 'import os\n');
+  writeFileSync(join(h, 'Documents', 'proj', '.venv', 'pyvenv.cfg'), 'home = /usr/bin\n');
+  assert.equal(cli(['--incident', 'litellm-2026-10', '--no-containers'], { HOME: h, TMPDIR: h }).code, 1, 'the control: a readable folder is EXPOSED');
+  chmodSync(join(h, 'Documents'), 0);
+  try {
+    const { code, results } = cli(['--incident', 'litellm-2026-10', '--no-containers'], { HOME: h, TMPDIR: h });
+    assert.equal(code, 2, JSON.stringify(results));
+    assert.ok(!results.some((r) => r.status === 'SAFE'), 'an all-clear beside a folder that was not opened');
+  } finally { chmodSync(join(h, 'Documents'), 0o755); }
+});
+
+test('seat 5 F3: a settings file the system refuses with EPERM is could-not-be-tested, not "not used"', { skip: process.platform !== 'darwin' || !existsSync('/usr/bin/sandbox-exec') }, () => {
+  const h = join(dir, 's5f3-home'); mkdirSync(h, { recursive: true });
+  writeFileSync(join(h, '.gitconfig'), '[user]\n\tname = Ada Example\n\temail = ada@example.invalid\n');
+  writeFileSync(join(h, '.curlrc'), 'header = "X-User: ada@example.invalid"\n');
+  const env = { HOME: h, TMPDIR: h };
+  assert.equal(cli(['--incident', 'identity-headers-2026-10', '--no-containers'], env).code, 1, 'the control: readable, it is EXPOSED');
+  const profile = `(version 1)(allow default)(deny file-read* (literal "${realpathOf(join(h, '.curlrc'))}"))`;
+  const { code, results } = cli(['--incident', 'identity-headers-2026-10', '--no-containers'], env, ['/usr/bin/sandbox-exec', '-p', profile]);
+  assert.equal(code, 2, JSON.stringify(results));
+});
+
+test('seat 5 F4: this user\'s own temp folder that can\'t be listed stays in the list, so it becomes an UNKNOWN row', { skip: asRoot }, () => {
+  const root = join(dir, 's5f4'); const t = join(root, 'aa', 'bb', 'T');
+  mkdirSync(t, { recursive: true });
+  mkdirSync(join(root, 'aa', 'cc'), { recursive: true }); // no T: nothing to report
+  chmodSync(t, 0);
+  try {
+    assert.ok(tempDirs('darwin', root).includes(t), 'the refused folder was dropped');
+    assert.ok(!tempDirs('darwin', root).includes(join(root, 'aa', 'cc', 'T')));
+  } finally { chmodSync(t, 0o755); }
+});
+
+test('seat 5 F6: a PATH folder that can be entered but not listed is could-not-be-tested for a rule with several names', { skip: asRoot }, () => {
+  const d = join(dir, 's5f6'); mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, 'php8.1'), '#!/bin/sh\necho PHP 8.1.2\n', { mode: 0o755 });
+  const odd = [];
+  assert.equal(copiesMatching('^php(?:\\d+(?:\\.\\d+)?)?$', d, [], odd, 'php').run.length, 1, 'the control: listable, the copy is found');
+  assert.deepEqual(odd, []);
+  chmodSync(d, 0o111);
+  try {
+    const odd2 = [];
+    copiesMatching('^php(?:\\d+(?:\\.\\d+)?)?$', d, [], odd2, 'php');
+    assert.deepEqual(odd2, [d]);
+  } finally { chmodSync(d, 0o755); }
+});
+
+test('seat 5 F2: what macOS keeps to itself is not reported from the home look, or every healthy run exits 2', { skip: asRoot }, () => {
+  const h = join(dir, 's5f2b-home');
+  for (const name of ['.Trash', 'Pictures/Photos Library.photoslibrary', 'Pictures/Photo Booth Library']) { mkdirSync(join(h, name), { recursive: true }); chmodSync(join(h, name), 0); }
+  try {
+    const { code, results } = cli(['--incident', 'litellm-2026-10', '--no-containers'], { HOME: h, TMPDIR: h });
+    assert.equal(code, 0, JSON.stringify(results));
+  } finally { for (const name of ['.Trash', 'Pictures/Photos Library.photoslibrary', 'Pictures/Photo Booth Library']) chmodSync(join(h, name), 0o755); }
 });
