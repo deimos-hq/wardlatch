@@ -11,11 +11,13 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
-We found every defect under Security below ourselves, in reviews of our own work from 29 to 31 October 2026, and
-each entry ends with the day it was found, the day it was fixed and the fixing commit (dates in US Pacific time, as
-the commits record them). None has shipped yet: the last release is 0.1.10, of 27 October, and the Mac fix download
-changes only when the site serves the new script and its digest together (SECURITY.md, step 4). The advisories
-SECURITY.md promises for them are not open yet; the release that ships them states the day it shipped.
+## [0.1.11] - 2026-11-02
+
+We found every defect under Security below ourselves, in reviews of our own work from 29 October to 2 November 2026,
+and each entry ends with the day it was found and the day it was fixed (dates in US Pacific time, as the commits record
+them). The fixes to the command ship in this package. The Mac fix download changes only when the site serves the new
+script and its digest together (SECURITY.md, step 4), so a copy downloaded before then has none of its fixes. The
+advisories SECURITY.md promises for these defects are not open yet.
 
 ### Security
 
@@ -1832,7 +1834,8 @@ Published 05:14 UTC. npm `gitHead`: `4d4f295`. The first release.
 npm also lists `0.0.0-stage` (21 October, 05:13 UTC), a 331-byte, two-file placeholder from npm's staged publishing,
 described on npm as a "Temporary package placeholder". It is not a release and holds none of Wardlatch's code.
 
-[Unreleased]: https://github.com/deimos-hq/wardlatch/compare/v0.1.10...main
+[Unreleased]: https://github.com/deimos-hq/wardlatch/compare/v0.1.11...main
+[0.1.11]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.11
 [0.1.10]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.10
 [0.1.9]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.9
 [0.1.8]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.8
