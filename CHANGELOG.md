@@ -608,9 +608,10 @@ and an attacker's reading of the specification. Each fix below has a test that f
   found a venv's packages only there, so a PyPy venv (`lib/pypy3.X/site-packages`), a Windows-layout one
   (`Lib/site-packages`) or an older PyPy one (beside `pyvenv.cfg`) holding the LiteLLM stealer read SAFE, exit 0, and
   a PyPy venv's certifi was never tested. They are found in every one of those layouts now. *Found and fixed 31 Oct
-  2026 (78d0dfc).* (Open, measured by this round's strict audit: the code takes any folder of a venv whose name begins
-  `lib`, in any case, as its lib folder, so a venv inside a project-venv's `libs/` is not looked for, and the line
-  under the all-clear names only `lib`, `lib64` and `Lib`.)
+  2026 (78d0dfc).* (That left a gap this round's strict audit measured — the code took any folder of a venv whose name
+  began `lib`, in any case, as its lib folder, so a venv inside a project-venv's `libs/` was not looked for — and
+  b7aea94 closed it: a venv's lib folders are `lib`, `lib64` and `Lib` under those names or any spelling this disk
+  opens them by, which is what the line under the all-clear now says.)
 - **A venv's own `bin`, `share` and `etc` were never searched, while the line under the all-clear said they were
   "checked with it".** 471a4ea (above) skipped them, so a stealer's venv inside a project-venv's own `lib/`, `share/`,
   `bin/` or `etc/` read SAFE, exit 0. A venv is now walked like any folder but its own package folders, which are
@@ -623,8 +624,9 @@ and an attacker's reading of the specification. Each fix below has a test that f
   another repository is not looked for: pass --paths with it to include it". *Found and fixed 31 Oct 2026 (fed35b6).*
 - **A DER key followed by more than 1 MB of other bytes was skipped with no row.** The key reader read files under a
   1 MB cap before it looked at their structure. It now reads the first 1 MB, and a key in it is a key. A file whose
-  first element is anything else still claims nothing past 1 MB. *Found and fixed 31 Oct 2026 (e85a3ef).* (Open,
-  measured by this round's strict audit: a PKCS #12 store over 1 MB holding a key reads SAFE.)
+  first element is anything else still claims nothing past 1 MB. *Found and fixed 31 Oct 2026 (e85a3ef).* (That left a
+  gap this round's strict audit measured — a store whose own outer element ran past the 1 MB cap was skipped with no
+  row at all — and fea30b3 closed it: such a file is now named, or UNKNOWN with the cap given, never skipped.)
 - **A loose copy of a plugins folder under any other parent read SAFE.** A `plugins` folder holding a listed plugin's
   folder is now checked as a site's are, whatever its parent, unless it sits in a found site's own folder. *Found and
   fixed 31 Oct 2026 (1a2b7e2).*
