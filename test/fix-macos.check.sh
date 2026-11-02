@@ -516,7 +516,7 @@ done
 # stand-in's, nothing left in TMPDIR, a line to read.
 sigrun_sig=INT
 sigrun() {
-  local s=$1 f=$2 pid i
+  local s=$1 f=$2 pid
   shift 2
   rm -rf "$work/tmp"; mkdir "$work/tmp"; rm -f "$r2/mark"
   set -m
