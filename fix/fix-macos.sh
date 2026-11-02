@@ -135,7 +135,19 @@ KEYTEXT=no_header,no_version,no_serial,no_signame,no_validity,no_subject,no_issu
 plain() { case "$1" in ''|*[!A-Za-z0-9\ /._+@,:=~%-]*) return 1 ;; esac; }
 linked() {
   local to me
-  to=$(readlink "$FILE" 2>/dev/null) || to=
+  # The target's bytes, exactly. Until this fix the line and the command below named the WRONG FILE when the target's
+  # name ended in a line break: `to=$(readlink "$FILE")` reported a link to "real.pem<LF>" as a link to real.pem, and
+  # told the reader to run this again on real.pem -- a decoy sitting beside it (F-6b0-1, round 4's strict audit; only
+  # whoever can make the link can do this, which for /etc/ssl is root).
+  # readlink cannot be fixed with a sentinel, which is what that finding proposed: MEASURED on this macOS, `readlink`
+  # prints a target that does not end in a line break WITH one added and a target that does end in one WITHOUT, so
+  # "real.pem" and "real.pem<LF>" both come out as the same 9 bytes. The information is gone inside readlink.
+  # /usr/bin/stat -nf '%Y' adds nothing (`-n`: no newline forced), so the two differ by their real byte (8 and 9,
+  # MEASURED), and `printf x` holds the end against the command substitution, which drops every trailing line break.
+  # `&&` keeps stat's own exit status when it fails, so an unreadable link still gives the empty $to the branches below
+  # expect, and nothing false is named. plain() then sees whatever the name really holds.
+  to=$(/usr/bin/stat -nf '%Y' "$FILE" 2>/dev/null && printf x) || to=
+  to=${to%x}
   case "$to" in /*|'') ;; *) to="$(dirname "$FILE")/$to" ;; esac
   me='<this script>'; case "$0" in *.sh) ! plain "$0" || me=$0 ;; esac
   if [ -z "$to" ] || plain "$to"; then

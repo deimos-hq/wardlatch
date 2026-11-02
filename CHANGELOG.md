@@ -865,6 +865,26 @@ These were found by the third read of 31 Oct 2026 (03d95c9), and each fix has a 
 - **The Mac fix's header said nothing read from its snapshot is taken on trust.** One reading is: the control before
   the change goes through the snapshot, and nothing bears it out (section 4 of ASSURANCE_CASE.md already said so).
   The header now names it. A comment, so only the digest changed, with CI's pin in the same commit. (202950c)
+- **A real line break in a crash's message started a verdict line of its own on stderr.** `lib/crash.mjs` split the
+  stack on every real line break and escaped each piece separately, so the message's own line breaks survived: an
+  error whose text held an LF before `SAFE     no LiteLLM 1.107.0 files or markers found` printed that as a line a
+  reader — or a reader's agent — sees under a crash that exits 2. APFS takes an LF in a name, so a path carries one
+  in exactly as it carries the four printable characters `\x0a` that were fixed on 31 October; the comment added then
+  said a line break inside a message stayed escaped, and it did not. The message and the frames are now escaped
+  apart: the end of the message comes from the error's own `message`, never from the shape of the text, and a line
+  break is kept only where the line after it is a stack frame. Found 31 Oct 2026, fixed 1 Nov 2026. (4a7feaf)
+- **The Mac fix named the wrong file when a linked bundle's target ended in a line break.** `/etc/ssl/cert.pem` as a
+  symbolic link to a file called `real.pem` followed by a line break was reported, and put into the printed
+  `WARDLATCH_CERT_FILE=... bash ...` command, as a link to `real.pem` — a different file, which can be sitting beside
+  it. `readlink` cannot tell the two names apart at all: measured on macOS 27.2, it prints a target that does not end
+  in a line break **with** one added and a target that does end in one **without**, so both come back as the same
+  bytes, and a command substitution drops what is left. The target is now read with `/usr/bin/stat -nf '%Y'`, which
+  adds nothing, and a sentinel holds the end, so `plain()` sees whatever the name really holds and a name with a line
+  break in it is never printed. Only whoever can create the link can do this, which for `/etc/ssl` is root. Found
+  31 Oct 2026, fixed 1 Nov 2026. The script's digest changes with it:
+  `bf0ac69c230796104a2547e9cffaba55a03ee27766d31659d6a60fff19856e07`, pinned in `ci.yml` in the same commit. The
+  site's download, the hash on its page and its changelog record have **not** been updated and must be, together,
+  before this script is published (SECURITY.md, step 4).
 
 ### Development (no code in the package changes)
 
