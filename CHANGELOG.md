@@ -28,14 +28,14 @@ SECURITY.md promises for them are not open yet; the release that ships them stat
   could not be listed was dropped; it is UNKNOWN now. And a `PATH` folder that can be entered but not listed hid
   `php8.1`; for a rule with several names it is UNKNOWN now. `test/round6.test.mjs`. *Found and fixed 2 Nov 2026.*
 
-- **Known false `SAFE`s not fixed in this release, found 2 Nov 2026.** All are read from a rule or a parser, and each
-  was reproduced. The git config parser misses `[http] extraHeader = ...` on one line, a value continued with a
-  backslash, and a space before a `;` inside quotes. WordPress: a compromised copy under a folder beside a core, or in
-  a plugin folder with another name (`plugins.bak`, `name-3.0.123`), or at `Version: 3.0.123.0`, is not matched. An
-  image with no repository (`<none>`) and a known-bad digest is dropped. The LiteLLM rule's tag list is narrower than
-  its own text. A `--target` pip layout, a bare repository, `.mcp.json` outside a git repository, and a TOML `args`
-  array are not read. `--paths` with a folder nearer to any of these does not help; treat a `SAFE` on them as not
-  having looked.
+- **Fourteen more places a real finding read `SAFE`, found and fixed 2 Nov 2026.** The git config parser now reads a section
+  and key on one line, a value continued with a backslash, and a `;` inside quotes. A TOML `args` array is read as a JSON
+  one is. A compromised WordPress copy beside a core, under a folder like `plugins.bak`, in a folder named for its
+  version, or at `Version: 3.0.123.0` is matched; a single-file plugin added in the window is a REVIEW line. A dangling
+  image with a known-bad digest is `EXPOSED`, and an engine whose list can't be read is UNKNOWN. A LiteLLM tag the rule's
+  text names, with an unlisted digest, is a REVIEW line. A bare repository, a `pip --target` folder, and `.mcp.json` in a
+  project with no `.git` are read. A failing program's warning is no longer taken for its version, a venv with only
+  `bin/python3` is probed, and a FIFO in place of a certifi bundle is UNKNOWN. `test/seat5.test.mjs`.
 
 - **A failed control could hide the only EXPOSED the Mac fix can print (never released).** Round 5 took the date off
   curl's 0 and left the 0 inside the control's `if`, so when the ordinary website failed for any reason (a DNS block, a

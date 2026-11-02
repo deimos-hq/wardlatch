@@ -566,7 +566,7 @@ for (const inc of chosen) {
   if (inc.type === 'workflows' && !start.error) {
     let repos = 0;
     const denied = [...lockedRoots], links = [], deep = [];
-    for (const repo of reposUnder(searchable, 4, denied, links, { deep })) {
+    for (const repo of reposUnder(searchable, 4, denied, links, { deep, bare: true })) {
       const added = workflowsAddedSince(repo, inc.since);
       // read, but the window isn't all here or a commit's time can't be read (a shallow repository, wherever it is cut;
       // a committer time that isn't a whole number): UNKNOWN with that reason, not as a repository git couldn't read
