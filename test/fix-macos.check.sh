@@ -1184,7 +1184,7 @@ if [ "$found" -gt 0 ]; then
   # the baseline control pauses too, so the first interrupt chance is before the write; let that one pass by
   # waiting for the SECOND touch of the sentinel, which is the control read after the file was replaced.
   interrupt_after() {   # $1 = script copy, $2 = bundle. Sets $code and $out.
-    local pid i
+    local pid
     rm -rf "$work/tmp"; mkdir "$work/tmp"
     rm -f "$work/at-the-write"
     set -m
@@ -2448,7 +2448,7 @@ derhdr() {   # $1 = hex starting at a SEQUENCE: prints the header's length in he
   if [ "$b" -lt 128 ]; then echo "4 $b"; elif [ "$b" -eq 129 ]; then echo "6 $((0x${1:4:2}))"; elif [ "$b" -eq 130 ]; then echo "8 $((0x${1:4:4}))"; else echo "0 0"; fi
 }
 respki() {   # $1 = certificate, $2 = SubjectPublicKeyInfo (DER hex), $3 = out: the certificate with that key, its signature kept
-  local h old oh _ t th tl tbs after inner
+  local h old oh t th tl tbs after inner
   h=$(/usr/bin/openssl x509 -in "$1" -outform DER | xxd -p | tr -d '\n'); old=$(spkihex "$1")
   read -r oh _ <<<"$(derhdr "$h")"; t=${h:$oh}; read -r th tl <<<"$(derhdr "$t")"
   { [ "$oh" -gt 0 ] && [ "$th" -gt 0 ]; } || fail "a key in another encoding: $1 is not a certificate this can rebuild"
