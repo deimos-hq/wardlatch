@@ -27,7 +27,7 @@ source=${1:-"$root/test/support/fixtures/macos-27.2-cert.pem"}
 # Every case that reports ok counts itself, and the end of the run checks the total: a case that stops running
 # because the bundle under test no longer has the shape it needs must not pass as silence. Bump this when you add
 # a case, and the run tells you the number to put here.
-expect_cases=102
+expect_cases=103
 # Cases that could not run on this machine, by name, each with a NOTE where it was skipped. Only two things put a
 # case here: running as root (a file can't be made unreadable to root) and running inside another sandbox
 # (sandbox-exec can't apply a second profile), and the second only when WL_NESTED_SANDBOX=1 says so.
@@ -182,14 +182,24 @@ behind /usr/bin/curl WARDLATCH_CURL "$r2/net.sh" 2
 behind /usr/bin/openssl WARDLATCH_OPENSSL "$r2/ossl.sh" 1
 cat >"$r2/curl" <<'STUB'
 #!/bin/bash
-# Stands in for /usr/bin/curl. The advisory's test host gets $STUB_TEST. A control call gets $STUB_CONTROL, or, when
-# $STUB_CONTROLS is set, the next of its answers, one per call, the last repeating (counted in $STUB_STATE). With
-# STUB_HOLD=1 the first control call touches $WL_MARK and waits, so a case can stop the run there.
+# Stands in for /usr/bin/curl. The advisory's test host gets $STUB_TEST, or, when $STUB_TESTS is set, the next of
+# its answers, one per call, the last repeating (counted in $STUB_TSTATE). A control call gets $STUB_CONTROL, or,
+# when $STUB_CONTROLS is set, the next of its answers, one per call, the last repeating (counted in $STUB_STATE).
+# With STUB_HOLD=1 the first control call touches $WL_MARK and waits, so a case can stop the run there.
 # r4: STUB_ONLY_FILE=1: a call whose --cacert is not $WARDLATCH_CERT_FILE itself gets 77, an answer nothing expects.
 # STUB_MARK_TEST=1: the call to the test host touches $WL_MARK first (the last reading a run takes).
+# r5b: $STUB_TESTS exists because the fix now reads the test host TWICE on the fix path -- once through the file as
+# it was, as the positive control for the canary, and once through the cleaned file -- and a single $STUB_TEST
+# cannot tell those two readings apart, which is exactly the blind spot that let F1 through.
 if [ -n "${STUB_ONLY_FILE:-}" ]; then prev=''; for a in "$@"; do if [ "$prev" = --cacert ] && [ "$a" != "$WARDLATCH_CERT_FILE" ]; then exit 77; fi; prev=$a; done; fi
 case "$*" in *we-have-a-problem.com*) [ -z "${STUB_MARK_TEST:-}" ] || : >"$WL_MARK" ;; esac
-case "$*" in *we-have-a-problem.com*) exit "${STUB_TEST:?}" ;; esac
+case "$*" in *we-have-a-problem.com*)
+  [ -n "${STUB_TESTS:-}" ] || exit "${STUB_TEST:?}"
+  tn=$(cat "${STUB_TSTATE:?}" 2>/dev/null); tn=$(( ${tn:-0} + 1 )); printf '%s' "$tn" >"$STUB_TSTATE"
+  ti=1; tlast=0
+  for a in $STUB_TESTS; do tlast=$a; [ "$ti" = "$tn" ] && exit "$a"; ti=$((ti + 1)); done
+  exit "$tlast" ;;
+esac
 n=$(cat "${STUB_STATE:-/dev/null}" 2>/dev/null); n=$(( ${n:-0} + 1 ))
 [ -z "${STUB_STATE:-}" ] || printf '%s' "$n" >"$STUB_STATE"
 if [ "${STUB_HOLD:-}" = 1 ] && [ "$n" = 1 ]; then : >"$WL_MARK"; /bin/sleep 3; fi
@@ -1303,10 +1313,17 @@ STUB
   cat >"$work/curl-stub-ba" <<'STUB'
 #!/bin/bash
 # Stands in for /usr/bin/curl where the control has to answer differently before and after the write. The test host
-# always gets $STUB_TEST. Control calls take their answer from $STUB_CONTROLS, one per call in the order given, the
+# gets $STUB_TEST, or the next of $STUB_TESTS (one per call, the last repeating, counted in $STUB_TSTATE) where the
+# two test-host readings -- the canary's control, through the file as it was, and the verdict, through the cleaned
+# file -- have to differ. Control calls take their answer from $STUB_CONTROLS, one per call in the order given, the
 # last repeating; the call number is kept in $STUB_STATE.
 case "$*" in
-  *we-have-a-problem.com*) exit "${STUB_TEST:?}" ;;
+  *we-have-a-problem.com*)
+    [ -n "${STUB_TESTS:-}" ] || exit "${STUB_TEST:?}"
+    tn=$(cat "${STUB_TSTATE:?}" 2>/dev/null || echo 0); tn=$((tn + 1)); printf '%s' "$tn" >"$STUB_TSTATE"
+    ti=1; tlast=0
+    for a in $STUB_TESTS; do tlast=$a; [ "$ti" = "$tn" ] && exit "$a"; ti=$((ti + 1)); done
+    exit "$tlast" ;;
 esac
 n=$(cat "${STUB_STATE:?}" 2>/dev/null || echo 0)
 n=$((n + 1)); printf '%s' "$n" >"$STUB_STATE"
@@ -1361,10 +1378,14 @@ STUB
 
   # The control loads both times, so it is meaningful and the test host's answer can be read. The third reading,
   # and the only one that ends in a verdict about the compromised keys.
+  # r5b, 1 Nov 2026: this case drove STUB_TEST=60, i.e. a test site that refused the UNFIXED bundle too, and
+  # asserted "now refuses the compromised keys" from it. A probe that will not accept a file holding the very
+  # roots its own chain anchors in has not shown it can tell the two files apart, so that assertion was a claim
+  # with no receipt. The inputs were wrong, not the expectation: 0 through the old file, 60 through the new one.
   cp "$work/original.pem" "$work/bothcontrols.pem"
-  printf '0' >"$work/ba-state"
+  printf '0' >"$work/ba-state"; rm -f "$work/ba-tstate"
   run "$work/bothcontrols.pem" WARDLATCH_CURL="$work/curl-stub-ba" STUB_STATE="$work/ba-state" \
-    STUB_CONTROLS="0 0" STUB_TEST=60
+    STUB_TSTATE="$work/ba-tstate" STUB_CONTROLS="0 0" STUB_TESTS="0 60"
   [ "$code" -eq 0 ] || fail "the control loads both times: expected exit 0, got $code"
   grep -q 'now refuses the compromised keys' <<<"$out" || fail "the control loads both times: it did not read the test host"
   [ "$(count "$work/bothcontrols.pem")" -eq $((total - found)) ] || fail "the control loads both times: the file was not fixed"
@@ -3093,9 +3114,18 @@ pinned=$(grep -v '^[[:space:]]*#' "$fix" | grep -c 'CURL_SSL_BACKEND=openssl /us
 [ "$pinned" -eq "$callsites" ] || fail "the curl backend: $pinned of $callsites curl call sites name CURL_SSL_BACKEND=openssl"
 cat >"$r2/curlbe" <<'STUB'
 #!/bin/bash
-# Stands in for /usr/bin/curl and writes the backend it was given, one line per call, to $BE_LOG.
+# Stands in for /usr/bin/curl and writes the backend it was given, one line per call, to $BE_LOG. The log is
+# written FIRST, before any answer is chosen, so the "the stub was never called" check below still measures every
+# call whatever the answer is. The test host gets $STUB_TEST, or the next of $STUB_TESTS (one per call, the last
+# repeating, counted in $STUB_TSTATE), because the fix reads the test host twice on the fix path.
 printf '%s\n' "${CURL_SSL_BACKEND:-<unset>}" >>"$BE_LOG"
-case "$*" in *we-have-a-problem.com*) exit "${STUB_TEST:?}" ;; esac
+case "$*" in *we-have-a-problem.com*)
+  [ -n "${STUB_TESTS:-}" ] || exit "${STUB_TEST:?}"
+  tn=$(cat "${STUB_TSTATE:?}" 2>/dev/null); tn=$(( ${tn:-0} + 1 )); printf '%s' "$tn" >"$STUB_TSTATE"
+  ti=1; tlast=0
+  for a in $STUB_TESTS; do tlast=$a; [ "$ti" = "$tn" ] && exit "$a"; ti=$((ti + 1)); done
+  exit "$tlast" ;;
+esac
 exit "${STUB_CONTROL:?}"
 STUB
 chmod 755 "$r2/curlbe"
@@ -3103,8 +3133,12 @@ script=$r2/net.sh
 for given in secure-transport '' nonsense-backend; do
   rm -rf "$d/run"; mkdir -p "$d/run"
   cp "$work/original.pem" "$d/run/cert.pem"
-  : >"$d/log"
-  run "$d/run/cert.pem" WARDLATCH_CURL="$r2/curlbe" BE_LOG="$d/log" STUB_TEST=60 STUB_CONTROL=0 CURL_SSL_BACKEND="$given"
+  : >"$d/log"; rm -f "$d/tstate"
+  # r5b, 1 Nov 2026: this drove STUB_TEST=60 and asserted "now refuses the compromised keys" from a test site
+  # that refused the UNFIXED bundle too -- a run that never showed the probe can tell the two files apart, so the
+  # claim had no receipt. The inputs were wrong, not the expectation: 0 through the file as it was, 60 through the
+  # cleaned one. The probe count below rises from 3 to 4 with the canary's own control, and the >= keeps holding.
+  run "$d/run/cert.pem" WARDLATCH_CURL="$r2/curlbe" BE_LOG="$d/log" STUB_TSTATE="$d/tstate" STUB_TESTS="0 60" STUB_CONTROL=0 CURL_SSL_BACKEND="$given"
   [ "$code" -eq 0 ] || fail "the curl backend (given '${given:-<empty>}'): expected exit 0, got $code"
   grep -q '^SAFE     Fixed\. .* now refuses the compromised keys' <<<"$out" || fail "the curl backend (given '${given:-<empty>}'): the verdict changed"
   [ -s "$d/log" ] || fail "the curl backend (given '${given:-<empty>}'): the stub was never called, so this measured nothing"
@@ -3119,9 +3153,25 @@ ok "both curl probes name CURL_SSL_BACKEND=openssl, whatever the environment set
 # curl's 60 is CURLE_PEER_FAILED_VERIFICATION, which an expired leaf gives too: measured on a throwaway pair, an
 # expired leaf gives 60 both through a file that trusts its root and through one that does not -- the two readings
 # this test exists to tell apart. The advisory's leaves expire 3 May 2027 01:04 UTC, so from that day a 60 would say
-# nothing and every unfixed Mac would read SAFE (F-tls-3). From then on the fix reads nothing online and says so.
-# The clock is a stand-in, so this case is the same on any day; the control is the same file with the clock before
-# the date, which must still take the online reading.
+# nothing and every unfixed Mac would read SAFE (F-tls-3).
+#
+# r5b, 1 Nov 2026 -- WHY THE CASES BELOW CHANGED. The r5 cases here drove STUB_TEST=60 for every run that
+# mattered, so they only ever checked that the 60 stopped being read. They never drove a 0, and curl's 0 is not
+# the reading expiry poisons: a chain whose leaf has expired cannot verify, so an expired leaf gives 60 and can
+# never give 0 (MEASURED again on 1 Nov on a loopback CA of our own: valid leaf through a trusting bundle -> 0,
+# expired leaf through the same bundle -> 60). The old gate stopped reading the test site altogether, so it threw
+# the 0 away with the 60, and a Mac that WAS exposed read SAFE exit 0 from 3 May 2027 -- and, because an
+# unreadable clock counts as past the date, from today on a Mac whose clock is dead or years fast. One case here
+# asserted that SAFE as correct, which is why the suite was green over it.
+#
+# The date gate is gone from the fix path, replaced by a positive control that does not expire: the test site is
+# read once through the file as it WAS (which still held the withdrawn roots) and once through the cleaned file.
+# A 0 through the old file proves the canary is alive -- its leaf is valid, the host answered, nothing is
+# intercepting -- so a 60 through the new file is a real refusal, on any date. Without that 0 the 60 is not a
+# receipt, on any date, which is wider than the expiry the gate was built for. The 0 through the NEW file is read
+# as EXPOSED always and is gated by nothing: it is self-certifying, and gating it is the defect above.
+# On the already-clean path there is no file in hand that holds the withdrawn roots, so no such control can be
+# built and the date stays -- over the 60 only, never over the 0.
 d=$work/r5/expiry; mkdir -p "$d"
 # This case needs BOTH stand-ins in one copy: the clock, to put the date where it wants it, and curl, because the
 # whole point is that the test site would have answered 60 and the run must not read it. behind() builds each copy
@@ -3142,35 +3192,150 @@ exec /bin/date "$@"
 STUB
 chmod 755 "$r2/clock"
 script=$r2/clock.sh
-# Before the date: the online reading is taken, and the SAFE line is the one that claims it.
+# The fix path, canary ALIVE (0 through the file as it was), before the date: the online reading is taken and the
+# SAFE line claims it. Until 1 Nov 2026 this case drove STUB_TEST=60, i.e. a test site that refused the UNFIXED
+# bundle too -- a run that has never shown it can tell the two files apart -- and asserted "now refuses the
+# compromised keys" from it. That claim had no receipt, so the inputs, not the expectation, were wrong.
 rm -rf "$d/live"; mkdir -p "$d/live"; cp "$work/original.pem" "$d/live/cert.pem"
-run "$d/live/cert.pem" WARDLATCH_DATE="$r2/clock" FAKE_DAY=20270502 WARDLATCH_CURL="$r2/curl" STUB_TEST=60 STUB_CONTROL=0
-[ "$code" -eq 0 ] || fail "the canary expiry (the day before): expected exit 0, got $code"
-grep -q '^SAFE     Fixed\. .* now refuses the compromised keys' <<<"$out" || fail "the canary expiry (the day before): the online reading was not taken"
-grep -q 'prove nothing' <<<"$out" && fail "the canary expiry (the day before): it said a refusal would prove nothing"
-cmp -s "$d/live/cert.pem" "$r2/P.pem" || fail "the canary expiry (the day before): the file is not the cleaned file"
-# On and after the date, and when the clock cannot be read at all: the file is still fixed, and nothing online is
-# claimed. The curl stub would answer 60 to the test host, so a run that still read it would print the line above.
+run "$d/live/cert.pem" WARDLATCH_DATE="$r2/clock" FAKE_DAY=20270502 WARDLATCH_CURL="$r2/curl" STUB_TSTATE="$d/ts1" STUB_TESTS="0 60" STUB_CONTROL=0
+[ "$code" -eq 0 ] || fail "canary alive, the day before: expected exit 0, got $code"
+grep -q '^SAFE     Fixed\. .* now refuses the compromised keys' <<<"$out" || fail "canary alive, the day before: the online reading was not taken"
+grep -q 'prove nothing' <<<"$out" && fail "canary alive, the day before: it said a refusal would prove nothing"
+grep -q 'wardlatch: verdict=SAFE scope=file+online online=refused reason=- removed=2 kept=126' <<<"$out" || fail "canary alive, the day before: the trailer does not say the reading was taken"
+cmp -s "$d/live/cert.pem" "$r2/P.pem" || fail "canary alive, the day before: the file is not the cleaned file"
+# And the whole point of the control: the SAME readings PAST the date, and with no readable clock at all, must
+# still be read. The old gate suppressed them; a run that regressed to it prints the expiry note instead.
 for day in 20270503 20280101 none; do
-  rm -rf "$d/run"; mkdir -p "$d/run"; cp "$work/original.pem" "$d/run/cert.pem"
-  run "$d/run/cert.pem" WARDLATCH_DATE="$r2/clock" FAKE_DAY="$day" WARDLATCH_CURL="$r2/curl" STUB_TEST=60 STUB_CONTROL=0
-  [ "$code" -eq 0 ] || fail "the canary expiry ($day): expected the file to be fixed, exit 0, got $code"
-  grep -q '^SAFE     Fixed in the file: removed both withdrawn roots, kept 126\.' <<<"$out" || fail "the canary expiry ($day): it did not say the file was fixed without an online claim"
-  grep -q 'prove nothing' <<<"$out" || fail "the canary expiry ($day): it did not say why nothing was read online"
-  grep -q 'refuses the compromised keys' <<<"$out" && fail "the canary expiry ($day): it still claimed the file refuses the compromised keys"
-  cmp -s "$d/run/cert.pem" "$r2/P.pem" || fail "the canary expiry ($day): the file is not the cleaned file"
-  [ "$(baks "$d/run/cert.pem")" -eq 1 ] || fail "the canary expiry ($day): it did not keep exactly one backup"
+  rm -rf "$d/past"; mkdir -p "$d/past"; cp "$work/original.pem" "$d/past/cert.pem"
+  run "$d/past/cert.pem" WARDLATCH_DATE="$r2/clock" FAKE_DAY="$day" WARDLATCH_CURL="$r2/curl" STUB_TSTATE="$d/ts2" STUB_TESTS="0 60" STUB_CONTROL=0
+  [ "$code" -eq 0 ] || fail "canary alive ($day): expected exit 0, got $code"
+  grep -q '^SAFE     Fixed\. .* now refuses the compromised keys' <<<"$out" || fail "canary alive ($day): a live canary's refusal was not read"
+  grep -q 'prove nothing' <<<"$out" && fail "canary alive ($day): it fell back to the date"
+  cmp -s "$d/past/cert.pem" "$r2/P.pem" || fail "canary alive ($day): the file is not the cleaned file"
+  rm -f "$d/ts2"
 done
-# An already-clean file on and after the date: SAFE, nothing changed, and no claim about the test site.
-rm -rf "$d/clean"; mkdir -p "$d/clean"; cp "$r2/P.pem" "$d/clean/cert.pem"
-run "$d/clean/cert.pem" WARDLATCH_DATE="$r2/clock" FAKE_DAY=20270503 WARDLATCH_CURL="$r2/curl" STUB_TEST=0 STUB_CONTROL=0
-[ "$code" -eq 0 ] || fail "the canary expiry (already clean): expected exit 0, got $code"
-grep -q 'prove nothing' <<<"$out" || fail "the canary expiry (already clean): it did not say why nothing was read online"
-grep -q 'already refuses the compromised keys' <<<"$out" && fail "the canary expiry (already clean): it claimed the file refuses the compromised keys"
-cmp -s "$d/clean/cert.pem" "$r2/P.pem" || fail "the canary expiry (already clean): the file changed"
+# F1, the defect this block exists for: the test site ACCEPTS the cleaned file. That is exposure, and curl's 0
+# says so whatever the date is, because an expired leaf cannot produce a 0. Each of these read SAFE, exit 0 at
+# 38c0c71 -- and the second needs no 2027 at all: an unreadable clock reaches it today.
+for day in 20270503 none; do
+  rm -rf "$d/exp"; mkdir -p "$d/exp"; cp "$work/original.pem" "$d/exp/cert.pem"
+  run "$d/exp/cert.pem" WARDLATCH_DATE="$r2/clock" FAKE_DAY="$day" WARDLATCH_CURL="$r2/curl" STUB_TEST=0 STUB_CONTROL=0
+  [ "$code" -eq 1 ] || fail "the test site still trusted ($day): expected EXPOSED, exit 1, got $code"
+  grep -q '^EXPOSED  Fixed in the file (removed both withdrawn roots, kept 126), but the advisory.s test site is' <<<"$out" ||
+    fail "the test site still trusted ($day): it did not print the EXPOSED line"
+  grep -q 'wardlatch: verdict=EXPOSED scope=file+online online=trusted reason=- removed=2 kept=126' <<<"$out" || fail "the test site still trusted ($day): the trailer is wrong"
+  grep -q 'putting the original back would put' <<<"$out" || fail "the test site still trusted ($day): it did not say the fix was kept"
+  cmp -s "$d/exp/cert.pem" "$r2/P.pem" || fail "the test site still trusted ($day): the file is not the cleaned file"
+  [ "$(baks "$d/exp/cert.pem")" -eq 1 ] || fail "the test site still trusted ($day): it did not keep exactly one backup"
+done
+# The canary DEAD, and before the date, so only the control can catch it: the test site refused the file as it
+# was, which it should have accepted. Nothing here shows it can tell the two files apart, so the 60 through the
+# new file is not a receipt and must not be read as one. At 38c0c71 this printed "now refuses the compromised
+# keys" -- a SAFE with no receipt, on a date the gate never covered.
+for pair in "60 60" "28 60" "7 60"; do
+  rm -rf "$d/dead"; mkdir -p "$d/dead"; cp "$work/original.pem" "$d/dead/cert.pem"
+  run "$d/dead/cert.pem" WARDLATCH_DATE="$r2/clock" FAKE_DAY=20261101 WARDLATCH_CURL="$r2/curl" STUB_TSTATE="$d/ts3" STUB_TESTS="$pair" STUB_CONTROL=0
+  [ "$code" -eq 0 ] || fail "canary dead ($pair): expected the file to be fixed, exit 0, got $code"
+  grep -q '^SAFE     Fixed in the file: removed both withdrawn roots, kept 126\.' <<<"$out" || fail "canary dead ($pair): it did not say the file was fixed without an online claim"
+  grep -q 'refuses the compromised keys' <<<"$out" && fail "canary dead ($pair): it claimed a refusal with no receipt"
+  grep -q 'Nothing here shows the test site can still tell' <<<"$out" || fail "canary dead ($pair): it did not say the control failed"
+  grep -q 'Not checked: whether anything else on this Mac still trusts the compromised keys\.' <<<"$out" || fail "canary dead ($pair): it did not say what was not checked"
+  grep -q 'wardlatch: verdict=SAFE scope=file online=not-tested reason=canary-dead removed=2 kept=126' <<<"$out" || fail "canary dead ($pair): the trailer is wrong"
+  cmp -s "$d/dead/cert.pem" "$r2/P.pem" || fail "canary dead ($pair): the file is not the cleaned file"
+  rm -f "$d/ts3"
+done
+# The already-clean path, where NO control can be built: the file holds neither root, so there is nothing in hand
+# that the test site should accept, and the date is the only instrument left. It governs the 60 -- and nothing
+# else. First the 0, which it must never govern: EXPOSED, exit 1, on and after the date and with no clock.
+for day in 20270503 none; do
+  rm -rf "$d/clean0"; mkdir -p "$d/clean0"; cp "$r2/P.pem" "$d/clean0/cert.pem"
+  run "$d/clean0/cert.pem" WARDLATCH_DATE="$r2/clock" FAKE_DAY="$day" WARDLATCH_CURL="$r2/curl" STUB_TEST=0 STUB_CONTROL=0
+  [ "$code" -eq 1 ] || fail "already clean, test site trusted ($day): expected EXPOSED, exit 1, got $code"
+  grep -q '^EXPOSED  .* holds neither root but still trusts the test site' <<<"$out" || fail "already clean, test site trusted ($day): it did not print the EXPOSED line"
+  grep -q 'wardlatch: verdict=EXPOSED scope=file+online online=trusted reason=- removed=0 kept=126' <<<"$out" || fail "already clean, test site trusted ($day): the trailer is wrong"
+  cmp -s "$d/clean0/cert.pem" "$r2/P.pem" || fail "already clean, test site trusted ($day): the file changed"
+done
+# Then the 60 on the same path, which the date does govern, because no control is available here.
+rm -rf "$d/clean60"; mkdir -p "$d/clean60"; cp "$r2/P.pem" "$d/clean60/cert.pem"
+run "$d/clean60/cert.pem" WARDLATCH_DATE="$r2/clock" FAKE_DAY=20270503 WARDLATCH_CURL="$r2/curl" STUB_TEST=60 STUB_CONTROL=0
+[ "$code" -eq 0 ] || fail "already clean, past the date: expected exit 0, got $code"
+grep -q 'already refuses the compromised keys' <<<"$out" && fail "already clean, past the date: it claimed the file refuses the compromised keys"
+grep -q 'prove nothing' <<<"$out" || fail "already clean, past the date: it did not say why nothing was read online"
+grep -q 'wardlatch: verdict=SAFE scope=file online=not-tested reason=canary-expired removed=0 kept=126' <<<"$out" || fail "already clean, past the date: the trailer is wrong"
+run "$d/clean60/cert.pem" WARDLATCH_DATE="$r2/clock" FAKE_DAY=none WARDLATCH_CURL="$r2/curl" STUB_TEST=60 STUB_CONTROL=0
+grep -q 'wardlatch: verdict=SAFE scope=file online=not-tested reason=clock-unreadable removed=0 kept=126' <<<"$out" || fail "already clean, no clock: the trailer does not name the clock"
+# And before the date the same 60 IS the receipt, so the claim comes back.
+run "$d/clean60/cert.pem" WARDLATCH_DATE="$r2/clock" FAKE_DAY=20270502 WARDLATCH_CURL="$r2/curl" STUB_TEST=60 STUB_CONTROL=0
+grep -q 'already refuses the compromised keys' <<<"$out" || fail "already clean, the day before: the online reading was not taken"
+grep -q 'wardlatch: verdict=SAFE scope=file+online online=refused reason=- removed=0 kept=126' <<<"$out" || fail "already clean, the day before: the trailer is wrong"
 script=$fix
-ok "from 3 May 2027, and when the clock can't be read, no verdict is taken from the test site, and the file is still fixed"
+ok "the canary's liveness is a control, not a date: a 0 is EXPOSED on every date, a 60 is a refusal only with the control, and the already-clean path keeps the date over its 60 alone"
 # ---- r5 end case
+
+# ---- r5b case: what an uncorroborated SAFE says, and the trailer a fleet can read
+# Three paths print SAFE and exit 0 with no online corroboration. The exit code is a published contract (the Mac
+# page's exit-code table names these cases as 0, under a section telling fleet admins to wire it into Jamf,
+# Kandji or Intune), so it does not move; the words do, and a second channel is added beside it. The headline
+# now says WHAT was not checked rather than only why, as a sentence of its own under the verdict rather than a
+# parenthesis the typography invites the reader to skip.
+d=$work/r5b; mkdir -p "$d"
+# These cases must run the copy whose curl is behind a stand-in, not the shipped script: with the shipped script
+# $WARDLATCH_CURL does nothing, every probe reaches the real network, and -- MEASURED while writing this block --
+# a no-network run then answers curl 7 to everything, which is a plausible-looking answer that made the first
+# case below pass for the wrong reason. Two guards, because the first version of this block had neither: the
+# script in use must carry the stand-in, and the control's stubbed answer is 47 (too many redirects), which a
+# dead network cannot produce, so an answer that came from the real curl cannot be mistaken for the stub's.
+script=$r2/net.sh
+grep -q 'WARDLATCH_CURL' "$script" || fail "setup: the r5b cases are not using the curl stand-in copy, so they would reach the real network and measure nothing"
+# The already-clean path, the answer reached by a user who is ASKING rather than fixing. Until 1 Nov 2026 it
+# exited before the scope block every other SAFE carries, so it was one bare line: no "this covers four tools",
+# no "for everything else run wardlatch", no "run this again after every macOS update".
+rm -rf "$d/clean"; mkdir -p "$d/clean"; cp "$r2/P.pem" "$d/clean/cert.pem"
+run "$d/clean/cert.pem" WARDLATCH_CURL="$r2/curl" STUB_CONTROL=47 STUB_TEST=60
+[ "$code" -eq 0 ] || fail "already clean, no control: expected exit 0, got $code"
+grep -q 'Not checked: whether anything else on this Mac still trusts the compromised keys\.' <<<"$out" || fail "already clean, no control: it did not say what was not checked"
+grep -q 'This covers the built-in curl, git, python3 and openssl' <<<"$out" || fail "already clean, no control: the scope block is missing"
+grep -q 'For everything else: npx wardlatch@latest' <<<"$out" || fail "already clean, no control: it did not say where to test the rest"
+grep -q 'A macOS update puts Apple.s original file back' <<<"$out" || fail "already clean, no control: it did not say an update undoes this"
+grep -q 'wardlatch: verdict=SAFE scope=file online=not-tested reason=control-47 removed=0 kept=126' <<<"$out" || fail "already clean, no control: the trailer is wrong, or the answer did not come from the stand-in"
+# An ordinary website's certificate REFUSED through this very file is the interception signature, not "the
+# network didn't answer", and until 1 Nov 2026 a 60 here read the same as a dropped connection (curl 7).
+run "$d/clean/cert.pem" WARDLATCH_CURL="$r2/curl" STUB_CONTROL=60 STUB_TEST=60
+[ "$code" -eq 0 ] || fail "already clean, control 60: expected exit 0, got $code"
+grep -q 'what a network inspecting TLS looks like' <<<"$out" || fail "already clean, control 60: a refused certificate read as a network that didn't answer"
+grep -q 'wardlatch: verdict=SAFE scope=file online=not-tested reason=control-60 removed=0 kept=126' <<<"$out" || fail "already clean, control 60: the trailer is wrong"
+# The same reading on the fix path, before AND after the write: a network intercepting TLS permanently. It got
+# the same words as a dropped connection, while the network that starts intercepting mid-run gets exit 2 and a
+# paragraph of attack language. The exit codes differ for a reason the words did not carry.
+rm -rf "$d/both"; mkdir -p "$d/both"; cp "$work/original.pem" "$d/both/cert.pem"
+run "$d/both/cert.pem" WARDLATCH_CURL="$r2/curl" STUB_CONTROL=60 STUB_TEST=60
+[ "$code" -eq 0 ] || fail "fix path, control 60 both: expected exit 0, got $code"
+grep -q 'what a network inspecting TLS looks like' <<<"$out" || fail "fix path, control 60 both: the permanent interceptor read as a network that didn't answer"
+grep -q 'wardlatch: verdict=SAFE scope=file online=not-tested reason=control-60-both removed=2 kept=126' <<<"$out" || fail "fix path, control 60 both: the trailer is wrong"
+cmp -s "$d/both/cert.pem" "$r2/P.pem" || fail "fix path, control 60 both: the file is not the cleaned file"
+# The test host silent, the control fine: the cheapest attack there is, and the one path where the user is told
+# the failure is specific to the test host.
+rm -rf "$d/silent"; mkdir -p "$d/silent"; cp "$work/original.pem" "$d/silent/cert.pem"
+run "$d/silent/cert.pem" WARDLATCH_CURL="$r2/curl" STUB_TSTATE="$d/ts" STUB_TESTS="0 28" STUB_CONTROL=0
+[ "$code" -eq 0 ] || fail "fix path, test host silent: expected exit 0, got $code"
+grep -q 'Not checked: whether anything else on this Mac still trusts the compromised keys\.' <<<"$out" || fail "fix path, test host silent: it did not say what was not checked"
+grep -q 'wardlatch: verdict=SAFE scope=file online=not-tested reason=test-28 removed=2 kept=126' <<<"$out" || fail "fix path, test host silent: the trailer is wrong"
+# Every non-SAFE headline must say the file was still fixed AND that the backup must not be put back: a user who
+# reads a warning as failure and restores a backup holding both withdrawn roots has undone the fix, which
+# SECURITY.md names a vulnerability outright.
+rm -rf "$d/nosafe"; mkdir -p "$d/nosafe"
+for c in 7 60 35; do
+  rm -rf "$d/nosafe/$c"; mkdir -p "$d/nosafe/$c"; cp "$work/original.pem" "$d/nosafe/$c/cert.pem"
+  run "$d/nosafe/$c/cert.pem" WARDLATCH_CURL="$r2/curl" STUB_STATE="$d/nosafe/$c/st" STUB_CONTROLS="0 $c" STUB_TEST=60
+  [ "$code" -eq 2 ] || fail "non-SAFE headline (control 0 then $c): expected exit 2, got $code"
+  grep -qE '^UNKNOWN  Fixed in the file \(removed both withdrawn roots, kept 126\)' <<<"$out" || fail "non-SAFE headline (control 0 then $c): it did not say the file was fixed"
+  grep -q "Don't put the backup back" <<<"$out" || fail "non-SAFE headline (control 0 then $c): it did not say to leave the backup alone"
+  grep -q 'wardlatch: verdict=UNKNOWN scope=file online=not-tested' <<<"$out" || fail "non-SAFE headline (control 0 then $c): the trailer is missing"
+  cmp -s "$d/nosafe/$c/cert.pem" "$r2/P.pem" || fail "non-SAFE headline (control 0 then $c): the file is not the cleaned file"
+done
+script=$fix
+ok "an uncorroborated SAFE keeps exit 0 and says what was NOT checked, a refused control is named as interception rather than silence, every non-SAFE headline says the fix was kept and the backup must stay put, and every verdict carries a machine-readable trailer"
+# ---- r5b end case
 
 # A file the fix can't read: UNKNOWN (exit 2), unchanged, nothing on stderr.
 cp "$work/original.pem" "$work/unreadable.pem"
