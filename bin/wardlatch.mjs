@@ -628,7 +628,7 @@ for (const inc of chosen) {
     // a plugins folder with no core found to use it (given with --paths, or a copy of a content folder), and a folder
     // given with --paths that is one listed plugin's own folder: checked, never passed over (WV-1), with or without its
     // main file (up to this fix only with it, so a backdoored copy missing rank-math-pro.php read SAFE: R2-N7)
-    for (const p of loose) for (const f of checkPluginsFolder(p, inc.rules, inc.addedSince)) show(p, f);
+    for (const p of loose) for (const f of checkPluginsFolder(p, inc.rules, inc.addedSince, searchable.filter((r) => dirname(r) === p).map((r) => basename(r)))) show(p, f);
     // A folder given with --paths that is a listed plugin's: its parent is checked for those plugins, once, however many of
     // them were named, or three paths at three copies counted nine rows (seat 8). A link counts by its own name or what
     // it points at (seat 7's D7b).
