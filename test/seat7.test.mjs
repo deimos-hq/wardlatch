@@ -12,6 +12,9 @@ import { join } from 'node:path';
 import { fresh, put, cli, NEW, KEYS, WP, LITELLM, HDR, repoWith, gitIn, brief, has, safeOnly, old, tlv, kids } from './support/seat7-lib.mjs';
 const O = '/usr/bin/openssl', PW = 'seat7-not-a-secret';
 const ssl = (args) => spawnSync(O, args, { encoding: 'buffer' });
+// These forms load in LibreSSL: that is the control, so it holds only where LibreSSL is the openssl. The row is asserted everywhere.
+const LIBRE = /LibreSSL/.test(spawnSync(O, ['version'], { encoding: 'utf8' }).stdout ?? '');
+const loaded = (r, msg) => { if (LIBRE) assert.equal(r.status, 0, msg); };
 const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const p1 = rsa.privateKey.export({ type: 'pkcs1', format: 'der' });
 const p8 = rsa.privateKey.export({ type: 'pkcs8', format: 'der' });
@@ -30,7 +33,7 @@ test('D1 REGRESSION a working RSA private key with a two-byte version reads SAFE
   const ctl = key(NEW, p1);
   assert.ok(has(ctl, 'REVIEW'), `CONTROL the same key as made: ${brief(ctl)}`);
   const bad = swapV(p1, V2), f = file(bad);
-  assert.equal(ssl(['rsa', '-inform', 'DER', '-in', f, '-noout']).status, 0, 'CONTROL LibreSSL loads it');
+  loaded(ssl(['rsa', '-inform', 'DER', '-in', f, '-noout']), 'CONTROL LibreSSL loads it');
   const d = fresh('sig'), msg = put(join(d, 'm'), 'seat 7\n'), pub = put(join(d, 'p.pem'), rsa.publicKey.export({ type: 'spki', format: 'pem' })), pem = join(d, 'k.pem');
   writeFileSync(pem, ssl(['rsa', '-inform', 'DER', '-in', f]).stdout);
   assert.equal(ssl(['dgst', '-sha256', '-sign', pem, '-out', join(d, 's'), msg]).status, 0, 'CONTROL it signs');
@@ -42,13 +45,13 @@ test('D1 REGRESSION a working RSA private key with a two-byte version reads SAFE
 test('D1b REGRESSION the same, PKCS #8', () => {
   assert.ok(has(key(NEW, p8), 'REVIEW'), 'CONTROL as made');
   const bad = swapV(p8, V2);
-  assert.equal(ssl(['pkcs8', '-inform', 'DER', '-nocrypt', '-in', file(bad), '-out', '/dev/null']).status, 0, 'CONTROL LibreSSL loads it');
+  loaded(ssl(['pkcs8', '-inform', 'DER', '-nocrypt', '-in', file(bad), '-out', '/dev/null']), 'CONTROL LibreSSL loads it');
   const r = key(NEW, bad); assert.ok(!safeOnly(r), `DEFECT ${brief(r)}`);
 });
 test('D1c REGRESSION the same, SEC1 EC', () => {
   assert.ok(has(key(NEW, sec1), 'REVIEW'), 'CONTROL as made');
   const bad = swapV(sec1, V2);
-  assert.equal(ssl(['ec', '-inform', 'DER', '-in', file(bad), '-noout']).status, 0, 'CONTROL LibreSSL loads it');
+  loaded(ssl(['ec', '-inform', 'DER', '-in', file(bad), '-noout']), 'CONTROL LibreSSL loads it');
   const r = key(NEW, bad); assert.ok(!safeOnly(r), `DEFECT ${brief(r)}`);
 });
 test('D1d REGRESSION the same, PKCS #12 with a two-byte version: the key comes out with the password', () => {
@@ -58,7 +61,7 @@ test('D1d REGRESSION the same, PKCS #12 with a two-byte version: the key comes o
   const made = readFileSync(p); rmSync(kp);
   assert.ok(has(key(NEW, made), 'REVIEW'), 'CONTROL as made');
   const bad = tlv(0x30, Buffer.concat([Buffer.from([2, 2, 1, 3]), ...kids(made).slice(1)]));
-  assert.equal(ssl(['pkcs12', '-in', file(bad), '-nodes', '-passin', `pass:${PW}`, '-out', '/dev/null']).status, 0, 'CONTROL LibreSSL reads the key out');
+  loaded(ssl(['pkcs12', '-in', file(bad), '-nodes', '-passin', `pass:${PW}`, '-out', '/dev/null']), 'CONTROL LibreSSL reads the key out');
   const r = key(NEW, bad); assert.ok(!safeOnly(r), `DEFECT ${brief(r)}`);
 });
 test('D1e REGRESSION the same bytes under a name that says text are UNKNOWN: the file name decides, and deleted files too', () => {
@@ -78,7 +81,7 @@ test('D5 the PBE window: an encrypted key with its OID pushed past 32 bytes read
   const near = key(NEW, padAlg(16));
   assert.equal(near.code, 2, `CONTROL 16 length bytes, OID inside the window: ${brief(near)}`);
   const bad = padAlg(32);
-  assert.equal(ssl(['pkcs8', '-inform', 'DER', '-in', file(bad), '-passin', `pass:${PW}`, '-out', '/dev/null']).status, 0, 'CONTROL LibreSSL opens it with the password');
+  loaded(ssl(['pkcs8', '-inform', 'DER', '-in', file(bad), '-passin', `pass:${PW}`, '-out', '/dev/null']), 'CONTROL LibreSSL opens it with the password');
   const r = key(NEW, bad); assert.ok(!safeOnly(r), `DEFECT ${brief(r)}`);
 });
 // ---- D6 indefinite, text gate, high tag ------------------------------------------------------------------------------
@@ -89,7 +92,7 @@ test('D6a indefinite outer with a constructed OCTET STRING: an encrypted key rea
   const ctl = key(NEW, indef(Buffer.concat([alg, data])));
   assert.ok(has(ctl, 'REVIEW'), `CONTROL indefinite outer alone: ${brief(ctl)}`);
   const bad = indef(Buffer.concat([alg, conOct(dataBody)]));
-  assert.equal(ssl(['pkcs8', '-inform', 'DER', '-in', file(bad), '-passin', `pass:${PW}`, '-out', '/dev/null']).status, 0, 'CONTROL LibreSSL opens it');
+  loaded(ssl(['pkcs8', '-inform', 'DER', '-in', file(bad), '-passin', `pass:${PW}`, '-out', '/dev/null']), 'CONTROL LibreSSL opens it');
   const r = key(NEW, bad); assert.ok(!safeOnly(r), `DEFECT ${brief(r)}`);
 });
 test('D6b indefinite outer with a constructed OCTET STRING: a plain PKCS #8 key reads SAFE', () => {
@@ -97,7 +100,7 @@ test('D6b indefinite outer with a constructed OCTET STRING: a plain PKCS #8 key 
   const ctl = key(NEW, tlv(0x30, Buffer.concat([v, a, conOct(body)])));
   assert.ok(!safeOnly(ctl), `CONTROL stated outer length: ${brief(ctl)}`);
   const bad = indef(Buffer.concat([v, a, conOct(body)]));
-  assert.equal(ssl(['pkcs8', '-inform', 'DER', '-nocrypt', '-in', file(bad), '-out', '/dev/null']).status, 0, 'CONTROL LibreSSL loads it');
+  loaded(ssl(['pkcs8', '-inform', 'DER', '-nocrypt', '-in', file(bad), '-out', '/dev/null']), 'CONTROL LibreSSL loads it');
   const r = key(NEW, bad); assert.ok(!safeOnly(r), `DEFECT ${brief(r)}`);
 });
 test('D6c the text gate: a NUL-free SEC1 key with a short outer length and version 2 reads SAFE', () => {
@@ -107,13 +110,13 @@ test('D6c the text gate: a NUL-free SEC1 key with a short outer length and versi
   const ctl = key(NEW, tlv(0x30, Buffer.concat([k[0], k[1], k[2]])));
   assert.ok(has(ctl, 'REVIEW'), `CONTROL version 1: ${brief(ctl)}`);
   const bad = tlv(0x30, Buffer.concat([Buffer.from([2, 1, 2]), k[1], k[2]]));
-  assert.ok(!bad.includes(0), 'CONTROL no NUL'); assert.equal(ssl(['ec', '-inform', 'DER', '-in', file(bad), '-noout']).status, 0, 'CONTROL LibreSSL loads it');
+  assert.ok(!bad.includes(0), 'CONTROL no NUL'); loaded(ssl(['ec', '-inform', 'DER', '-in', file(bad), '-noout']), 'CONTROL LibreSSL loads it');
   const r = key(NEW, bad); assert.ok(!safeOnly(r), `DEFECT ${brief(r)}`);
 });
 test('D6d high-tag form: outer 3f 10, or the version as 1f 02, loads and reads SAFE', () => {
   const a = Buffer.concat([Buffer.from([0x3f, 0x10]), p1.subarray(1)]), b = swapV(p1, Buffer.from([0x1f, 2, 1, 0]));
-  assert.equal(ssl(['rsa', '-inform', 'DER', '-in', file(a), '-noout']).status, 0, 'CONTROL LibreSSL loads the first');
-  assert.equal(ssl(['rsa', '-inform', 'DER', '-in', file(b), '-noout']).status, 0, 'CONTROL LibreSSL loads the second');
+  loaded(ssl(['rsa', '-inform', 'DER', '-in', file(a), '-noout']), 'CONTROL LibreSSL loads the first');
+  loaded(ssl(['rsa', '-inform', 'DER', '-in', file(b), '-noout']), 'CONTROL LibreSSL loads the second');
   const ra = key(NEW, a), rb = key(NEW, b);
   assert.ok(!safeOnly(ra) && !safeOnly(rb), `DEFECT ${brief(ra)} ;; ${brief(rb)}`);
 });
@@ -198,8 +201,9 @@ test('REFUTED mayBeFolder in the --paths walks: a locked link target is UNKNOWN 
 // ---- D9 TOML ---------------------------------------------------------------------------------------------------------
 const E = 'ada@example.invalid', H = `"X-User: ${E}"`;
 const toml = (t) => { const h = fresh('h'); put(join(h, '.gitconfig'), `[user]\n\tname = Ada Example\n\temail = ${E}\n`); put(join(h, '.codex', 'config.toml'), t); return cli(NEW, HDR, { home: h }); };
-const parses = (t) => { const f = put(join(fresh('t'), 'c.toml'), t); const p = spawnSync('/Library/Frameworks/Python.framework/Versions/3.14/bin/python3', ['-I', '-c', 'import tomllib,sys;print(tomllib.load(open(sys.argv[1],"rb")))', f], { encoding: 'utf8' }); assert.equal(p.status, 0, `CONTROL tomllib refused: ${p.stderr}`); assert.match(p.stdout, /ada@example\.invalid/, 'CONTROL tomllib reads the address'); };
-const tomlCase = (name, t) => test(`D9 TOML, valid and read by tomllib, SAFE here: ${name}`, () => { assert.ok(has(toml(`[mcp_servers.x]\nargs = ["--header", ${H}]\n`), 'REVIEW'), 'CONTROL own table'); parses(t); const r = toml(t); assert.ok(!safeOnly(r), `DEFECT ${brief(r)}`); });
+const TOMLLIB = '/Library/Frameworks/Python.framework/Versions/3.14/bin/python3';
+const parses = (t) => { const f = put(join(fresh('t'), 'c.toml'), t); const p = spawnSync(TOMLLIB, ['-I', '-c', 'import tomllib,sys;print(tomllib.load(open(sys.argv[1],"rb")))', f], { encoding: 'utf8' }); assert.equal(p.status, 0, `CONTROL tomllib refused: ${p.stderr}`); assert.match(p.stdout, /ada@example\.invalid/, 'CONTROL tomllib reads the address'); };
+const tomlCase = (name, t) => test(`D9 TOML, valid and read by tomllib, SAFE here: ${name}`, { skip: !existsSync(TOMLLIB) && 'the reference is tomllib, from a Python this machine does not have' }, () => { assert.ok(has(toml(`[mcp_servers.x]\nargs = ["--header", ${H}]\n`), 'REVIEW'), 'CONTROL own table'); parses(t); const r = toml(t); assert.ok(!safeOnly(r), `DEFECT ${brief(r)}`); });
 tomlCase('a closing brace from a nested table before a multi-line array', `[mcp_servers]\nx = { env = {}, args = ["--header",\n ${H}] }\n`);
 tomlCase('http_headers inside an inline table', `[mcp_servers]\nx = { url = "https://x.example", http_headers = { "X-User" = "${E}" } }\n`);
 tomlCase('a quoted key holding an equals sign', `[mcp_servers]\n"a=b" = { args = ["--header", ${H}] }\n`);

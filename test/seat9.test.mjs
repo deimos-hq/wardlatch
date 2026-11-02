@@ -83,6 +83,7 @@ test('G1 OLD a CR or U+2028 inside a git value drops the whole line', () => {
 
 // ---- DER -------------------------------------------------------------------------------------------------------------
 const keyRun = (tree, der) => cli(tree, [...KEYS, '--paths', repoWith(join(fresh('r'), 'r'), { 'k.bin': der })]);
+const LIBRE = /LibreSSL/.test(spawnSync(O, ['version'], { encoding: 'utf8' }).stdout ?? '');
 const loadsNow = (kind, der) => loads(kind, put(join(fresh('k'), 'k'), der));
 const P = (name) => FORMS[name];
 const DER_CASES = {
@@ -105,8 +106,8 @@ const DER_CASES = {
 for (const [name, [form, ctl]] of Object.entries(DER_CASES)) {
   test(`${name}: LibreSSL loads it, no row`, () => {
     const [kind, der] = P(form), [ckind, cder] = P(ctl);
-    assert.ok(loadsNow(kind, der), 'CONTROL LibreSSL loads this form');
-    assert.ok(loadsNow(ckind, cder), 'CONTROL LibreSSL loads the control form');
+    // LibreSSL's leniency is the control, so it holds only where LibreSSL is the openssl; the row is asserted everywhere
+    if (LIBRE) { assert.ok(loadsNow(kind, der), 'CONTROL LibreSSL loads this form'); assert.ok(loadsNow(ckind, cder), 'CONTROL LibreSSL loads the control form'); }
     assert.ok(!safeOnly(keyRun(NEW, cder)), 'CONTROL the near form has a row');
     const r = keyRun(NEW, der); assert.ok(!safeOnly(r), `DEFECT ${brief(r)}`);
   });
@@ -183,10 +184,10 @@ test('W6 count: --paths a plugins folder and its plugin through a link root coun
   const r = wp(NEW, shape); assert.equal(n(r), 1, `DEFECT ${brief(r)}`);
 });
 
-test('W7 REGRESSION on a case-insensitive disk: a change of case under a leftover plugins folder', () => {
+test('W7 REGRESSION on a case-insensitive disk: a change of case under a leftover plugins folder', (t) => {
   const shape = (r) => { rm(join(r, 'backup/plugins/SEO-BY-RANK-MATH-PRO')); };
   const r0 = realpathSync(fresh('case')); put(join(r0, 'Aa'), 'x');
-  assert.ok(existsSync(join(r0, 'aA')), 'CONTROL this disk folds case, as a Mac disk does');
+  if (!existsSync(join(r0, 'aA'))) return t.skip('this disk does not fold case, as a Mac disk does');
   assert.ok(has(wp(NEW, (r) => { rm(join(r, 'backup/plugins', PL)); }), 'EXPOSED'), 'CONTROL the exact spelling, 95b0503: EXPOSED');
   const r = wp(NEW, shape); assert.ok(!safeOnly(r), `DEFECT ${brief(r)}`);
 });
@@ -202,7 +203,7 @@ const proj = (root, git) => { const p = join(root, 'proj'); mkdirSync(p, { recur
 const hdr = (build, git) => { const root = realpathSync(fresh('i')); build(proj(root, git), root); const r = cli(NEW, [...HDR, '--paths', root], { home: homeFor() }); opened(); return r; };
 
 // ---- installs -----------------------------------------------------------------------------------------------------------
-test('P1 a sourceless sitecustomize runs at start and has no row', () => {
+test('P1 a sourceless sitecustomize runs at start and has no row', { skip: process.platform !== 'darwin' && 'measured with Apple\'s Python 3.9.6, which reads a sourceless package' }, () => {
   const root = realpathSync(fresh('v')), v = join(root, 'env'), PYA = '/usr/bin/python3';
   assert.equal(spawnSync(PYA, ['-m', 'venv', '--without-pip', v]).status, 0, 'CONTROL venv');
   const site = spawnSync(join(v, 'bin/python'), ['-c', 'import sys;print([p for p in sys.path if p.endswith("site-packages")][0])'], { encoding: 'utf8' }).stdout.trim();
