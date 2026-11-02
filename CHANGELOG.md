@@ -928,7 +928,7 @@ These were found by the third read of 31 Oct 2026 (03d95c9), and each fix has a 
   adds nothing, and a sentinel holds the end, so `plain()` sees whatever the name really holds and a name with a line
   break in it is never printed. Only whoever can create the link can do this, which for `/etc/ssl` is root. Found
   31 Oct 2026, fixed 1 Nov 2026. The script's digest changes with it:
-  `694ca18007621dd92d35c82e9254c96692aceba9b060dd6b9be61f1086e816fa`, pinned in `ci.yml` in the same commit. The
+  `88527af656a49f19b841c2294b200288f33afaa03d1659eee74f7a6d1572a9d4`, pinned in `ci.yml` in the same commit. The
   site's download, the hash on its page and its changelog record have **not** been updated and must be, together,
   before this script is published (SECURITY.md, step 4).
 

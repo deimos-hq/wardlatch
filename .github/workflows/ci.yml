@@ -68,7 +68,7 @@ jobs:
         # the site's download, the page's hash, a new Record entry naming its predecessor and the changelog
         # together, and this hash and SECURITY.md's printed digest with them. The step below checks the three
         # copies that live in THIS repository; the site's are the owner's to ship and nothing here can see them.
-        run: echo "694ca18007621dd92d35c82e9254c96692aceba9b060dd6b9be61f1086e816fa  fix/fix-macos.sh" | shasum -a 256 -c -
+        run: echo "88527af656a49f19b841c2294b200288f33afaa03d1659eee74f7a6d1572a9d4  fix/fix-macos.sh" | shasum -a 256 -c -
       - name: The digest chain agrees -- the file, the pin above and the digest SECURITY.md prints
         # The step above compares the script to ONE number in ONE file; every other copy of that number was
         # unguarded prose, and the chain drifted twice in forty-eight hours (bb4f9b8 fixed SECURITY.md on 31 Oct

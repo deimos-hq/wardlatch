@@ -378,8 +378,10 @@ strip() {
   envs=(WL_STRIP=1)
   # Split on purpose: $2 is "position:kind" pairs, digits, colons, AAA, EMS and -KEY only.
   # shellcheck disable=SC2086
+  set -f
   # shellcheck disable=SC2086  # split on purpose, with globbing off
-  set -f; set -- "$1" $2; set +f
+  set -- "$1" $2
+  set +f
   for p in "${@:2}"; do
     case "${p#*:}" in AAA|EMS) e=$(entry "$1" "${p%%:*}" "${p#*:}") || e=''; envs+=("WL_ENTRY_${p%%:*}=$e") ;; esac
   done
@@ -852,8 +854,10 @@ esac
 drop=''
 # Split on purpose: roots() prints "position kind" pairs, digits and AAA, EMS, AAA-KEY, EMS-KEY or WKEY<n> only.
 # shellcheck disable=SC2086
+set -f
 # shellcheck disable=SC2086  # split on purpose, with globbing off
-set -f; set -- $spec; set +f
+set -- $spec
+set +f
 while [ "$#" -ge 2 ]; do
   case "$2" in
     AAA) naaa=$((naaa + 1)) ;;

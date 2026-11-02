@@ -41,6 +41,8 @@ build() {
 }
 
 # Runs the check on the throwaway root. Sets $code and $out.
+# sed -i differs between macOS and Linux, and cat keeps the file's mode.
+sub() { sed "$1" "$2" >"$2.new" && cat "$2.new" >"$2" && rm -f "$2.new"; }
 chk() { code=0; out=$(bash "$chk" "$work/r" 2>&1) || code=$?; printf '%s\n' "$out" | sed 's/^/    | /'; }
 
 # ---- POSITIVE CONTROL. Without this the mutants below prove only that the check always fails.
@@ -51,13 +53,13 @@ ok "CONTROL: a chain whose three files agree passes, so a FAIL below means somet
 
 # ---- M1. SECURITY.md's digest off by one hex digit. This is the live defect of 1 Nov 2026, and of 31 Oct
 # before it (bb4f9b8): the script and the pin moved and the printed digest did not.
-build; sed -i '' "s/\`$d\`/\`${d%?}0\`/" "$work/r/SECURITY.md"; chk
+build; sub "s/\`$d\`/\`${d%?}0\`/" "$work/r/SECURITY.md"; chk
 [ "$code" -ne 0 ] || fail "M1: SECURITY.md printing another digest passed"
 grep -q 'SECURITY.md prints' <<<"$out" || fail "M1: the failure did not name SECURITY.md's digest"
 ok "M1 CAUGHT: SECURITY.md printing a digest that is not the file's"
 
 # ---- M2. The ci.yml pin off by one hex digit: the leg CI already had, kept under this check too.
-build; sed -i '' "s/$d/${d%?}0/" "$work/r/.github/workflows/ci.yml"; chk
+build; sub "s/$d/${d%?}0/" "$work/r/.github/workflows/ci.yml"; chk
 [ "$code" -ne 0 ] || fail "M2: a wrong pin passed"
 grep -q 'the pin in' <<<"$out" || fail "M2: the failure did not name the pin"
 ok "M2 CAUGHT: the ci.yml pin not matching the file"
@@ -77,7 +79,7 @@ ok "M4 CAUGHT: SECURITY.md printing more than one digest, with the reason stated
 
 # ---- M5. The pin line gone. A check that reads a missing line as a match is the grep-read-as-no-match class
 # this repository has already been bitten by twice.
-build; sed -i '' '/shasum -a 256 -c -/d' "$work/r/.github/workflows/ci.yml"; chk
+build; sub '/shasum -a 256 -c -/d' "$work/r/.github/workflows/ci.yml"; chk
 [ "$code" -ne 0 ] || fail "M5: ci.yml with no pin line at all passed"
 grep -q 'expected exactly 1' <<<"$out" || fail "M5: it did not say the pin line is missing"
 ok "M5 CAUGHT: ci.yml with no 'shasum -a 256 -c -' line"
