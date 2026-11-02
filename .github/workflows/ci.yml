@@ -58,6 +58,17 @@ jobs:
         # deliberate change to the script must update the site's download, the page's hash and the changelog record
         # together, and this hash with them.
         run: echo "464e3bbecdb421397b0dd6781e919d0d1b90b3c893bfdded389764f4fc6d5d2a  fix/fix-macos.sh" | shasum -a 256 -c -
+      - name: The digest chain agrees -- the file, the pin above and the digest SECURITY.md prints
+        # The step above compares the script to ONE number in ONE file; every other copy of that number was
+        # unguarded prose, and the chain drifted twice in forty-eight hours (bb4f9b8 fixed SECURITY.md on 31 Oct
+        # after it printed the round-3 digest; by 1 Nov it was wrong again, with the file and this pin on
+        # 464e3bbe and SECURITY.md telling the reader d8a4bffd, which belonged to neither, while four reviewers
+        # were reading that tree). This compares all three, and the mode with them.
+        run: bash test/digest-chain.sh
+      - name: That check can fail -- its positive control and seven mutants
+        # A check nobody has shown can fail is not a check. One control (three files that agree must pass) and
+        # seven planted defects that must each be caught, including a shasum that prints nothing.
+        run: bash test/digest-chain.selftest.sh
       - name: The Mac fix on copies of the vendored macOS 27.2 bundle, test/support/fixtures/macos-27.2-cert.pem (off macOS, that it refuses to run)
         run: bash test/fix-macos.check.sh
       - name: The Mac fix on the Mojave-era one-root shapes (offline, a stub for every probe)
