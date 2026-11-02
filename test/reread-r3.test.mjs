@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Deimos AI LLC
-// Round 3's three independent re-reads of fix/false-safes at f62f9ba (31 Oct 2026) all said NOT READY, and the owner
+// Round 3's three independent re-reads of fix/false-safes at 5380d86 (31 Oct 2026) all said NOT READY, and the owner
 // decided #33 the same day. Each test here stands in front of one of their lib and bin findings, of the lib mutants
-// round 3's re-read planted that no test caught, or of decision #33, is named after it, and failed at f62f9ba for the
+// round 3's re-read planted that no test caught, or of decision #33, is named after it, and failed at 5380d86 for the
 // reason its name gives (or, for a test that could not fail there, fails on the mutant named in its comment). Offline:
 // no test reaches a network host.
 import './support/no-real-home.cjs';
@@ -39,7 +39,7 @@ const unknowns = (r) => r.rows.filter((x) => x.status === 'UNKNOWN');
 // ---- owner decision #33: a service's folder that could not be opened is UNKNOWN, grouped in one row ------------------
 // "UNKNOWN too" (owner, 31 Oct 2026): a folder Wardlatch could not open because it belongs to a system service (EACCES)
 // is could-not-be-tested, exit 2, never a REVIEW line beside SAFE, and such folders are grouped into one line. This
-// supersedes the 22 Oct one-review-line rule and extends decision #32 (EPERM). At f62f9ba, MEASURED by the round-3
+// supersedes the 22 Oct one-review-line rule and extends decision #32 (EPERM). At 5380d86, MEASURED by the round-3
 // re-read and again here: `--incident litellm-2026-10 --paths /private/var/spool` printed "REVIEW folders not searched"
 // for 15 folders root and _postfix own, then "SAFE no LiteLLM 1.107.0 files or markers found", exit 0.
 /** A folder on this machine below which every folder that can't be listed is a service's and refuses with EACCES,
@@ -120,10 +120,10 @@ const discovered = async (roots) => {
   return { envs, deep, links, untested, found, denied, rts };
 };
 
-// Round 3's re-read 2, finding 1 (MEASURED there and here): 471a4ea stopped walking a venv's lib and Lib, and found its
+// Round 3's re-read 2, finding 1 (MEASURED there and here): 2ce50f0 stopped walking a venv's lib and Lib, and found its
 // packages only at lib*/python3*/site-packages, case-sensitively. PyPy puts them at lib/pypy3.X/site-packages, a
 // Windows-layout venv at Lib/site-packages (and an older PyPy virtualenv beside pyvenv.cfg): `--paths <the venv>` read
-// SAFE, exit 0, with the line under it saying lib and Lib "are checked with it". At 03d95c9 it was EXPOSED. The same
+// SAFE, exit 0, with the line under it saying lib and Lib "are checked with it". At 33641f9 it was EXPOSED. The same
 // venv below the folder given read SAFE at both. The trust walk never probed a PyPy venv's certifi (no row at all).
 const LAYOUTS = { pypy: 'lib/pypy3.10/site-packages', windows: 'Lib/site-packages', oldPypy: 'site-packages', lib64: 'lib64/python3.12/site-packages' };
 test('venv layouts: a venv\'s packages at lib/pypy3.X, Lib or beside pyvenv.cfg are checked, given with --paths or found below it', () => {
@@ -165,7 +165,7 @@ test('venv layouts: the trust walk probes the certifi of a PyPy venv, and of one
 // ---- a venv's own folders: walked, and the line under the all-clear says exactly what is not -----------------------------
 // Round 3's re-read 2, finding 2, and re-read 3, finding 7 (MEASURED): a project made with `python3 -m venv .` (pyvenv.cfg
 // and bin/python at its root) holding a stealer's venv in its own lib/, share/, bin/ or etc/ read SAFE, exit 0, at
-// f62f9ba (EXPOSED at 03d95c9), with the line under the all-clear saying those folders "are checked with it", while
+// 5380d86 (EXPOSED at 33641f9), with the line under the all-clear saying those folders "are checked with it", while
 // nothing in bin, share or etc was read, and lib only for its site-packages.
 const OWN = ['lib/tools', 'share/demo', 'bin/x', 'etc/y', 'include/z', 'Scripts/w', 'lib/python3.12/vendored'];
 test('a venv\'s own folders: a venv inside a project-venv\'s lib/, share/, bin/, etc/, include/ or Scripts/ is found', async () => {

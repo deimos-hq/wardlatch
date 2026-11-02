@@ -114,7 +114,7 @@ GitHub release; 0.1.3 and every release since went through it. How to check one:
 [docs/RELEASING.md](docs/RELEASING.md#verifying-a-release).
 
 `fix/fix-macos.sh` in this repository has SHA-256
-`88527af656a49f19b841c2294b200288f33afaa03d1659eee74f7a6d1572a9d4`. CI pins that hash and also checks that the
+`c8bba160a8a9c30f2f850cd8987429b297612ea580e77404fddbbfe7ddc167a6`. CI pins that hash and also checks that the
 hash printed here, the pin and the file itself are one string, so a change to the script fails CI until all
 three move together (`test/digest-chain.sh`).
 

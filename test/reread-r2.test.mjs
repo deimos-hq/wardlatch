@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Deimos AI LLC
-// The three independent re-reads of fix/false-safes at 03d95c9 (31 Oct 2026) all said NOT READY. Each test here stands
+// The three independent re-reads of fix/false-safes at 33641f9 (31 Oct 2026) all said NOT READY. Each test here stands
 // in front of one of their lib and bin findings, or of the escaper finding of the same day's red-team pass (W1), is
-// named after it, and failed at 03d95c9 for the reason its name gives (or, for a test that could not fail there, fails
+// named after it, and failed at 33641f9 for the reason its name gives (or, for a test that could not fail there, fails
 // on the mutant named in its comment). Offline: no test reaches a network host.
 import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
@@ -259,8 +259,8 @@ console.log(JSON.stringify(checkVersionFiles({ product: 'GitLab', fixedIn: '18.4
   assert.match(row?.reason ?? '', SUDO, JSON.stringify(e.rows));
 });
 
-// ---- R2-N1, R2-N2, R2-N4, RR-5: the d4d4c71 regressions, and what a virtual environment hides -----------------------------
-// d4d4c71 made a --paths folder that IS a virtual environment be probed by the trust walk instead of walked (R2-N1), and
+// ---- R2-N1, R2-N2, R2-N4, RR-5: the 53c3029 regressions, and what a virtual environment hides -----------------------------
+// 53c3029 made a --paths folder that IS a virtual environment be probed by the trust walk instead of walked (R2-N1), and
 // made the installs walk add a folder or a LINK named site-packages or dist-packages without walking it or reporting it
 // (R2-N2): a project made with `python3 -m venv .` holding services/api/.venv, a folder named site-packages holding a
 // stealer's venv, and a link named site-packages read SAFE, exit 0. Neither walk ever went into a venv found below a
@@ -317,10 +317,10 @@ test('RR-5 the trust walk given a venv\'s lib or site-packages folder probes tha
 });
 
 // REWRITTEN 31 Oct 2026 (round 4). As first written this asserted that a venv's share/ tree past the depth cap makes NO
-// depth-limit row, which is true only because 471a4ea stopped walking a venv's bin, include, lib, share and etc
+// depth-limit row, which is true only because 2ce50f0 stopped walking a venv's bin, include, lib, share and etc
 // (VENV_OWN) and said they "are checked with it". Round 3's re-reads measured that sentence untrue (nothing in them was
 // read) and the exclusion a false SAFE: a stealer's venv in a project-venv's lib/, share/, bin/ or etc/ read SAFE, exit
-// 0, where 03d95c9 read EXPOSED. The brief for round 4 orders it fixed, so a venv's folders are walked like any others,
+// 0, where 33641f9 read EXPOSED. The brief for round 4 orders it fixed, so a venv's folders are walked like any others,
 // and a share/ tree deeper than the cap was not searched past it: an honest depth-limit row, UNKNOWN, never silence.
 // What this test was for still holds and is still asserted: a venv's own package folders, where a real venv's 9-level
 // folders are (pip's tree), are checked and not walked, so they make no depth-limit row (re-read 2 measured exactly this
@@ -520,7 +520,7 @@ test('R2-N8 a folder past the depth cap holding only names the walk never enters
 // `deep` was opt-in in all four walkers, `denied`, `found`, `untested`, `coreOnly` and `loose` in some, and places()
 // (lib/headers.mjs) defaulted `links` to a list nobody read: a caller that forgot one got a walk that said nothing about
 // what it did not search, the pattern lib/wordpress.mjs's AUDIT-3 comment says must not be opt-in. No live caller left
-// one out at 03d95c9 (the re-read checked each); the next one could. A walk now throws when it has a gap to report and
+// one out at 33641f9 (the re-read checked each); the next one could. A walk now throws when it has a gap to report and
 // no list to put it in: a crash is could-not-be-tested (lib/crash.mjs), never SAFE.
 test('R2-N9 a walker given no list for a gap it found throws, rather than say nothing', async () => {
   const { discover } = await import('../lib/discover.mjs');
@@ -554,9 +554,9 @@ test('R2-N9 a walker given no list for a gap it found throws, rather than say no
 });
 
 // ---- a regression of this round's R2-N3 fix: derKind() took quadratic time after a certificate ---------------------------
-// 5bf562b read the elements after a certificate one by one, and before each one tested whether everything left was
+// 81b267d read the elements after a certificate one by one, and before each one tested whether everything left was
 // line ends by copying all of it: a 33 KB file (a certificate and 16,000 empty SEQUENCEs) took 2.9 s, and a file under
-// the 1 MB DER cap would have held the key scan for about half an hour. MEASURED, 31 Oct 2026. Fails on 5bf562b.
+// the 1 MB DER cap would have held the key scan for about half an hour. MEASURED, 31 Oct 2026. Fails on 81b267d.
 test('R2-N3 regression: a certificate followed by a flood of tiny elements is read in linear time', async () => {
   const { derKind } = await import('../lib/secrets.mjs');
   const pem = readFileSync(join(ROOT, 'lib', 'incidents', 'emudhra-2026-10-root-aaa.pem'), 'utf8');

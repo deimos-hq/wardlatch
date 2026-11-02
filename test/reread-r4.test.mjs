@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Deimos AI LLC
 // Round 4's strict audit, its swarm and its three re-reads (31 Oct 2026) all said NOT READY. Each test here stands in
-// front of one of their findings about the virtual-environment walks, is named after it, and fails at 99a7f7d (the
+// front of one of their findings about the virtual-environment walks, is named after it, and fails at edc4d71 (the
 // round-4 merge head) for the reason its name gives. Offline: no test here reaches a network host — the trust walk is
 // exercised through lib/discover.mjs discover(), which reads files and starts nothing, never through the CLI's probes.
 import './support/no-real-home.cjs';
@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 // lib/files.mjs is imported inside the tests, not at the top: isSiteName(), isLibName() and LIB_NAMES are this round's
-// own, so a run of this file against the code of 99a7f7d (the red proof A2 asks for) must still load, and each test
+// own, so a run of this file against the code of edc4d71 (the red proof A2 asks for) must still load, and each test
 // must fail for the reason its name gives rather than the whole file failing to import.
 const files = () => import('../lib/files.mjs');
 
@@ -89,10 +89,10 @@ const caseBlind = (() => {
 })();
 
 // ---- SN-1: a venv's package folder under a spelling the disk folds (round 4's swarm, BLOCKER) ------------------------
-// 78d0dfc replaced expand('lib*/python3*/site-packages'), whose last segment the file system resolved, with a readdir
+// 1a8141e replaced expand('lib*/python3*/site-packages'), whose last segment the file system resolved, with a readdir
 // scan comparing names exactly. On APFS (case-insensitive by default) CPython still loads `Site-Packages`,
 // `SITE-PACKAGES`, `ſite-packages` (U+017F) and `site-pacKages` (U+212A) through the lib/python3.12/site-packages path
-// it records, so the packages are live and Wardlatch stopped seeing them. MEASURED at 99a7f7d (venv-probe.sh, 1 Nov
+// it records, so the packages are live and Wardlatch stopped seeing them. MEASURED at edc4d71 (venv-probe.sh, 1 Nov
 // 2026): every one of those, and `Dist-Packages`, read `SAFE no LiteLLM 1.107.0 files or markers found`, exit 0, while
 // `site-packages` and `dist-packages` read EXPOSED, exit 1.
 const FOLDED = {
@@ -156,7 +156,7 @@ test('SN-1 control: a spelling this disk does NOT fold is not a venv\'s package 
 // LIB_NAME was /^lib/i, so `libs`, `library`, `libexec` and `lib-old` all counted as a venv's lib folder and a
 // site-packages inside one was taken for the venv's own package folder: checked at its top and never walked
 // (VENV_PACKAGES_SAID), so a stealer's venv at <project-venv>/libs/site-packages/inner/.venv read SAFE, exit 0, while
-// the same tree under vendor/ read EXPOSED. MEASURED at 99a7f7d (venv-probe2.sh, 1 Nov 2026) for all four names. The
+// the same tree under vendor/ read EXPOSED. MEASURED at edc4d71 (venv-probe2.sh, 1 Nov 2026) for all four names. The
 // receipt names only lib, lib64 and Lib, so the code and the receipt disagreed; this holds them to the receipt.
 const NOT_LIB = ['libs', 'library', 'libexec', 'lib-old', 'libraries', 'vendor'];
 test('B-78d-2: a folder merely beginning "lib" is not a venv\'s lib folder, so a venv inside it is still found', () => {
@@ -199,7 +199,7 @@ test('B-78d-2: the receipt names every folder the code takes for a venv\'s lib f
 // A folder that can be listed but not entered (mode 0444: read, no search) on the way to a venv's package folder was
 // skipped in silence by venvPackages(): `pathState(...) !== 'dir'` could not tell a denied folder from a file. The
 // installs walk happens to walk a venv's lib and lib/python3.12 itself and so reported them, but the TRUST walk reaches
-// a venv's packages through venvPackages() alone. MEASURED at 99a7f7d (venv-probe2.sh, 1 Nov 2026): with lib or
+// a venv's packages through venvPackages() alone. MEASURED at edc4d71 (venv-probe2.sh, 1 Nov 2026): with lib or
 // lib/python3.12 at 0444, the venv's certifi row vanished and no row took its place.
 const UNSEARCHABLE = { 'the venv\'s lib': 'lib', 'the venv\'s lib/python3.12': join('lib', 'python3.12') };
 test('B-78d-1: a folder on the way to a venv\'s packages that can be listed but not searched is a gap, not silence', async (t) => {
@@ -240,8 +240,8 @@ test('B-78d-1: the installs check says UNKNOWN, exit 2, for a venv behind a fold
 
 // ---- SN-2: every certifi bundle in a venv, not the first in readdir order (round 4's swarm) --------------------------
 // certifiIn() returned at the first package folder holding certifi/cacert.pem. `python3.12 -m venv --upgrade` leaves
-// lib/python3.11 behind, and since 78d0dfc any folder one level below lib counts, so a leftover whose name sorts first
-// wins: the bundle the venv's own python loads is tested by nothing and has no row. MEASURED at 99a7f7d
+// lib/python3.11 behind, and since 1a8141e any folder one level below lib counts, so a leftover whose name sorts first
+// wins: the bundle the venv's own python loads is tested by nothing and has no row. MEASURED at edc4d71
 // (venv-probe2.sh, 1 Nov 2026): two bundles in one venv, one certifi row, whichever name came first.
 test('SN-2: every certifi bundle in a virtual environment is tested, not only the first readdir returns', async () => {
   for (const other of ['python3.11', 'python3.13', 'a-leftover', 'zz-leftover']) {
@@ -271,9 +271,9 @@ test('SN-2 control: a venv with one bundle still has one row, naming the environ
 });
 
 // ---- B-e85-1: a DER store whose own outer element is longer than the bytes read (strict audit, BLOCKER) --------------
-// e85a3ef gave derKind() the first 1 MB of a file so that a key followed by more than a megabyte of other bytes is
+// 008f5f9 gave derKind() the first 1 MB of a file so that a key followed by more than a megabyte of other bytes is
 // still found. A store whose OWN outer element is longer than 1 MB was still skipped, with no row: derAt() refuses an
-// element whose declared length runs past the buffer. MEASURED at 99a7f7d (p12-probe.sh, 1 Nov 2026): a 1,866,487-byte
+// element whose declared length runs past the buffer. MEASURED at edc4d71 (p12-probe.sh, 1 Nov 2026): a 1,866,487-byte
 // PKCS #12 holding one RSA key, which `openssl pkcs12 -nocerts -nodes` reads the key out of, read "SAFE no committed
 // keys found in the files of 1 local repository", exit 0.
 const KEYS = ['--incident', 'committed-keys-2026-10'];
@@ -477,7 +477,7 @@ test('a FIFO in a venv\'s lib does not stop its packages being found, and makes 
 // ---- F2: the same store with an INDEFINITE outer length, over the bytes read (round-5 re-read #1, false-SAFE) -------
 // B-e85-1 above closed the stated-length case. derPastEnd() reached it through declaredEnd(), which returns null for the
 // indefinite-length marker (0x80), so a BER store over the cap never took the clipped read: no finding, no gap row, not
-// even a row saying a file was not read. MEASURED at 9a8ecfb (F2-DER-INDEFINITE.md, 1 Nov 2026): one real
+// even a row saying a file was not read. MEASURED at eccae50 (F2-DER-INDEFINITE.md, 1 Nov 2026): one real
 // `openssl pkcs12 -export` store of 1,866,486 bytes, its outer SEQUENCE re-wrapped `30 80 … 00 00` and nothing else
 // changed, committed as keystore.bin, read "SAFE no committed keys found in the files of 1 local repository", exit 0 —
 // while the other three cells of the 2x2 (definite/under, indefinite/under, definite/over) were all named, and both
@@ -543,7 +543,7 @@ test('F2: an indefinite-length store over the cap, deleted from the working tree
 // The precision gate. BER must not come to mean "not read": an indefinite element whose end-of-contents IS inside the
 // bytes was read in full, and an unrecognised shape inside bytes that were all read claims nothing, exactly as a stated
 // length under the cap claims nothing. Without this the fix could be met by calling every file that begins 30 80
-// UNKNOWN. It passes at 9a8ecfb by nature, which is what makes it a control and not a second red test.
+// UNKNOWN. It passes at eccae50 by nature, which is what makes it a control and not a second red test.
 test('F2 control: an indefinite element whose end-of-contents is inside the bytes read is not called unread', () => {
   const body = berKnownEnd(2000);
   assert.ok(body.length < 1024 * 1024);

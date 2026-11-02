@@ -210,7 +210,7 @@ function notRunRow(results, inc, what, paths) {
 //   - `review`: folders a check knows to be private by their place (a locked dot-folder under a web root: www-data's
 //     .ssh), in the same grouped row whoever owns them.
 //   - a folder that refuses with EPERM, whoever owns it: UNKNOWN, always (owner decision #32, 31 Oct 2026: "Yes,
-//     UNKNOWN"). From 6bf0555 to this fix it was a "stated gap" in the REVIEW line beside SAFE, exit 0, on the claim
+//     UNKNOWN"). From 4209d15 to this fix it was a "stated gap" in the REVIEW line beside SAFE, exit 0, on the claim
 //     that EPERM was macOS's privacy protection and could not be forged without root. An unprivileged sandbox
 //     (sandbox-exec, the kind coding agents run tools in) gives exactly that EPERM, and a venv holding the LiteLLM
 //     stealer inside such a folder read SAFE, exit 0, where it is EXPOSED ×2, exit 1. Its row says the errno, the mode

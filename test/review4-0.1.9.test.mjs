@@ -167,7 +167,7 @@ exit 1`);
 // which is run by hand: support/no-real-home.cjs rightly refuses to let a test read the person's own home.
 // REVERSED 31 Oct 2026 by owner decision #32 ("Yes, UNKNOWN"): any folder Wardlatch could not open, EPERM included, is
 // UNKNOWN with exit 2, never SAFE. Up to then this demanded an all-clear and exit 0 beside a stated gap, because EPERM
-// was taken to be macOS's privacy protection, which nobody could forge; the independent read of da8f5c2 forged it with
+// was taken to be macOS's privacy protection, which nobody could forge; the independent read of 176b94e forged it with
 // an unprivileged sandbox-exec profile and hid a LiteLLM stealer behind it (EXPOSED ×2, exit 1 became SAFE, exit 0).
 // What the outcome now is: the folder is its own UNKNOWN row with the errno, mode and owner, and the run exits 2.
 // test/false-safes.test.mjs holds the full contract; this keeps the outcome pinned where it was first demanded.

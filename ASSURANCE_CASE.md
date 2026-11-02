@@ -118,7 +118,7 @@ keeps its real value with those characters written as JSON escapes, so none of t
 message is escaped a line at a time; a real line break inside the message itself (a path holding one) still starts a
 line on stderr, under a crash that exits 2 (measured 31 Oct 2026). What it does not do: printable text is printed as
 it is, so a name can still say anything plain letters can say, a sentence addressed to a person or an AI agent reading
-the output included; the escaper makes the hidden visible, and cannot make a planted sentence untrue. Up to 03d95c9 it
+the output included; the escaper makes the hidden visible, and cannot make a planted sentence untrue. Up to 33641f9 it
 escaped control characters only, and the others reached the output raw; up to round 4 (31 Oct 2026) the
 default-ignorable characters outside those categories, and U+2800, still did. *Evidence:* `test/cli.test.mjs` plants
 a folder named with control characters and checks that none reaches the output raw; `test/reread-r2.test.mjs` (the W1

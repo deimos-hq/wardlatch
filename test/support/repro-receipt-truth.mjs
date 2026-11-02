@@ -29,7 +29,7 @@
 //        the half of the gate that already worked: both correctly refused. They were kept so the file could not
 //        become all-fail and therefore meaningless, and they are kept now for the same reason, from the other side.
 //
-// 00b6332 (29 Oct 2026) fixed the gate: a receipt entry is now either an absolute path that is on this machine, or
+// dd939b7 (29 Oct 2026) fixed the gate: a receipt entry is now either an absolute path that is on this machine, or
 // an observation declared by the check with saw(), and anything else is prose, so the row comes back UNKNOWN with
 // the failing entry named. From that commit none of the six reproduces, and this file said "FAILED RUN: nothing
 // reproduced" and exited 1 — backwards, because by then nothing reproducing was the correct state of the world.

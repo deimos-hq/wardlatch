@@ -2024,7 +2024,7 @@ ok "the header's sentences about interruption and backups say what the script do
 # Added on 31 Oct 2026 after a third independent read. Like the r2 cases, each stands on the setup above alone.
 
 # ---- r3 case: mode
-# The fix is executable, as the site serves it: `./fix/fix-macos.sh` in a clone must run. fbed337 (31 Oct 2026) took the
+# The fix is executable, as the site serves it: `./fix/fix-macos.sh` in a clone must run. 6e07aaa (31 Oct 2026) took the
 # bit away (100755 to 100644) without saying so, and nothing here could see it. In a git checkout the mode git records
 # is what a clone gets, so that is what is checked; elsewhere, the file's own bit.
 if m=$(git -C "$root" ls-files -s -- fix/fix-macos.sh 2>/dev/null) && [ -n "$m" ]; then
@@ -2974,7 +2974,7 @@ ok "a 0 from the test site is EXPOSED whatever the control says, on both paths, 
 
 # ---- r5 case: nul-byte
 # A NUL byte inside a certificate block hides a withdrawn root from this fix and not from LibreSSL, so the run said
-# SAFE, exit 0, with the root still trusted through the file (measured 1 Nov 2026 on 99a7f7d; the swarm's B-tls-1).
+# SAFE, exit 0, with the root still trusted through the file (measured 1 Nov 2026 on edc4d71; the swarm's B-tls-1).
 # The mechanism, measured on this Mac: /bin/bash 3.2's `read` cuts a line at its first NUL and drops the rest
 # ("ab\0cd" comes back as "ab", length 2), and so does awk, while LibreSSL reads the file with BIO_gets in 253-byte
 # pieces and cuts EACH PIECE at its NUL -- so on a line longer than 253 bytes it reads every piece after the first.
@@ -3072,7 +3072,7 @@ ok "a file with no NUL byte is still fixed, so the refusal above is about the NU
 
 # ---- r5 case: compromised keys
 # A bundle holding one of the compromised eMudhra INTERMEDIATES, or either "emSign Root TLS CA - G3" certificate,
-# read SAFE, exit 0, nothing changed (measured 1 Nov 2026 on 99a7f7d for all 14 certificates: the swarm's B-tls-2).
+# read SAFE, exit 0, nothing changed (measured 1 Nov 2026 on edc4d71 for all 14 certificates: the swarm's B-tls-2).
 # Removing the two roots works only for a reader that insists on a chain ending at a self-signed root in the file.
 # /usr/bin/curl 8.7.1, Apple's git and the built-in perl take EVERY CA certificate in a --cacert file as an anchor,
 # so such a file keeps trusting everything that intermediate issued; and the self-signed "emSign Root TLS CA - G3"
@@ -3271,7 +3271,7 @@ for day in 20270503 20280101 none; do
 done
 # F1, the defect this block exists for: the test site ACCEPTS the cleaned file. That is exposure, and curl's 0
 # says so whatever the date is, because an expired leaf cannot produce a 0. Each of these read SAFE, exit 0 at
-# 38c0c71 -- and the second needs no 2027 at all: an unreadable clock reaches it today.
+# 794679e -- and the second needs no 2027 at all: an unreadable clock reaches it today.
 for day in 20270503 none; do
   rm -rf "$d/exp"; mkdir -p "$d/exp"; cp "$work/original.pem" "$d/exp/cert.pem"
   run "$d/exp/cert.pem" WARDLATCH_DATE="$r2/clock" FAKE_DAY="$day" WARDLATCH_CURL="$r2/curl" STUB_TEST=0 STUB_CONTROL=0
@@ -3285,7 +3285,7 @@ for day in 20270503 none; do
 done
 # The canary DEAD, and before the date, so only the control can catch it: the test site refused the file as it
 # was, which it should have accepted. Nothing here shows it can tell the two files apart, so the 60 through the
-# new file is not a receipt and must not be read as one. At 38c0c71 this printed "now refuses the compromised
+# new file is not a receipt and must not be read as one. At 794679e this printed "now refuses the compromised
 # keys" -- a SAFE with no receipt, on a date the gate never covered.
 for pair in "60 60" "28 60" "7 60"; do
   rm -rf "$d/dead"; mkdir -p "$d/dead"; cp "$work/original.pem" "$d/dead/cert.pem"
@@ -3405,7 +3405,7 @@ ok "an uncorroborated SAFE keeps exit 0 and says what was NOT checked, a refused
 # F-6b0-1. A bundle that is a symbolic link whose TARGET's name ends in a line break, beside a decoy with the same
 # name without it. Until r5 the line said the link pointed at the decoy and the command it printed named the decoy:
 # `to=$(readlink "$FILE")` drops every trailing line break. MEASURED (round 4's strict audit, and again here against
-# 99a7f7d). Only whoever can make the link can do this, which for /etc/ssl is root.
+# edc4d71). Only whoever can make the link can do this, which for /etc/ssl is root.
 # readlink cannot tell the two names apart at all on this macOS -- it prints a target without a trailing break WITH
 # one added and one with a break WITHOUT, so both come out the same 9 bytes -- so the sentinel the finding proposed
 # would not have worked either. /usr/bin/stat -nf '%Y' adds nothing, and is what the fix reads now.

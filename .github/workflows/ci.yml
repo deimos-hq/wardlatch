@@ -59,7 +59,7 @@ jobs:
         # only until it was rewritten, which CL-52 records.
         #
         # Until 1 Nov 2026 this comment said the site prints THIS digest and that CL-53 records the values this
-        # pin has held. Both became false the moment the pin moved to 464e3bbe (b749850) and neither was noticed:
+        # pin has held. Both became false the moment the pin moved to 464e3bbe (1d98436) and neither was noticed:
         # 464e3bbe appears on no site branch and in no Record entry, and CL-53 records d8a4bffd. A comment that
         # asserts the published state is itself a claim, and it was wrong in the file that is this project's own
         # mechanical guard for exactly this invariant.
@@ -68,10 +68,10 @@ jobs:
         # the site's download, the page's hash, a new Record entry naming its predecessor and the changelog
         # together, and this hash and SECURITY.md's printed digest with them. The step below checks the three
         # copies that live in THIS repository; the site's are the owner's to ship and nothing here can see them.
-        run: echo "88527af656a49f19b841c2294b200288f33afaa03d1659eee74f7a6d1572a9d4  fix/fix-macos.sh" | shasum -a 256 -c -
+        run: echo "c8bba160a8a9c30f2f850cd8987429b297612ea580e77404fddbbfe7ddc167a6  fix/fix-macos.sh" | shasum -a 256 -c -
       - name: The digest chain agrees -- the file, the pin above and the digest SECURITY.md prints
         # The step above compares the script to ONE number in ONE file; every other copy of that number was
-        # unguarded prose, and the chain drifted twice in forty-eight hours (bb4f9b8 fixed SECURITY.md on 31 Oct
+        # unguarded prose, and the chain drifted twice in forty-eight hours (2c9b4e2 fixed SECURITY.md on 31 Oct
         # after it printed the round-3 digest; by 1 Nov it was wrong again, with the file and this pin on
         # 464e3bbe and SECURITY.md telling the reader d8a4bffd, which belonged to neither, while four reviewers
         # were reading that tree). This compares all three, and the mode with them.

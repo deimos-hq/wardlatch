@@ -6,8 +6,8 @@
 # .github/workflows/ci.yml, and the digest SECURITY.md prints to the reader must all be one string.
 #
 # Why this exists. Until 1 Nov 2026 CI compared the script to one number typed in one file, and every other copy
-# of that number was unguarded prose. The chain drifted twice in forty-eight hours: bb4f9b8 (31 Oct) fixed
-# SECURITY.md after it printed the round-3 digest, and by 1 Nov it was wrong again -- fb4001a and b749850 moved
+# of that number was unguarded prose. The chain drifted twice in forty-eight hours: 2c9b4e2 (31 Oct) fixed
+# SECURITY.md after it printed the round-3 digest, and by 1 Nov it was wrong again -- 73038cb and 1d98436 moved
 # the script and the pin and SECURITY.md did not move with them, so the file hashed 464e3bbe..., CI pinned
 # 464e3bbe... and SECURITY.md told the reader d8a4bffd..., a digest that belonged to neither. Four reviewers were
 # reading that tree at the time. A hand-coordinated invariant with a one-way check is not a mechanism; this is.

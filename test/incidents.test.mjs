@@ -108,9 +108,9 @@ test('regression: the copyable macOS fix runs awk with sudo, so a root-only back
 // withdrawn ROOTS clears them only for a reader that insists on a chain ending at a self-signed root in the file;
 // /usr/bin/curl, Apple's git and the built-in perl take every CA certificate in a --cacert file as a trust anchor, so
 // one of those intermediates left in a bundle keeps trusting everything it issued, and the Mac fix said SAFE, exit 0
-// (measured 1 Nov 2026 on 99a7f7d, for all 14 certificates). "emSign Root TLS CA - G3", which issued six of the 12,
+// (measured 1 Nov 2026 on edc4d71, for all 14 certificates). "emSign Root TLS CA - G3", which issued six of the 12,
 // also exists as a SELF-SIGNED certificate, a full anchor for every reader; the owner's decision #38 was to add it.
-// These tests stand in front of that gap: they fail on 99a7f7d, where neither the data nor the fix's list existed.
+// These tests stand in front of that gap: they fail on edc4d71, where neither the data nor the fix's list existed.
 test('eMudhra: the seven other withdrawn keys are the keys their certificates hold, derived from the certificates', async () => {
   const { createHash } = await import('node:crypto');
   const ROOT = join(DIR, '..', '..');

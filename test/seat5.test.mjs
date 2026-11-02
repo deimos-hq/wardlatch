@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Deimos AI LLC
-// The rest of seat 5's review of 2 Nov 2026: what read SAFE and shouldn't have. Each failed on integrate/r5 at 8c7f203.
+// The rest of seat 5's review of 2 Nov 2026: what read SAFE and shouldn't have. Each failed on integrate/r5 at 04bd5ae.
 import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';

@@ -3,7 +3,7 @@
 // Round 5, gate A6: the FIX items the round-4 strict audit left open in bin/ and lib/ (STRICT-AUDIT.md, 31 Oct 2026,
 // "Open BLOCKER and FIX items"), which no round-5 tranche touched. Each one was MEASURED there as a mutant that the
 // whole node suite missed, or as a sentence the code does not keep. Each test below is named after its id, stands in
-// front of exactly that gap, and either fails on the base commit 99a7f7d (F-c5a-1, a real defect) or fails on the
+// front of exactly that gap, and either fails on the base commit edc4d71 (F-c5a-1, a real defect) or fails on the
 // named surviving mutant (the rest, which are tests-cannot-fail findings under gate A3).
 // Offline: no test here reaches a network host.
 import './support/no-real-home.cjs';
@@ -38,7 +38,7 @@ const json = (args, env = {}) => {
 const unknowns = (r) => r.rows.filter((x) => x.status === 'UNKNOWN');
 
 // ---- F-99a-1 and F-99a-2: the receipt of decision #33's one grouped row ------------------------------------------------
-// 99a80ea put the folders a service owns that could not be opened into ONE UNKNOWN row, with the basis per folder (the
+// 4c6e130 put the folders a service owns that could not be opened into ONE UNKNOWN row, with the basis per folder (the
 // errno, the mode, the owner) "so a reader can check each with one `ls -ld`". The strict audit planted three mutants on
 // it that the WHOLE node suite missed (MEASURED, 31 Oct, logs mut-99a80ea.txt and mut-dd0d23f.txt):
 //   99a-no-basis-text  the reason loses `: ${say(folders)}`, so the text a person reads never names a folder
@@ -130,7 +130,7 @@ test('F-99a-2 decision #33: one folder not searched is said in the singular, not
 });
 
 // ---- F-835-1: the venv-link sentence belongs to the installs check alone ----------------------------------------------
-// 835882a words one row for a link that leads to a virtual environment: "its own packages were checked through it".
+// d5b890f words one row for a link that leads to a virtual environment: "its own packages were checked through it".
 // That is true of the installs check, which reads a linked venv's package folders through the link (lib/installs.mjs),
 // and of no other check. The guard is `kind === 'install'`, and the strict audit's mutant 835-reason-anykind, which
 // drops it, survived the whole node suite (MEASURED, extra.txt): every check would then tell a reader that a venv
@@ -139,7 +139,7 @@ test('F-99a-2 decision #33: one folder not searched is said in the singular, not
 //
 // NOTE, against the audit's own suggested fix ("a trust-walk case with a link to a venv"): the trust walk cannot hold
 // this guard. lib/discover.mjs:159 sends a link that looks like an environment to `untested`, not to the `links` list
-// gaps() words, so a link to a venv met by the trust walk never reaches this branch at all — MEASURED at 99a7f7d: the
+// gaps() words, so a link to a venv met by the trust walk never reaches this branch at all — MEASURED at edc4d71: the
 // row comes back as kind 'curl' with discover()'s own sentence. The four checks that do reach it are header, secret,
 // workflow and wordpress, and all four are asserted here.
 test('F-835-1 only the installs check says a linked venv\'s own packages were checked through the link', () => {
@@ -185,7 +185,7 @@ test('F-835-1 only the installs check says a linked venv\'s own packages were ch
 });
 
 // ---- F-e85-2: the value of the DER cap is held by a test --------------------------------------------------------------
-// e85a3ef gives derKind() the first DER_MAX (1 MB) bytes of a file, so "a key is a key whatever follows it". The only
+// 008f5f9 gives derKind() the first DER_MAX (1 MB) bytes of a file, so "a key is a key whatever follows it". The only
 // test puts the key at the START of the file, so the cap's VALUE is untested: the strict audit's mutant e85-cap-64k
 // (1 MB -> 64 KB) survived the whole node suite (MEASURED, extra.txt). At 64 KB a certificate chain longer than 64 KB
 // followed by its key — the "a certificate and its key in one file" shape derKind() reads — is cut off mid-chain, no
@@ -197,7 +197,7 @@ test('F-e85-2 a DER key after more than 64 KB of certificates, in a file under 1
   const pem = readFileSync(join(ROOT, 'lib', 'incidents', 'emudhra-2026-10-root-aaa.pem'), 'utf8');
   const cert = Buffer.from(pem.replace(/-----[^-]+-----/g, '').replace(/\s+/g, ''), 'base64');
   // a certificate, then empty SEQUENCEs, then the key: the chain is put as near the 1 MB cap as it will go, so that
-  // ANY cap smaller than the one e85a3ef chose loses the key, not only the 64 KB the audit's mutant tried
+  // ANY cap smaller than the one 008f5f9 chose loses the key, not only the 64 KB the audit's mutant tried
   const filler = Buffer.alloc(475000 * 2).fill(Buffer.from([0x30, 0x00]));
   const file = Buffer.concat([cert, filler, key]);
   assert.ok(file.length > 900 * 1024 && file.length < 1024 * 1024, `${file.length} bytes: just under the 1 MB cap`);
@@ -205,7 +205,7 @@ test('F-e85-2 a DER key after more than 64 KB of certificates, in a file under 1
   const { derKind } = await import('../lib/secrets.mjs');
   assert.equal(derKind(file)?.type, 'private key (DER, PKCS #8)', 'the control: this file IS a key after a chain');
   // and the control the other way, at four smaller caps: cut short, there is no key there to find, so the row below
-  // can only come from the cap being the 1 MB e85a3ef chose
+  // can only come from the cap being the 1 MB 008f5f9 chose
   for (const cap of [64, 128, 512, 900]) assert.equal(derKind(file.subarray(0, cap * 1024)), null, `cut at ${cap} KB`);
   // and through the CLI, where the cap decides
   const root = fresh('r5-der-cap');
@@ -223,10 +223,10 @@ test('F-e85-2 a DER key after more than 64 KB of certificates, in a file under 1
 });
 
 // ---- F-c5a-1: a real line break inside a crash's message -------------------------------------------------------------
-// c5ad2a9's own comment says "A line break inside a message (a path holding one) stays escaped". It did not: the stack
+// 3ffcb0d's own comment says "A line break inside a message (a path holding one) stays escaped". It did not: the stack
 // was split on EVERY real line break, the message's own included, and each piece escaped separately, so a real LF in an
 // error's text started a line of its own on stderr. APFS takes an LF in a name, so a path carries one into an error
-// message exactly as it carries the four printable characters \x0a that round 3's re-read 2 found. MEASURED at 99a7f7d:
+// message exactly as it carries the four printable characters \x0a that round 3's re-read 2 found. MEASURED at edc4d71:
 // an Error whose message holds a real LF before "SAFE     no LiteLLM 1.107.0 files or markers found" prints that as
 // stderr line 2, "lines starting with SAFE: 1", under a crash that exits 2.
 test('F-c5a-1 crash.mjs: a REAL line break inside a crash\'s message never starts a line, and the frames keep theirs', () => {

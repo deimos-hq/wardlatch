@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Deimos AI LLC
-// The independent read of fix/false-safes at da8f5c2 (31 Oct 2026): five readers with different lenses, then five
+// The independent read of fix/false-safes at 176b94e (31 Oct 2026): five readers with different lenses, then five
 // refuters who re-ran every finding. Each test here stands in front of one confirmed finding, is named after it, and
-// failed at da8f5c2 for the reason its name gives (or, for a test that could not fail before, fails on the mutant the
+// failed at 176b94e for the reason its name gives (or, for a test that could not fail before, fails on the mutant the
 // refuter planted). Offline: no test reaches a network host.
 import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
@@ -43,7 +43,7 @@ function litellmVenv(path) {
 const LITELLM = ['--incident', 'litellm-2026-10', '--no-containers'];
 
 // ---- owner decision #32 (WV-2, claims F1, M6, WV-14, WV-8) -------------------------------------------------------------
-// At da8f5c2 any EPERM on a folder whose mode would let the run in was read as "macOS is protecting it" and became a
+// At 176b94e any EPERM on a folder whose mode would let the run in was read as "macOS is protecting it" and became a
 // stated gap: a REVIEW line beside SAFE, exit 0. An unprivileged sandbox profile gives exactly that EPERM, and the
 // refuter turned a real EXPOSED ×2, exit 1 into SAFE, exit 0 with one. The owner's decision, 31 Oct 2026: "Yes,
 // UNKNOWN" — any folder Wardlatch could not open, EPERM included, is UNKNOWN with exit 2, never SAFE.
@@ -109,7 +109,7 @@ test('decision #32: the refuter\'s LiteLLM case under a real unprivileged sandbo
 // which returns before the mode is read. The mode test is what makes "its permission bits would let this run in" true
 // when a row says it, so it is held here directly, class by class, and through the command. It also had a defect of
 // its own: the others' bits counted for the folder's owner, whom DAC judges by the owner's bits alone, so a folder of
-// mode 0005 its owner cannot list was said to be open to them (that case fails at da8f5c2).
+// mode 0005 its owner cannot list was said to be open to them (that case fails at 176b94e).
 test('MUT-12 mandatoryRefusal() reads the permission bits that apply to this user, and only for EPERM', { skip: AS_ROOT && 'root is never refused by DAC' }, async () => {
   const { mandatoryRefusal } = await import('../lib/files.mjs');
   const at = (name, mode) => { const d = fresh(`m12-${name}`); chmodSync(d, mode); locked.push(d); return d; };

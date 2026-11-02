@@ -104,7 +104,7 @@ test('a folder shut with a deny ACL (mode still 0755) is could-not-be-tested and
 // ---- 3. the real article: a refusal from above the permission bits is could-not-be-tested ----------------------------
 // REVERSED 31 Oct 2026 by owner decision #32 ("Yes, UNKNOWN"): any folder Wardlatch could not open, EPERM included, is
 // UNKNOWN with exit 2, never SAFE. This test demanded the opposite — a stated gap in the REVIEW line beside the
-// all-clear, exit 0 — on the claim that EPERM cannot be forged without root. The independent read of da8f5c2 built
+// all-clear, exit 0 — on the claim that EPERM cannot be forged without root. The independent read of 176b94e built
 // that EPERM with an unprivileged sandbox-exec profile and turned a real EXPOSED ×2, exit 1 into SAFE, exit 0 with it.
 // The fixture is kept: a REAL folder on this machine that the system refuses with EPERM (on this Mac, one System
 // Integrity Protection guards under /private/var/db), found at run time and skipped when there is none, in the style

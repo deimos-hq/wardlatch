@@ -91,7 +91,7 @@ EMS_X='23a50cb82d12f528f3b1b2dde20212809e395f494d9fc925345974ecbb061ce7c072afe8a
 # backends it takes EVERY CA certificate in a --cacert file as a trust anchor, and Apple's git goes through the same
 # libcurl, as does the built-in perl. So a cert.pem holding one of the compromised intermediates keeps trusting
 # everything that intermediate issued after both roots are gone, and until 1 Nov 2026 this script looked only for
-# the two roots and said SAFE, exit 0 (the swarm's B-tls-2; measured here on 99a7f7d, and MEASURED again with
+# the two roots and said SAFE, exit 0 (the swarm's B-tls-2; measured here on edc4d71, and MEASURED again with
 # `openssl verify -partial_chain`: the advisory's ov-g3c leaf verifies through the cleaned file plus that one
 # intermediate, and fails through the cleaned file alone).
 #   - Six of them are the compromised TLS intermediate keys. There are 12 compromised intermediate certificates and
@@ -221,7 +221,7 @@ count() { local n r=0; n=$(grep -c -- "$1" "$2" 2>/dev/null) || r=$?; if [ "$r" 
 # Certificates are the lines that START with the BEGIN marker. A marker anywhere else in a line stops the run before
 # anything is read out of the file (see the checks after the snapshot): LibreSSL reads the file 253 bytes at a time, so
 # a marker at byte 253, 506, ... of a longer line starts a certificate it trusts (OpenSSL 3.6.4: byte 254), and this
-# script would not see it. Measured 31 Oct 2026, after an earlier change that day (6a36187) counted only markers at the
+# script would not see it. Measured 31 Oct 2026, after an earlier change that day (ec955f9) counted only markers at the
 # start of a line on the model that LibreSSL reads nothing else: a root hidden that way stayed trusted, under SAFE.
 certs() { count '^-----BEGIN CERTIFICATE-----' "$1"; }
 # How many NUL bytes are in the file $1, counted on BYTES and not on lines, or a failure. Every line-based reader this
@@ -230,7 +230,7 @@ certs() { count '^-----BEGIN CERTIFICATE-----' "$1"; }
 # pieces and cuts EACH PIECE at its first NUL, so on a line longer than 253 bytes it reads every piece after the
 # first. A certificate block can therefore carry base64 that curl, git, ruby, perl and openssl decode and this script
 # never sees, and until 1 Nov 2026 a withdrawn root hidden that way stayed trusted under SAFE, exit 0 (the swarm's
-# B-tls-1, reproduced here on 99a7f7d). No earlier check sees it: the BEGIN marker still only ever starts a line, the
+# B-tls-1, reproduced here on edc4d71). No earlier check sees it: the BEGIN marker still only ever starts a line, the
 # counts agree, and every certificate this does read has a fingerprint and a key, so the completeness gate passes too.
 # A length check cannot stand in for this, because awk measures the cut line: on such a file `awk 'length($0)>252'`
 # reports no line at all. So the count is taken with tr, on bytes. Apple's own file holds no NUL byte, so refusing

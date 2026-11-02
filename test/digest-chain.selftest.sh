@@ -52,7 +52,7 @@ grep -q '^ok: the digest chain agrees' <<<"$out" || fail "the control: it did no
 ok "CONTROL: a chain whose three files agree passes, so a FAIL below means something"
 
 # ---- M1. SECURITY.md's digest off by one hex digit. This is the live defect of 1 Nov 2026, and of 31 Oct
-# before it (bb4f9b8): the script and the pin moved and the printed digest did not.
+# before it (2c9b4e2): the script and the pin moved and the printed digest did not.
 build; sub "s/\`$d\`/\`${d%?}0\`/" "$work/r/SECURITY.md"; chk
 [ "$code" -ne 0 ] || fail "M1: SECURITY.md printing another digest passed"
 grep -q 'SECURITY.md prints' <<<"$out" || fail "M1: the failure did not name SECURITY.md's digest"

@@ -113,7 +113,7 @@ test('AUDIT-12 a SAFE row\'s reason claims more than its receipt covers: the OVH
 // that hasReceipt() says yes to a prose sentence, in those words ("premise: any non-blank string is a receipt"), and
 // only its third line was the finding. A test built that way cannot pass after any correct fix -- once the gate
 // refuses a made-up receipt the premises are false, so it goes red for the right reason and stays red for ever, and a
-// suite with a permanent red in it is a suite nobody reads. 00b6332 fixed the gate on this branch; the finding is now
+// suite with a permanent red in it is a suite nobody reads. dd939b7 fixed the gate on this branch; the finding is now
 // asserted the way round that survives it. What AUDIT-13 found is that the rule standing between an UNKNOWN and a
 // SAFE tested the SHAPE of a receipt and never its truth, and that the second enforcement on the way out called the
 // same shape-only test and so could catch nothing. Both are asserted here as refusals.
