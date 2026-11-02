@@ -11,6 +11,83 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-11-02
+
+We found every defect under Security below ourselves, on 2 November 2026, in a second read of 0.1.11 made after it
+shipped, three reviews of this release's drafts, and a differential against 0.1.11 over about 250,000 generated cases. Each could read `SAFE` where something was wrong. If 0.1.11 or
+earlier said `SAFE`, run this version. The Mac fix download doesn't change. The advisories SECURITY.md promises for these
+defects, and for those in 0.1.11, are not open yet. `test/seat6.test.mjs` to `test/seat10.test.mjs` hold the tests. Two of seat 6's, I4-H2 and R11, pass on 0.1.11: they pin fixes already made. There is no test for the Linux
+link name.
+
+### Security
+
+- **Apple's own Python folders were never searched.** `/Library/Python/3.x/site-packages`, where `sudo pip3` installs, and
+  the site folders of the Command Line Tools and Xcode are the ones `/usr/bin/python3` names, and none was on the list.
+  A stealer in one read `SAFE`, exit 0.
+
+- **A link to a folder the run couldn't reach was dropped with no row.** All four walks asked whether a link led to a
+  folder, and a locked target is neither a folder nor gone. A venv, repository or WordPress site behind one read `SAFE`,
+  exit 0, while the same link reachable read UNKNOWN. On Linux a link with a name that isn't valid UTF-8 fell in the same
+  hole. Below the folders searched it is UNKNOWN now, and so is a link to a file behind a locked folder, which the run
+  can't tell from one. In the quick look round the home folder only a link named like a venv is reported.
+
+- **The quick look missed a venv it could not enter.** `~/app/.venv` as a link to a locked target, or a folder of mode
+  0644, read `SAFE`. It is UNKNOWN now, and so is any folder of that mode there, whatever its name.
+
+- **0.1.11 put a name back in charge of a verdict.** Its quick look left out `.Trash`, `Photo Booth Library` and
+  `*.photoslibrary` by name at any depth, so a locked `~/Documents/clients.photoslibrary` holding a stealer read `SAFE` and
+  the same folder called `work` read UNKNOWN. Now only `~/.Trash`, and `Photo Booth Library` and any `*.photoslibrary` in
+  `~/Pictures`, are left out, and only on EPERM, which macOS gives there and a sandbox or security tool can give too.
+  When they are refused they are not searched, and the line under the result names them, says how many items at their
+  top level went unsearched, and says how to search them: Full Disk Access, or emptying the Trash. macOS answers for a folder's own metadata
+  while refusing its contents, so a refused folder holding nothing is proven empty and isn't mentioned. That works on APFS;
+  on another disk the count is left out.
+
+- **The temp-folder fix in 0.1.11 stopped short.** With `/private/var/folders`, or the level below it, refused, the run
+  read `SAFE`, exit 0, with `T` gone from what it looked at. Those levels are UNKNOWN now, as is the per-user folder through
+  `T`'s row, except `zz`, which holds only system users. Inside a sandbox that refuses them this can read UNKNOWN where nothing is wrong: it is a place not looked at.
+
+- **A `sitecustomize.py` changed by one byte read `SAFE`.** The published file was `EXPOSED` and anything else had no row,
+  by an option that silenced the line. It is a REVIEW line now, and the option is gone. A file of that name inside a
+  site-packages turns that check's SAFE into REVIEW, exit 0. Homebrew's own is one folder up and isn't read. A
+  `sitecustomize/` package, or either compiled with no source, which Python runs the same way, is a REVIEW line too. The
+  owner's decision, 2 Nov 2026.
+
+- **WordPress leftovers read `SAFE`.** `<site>/content/plugins` beside a stock site is checked now, as `backup/plugins` was,
+  and so is a folder under any parent that holds a listed plugin (`wp-content/upgrade`, `backup/old`). A folder holding a
+  listed plugin's main file is that plugin, whatever it is called (`rank-math-pro`, a pasted version number, a change of
+  case), in the live plugins folder too, where it had only an "added" REVIEW line. A folder with the plugin's name in it,
+  set off by anything but a letter or digit (`plugin copy`, `plugin 2`, `old-plugin`), and without the main file, has its
+  indicator searched and is a REVIEW line. So is a folder of the exact name in a parent with no `plugins` in its name; it
+  was not looked at before. A link at a copy's name counts. `--paths` naming a copy, a link to the plugin, or a folder holding
+  its main file, is checked as the exact name is.
+
+- **Private keys in forms LibreSSL loads read `SAFE`.** Lengths that aren't minimal, however long; a constructed OCTET STRING;
+  high-tag forms (`3f 10`, `3f 80 10`, `1f 02`), for the outer element and the ones inside; a version other than a single
+  byte 0 or 1, however written; a short key with no NUL byte. These go through one reader now, which normalises the tag and
+  the length, and they are found, or UNKNOWN where they can't be read. A file that merely begins `0.`, such as a `VERSION` of
+  `0.1.0`, read UNKNOWN, exit 2, and no longer does.
+
+- **Header forms read `SAFE`.** In TOML, `--header` or `http_headers` in an inline table, a dotted key split by a quote, a
+  quoted key holding `=`, a `]` or a quoted word in a comment, multi-line strings and escapes: a small tokenizer now reads
+  the file beside the line reader, and a row from either counts, so a file a strict parser gives up on loses nothing. Text
+  inside a multi-line string can therefore be a REVIEW line. A file with a multi-line string never closed and no header the
+  line reader can see is UNKNOWN, as broken JSON is. In git config, a
+  value continued by a backslash on a file's last line with no line end, quotes inside a value (`ada"@"example.org`), and a
+  CR or U+2028 inside one. A FIFO at `.mcp.json` in a project with no `.git`. A project file in a repository's subfolder is
+  still not read, in this release or earlier.
+
+### Fixed
+
+- A PKCS #1 public key in DER read UNKNOWN, exit 2, for an ordinary public key. It stays quiet now, on its whole shape: two
+  INTEGERs, a modulus and a small exponent.
+- A `--paths` folder that is a plugin's now checks its parent once, however many were named. The sitecustomize advice no
+  longer lands on a Docker image's row, where it told a healthy machine to rotate every secret. Both were in drafts only.
+- `test/round6.test.mjs` failed in place of skipping inside a sandbox.
+- `test/fix-macos.check.sh` said it is safe on your own Mac, and on a Mac with a network it contacts the advisory's test
+  host. Its header says so now, and how to keep it offline.
+- SECURITY.md said this repository is ahead of the download. It stopped being true on 2 Nov 2026.
+
 ## [0.1.11] - 2026-11-02
 
 We found every defect under Security below ourselves, in reviews of our own work from 29 October to 2 November 2026,
@@ -1834,7 +1911,8 @@ Published 05:14 UTC. npm `gitHead`: `4d4f295`. The first release.
 npm also lists `0.0.0-stage` (21 October, 05:13 UTC), a 331-byte, two-file placeholder from npm's staged publishing,
 described on npm as a "Temporary package placeholder". It is not a release and holds none of Wardlatch's code.
 
-[Unreleased]: https://github.com/deimos-hq/wardlatch/compare/v0.1.11...main
+[Unreleased]: https://github.com/deimos-hq/wardlatch/compare/v0.1.12...main
+[0.1.12]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.12
 [0.1.11]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.11
 [0.1.10]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.10
 [0.1.9]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.9

@@ -317,7 +317,7 @@ test('LiteLLM (real incident data): the exact dropped files, a variant by name, 
   const r = checkSitePackages(inc.sitePackages, [sp]);
   assert.match(r.find((x) => x.what === 'cook.pth').reason, /is the malicious file/);
   assert.equal(r.find((x) => x.what === 'cook.py').status, 'EXPOSED', 'nothing legitimate installs cook.py');
-  assert.equal(r.find((x) => x.what === 'sitecustomize.py'), undefined, 'a sitecustomize.py that isn\'t the stealer is not reported');
+  assert.equal(r.find((x) => x.what === 'sitecustomize.py').status, 'REVIEW', 'one that isn\'t the published stealer is a question, never silence (owner, 2 Nov 2026)');
   assert.equal(r.find((x) => x.what === 'litellm-1.107.0.dist-info').status, 'EXPOSED');
   const clean = join(dir, 'll', 'clean'); mkdirSync(join(clean, 'litellm-1.106.2.dist-info'), { recursive: true });
   assert.deepEqual(checkSitePackages(inc.sitePackages, [clean]), [], '1.106.2 is clean');
@@ -587,7 +587,7 @@ test('site-packages Wardlatch can\'t list, and a sitecustomize.py it can\'t read
   if (process.getuid?.() === 0) return t.skip('root reads everything');
   const sp = join(dir, 'denied-sp', 'site-packages'); mkdirSync(sp, { recursive: true });
   writeFileSync(join(sp, 'cook.pth'), 'x');
-  const rule = { iocFiles: [{ name: 'cook.pth', sha256: ['0'.repeat(64)], nameAlone: 'EXPOSED' }, { name: 'sitecustomize.py', sha256: ['0'.repeat(64)], reviewIfOther: false }] };
+  const rule = { iocFiles: [{ name: 'cook.pth', sha256: ['0'.repeat(64)], nameAlone: 'EXPOSED' }, { name: 'sitecustomize.py', sha256: ['0'.repeat(64)] }] };
   assert.equal(checkSitePackages(rule, [sp])[0].status, 'EXPOSED', 'the control: listable, cook.pth is found');
   chmodSync(sp, 0o000);
   try { assert.deepEqual(checkSitePackages(rule, [sp]).map((r) => r.status), ['UNKNOWN']); } finally { chmodSync(sp, 0o755); }

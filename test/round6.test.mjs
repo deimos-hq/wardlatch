@@ -52,14 +52,15 @@ test('F2 a key in DER that the parser cannot read is a gap, never skipped in sil
   const repo = repoWith('f2', { 'minimal.p12': key, 'longform.p12': longForm, 'wide.p12': wideVersion });
   const found = scanRepo(repo);
   assert.ok(found.some((h) => h.file === 'minimal.p12' && !h.unread), 'the positive control: the minimal key must be a finding');
-  for (const f of ['longform.p12', 'wide.p12']) assert.ok(found.some((h) => h.file === f && h.unread), `${f} left no row: ${JSON.stringify(found.map((h) => h.file))}`);
+  // A finding, since 2 Nov 2026: the reader takes these forms now (seats 7 and 9). What matters is that neither is silent.
+  for (const f of ['longform.p12', 'wide.p12']) assert.ok(found.some((h) => h.file === f), `${f} left no row: ${JSON.stringify(found.map((h) => h.file))}`);
 });
 
 test('F2 the same two, deleted from the working tree but still tracked: git\'s copy is held to the same rule', () => {
   const repo = repoWith('f2-gone', { 'longform.p12': longForm, 'wide.p12': wideVersion });
   rmSync(join(repo, 'longform.p12')); rmSync(join(repo, 'wide.p12'));
   const found = scanRepo(repo);
-  for (const f of ['longform.p12', 'wide.p12']) assert.ok(found.some((h) => h.file === f && h.unread), `${f} left no row`);
+  for (const f of ['longform.p12', 'wide.p12']) assert.ok(found.some((h) => h.file === f), `${f} left no row`);
 });
 
 test('F2 its control: a binary that does not begin like DER is still skipped, or every picture would be UNKNOWN', () => {
@@ -124,7 +125,9 @@ test('seat 5 F2: a folder the home look cannot open is could-not-be-tested, not 
   } finally { chmodSync(join(h, 'Documents'), 0o755); }
 });
 
-test('seat 5 F3: a settings file the system refuses with EPERM is could-not-be-tested, not "not used"', { skip: process.platform !== 'darwin' || !existsSync('/usr/bin/sandbox-exec') }, () => {
+test('seat 5 F3: a settings file the system refuses with EPERM is could-not-be-tested, not "not used"', { skip: process.platform !== 'darwin' || !existsSync('/usr/bin/sandbox-exec') }, (t) => {
+  // a sandbox can't be applied inside another: skip as independent-read.test.mjs does, or the offline suite fails here
+  if (spawnSync('/usr/bin/sandbox-exec', ['-p', '(version 1)(allow default)', '/usr/bin/true']).status !== 0) return t.skip('a sandbox cannot be applied here (this run is already inside one)');
   const h = join(dir, 's5f3-home'); mkdirSync(h, { recursive: true });
   writeFileSync(join(h, '.gitconfig'), '[user]\n\tname = Ada Example\n\temail = ada@example.invalid\n');
   writeFileSync(join(h, '.curlrc'), 'header = "X-User: ada@example.invalid"\n');
@@ -160,11 +163,22 @@ test('seat 5 F6: a PATH folder that can be entered but not listed is could-not-b
   } finally { chmodSync(d, 0o755); }
 });
 
-test('seat 5 F2: what macOS keeps to itself is not reported from the home look, or every healthy run exits 2', { skip: asRoot }, () => {
+test('seat 5 F2: what macOS keeps to itself is not reported from the home look, or every healthy run exits 2', { skip: process.platform !== 'darwin' || !existsSync('/usr/bin/sandbox-exec') }, (t) => {
+  const places = ['.Trash', 'Pictures/Photos Library.photoslibrary', 'Pictures/Photo Booth Library'];
   const h = join(dir, 's5f2b-home');
-  for (const name of ['.Trash', 'Pictures/Photos Library.photoslibrary', 'Pictures/Photo Booth Library']) { mkdirSync(join(h, name), { recursive: true }); chmodSync(join(h, name), 0); }
-  try {
-    const { code, results } = cli(['--incident', 'litellm-2026-10', '--no-containers'], { HOME: h, TMPDIR: h });
-    assert.equal(code, 0, JSON.stringify(results));
-  } finally { for (const name of ['.Trash', 'Pictures/Photos Library.photoslibrary', 'Pictures/Photo Booth Library']) chmodSync(join(h, name), 0o755); }
+  for (const name of places) mkdirSync(join(h, name), { recursive: true });
+  // EPERM, the refusal macOS gives there and chmod can't, from an unprivileged sandbox
+  const rules = places.map((name) => `(deny file-read* (subpath "${realpathOf(join(h, name))}"))`).join('');
+  const prefix = ['/usr/bin/sandbox-exec', '-p', `(version 1)(allow default)${rules}`];
+  if (spawnSync(prefix[0], [...prefix.slice(1), '/usr/bin/true']).status !== 0) return t.skip('a sandbox cannot be applied here (this run is already inside one)');
+  const { code, results } = cli(['--incident', 'litellm-2026-10', '--no-containers'], { HOME: h, TMPDIR: h }, prefix);
+  assert.equal(code, 0, JSON.stringify(results));
+});
+
+test('seat 6 R2: a name is not a place: the same names elsewhere, or locked by anyone, are UNKNOWN', { skip: asRoot }, () => {
+  const h = join(dir, 's6r2-home');
+  for (const name of ['.Trash', 'Documents/clients.photoslibrary']) {
+    const d = join(h, name); mkdirSync(d, { recursive: true }); chmodSync(d, 0);
+    try { assert.equal(cli(['--incident', 'litellm-2026-10', '--no-containers'], { HOME: h, TMPDIR: h }).code, 2, name); } finally { chmodSync(d, 0o755); }
+  }
 });

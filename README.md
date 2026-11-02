@@ -150,7 +150,10 @@ An unknown option, or `--paths` or `--incident` without a value, stops with exit
 Each line starts with a status: `SAFE`, `EXPOSED` (with the fix under it), `UNKNOWN` (could not be tested, with the
 reason) or `REVIEW` (something to look at, such as a new workflow file or plugin folder). The exit code is **1** if
 anything is exposed, otherwise **2** if anything could not be tested, otherwise **0**. Review lines never change it.
-A folder it can't open is could-not-be-tested whoever owns it, and no all-clear is printed beside it: a person's
+A folder it can't open is could-not-be-tested whoever owns it, and no all-clear is printed beside it (the quick look round
+the home folder leaves out `~/.Trash` and, in `~/Pictures`, `Photo Booth Library` and `*.photoslibrary` when they refuse with
+EPERM, and the line under the result names them, says how many items went unsearched, and how to search them; one that
+holds nothing is proven empty from its own metadata and isn't mentioned): a person's
 folder (it could hold their projects) gets a line of its own, and the folders a service owns (a database's data,
 certbot's keys) are grouped into one line per check (`15 folders owned by service accounts, not searched`), with each
 folder's error, mode and owner under it and the advice to run Wardlatch with sudo to include them. A folder
@@ -178,7 +181,7 @@ checked with the environment, not searched for other environments`), and the tru
 says so under its rows. The repository walk also stops at each repository it finds, so a repository inside another one
 (a clone in an ignored folder, for example) is not checked by the workflow, committed-keys or header checks, and the
 line under their all-clear says so (`a repository inside another repository is not looked for: pass --paths with it to
-include it`); given with `--paths`, it is checked. A link to a folder elsewhere is not followed; it is
+include it`); given with `--paths`, it is checked. A link whose target this run can't reach is could-not-be-tested too, since it may lead to a folder. A link to a folder elsewhere is not followed; it is
 could-not-be-tested unless the same walk went through the folder it points to, at least as deep as following the link
 would have. A link to a virtual environment has that environment's own packages checked through it, and is
 could-not-be-tested on the same terms, since nothing else in it is searched.
@@ -227,7 +230,7 @@ To work on it: `git clone`, then `npm test`. Nothing to install.
 
 - `wordpress-plugins-2026-10`: Rank Math PRO 3.0.123 shipped with a backdoor (15 to 16 Oct; clean 3.0.124) and stolen UpdraftCentral keys were used to plant backdoor plugins from 18 Oct ([Patchstack](https://patchstack.com/articles/updraftcentral-key-compromise-wordpress-backdoors/)). Finds WordPress installs under the folders searched (and `/var/www`), flags Rank Math PRO 3.0.123 and the attack's indicator, UpdraftPlus before 1.26.13 / 2.26.13, and lists plugin folders added since 18 Oct to review. Run it on the server.
 - `gitlab-2026-10`: GitLab CVE-2026-110264, unauthenticated code execution on self-managed GitLab, fixed 21 Oct in 19.5.1, 19.4.3, 19.3.6, 19.2.9, 19.1.9, 19.0.10 and 18.11.13 ([GitLab](https://docs.gitlab.com/releases/patches/patch-release-gitlab-19-5-1-released/)). Reads the version from GitLab's own version files; never runs GitLab. Docker and Kubernetes installs aren't checked yet.
-- `litellm-2026-10`: LiteLLM 1.107.0 on PyPI and Docker shipped a credential stealer on 21 Oct ([LiteLLM](https://docs.litellm.ai/blog/security-incident-oct-21-2026)). Looks in Python's site-packages for the release record and the files it drops (`cook.pth` and `cook.py` by name, `sitecustomize.py` by SHA-256), in the temp folders for its markers, and at local image digests and tags; never starts Python for this.
+- `litellm-2026-10`: LiteLLM 1.107.0 on PyPI and Docker shipped a credential stealer on 21 Oct ([LiteLLM](https://docs.litellm.ai/blog/security-incident-oct-21-2026)). Looks in Python's site-packages for the release record and the files it drops (`cook.pth` and `cook.py` by name, `sitecustomize.py` by SHA-256, and a REVIEW line for any other file of that name), in the temp folders for its markers, and at local image digests and tags; never starts Python for this.
 - `plex-2026-10`: Plex Media Server, four chained flaws exploited since 16 Oct, fixed in 1.43.3.10861 ([Plex](https://forums.plex.tv/t/important-security-update-for-plex-media-server-v1-43-2-and-earlier/942319)). Reads the version from the Debian package record or the macOS app; never runs Plex.
 
 When the next one happens, it gets added here.

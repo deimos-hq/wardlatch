@@ -40,7 +40,7 @@ test('every incident has the fields its check reads, named after its file', () =
           assert.ok(f.name && !f.name.includes('/') && [].concat(f.sha256).every((h) => /^[0-9a-f]{64}$/.test(h)), `${i.id}: ${f.name}`);
           assert.ok([undefined, 'EXPOSED'].includes(f.nameAlone), `${i.id}: ${f.name} nameAlone`);
           // a review line needs its own advice: the EXPOSED fix ("rotate every credential") is wrong for a legitimate file
-          if (f.nameAlone !== 'EXPOSED' && f.reviewIfOther !== false) assert.ok(i.reviewFix, `${i.id}: reviewFix for ${f.name}`);
+          if (f.nameAlone !== 'EXPOSED') assert.ok(i.reviewFix, `${i.id}: reviewFix for ${f.name}`);
         }
       }
       if (i.tmpTrace) new RegExp(i.tmpTrace);

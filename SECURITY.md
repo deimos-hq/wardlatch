@@ -88,7 +88,7 @@ record says for how long and why. Where this stands on 2 Nov 2026: the defects u
 [CHANGELOG.md](CHANGELOG.md), which we found ourselves from 29 October, each say the day they were found. None has an
 advisory yet, draft or published. The 72 hours passed on 1 Nov for those found on 29 Oct, because
 the work of fixing them ran ahead of the paperwork and a posting freeze held every release; that is the reason, and it
-is not a good one.
+is not a good one. The defects under Security in 0.1.12, found on 2 Nov, have the same clock: 72 hours is 5 Nov.
 
 If a fix is not possible or not worth its risk, the advisory says so and explains the workaround, rather than staying
 quiet.
@@ -118,8 +118,6 @@ GitHub release; 0.1.3 and every release since went through it. How to check one:
 hash printed here, the pin and the file itself are one string, so a change to the script fails CI until all
 three move together (`test/digest-chain.sh`).
 
-**This is ahead of the download.** Under the posting freeze the script in this repository has moved and
-www.deimoscore.com has not, so the page's published checksum is for an older file and the digest above is not
-yet the download's. Check the file you downloaded against the checksum on the page you downloaded it from, not
-against this one. When a change ships, the download, the page's hash, a new entry in the site's public record
-naming its predecessor, the changelog, the pin and this line all move together.
+www.deimoscore.com has served this file since 2 Nov 2026, the Record's CL-55. When a change ships, the download, the
+page's hash, a new entry in the site's public record naming its predecessor, the changelog, the pin and this line all
+move together.
