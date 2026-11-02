@@ -1083,8 +1083,10 @@ const bedrock100 = (name, app, env) => {
 };
 const STOCK100 = "<?php\n$root_dir = dirname(dirname(__FILE__));\ndefine('CONTENT_DIR', '/app');\ndefine('WP_CONTENT_DIR', $root_dir . CONTENT_DIR);\ndefine('WP_CONTENT_URL', 'http://' . $_SERVER['HTTP_HOST'] . CONTENT_DIR);\n";
 
-test('wordpress: Bedrock 1.0.0 (app/, config/ and wp/ side by side): stock reads SAFE; a moved CONTENT_DIR or WP_PLUGIN_DIR in its config is UNKNOWN', () => {
-  assert.equal(wp(bedrock100('t78a', STOCK100)).code, 0);
+test('wordpress: Bedrock 1.0.0 (app/, config/ and wp/ side by side): stock reads app/ and reports the leftover beside it; a moved CONTENT_DIR or WP_PLUGIN_DIR in its config is UNKNOWN', () => {
+  // Changed 2 Nov 2026. This asserted exit 0, with the unfixed 1.26.12 in content/plugins beside a stock site: that is the
+  // gap seat 6's R4 is about. A leftover the config doesn't claim is on the web server all the same, as backup/plugins is.
+  assert.equal(wp(bedrock100('t78a', STOCK100)).code, 1);
   assert.equal(wp(bedrock100('t78b', STOCK100.replace("'/app'", "'/content'"))).code, 2);
   assert.equal(wp(bedrock100('t78c', STOCK100, "<?php\ndefine('WP_PLUGIN_DIR', '/srv/p');\n")).code, 2);
 });

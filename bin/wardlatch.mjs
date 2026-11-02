@@ -17,7 +17,7 @@ import { checkVersionFiles, sitePackagesDirs, checkSitePackages, localImageDiges
 import { listContainers, checkContainer, engineHost } from '../lib/containers.mjs';
 import { reposUnder, workflowsAddedSince, windowStart, NOT_WALKED as REPO_NOT_WALKED, NESTED_SAID } from '../lib/workflows.mjs';
 import { scanRepo } from '../lib/secrets.mjs';
-import { wordpressUnder, checkSite, checkPluginsFolder, NOT_WALKED as WP_NOT_WALKED } from '../lib/wordpress.mjs';
+import { wordpressUnder, checkSite, checkPluginsFolder, isCopyName, NOT_WALKED as WP_NOT_WALKED } from '../lib/wordpress.mjs';
 import { scanHeaders } from '../lib/headers.mjs';
 import { pathState, readText, listDir, denialCode, mandatoryRefusal, statBits, epermCauses, VENV_PACKAGES_SAID } from '../lib/files.mjs';
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
@@ -622,7 +622,7 @@ for (const inc of chosen) {
     // main file (up to this fix only with it, so a backdoored copy missing rank-math-pro.php read SAFE: R2-N7)
     for (const p of loose) for (const f of checkPluginsFolder(p, inc.rules, inc.addedSince)) show(p, f);
     for (const r of searchable) {
-      const own = inc.rules.filter((x) => basename(r) === x.plugin);
+      const own = inc.rules.filter((x) => basename(r) === x.plugin || isCopyName(basename(r), x.plugin));
       if (own.length && !loose.includes(dirname(r))) for (const f of checkPluginsFolder(dirname(r), own)) show(r, f);
     }
     gaps(results, inc, 'wordpress', denied, { review: privateDot, links, deep, levels: 5 });

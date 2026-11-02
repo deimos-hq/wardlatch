@@ -11,6 +11,54 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-11-02
+
+We found every defect under Security below ourselves, on 2 November 2026, in a second read of 0.1.11 made after it
+shipped. Each could read `SAFE` where something was wrong. If 0.1.11 or earlier said `SAFE`, run this version. The Mac
+fix download doesn't change. The advisories SECURITY.md promises for these defects, and for those in 0.1.11, are not open
+yet. `test/seat6.test.mjs` holds a test for each, every one failing on 0.1.11.
+
+### Security
+
+- **Apple's own Python folders were never searched.** `/Library/Python/3.x/site-packages`, where `sudo pip3` installs, and
+  the site folders of the Command Line Tools and Xcode are the ones `/usr/bin/python3` names, and none was on the list.
+  A stealer in one read `SAFE`, exit 0.
+
+- **A link to a folder the run couldn't reach was dropped with no row.** All four walks asked whether a link led to a
+  folder, and a locked target is neither a folder nor gone. A venv, repository or WordPress site behind one read `SAFE`,
+  exit 0, while the same link reachable read UNKNOWN. On Linux a link with a name that isn't valid UTF-8 fell in the same
+  hole. It is UNKNOWN now.
+
+- **0.1.11 put a name back in charge of a verdict.** Its quick look round the home folder left out `.Trash`,
+  `Photo Booth Library` and `*.photoslibrary` by name at any depth, so a locked `~/Documents/clients.photoslibrary`
+  holding a stealer read `SAFE` and the same folder called `work` read UNKNOWN. Now only `~/.Trash`, and those two in
+  `~/Pictures`, are left out, and only when macOS itself refuses them (EPERM). Those three are still not searched.
+
+- **The temp-folder fix in 0.1.11 stopped a level short.** With `/private/var/folders`, or a level below it, refused, the
+  run read `SAFE`, exit 0, with `T` gone from what it looked at. Those levels are UNKNOWN now.
+
+- **A `sitecustomize.py` changed by one byte read `SAFE`.** The published file was `EXPOSED` and anything else had no row,
+  by an option that silenced the line. It is a REVIEW line now, and the option is gone. The owner's decision, 2 Nov 2026.
+
+- **WordPress leftovers read `SAFE`.** `<site>/content/plugins` beside a stock site is checked now, as `backup/plugins`
+  was. A copy of a listed plugin named with a space or a prefix (`plugin copy`, `plugin 2`, `old-plugin`) is that plugin,
+  in the live plugins folder too, where it had only an "added" REVIEW line. A copy with its main file gone has its
+  indicator searched. `--paths` naming a copy is checked as the exact name is.
+
+- **An encrypted PKCS #8 key with non-minimal lengths read `SAFE`.** LibreSSL loads one. 0.1.11's entry on non-minimal keys
+  left this out. It is UNKNOWN now.
+
+- **Three header forms read `SAFE`.** `--header` in a TOML inline table, a git value continued by a backslash on a file's
+  last line with no line end, and a FIFO at `.mcp.json` in a project with no `.git`.
+
+### Fixed
+
+- A PKCS #1 public key in DER read UNKNOWN, exit 2, for an ordinary public key. It stays quiet now.
+- `test/round6.test.mjs` failed in place of skipping inside a sandbox.
+- `test/fix-macos.check.sh` said it is safe on your own Mac, and on a Mac with a network it contacts the advisory's test
+  host. Its header says so now, and how to keep it offline.
+- SECURITY.md said this repository is ahead of the download. It stopped being true on 2 Nov 2026.
+
 ## [0.1.11] - 2026-11-02
 
 We found every defect under Security below ourselves, in reviews of our own work from 29 October to 2 November 2026,
@@ -1834,7 +1882,8 @@ Published 05:14 UTC. npm `gitHead`: `4d4f295`. The first release.
 npm also lists `0.0.0-stage` (21 October, 05:13 UTC), a 331-byte, two-file placeholder from npm's staged publishing,
 described on npm as a "Temporary package placeholder". It is not a release and holds none of Wardlatch's code.
 
-[Unreleased]: https://github.com/deimos-hq/wardlatch/compare/v0.1.11...main
+[Unreleased]: https://github.com/deimos-hq/wardlatch/compare/v0.1.12...main
+[0.1.12]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.12
 [0.1.11]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.11
 [0.1.10]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.10
 [0.1.9]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.9

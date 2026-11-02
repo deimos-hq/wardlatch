@@ -5,7 +5,9 @@
 #
 # Runs fix/fix-macos.sh on COPIES of a certificate bundle, never on the real /etc/ssl/cert.pem: the original, a
 # second run, undo from the backup, an empty file, a truncated file and a missing file. Off macOS it checks that the
-# fix refuses to run. CI runs it on macos-latest and ubuntu-latest; it is safe on your own Mac too.
+# fix refuses to run. CI runs it on macos-latest and ubuntu-latest. It leaves your own Mac's files alone, but on a Mac
+# with a network it contacts the advisory's test host and www.apple.com (below): to keep it offline, run it inside
+# sandbox-exec with outbound network denied. Until 2 Nov 2026 this line said only that it is safe on your own Mac.
 #
 # The bundle it works from defaults to the vendored UNFIXED fixture, test/support/fixtures/macos-27.2-cert.pem, for
 # the reason test/support/fixtures/README.md gives: every removal case and every network case here needs a bundle

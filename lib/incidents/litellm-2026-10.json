@@ -19,8 +19,7 @@
       },
       {
         "name": "sitecustomize.py",
-        "sha256": "34bef04fe88ac9d0aae0475630b1738681d15b94f233ac8aa46eacf5968305fa",
-        "reviewIfOther": false
+        "sha256": "34bef04fe88ac9d0aae0475630b1738681d15b94f233ac8aa46eacf5968305fa"
       }
     ],
     "distInfo": [
@@ -69,5 +68,6 @@
     "litellm/litellm-non_root:v1.107.0"
   ],
   "dockerFix": "Stop and remove containers from this image and delete the image, then pull an explicit earlier version by digest (LiteLLM: pin v1.106.2) or a release after the fix. Treat every secret those containers could reach as stolen and rotate it, including the provider keys in the proxy database, the master and virtual keys, and DATABASE_URL.",
-  "safeText": "no LiteLLM 1.107.0 files or markers found, and no compromised image among those checked"
+  "safeText": "no LiteLLM 1.107.0 files or markers found, and no compromised image among those checked",
+  "reviewFix": "A sitecustomize.py runs every time this Python starts, and it is one of the files LiteLLM's stealer dropped. Open it and confirm you know where it came from. If you don't, handle this environment as a compromised one: delete it, and rotate every secret this machine could read."
 }
