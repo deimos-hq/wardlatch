@@ -38,8 +38,8 @@ link name.
   `*.photoslibrary` by name at any depth, so a locked `~/Documents/clients.photoslibrary` holding a stealer read `SAFE` and
   the same folder called `work` read UNKNOWN. Now only `~/.Trash`, and `Photo Booth Library` and any `*.photoslibrary` in
   `~/Pictures`, are left out, and only on EPERM, which macOS gives there and a sandbox or security tool can give too.
-  When they are refused they are not searched, and the line under the result names them, says how many items went
-  unsearched, and says how to search them: Full Disk Access, or emptying the Trash. macOS answers for a folder's own metadata
+  When they are refused they are not searched, and the line under the result names them, says how many items at their
+  top level went unsearched, and says how to search them: Full Disk Access, or emptying the Trash. macOS answers for a folder's own metadata
   while refusing its contents, so a refused folder holding nothing is proven empty and isn't mentioned. That works on APFS;
   on another disk the count is left out.
 

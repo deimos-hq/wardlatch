@@ -570,7 +570,12 @@ for (const inc of chosen) {
     const onlyEngineGaps = counted(results).every((r) => r.engine && (r.status === 'UNKNOWN' || r.notRunning));
     if (onlyEngineGaps) allClear(results, inc, 'install', `${inc.safeText ?? 'nothing found'} (looked${lookedFor ? ` for ${lookedFor},` : ''} in ${searched.length} place${searched.length === 1 ? '' : 's'}${inc.sitePackages ? '; pass --paths for a folder elsewhere' : ''})`, searched.filter(Boolean), inc.sitePackages ? [...VENV_NOT_WALKED, LIBRARY, VENV_PACKAGES_SAID, ...(macKept.length ? [keptSaid(macKept)] : [])] : undefined, inc.sitePackages ? undefined : { why: `this check reads ${inc.versionFiles?.product ?? 'the product'}'s own version files at the paths its installers use, and --paths does not add to them` });
     // the all-clear says this itself; with any other row the same line goes under them (seat 9)
-    if (macKept.length && counted(results).length) note('2', keptSaid(macKept));
+    if (macKept.length && counted(results).length) {
+      note('2', keptSaid(macKept));
+      // and in --json, where a note isn't: on the first row of this check that has a status to read beside it
+      const row = results.find((r) => r.incident === inc.id && r.status !== 'SAFE');
+      if (row) row.notSearched = [...(row.notSearched ?? []), keptSaid(macKept)];
+    }
   }
 
   // the window's start: an explicit UTC instant, or the review is UNKNOWN (up to 0.1.9 a bare date read SAFE: see

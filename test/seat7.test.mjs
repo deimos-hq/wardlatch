@@ -260,6 +260,7 @@ const sandboxed = (home, deny) => {
   const r = spawnSync('/usr/bin/sandbox-exec', ['-p', `(version 1)(allow default)${rule}`, process.execPath, join(NEW, 'bin/wardlatch.mjs'), '--json', '--incident', 'litellm-2026-10', '--no-containers', '--paths', fresh('empty')], { encoding: 'utf8', maxBuffer: 1 << 26, env: { HOME: home, PATH: '/usr/bin:/bin', TMPDIR: fresh('t') } });
   return r.stdout ? { code: r.status, rows: JSON.parse(r.stdout).results } : null;
 };
+const venvFile = (v) => { put(join(v, 'pyvenv.cfg'), 'home = /usr/bin\n'); put(join(v, 'bin', 'python')); put(join(v, 'lib/python3.12/site-packages/sitecustomize.py'), '# ours\n'); };
 const planted = (sub) => { const h = fresh('h'), v = join(h, sub, '.venv'); put(join(v, 'pyvenv.cfg'), 'home = /usr/bin\n'); put(join(v, 'bin', 'python')); put(join(v, 'lib/python3.12/site-packages/cook.pth'), 'import cook\n'); return h; };
 for (const [sub, re] of [['.Trash', /\.Trash/], ['Pictures/anything.photoslibrary', /photoslibrary/]]) {
   test(`D13 EPERM on ~/${sub}, stealer inside: the SAFE row says this folder was not searched`, { skip: process.platform !== 'darwin' }, (t) => {
@@ -288,4 +289,11 @@ test('a refused ~/.Trash with nothing in it is proven empty, so nothing is said 
   if (!r) return t.skip('a sandbox cannot be applied here (this run is already inside one)');
   assert.equal(r.code, 0);
   assert.doesNotMatch(JSON.stringify(r.rows.flatMap((x) => [x.reason, ...(x.notSearched ?? [])])), /\.Trash/);
+});
+test('--json carries what macOS kept beside any other row, not only under an all-clear', { skip: process.platform !== 'darwin' }, (t) => {
+  const h = planted('.Trash'); venvFile(join(h, 'Documents', '.venv'));
+  const r = sandboxed(h, join(h, '.Trash'));
+  if (!r) return t.skip('a sandbox cannot be applied here (this run is already inside one)');
+  assert.ok(r.rows.some((x) => x.status === 'REVIEW'), 'CONTROL a REVIEW row beside it');
+  assert.match(JSON.stringify(r.rows.flatMap((x) => x.notSearched ?? [])), /\.Trash \(1 item\)/);
 });
