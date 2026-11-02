@@ -3298,6 +3298,9 @@ grep -q 'This covers the built-in curl, git, python3 and openssl' <<<"$out" || f
 grep -q 'For everything else: npx wardlatch@latest' <<<"$out" || fail "already clean, no control: it did not say where to test the rest"
 grep -q 'A macOS update puts Apple.s original file back' <<<"$out" || fail "already clean, no control: it did not say an update undoes this"
 grep -q 'wardlatch: verdict=SAFE scope=file online=not-tested reason=control-47 removed=0 kept=126' <<<"$out" || fail "already clean, no control: the trailer is wrong, or the answer did not come from the stand-in"
+# And the other direction, which nothing asserted until a mutant survived on it: a control that did not get far
+# enough to refuse a certificate must NOT be described as one that refused it. 47 is not 60.
+grep -q 'what a network inspecting TLS looks like' <<<"$out" && fail "already clean, no control: a control that never loaded was described as a certificate refused"
 # An ordinary website's certificate REFUSED through this very file is the interception signature, not "the
 # network didn't answer", and until 1 Nov 2026 a 60 here read the same as a dropped connection (curl 7).
 run "$d/clean/cert.pem" WARDLATCH_CURL="$r2/curl" STUB_CONTROL=60 STUB_TEST=60
@@ -3320,6 +3323,12 @@ run "$d/silent/cert.pem" WARDLATCH_CURL="$r2/curl" STUB_TSTATE="$d/ts" STUB_TEST
 [ "$code" -eq 0 ] || fail "fix path, test host silent: expected exit 0, got $code"
 grep -q 'Not checked: whether anything else on this Mac still trusts the compromised keys\.' <<<"$out" || fail "fix path, test host silent: it did not say what was not checked"
 grep -q 'wardlatch: verdict=SAFE scope=file online=not-tested reason=test-28 removed=2 kept=126' <<<"$out" || fail "fix path, test host silent: the trailer is wrong"
+# The scope block on the FIX path. Nothing asserted it there until a mutant survived by deleting the call: the
+# already-clean path's copy was held by the case above and the fix path's was not, which is how a block that
+# every SAFE is supposed to carry could have gone missing from the path most runs take.
+grep -q 'This covers the built-in curl, git, python3 and openssl' <<<"$out" || fail "fix path, test host silent: the scope block is missing"
+grep -q 'For everything else: npx wardlatch@latest' <<<"$out" || fail "fix path, test host silent: it did not say where to test the rest"
+grep -q 'A macOS update puts Apple.s original file back' <<<"$out" || fail "fix path, test host silent: it did not say an update undoes this"
 # Every non-SAFE headline must say the file was still fixed AND that the backup must not be put back: a user who
 # reads a warning as failure and restores a backup holding both withdrawn roots has undone the fix, which
 # SECURITY.md names a vulnerability outright.
