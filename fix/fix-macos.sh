@@ -43,7 +43,8 @@
 #   - keeps the file readable by everyone, as macOS ships it;
 #   - checks that what landed in the file is the file it checked, and puts the original back if it isn't -- the one
 #     reason it ever puts the original back, because the original is the file that trusts the compromised keys;
-#   - reads a control -- an ordinary website, through this same file -- both before and after the change, and tells
+#   - reads a control -- an ordinary website, naming this file to curl, which Apple's trust can also pass -- both
+#     before and after the change, and tells
 #     a certificate refused after the change apart from a network that stopped answering; it re-tests against the
 #     advisory's test site only when the control loads, and no network result undoes the fix;
 #   - on macOS, prints a line that starts with SAFE, EXPOSED or UNKNOWN whenever it exits, from its first command on
@@ -86,7 +87,8 @@ EMS_NAME='emSign ECC Root CA - G3'
 AAA_N='be409df46ee1ea76871c4d45448ebe46c883069dc12afe181f8ee402faf3ab5d508a16310b9a06d0c57022cd492d5463'
 EMS_X='23a50cb82d12f528f3b1b2dde20212809e395f494d9fc925345974ecbb061ce7c072afe8ae2fe141548714a84ab2e87c'
 # The seven OTHER keys of this incident, which this file must not hold either. Removing the two roots above works
-# because the compromised intermediates then chain to nothing -- but only for a reader that insists on a chain
+# because the compromised intermediates then chain to nothing in this file, and Apple's trust blocks them (on a Mac
+# without that block, curl's fallback to Apple's trust can still accept them) -- but only for a reader that insists on a chain
 # ending at a self-signed root in the file. /usr/bin/curl 8.7.1 does not: like curl since 7.68 on OpenSSL-style
 # backends it takes EVERY CA certificate in a --cacert file as a trust anchor, and Apple's git goes through the same
 # libcurl, as does the built-in perl. So a cert.pem holding one of the compromised intermediates keeps trusting
@@ -164,13 +166,14 @@ linked() {
   exit 2
 }
 
-# 0 = trusts the compromised keys, 60 = refuses them, anything else = the test site didn't answer
+# 0 = curl accepted it, through this file or Apple's trust; 60 = the file and Apple's trust both refused (or its
+# certificate expired); 77 = this file loaded nothing; anything else = no answer
 # (-q: ignore ~/.curlrc, whose settings could change the answer)
 # CURL_SSL_BACKEND=openssl: /usr/bin/curl 8.7.1 is built with BOTH LibreSSL and SecureTransport, and that variable
 # picks one at run time. -q keeps ~/.curlrc out; nothing kept the environment out, and these runs happen as the
 # person who typed the command, with their environment. Under SecureTransport the --cacert anchors are judged by
 # Apple's Security framework, which blocks the eMudhra certificates (19 and 23 Oct 2026) whatever file it is given,
-# so the answer stops being about this file at all: MEASURED 31 Oct 2026, a copy of the cleaned file plus
+# so a refusal stops being evidence about this file: MEASURED 31 Oct 2026, a copy of the cleaned file plus
 # emSign Root TLS CA - G3 read EXPOSED by default and SAFE with CURL_SSL_BACKEND=secure-transport, while the default
 # curl through that same file still loaded the test site. An unknown backend name lands on SecureTransport too, so
 # the right value has to be named rather than the variable merely unset. MEASURED here: =openssl selects LibreSSL
@@ -208,8 +211,9 @@ expired_note() {
   echo "         (The advisory's test site has its own certificate, and that expires on 3 May 2027; this Mac's date"
   echo "         reads $(today 2>/dev/null || echo 'as something this cannot use'), so a refusal there would prove nothing and nothing was read from it.)"
 }
-# The control, read before any verdict is taken from trust(). 0 = an ordinary website loaded through this same file,
-# so the network answers and the file still validates ordinary certificates; anything else and there is no online
+# The control, read before any verdict is taken from trust(). 0 = an ordinary website loaded, so the network answers
+# and this file parses. It does not show the file validates anything: Apple's trust passes it when the file fails.
+# Anything else and there is no online
 # verdict to be had here -- without this, "the test site refused" and "nothing on this network answered" are the
 # same reading, and the Mac that most needs this fix is the one whose network is under someone else's control.
 # The same library is pinned here as in trust(), for the same reason: a control judged by Apple's Security framework
@@ -605,7 +609,7 @@ scope_lines() {
 #   scope    file         no online reading was taken, so the verdict is about this file and nothing else
 #            file+online  an online reading was taken and is part of the verdict
 #   online   refused      the test site refused this file, with a live canary behind that refusal
-#            trusted      the test site was accepted through this file
+#            trusted      the test site was accepted by curl, through this file or Apple's trust
 #            not-tested   no online reading was taken
 #   reason   why none was taken, or - when one was:
 #            control-<n>        an ordinary website did not load through this file (curl <n>)
@@ -625,7 +629,7 @@ trailer() {
   echo "         wardlatch: verdict=$1 scope=$scope online=$2 reason=$3 removed=$4 kept=$5"
 }
 # The reason no online reading could be judged when the control failed. A control exit of 60 is NOT "the network
-# didn't answer": it is an ordinary website's certificate REFUSED through the very file this verdict is about,
+# didn't answer": it is an ordinary website's certificate refused by this file and by Apple's trust,
 # which is what a network inspecting TLS looks like. Until 1 Nov 2026 that reading got the same words as a dropped
 # connection on both paths, while a network that starts intercepting between the two reads gets exit 2 and a
 # paragraph of attack language -- so the permanent interceptor was read more charitably than the transient one
@@ -641,7 +645,7 @@ control_note() {
       echo "         (An ordinary website's certificate was refused through this file (curl $1). That is not the network"
       echo "         failing to answer: something signed that website's"
     fi
-    echo "         certificate with a root this file doesn't hold, which is what a network inspecting TLS looks like."
+    echo "         certificate with a root neither this file nor Apple's trust holds, which is what a network inspecting TLS looks like."
     echo "         Worth finding out what, because it judges every site this Mac visits. The advisory's test site"
     echo "         was still asked, and a 0 would have been reported, but a refusal from it proves nothing here.)"
   elif [ -n "$2" ] && { [ "$1" -eq 60 ] || [ "$2" -eq 60 ]; }; then
@@ -941,7 +945,8 @@ if [ "$todrop" -eq 0 ]; then
   # This is the ONE path in this script where the canary's liveness cannot be controlled for, and so the one place
   # the expiry date still decides anything. The fix path takes its receipt from the file as it was, which still
   # held a withdrawn root and so had to be accepted by the test site; here the file holds neither root and neither
-  # does the snapshot, so there is nothing in this run's hands that the test site should accept and nothing to
+  # does the snapshot, so there is nothing in this run's hands that the test site should accept (though Apple's
+  # trust still can, so a 0 here isn't about the file) and nothing to
   # read a control from. Checked and rejected: the script carries the roots' SHA-256 fingerprints and the seven
   # withdrawn public keys, not certificate bytes, so it cannot build a bundle the test site would accept; a
   # previous run's .bak may not exist and is a file this run has established nothing about; and reading the test
@@ -959,7 +964,7 @@ if [ "$todrop" -eq 0 ]; then
   if [ "$r" -eq 0 ]; then
     settled
     tos=trusted
-    echo "EXPOSED  $FILE holds neither root but still trusts the test site. Nothing changed; please report this."
+    echo "EXPOSED  $FILE holds neither root, but curl still accepts the test site. Nothing changed; please report this."
     trailer EXPOSED trusted - 0 "$before"
     meant=1; exit 1
   fi
@@ -1132,11 +1137,12 @@ if [ "$r" -eq 0 ]; then
   settled
   tos=trusted
   echo "EXPOSED  Fixed in the file ($(removed_phrase), kept $after), but the advisory's test site is"
-  echo "         still trusted. Two ordinary things look exactly like this, and both are likelier than"
-  echo "         anything stranger. A TLS-inspecting proxy's own root may have been added to this file (or to"
-  echo "         whichever file your tools read): the proxy then signs everything, and that site loads"
-  echo "         whatever this file holds. Or the test site may have re-issued its certificate from an"
-  echo "         ordinary CA, in which case it now loads for everyone and tests nothing. Rule those two out"
+  echo "         still trusted. Three ordinary things look exactly like this, and all are likelier than"
+  echo "         anything stranger. A TLS-inspecting proxy's own root may be in this file or in this Mac's"
+  echo "         keychain: the proxy then signs everything, and that site loads whatever this file holds."
+  echo "         The test site may have re-issued its certificate from an ordinary CA, in which case it now"
+  echo "         loads for everyone and tests nothing. Or Apple's trust, which curl also asks, may not block"
+  echo "         these keys on this Mac. Rule those three out"
   echo "         before you go looking for something else on this Mac that trusts the compromised keys. The"
   echo "         fix was kept either way: putting the original back would put"
   echo "         $(held) back. Please report this."
@@ -1145,8 +1151,8 @@ if [ "$r" -eq 0 ]; then
   meant=1; exit 1
 fi
 if c=$(control "$FILE") && [ "$c" -eq 0 ]; then
-  # The control loads through the new file: this network answers, and the new file still validates ordinary
-  # certificates. So the test host's refusal is about the test host, and there is a verdict to be had.
+  # The control loads with the new file named: this network answers, and the new file parses. So the test host's
+  # refusal is about the test host, and there is a verdict to be had.
   settled
   case "$r" in
     60) if [ "$t0" -eq 0 ]; then
@@ -1190,7 +1196,7 @@ else
       # change and no attack to diagnose. Until 31 Oct 2026 this got the certificate reading below, attack and all.
       case "$c" in 6) why="the name didn't resolve" ;; 7) why="no connection was made" ;; *) why="no answer in time" ;; esac
       echo "UNKNOWN  Fixed in the file ($(removed_phrase), kept $after), but this network stopped answering:"
-      echo "         an ordinary website loaded through the old file (curl 0), then not through the new one (curl $c:"
+      echo "         an ordinary website loaded with the old file named (curl 0), then not with the new one (curl $c:"
       echo "         $why). That is not a certificate being refused, so it says nothing about the change, and the test"
       echo "         site's refusal proves nothing here. Run this again to re-test."
       kept_say
@@ -1199,21 +1205,22 @@ else
       # The one reading here that is about the change or about the network, and cannot tell which: an ordinary
       # website's certificate verified through the file as it was and is refused through the file this wrote, and
       # the certificates in those two files differ only by the withdrawn roots removed. So either that site's chain
-      # needs one of them, or something on this network answered the two requests differently -- and that second
+      # needs one of them and Apple's trust refuses it too, or something on this network answered the two requests differently -- and that second
       # reading is what an attack on this Mac looks like. Both say the same thing about what to do, which is why there
       # is no revert here, no revert-reason for one, and no Undo line: putting a withdrawn root back to make a page
       # load is not a repair, and on the second reading it would hand it back to a Mac already under attack.
       echo "UNKNOWN  Fixed in the file ($(removed_phrase), kept $after), but an ordinary website that"
-      echo "         loaded through the old file (curl 0) doesn't load through the new one (curl 60), which means its"
+      echo "         loaded with the old file named (curl 0) doesn't load with the new one (curl 60), which means its"
       echo "         certificate was refused. The certificates in the two files differ only by $(held), so"
-      echo "         either that website's certificate chain needs what was removed, or this network answered the two"
+      echo "         either that website's certificate chain needs what was removed and Apple's trust refuses it too,"
+      echo "         or this network answered the two"
       echo "         requests differently -- and the second is what an attack on this Mac would look like. The fix was"
       echo "         kept either way: this does not put a withdrawn root back on a network reading. Please report this."
       kept_say
       exit 2 ;;
     *)
       echo "UNKNOWN  Fixed in the file ($(removed_phrase), kept $after), but an ordinary website that"
-      echo "         loaded through the old file (curl 0) failed through the new one with curl $c, which is neither a"
+      echo "         loaded with the old file named (curl 0) failed with the new one with curl $c, which is neither a"
       echo "         certificate refused (60) nor a network that stopped answering (6, 7, 28). This run"
       echo "         reads nothing into it, and the test site's refusal proves nothing here. Please report this."
       kept_say

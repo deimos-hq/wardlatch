@@ -88,9 +88,8 @@ record says for how long and why. Where this stands on 2 Nov 2026: the defects u
 [CHANGELOG.md](CHANGELOG.md), which we found ourselves from 29 October, each say the day they were found, and their
 advisories are published: GHSA-j6fm-jfg3-q89q, GHSA-c2fw-7h9h-g6qr and GHSA-qg36-5mwx-mvpf. For those found on 29 Oct
 the 72 hours passed on 1 Nov, a day before the advisories, because the work of fixing them ran ahead of the paperwork
-and a posting freeze held every release; that is the reason, and it is not a good one. Other defects found on 2 Nov,
-while those advisories were being checked, are not described here until their fix is out (step 5). They run on the
-same clock.
+and a posting freeze held every release; that is the reason, and it is not a good one. The defects under Security in
+0.1.13, found on 2 Nov while those advisories were being checked, have the advisory GHSA-2q92-ggx3-wq82.
 
 If a fix is not possible or not worth its risk, the advisory says so and explains the workaround, rather than staying
 quiet.
@@ -116,7 +115,7 @@ GitHub release; 0.1.3 and every release since went through it. How to check one:
 [docs/RELEASING.md](docs/RELEASING.md#verifying-a-release).
 
 `fix/fix-macos.sh` in this repository has SHA-256
-`c8bba160a8a9c30f2f850cd8987429b297612ea580e77404fddbbfe7ddc167a6`. CI pins that hash and also checks that the
+`893f53cb96abe5a5afb800a70e5e1233f9089398fbd261840ae8dc8ddd9bd73d`. CI pins that hash and also checks that the
 hash printed here, the pin and the file itself are one string, so a change to the script fails CI until all
 three move together (`test/digest-chain.sh`).
 

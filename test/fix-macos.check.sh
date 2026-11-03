@@ -1353,8 +1353,8 @@ STUB
   [ "$code" -eq 2 ] || fail "the control broke with the change: expected exit 2, got $code"
   grep -q '^UNKNOWN' <<<"$out" || fail "the control broke with the change: expected UNKNOWN"
   grep -q '^SAFE' <<<"$out" && fail "the control broke with the change: it called the run safe"
-  grep -q 'loaded through the old file (curl 0)' <<<"$out" || fail "the control broke with the change: it did not give the reading before the change"
-  grep -q "doesn't load through the new one (curl 60)" <<<"$out" || fail "the control broke with the change: it did not give the reading after the change"
+  grep -q 'loaded with the old file named (curl 0)' <<<"$out" || fail "the control broke with the change: it did not give the reading before the change"
+  grep -q "doesn't load with the new one (curl 60)" <<<"$out" || fail "the control broke with the change: it did not give the reading after the change"
   [ "$(bad "$work/brokeafter.pem")" -eq 0 ] || fail "the control broke with the change: the fix was reverted, so the withdrawn roots are back"
   [ "$(count "$work/brokeafter.pem")" -eq $((total - found)) ] || fail "the control broke with the change: the file is not the fixed file"
   grep -q "Backup: $work/brokeafter.pem.wardlatch-" <<<"$out" || fail "the control broke with the change: it did not name the backup"
@@ -1803,7 +1803,7 @@ done
 cp "$work/original.pem" "$d/cert.pem"; rm -f "$d/state"
 run "$d/cert.pem" WARDLATCH_CURL="$r2/curl" STUB_STATE="$d/state" STUB_CONTROLS="0 60" STUB_TEST=60
 [ "$code" -eq 2 ] || fail "a certificate refused after the change: expected UNKNOWN, exit 2, got $code"
-grep -q "doesn't load through the new one (curl 60" <<<"$out" || fail "a certificate refused after the change: it did not give the reading"
+grep -q "doesn't load with the new one (curl 60" <<<"$out" || fail "a certificate refused after the change: it did not give the reading"
 grep -q 'attack' <<<"$out" || fail "a certificate refused after the change: it did not give the reading an attack would produce"
 rm -f "$d"/cert.pem.wardlatch-*.bak
 cp "$work/original.pem" "$d/cert.pem"; rm -f "$d/state"
@@ -1895,7 +1895,7 @@ cp "$r2/P.pem" "$d/cert.pem"; cp "$work/original.pem" "$d/cert.pem.wardlatch-202
 script=$r2/net.sh
 run "$d/cert.pem" WARDLATCH_CURL="$r2/curl" STUB_CONTROL=0 STUB_TEST=0
 [ "$code" -eq 1 ] || fail "already clean, test site trusted: expected EXPOSED, exit 1, got $code"
-grep -q '^EXPOSED.*holds neither root but still trusts the test site' <<<"$out" || fail "already clean, test site trusted: expected EXPOSED"
+grep -q '^EXPOSED.*holds neither root, but curl still accepts the test site' <<<"$out" || fail "already clean, test site trusted: expected EXPOSED"
 cmp -s "$d/cert.pem" "$r2/P.pem" || fail "already clean, test site trusted: the file changed (put back to the backup?)"
 cmp -s "$d/cert.pem.wardlatch-20261030-000000.bak" "$work/original.pem" || fail "already clean, test site trusted: the backup changed"
 [ "$(baks "$d/cert.pem")" -eq 1 ] || fail "already clean, test site trusted: it wrote another backup"
@@ -3308,7 +3308,7 @@ for day in 20270503 none; do
   rm -rf "$d/clean0"; mkdir -p "$d/clean0"; cp "$r2/P.pem" "$d/clean0/cert.pem"
   run "$d/clean0/cert.pem" WARDLATCH_DATE="$r2/clock" FAKE_DAY="$day" WARDLATCH_CURL="$r2/curl" STUB_TEST=0 STUB_CONTROL=0
   [ "$code" -eq 1 ] || fail "already clean, test site trusted ($day): expected EXPOSED, exit 1, got $code"
-  grep -q '^EXPOSED  .* holds neither root but still trusts the test site' <<<"$out" || fail "already clean, test site trusted ($day): it did not print the EXPOSED line"
+  grep -q '^EXPOSED  .* holds neither root, but curl still accepts the test site' <<<"$out" || fail "already clean, test site trusted ($day): it did not print the EXPOSED line"
   grep -q 'wardlatch: verdict=EXPOSED scope=file+online online=trusted reason=- removed=0 kept=126' <<<"$out" || fail "already clean, test site trusted ($day): the trailer is wrong"
   cmp -s "$d/clean0/cert.pem" "$r2/P.pem" || fail "already clean, test site trusted ($day): the file changed"
 done
