@@ -84,11 +84,13 @@ Every deadline above used to bind us only to someone else. That is the wrong way
 than anyone, so most defects in it will be found by us, and the ones we find are the ones no outside clock is
 counting. A defect we find in our own tools gets the same 72 hours, the same 7 days, the same advisory and the
 same changelog entry, and the dates we found it and shipped it are stated. If we hold one longer than that, the
-record says for how long and why. Where this stands on 2 Nov 2026: the defects under Security in 0.1.11 in
-[CHANGELOG.md](CHANGELOG.md), which we found ourselves from 29 October, each say the day they were found. None has an
-advisory yet, draft or published. The 72 hours passed on 1 Nov for those found on 29 Oct, because
-the work of fixing them ran ahead of the paperwork and a posting freeze held every release; that is the reason, and it
-is not a good one. The defects under Security in 0.1.12, found on 2 Nov, have the same clock: 72 hours is 5 Nov.
+record says for how long and why. Where this stands on 2 Nov 2026: the defects under Security in 0.1.11 and 0.1.12 in
+[CHANGELOG.md](CHANGELOG.md), which we found ourselves from 29 October, each say the day they were found, and their
+advisories are published: GHSA-j6fm-jfg3-q89q, GHSA-c2fw-7h9h-g6qr and GHSA-qg36-5mwx-mvpf. For those found on 29 Oct
+the 72 hours passed on 1 Nov, a day before the advisories, because the work of fixing them ran ahead of the paperwork
+and a posting freeze held every release; that is the reason, and it is not a good one. Other defects found on 2 Nov,
+while those advisories were being checked, are not described here until their fix is out (step 5). They run on the
+same clock.
 
 If a fix is not possible or not worth its risk, the advisory says so and explains the workaround, rather than staying
 quiet.
