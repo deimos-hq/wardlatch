@@ -11,6 +11,34 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-11-03
+
+We found every defect under Security below ourselves, on 2 November 2026, while checking the advisories for 0.1.11 and
+0.1.12. Each could read `SAFE` where something was wrong. If 0.1.12 or earlier said `SAFE`, run this version. The advisory is
+GHSA-2q92-ggx3-wq82. `test/seat11.test.mjs` holds the tests; L1 runs on Linux only.
+
+### Security
+
+- **A project file one level past the header walk was not read.** A folder past a walk's limit that holds only files
+  makes no row, so a `.mcp.json` in a project with no `.git`, five levels below a folder searched, read `SAFE`. The
+  walk reads the project files one level past its limit now.
+
+- **The quick look stopped at a link.** `~/app/proj` as a link to a project with a stealer in its `.venv` read `SAFE`,
+  reachable or locked. The quick look now goes through a link that leads to a folder, as deep as it goes into a folder.
+  A locked target is UNKNOWN. On a Mac, EPERM there is named under the result as `~/.Trash` is, because `~/OneDrive` as a
+  link to a folder macOS protects would otherwise end every run in exit 2. A link past a locked folder can't be told
+  from a link to a file, and the quick look still reports only one named like a venv.
+
+- **A venv whose own name isn't valid UTF-8 had no row at the quick look's last level,** on Linux. It is UNKNOWN now.
+
+### Changed
+
+- **The Mac fix download has a new digest, for its words only.** Its comments and three of its messages said that a site
+  loading "through this file" showed what the file trusts. The Mac's curl also falls back to Apple's trust (seat 16,
+  measured 2 Nov 2026), so they say what was measured now, and the message for a test site still trusted after the fix
+  names that third cause. No line of its logic changed, and no verdict or exit code. A copy with SHA-256 `c8bba160...` needn't be
+  replaced.
+
 ## [0.1.12] - 2026-11-02
 
 We found every defect under Security below ourselves, on 2 November 2026, in a second read of 0.1.11 made after it
@@ -1005,7 +1033,7 @@ These were found by the third read of 31 Oct 2026 (33641f9), and each fix has a 
   adds nothing, and a sentinel holds the end, so `plain()` sees whatever the name really holds and a name with a line
   break in it is never printed. Only whoever can create the link can do this, which for `/etc/ssl` is root. Found
   31 Oct 2026, fixed 1 Nov 2026. The script's digest changes with it:
-  `c8bba160a8a9c30f2f850cd8987429b297612ea580e77404fddbbfe7ddc167a6`, pinned in `ci.yml` in the same commit. The
+  `c8bba160a8a9c30f2f850cd8987429b297612ea580e77404fddbbfe7ddc167a6`, the digest at this release. The
   site's download, the hash on its page and its changelog record have **not** been updated and must be, together,
   before this script is published (SECURITY.md, step 4).
 
