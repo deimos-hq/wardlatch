@@ -145,6 +145,11 @@
     "macos-system": "Apple blocks the compromised certificates for Safari and its own apps, which use Apple's trust layer rather than a file. That block arrives automatically as certificate configuration data, not in a software update, so there is nothing to install for this layer. Keep the system updated for everything else. For /etc/ssl/cert.pem, the file the built-in command-line tools read, Apple says macOS 27.2.1, 26.7.3 and 15.8.3 (9 Nov 2026) remove the withdrawn roots (support.apple.com/en-us/149555): see the curl line. On a Mac that can't update to one of them, an update can put Apple's original file back (updates to 26.7.2 on 27 Oct and 27.2 on 28 Oct did, as we measured): run the test after each software update. We haven't measured what an update to 27.2.1, 26.7.3 or 15.8.3 does to a file already changed by hand.",
     "container": "This container's image has the old trust list. Rebuild it on a fixed base (docker build --pull --no-cache), or pull the maintainer's fixed image (docker compose pull && docker compose up -d). For an image nobody maintains, mount the host's fixed bundle read-only: www.deimoscore.com/wardlatch/#homelab"
   },
+  "appPythons": [
+    "/Applications/*.app/Contents/Resources/*/python/lib/python3*/site-packages",
+    "~/Applications/*.app/Contents/Resources/*/python/lib/python3*/site-packages",
+    "/Applications/Unity/Hub/Editor/*/PlaybackEngines/*/BuildTools/Emscripten/python/lib/python3*/site-packages"
+  ],
   "appleFix": {
     "source": "https://support.apple.com/en-us/149555",
     "date": "2026-11-09",
@@ -173,7 +178,7 @@
       }
     ]
   },
-  "notCovered": "A compiled program does not pick this change up from the system, so it has to be rebuilt or replaced: rebuild Go programs with Go 1.27.3 or 1.26.10 (on Linux and in containers: on a Mac, Go programs use Apple's own certificate check, and one Go 1.26.2 program on macOS 27.2.1 was measured refusing the 12 certificates, whatever SSL_CERT_FILE said); update Electron apps to 44.9.1, 43.8.1 or 42.11.16; Rust: rustls-webpki 0.103.16, webpki-roots 1.0.10. Browsers: Chrome, Edge, Firefox and Safari block the intermediates through their own updates; check yours at the advisory's #check page.",
+  "notCovered": "A compiled program does not pick this change up from the system, so it has to be rebuilt or replaced: rebuild Go programs with Go 1.27.3 or 1.26.10 (on Linux and in containers: on a Mac, Go checks certificates through Apple's own trust, which Apple says blocks the 12 for apps that use it); update Electron apps to 44.9.1, 43.8.1 or 42.11.16; Rust: rustls-webpki 0.103.16, webpki-roots 1.0.10. Browsers: Chrome, Edge, Firefox and Safari block the intermediates through their own updates; check yours at the advisory's #check page.",
   "type": "trust",
   "binaries": [
     {

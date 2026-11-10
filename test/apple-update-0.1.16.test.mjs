@@ -292,6 +292,7 @@ test('W4 pip\'s own list, read by key: a REVIEW row when it holds a withdrawn ro
   assert.deepEqual(rows.map((r) => [r.file.split('/w4/')[1], r.status]), [['held/site-packages/pip/_vendor/certifi/cacert.pem', 'REVIEW'], ['broken/site-packages/pip/_vendor/certifi/cacert.pem', 'REVIEW'], ['locked/site-packages/pip/_vendor/certifi/cacert.pem', 'REVIEW']]);
   assert.deepEqual(rows[0].heldRoots, [AAA, G3]);
   assert.match(rows[0].reason, /pip uses this list only when run with --use-deprecated=legacy-certs/);
+  assert.match(rows[0].reason, /a compromised test host of the emSign family \(the AAA family was refused/);
   assert.match(rows[1].reason, /1 of 124 certificates could not be read here/);
   assert.match(rows[2].reason, /could not be read here, so whether it holds the withdrawn roots was not checked/);
   assert.ok(rows.every((r) => r.kind === 'pip-list' && r.status === 'REVIEW'), 'never SAFE or EXPOSED: it takes a flag to be used');
@@ -299,5 +300,18 @@ test('W4 pip\'s own list, read by key: a REVIEW row when it holds a withdrawn ro
 });
 
 test('W8 the Go rebuild advice says it is for Linux and containers, and what was measured on a Mac', () => {
-  assert.match(inc.notCovered, /rebuild Go programs with Go 1\.27\.3 or 1\.26\.10 \(on Linux and in containers: on a Mac, Go programs use Apple's own certificate check, and one Go 1\.26\.2 program on macOS 27\.2\.1 was measured refusing the 12 certificates, whatever SSL_CERT_FILE said\);/);
+  // only what Go documents and Apple says: the first inspection's Go measurement was not independently verified
+  assert.match(inc.notCovered, /rebuild Go programs with Go 1\.27\.3 or 1\.26\.10 \(on Linux and in containers: on a Mac, Go checks certificates through Apple's own trust, which Apple says blocks the 12 for apps that use it\);/);
+});
+
+import { appCertifiRows } from '../lib/probe.mjs';
+test('W3 the certifi an app\'s own Python carries (Blender, Unity) is read by key: REVIEW when it holds a withdrawn root, with what was and wasn\'t shown', () => {
+  assert.deepEqual(inc.appPythons, ['/Applications/*.app/Contents/Resources/*/python/lib/python3*/site-packages', '~/Applications/*.app/Contents/Resources/*/python/lib/python3*/site-packages', '/Applications/Unity/Hub/Editor/*/PlaybackEngines/*/BuildTools/Emscripten/python/lib/python3*/site-packages']);
+  const site = (name, text) => { const d = join(dir, 'w3', name); mkdirSync(join(d, 'certifi'), { recursive: true }); if (text !== undefined) writeFileSync(join(d, 'certifi', 'cacert.pem'), text); return d; };
+  const both = site('unity-like', APPLE_272), clean = site('clean', APPLE_2721), empty = site('empty');
+  const emsignOnly = site('blender-like', (APPLE_272.match(PEM) ?? []).filter((b) => !bundleHolds(b, inc).held.includes(AAA)).join('\n') + '\n');
+  const rows = appCertifiRows(inc, [both, clean, empty, emsignOnly]);
+  assert.deepEqual(rows.map((r) => [r.file.split('/w3/')[1], r.status, r.heldRoots]), [['unity-like/certifi/cacert.pem', 'REVIEW', [AAA, G3]], ['blender-like/certifi/cacert.pem', 'REVIEW', [G3]]]);
+  assert.match(rows[0].reason, /Whether the app itself connects that way is not known/);
+  assert.match(rows[0].reason, /its plain ssl default reads no list/);
 });

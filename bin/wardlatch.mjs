@@ -10,7 +10,7 @@ import { join, dirname, basename, delimiter, isAbsolute, resolve } from 'node:pa
 import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { discover, NOT_WALKED as TRUST_NOT_WALKED } from '../lib/discover.mjs';
-import { canaryExpired, check, reachable, pipListRows } from '../lib/probe.mjs';
+import { canaryExpired, check, reachable, pipListRows, appCertifiRows } from '../lib/probe.mjs';
 import { droppedNodeOptions } from '../lib/run.mjs';
 import { checkBinaryAll, findOnPath, tmpTraces, tempDirs } from '../lib/binaries.mjs';
 import { checkVersionFiles, sitePackagesDirs, checkSitePackages, localImageDigests, checkImages, NOT_WALKED as VENV_NOT_WALKED, SITE_PATTERNS, expand } from '../lib/installs.mjs';
@@ -466,7 +466,10 @@ for (const inc of chosen) {
     // W4: pip's own list in the machine's Python folders, read by key: REVIEW rows only (it takes a flag to be used)
     {
       const pipDirs = [...new Set(SITE_PATTERNS.flatMap((p) => expand(p, [], [])).map((d) => realPath(d) ?? d))];
-      for (const row of pipListRows(inc, pipDirs)) { results.push({ incident: inc.id, ...row }); print('REVIEW', `pip's own list  ${short(row.file)}`); note('33', row.reason); }
+      // W3: the Pythons apps carry (Blender, Unity's Emscripten): their bundled certifi, and pip's list beside it
+      const appDirs = [...new Set((inc.appPythons ?? []).flatMap((p) => expand(p, [], [])).map((d) => realPath(d) ?? d))].filter((d) => !pipDirs.includes(d));
+      for (const row of pipListRows(inc, [...pipDirs, ...appDirs])) { results.push({ incident: inc.id, ...row }); print('REVIEW', `pip's own list  ${short(row.file)}`); note('33', row.reason); }
+      for (const row of appCertifiRows(inc, appDirs)) { results.push({ incident: inc.id, ...row }); print('REVIEW', `an app's bundled certifi  ${short(row.file)}`); note('33', row.reason); }
     }
     // the test hosts' certificates expire: after that a container (which has no forced-roots control) would read every
     // refusal as SAFE, so containers are UNKNOWN once the incident's notAfter has passed
@@ -631,6 +634,8 @@ for (const inc of chosen) {
       const row = results.find((r) => r.incident === inc.id && r.status !== 'SAFE');
       if (row) row.notSearched = [...(row.notSearched ?? []), keptSaid(macKept)];
     }
+    // what this check doesn't read, where the incident file says (0.1.16: Chrome's other channels and Chromium browsers)
+    if (inc.notCovered) note('2', `not covered: ${inc.notCovered}`);
   }
 
   if (inc.type === 'bundled') {
