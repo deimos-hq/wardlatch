@@ -92,8 +92,10 @@ On a Mac, Wardlatch reads the macOS version from
 `/System/Library/CoreServices/SystemVersion.plist` (a file read) and chooses the built-in curl's fix text by it;
 the version never changes a result, which is what the tools themselves do with the test hosts. It also says, as a note,
 whether the file still holds the three other roots Apple's update removes: Apple did not say their keys were compromised,
-so they change no result. We haven't measured what an update to one of those releases does to a file already changed by
-hand, so Wardlatch doesn't say; Apple says not to restore a backup made before the update.
+so they change no result. We measured one Mac (10 Nov 2026) whose update from 27.2 to 27.2.1 replaced a `cert.pem` already
+changed by hand with Apple's new file; other Macs and the 26.7.3 and 15.8.3 updates weren't measured. Apple says not to
+restore a backup made before the update, and on a release Apple names Wardlatch says so of any backup in `/etc/ssl` that
+still holds a withdrawn root (it reads them, never changes them).
 
 `fix/fix-macos.sh` removes the two roots tied to the compromised eMudhra keys from `/etc/ssl/cert.pem` (the advisory's
 change), and any other certificate carrying either root's key in whatever encoding (a copy with a bit changed, a root

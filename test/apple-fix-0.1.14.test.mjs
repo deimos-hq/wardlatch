@@ -118,7 +118,8 @@ test('trustFix: the built-in curl\'s text follows the macOS release; every other
   assert.match(fixed, /^Apple's update should have removed the withdrawn roots from \/etc\/ssl\/cert\.pem, but the built-in curl still accepted the test hosts\. This Mac runs macOS 27\.2\.1, /);
   assert.doesNotMatch(fixed, /\{macos\}/);
   assert.match(fixed, /not to restore a backup made before the update/);
-  assert.match(fixed, /we haven't measured what an update does to a file changed by hand/);
+  // 0.1.16: measured on one Mac on 10 Nov 2026 (test/apple-update-0.1.16.test.mjs), and said as one Mac, no more
+  assert.match(fixed, /we measured one Mac on 10 Nov 2026 whose update from 27\.2 to 27\.2\.1 replaced a hand-changed file with Apple's; other Macs and releases weren't measured/);
   assert.match(old, /Apple names none for macOS 14\.7\.1/);
   for (const t of [before, fixed, old]) {
     assert.ok(t.includes(ADVISORY_CMD), 'the advisory\'s own command is still given');
@@ -187,10 +188,13 @@ test('appleNote: one line per state, each naming what it read, and the three roo
 });
 
 test('appleUnknownNote: why the built-in tools\' control may fail on an updated Mac, and only there', () => {
-  const unk = { status: 'UNKNOWN', reason: 'positive control failed: with the compromised roots forced in, this runtime still could not connect' };
+  const unk = { status: 'UNKNOWN', reason: "positive control failed: with the compromised roots forced in, this runtime still could not connect to the test site (a certificate error that is not the runtime's block of these keys), so a refusal would prove nothing here" };
+  // 0.1.16: a connection error is not Apple's block, so it gets no note
+  assert.equal(appleUnknownNote(inc, usrCurl, { ...unk, reason: 'positive control failed: with the compromised roots forced in, this runtime still could not connect to the test site (a connection error), so a refusal would prove nothing here' }, { os: 'darwin', macos: '27.2.1' }), '');
   const o = { os: 'darwin', macos: '27.2.1' };
   assert.match(appleUnknownNote(inc, usrCurl, unk, o), /^on macOS 27\.2\.1 Apple says the built-in command-line tools themselves stop accepting the 12 compromised certificates \(https:\/\/support\.apple\.com\/en-us\/149555\)/);
-  assert.match(appleUnknownNote(inc, usrCurl, unk, o), /We haven't measured it on an updated Mac/);
+  // 0.1.16: measured on one updated Mac; the note now fires only where the file check was skipped, and says so
+  assert.match(appleUnknownNote(inc, usrCurl, unk, o), /and that makes this control fail too \(measured on one Mac updated to 27\.2\.1, 10 Nov 2026\)/);
   assert.notEqual(appleUnknownNote(inc, { kind: 'python', bin: '/usr/bin/python3' }, unk, o), '');
   // not before the fix, not off macOS, not for another curl, a bundle given with --cacert, a venv, another reason or status
   assert.equal(appleUnknownNote(inc, usrCurl, unk, { os: 'darwin', macos: '27.2' }), '');
@@ -303,11 +307,11 @@ test('the command on a stand-in Mac where curl refuses: SAFE, and the note adds 
 
 test('the command on a stand-in Mac whose curl refuses even with the roots forced in: UNKNOWN, and on a fixed release it says why it may be', () => {
   const runs = runAll({ fixed: { version: '27.2.1', pem: cleaned() }, before: { version: '27.2', pem: APPLE_272 }, baseline: { version: '27.2.1', pem: cleaned(), baseline: true } }, 'UNKNOWN');
-  assert.match(runs.fixed.curl.reason, /^positive control failed/);
-  assert.match(runs.fixed.curl.appleNote, /^on macOS 27\.2\.1 Apple says the built-in command-line tools themselves stop accepting/);
-  assert.match(runs.fixed.text, /We haven't measured it on an updated Mac, so this row says only that this tool could not be tested this way/);
-  // and the reason beside it no longer says the error was not a block, which is unmeasured there
-  assert.doesNotMatch(runs.fixed.curl.reason, /not the runtime's block/); assert.match(runs.fixed.curl.reason, /which on this release may be Apple's own block \(see below\)/);
+  // 0.1.16: on a release Apple names, the file the tool reads stands in for the control (lib/probe.mjs fileVerdict).
+  // This stand-in refuses the normal site too, so the refusals prove nothing: still UNKNOWN, now saying so in that order.
+  assert.match(runs.fixed.curl.reason, /^on macOS 27\.2\.1 Apple says the built-in command-line tools themselves stop accepting the 12 compromised certificates/);
+  assert.match(runs.fixed.curl.reason, /and this runtime could not open a normal site either, so its refusals prove nothing$/);
+  assert.doesNotMatch(runs.fixed.curl.reason, /not the runtime's block/);
   assert.match(runs.before.curl.reason, /a certificate error that is not the runtime's block of these keys/, 'unchanged before the fix');
   assert.equal(runs.before.curl.appleNote, undefined);
   assert.equal(runs.baseline.curl.appleNote, undefined);

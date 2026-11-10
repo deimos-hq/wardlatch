@@ -25,7 +25,7 @@ import { pathState, readText, listDir, realPath, entriesByMetadata, denialCode, 
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
 import { safe, saw, withdrawUnreceipted } from '../lib/report.mjs';
 import { escapeHidden, escapeJsonHidden } from '../lib/escape.mjs';
-import { trustFix, readMacosVersion, appleNote, appleFixState, appleUnknownNote } from '../lib/macos.mjs';
+import { trustFix, readMacosVersion, appleNote, appleFixState, appleUnknownNote, appleFileCheck } from '../lib/macos.mjs';
 import { checkSshole } from '../lib/sshd.mjs';
 
 // npx puts the current project's node_modules/.bin, and each parent folder's, first on PATH. Wardlatch finds git,
@@ -421,17 +421,21 @@ for (const inc of chosen) {
     const rootsPem = join(LIB, 'incidents', inc.rootsPem);
     const deniedVenvs = [...lockedRoots], foundUnread = [], notRun = [], untested = [], links = [], deep = [];
     for (const rt of discover({ roots: searchable, denied: deniedVenvs, found: foundUnread, notRun, untested, links, deep })) {
-      const r = await check(rt, canaries, { rootsPem, controlUrl: inc.advisory });
+      // on a release where Apple says the built-in tools block the 12 certificates themselves, the file they read stands
+      // in for the forced-roots control (lib/probe.mjs fileVerdict); settings that point them elsewhere keep it UNKNOWN
+      const { fileCheck, skipped } = appleFileCheck(inc, rt, { os: platform(), macos, env: process.env, home: homedir(), exists: (f) => pathState(f) === 'file' });
+      const r = await check(rt, canaries, { rootsPem, controlUrl: inc.advisory, fileCheck });
       const row = { incident: inc.id, ...rt, ...r, fix: r.status === 'EXPOSED' ? fixFor(rt) : undefined };
       results.push(row);
       const what = rt.label ? `${rt.label} ${rt.version}` : `${rt.kind} ${rt.version}  ${short(rt.bin)}${rt.env ? `  (${short(rt.env)})` : ''}`;
-      print(r.status, what, r.status === 'EXPOSED' ? c('31', `  trusts ${r.trusted.length}/${r.tested}`) : '');
+      print(r.status, what, r.status === 'EXPOSED' ? c('31', r.heldRoots ? `  holds ${r.heldRoots.join(', ')}` : `  trusts ${r.trusted.length}/${r.tested}`) : '');
       // why the built-in tools' control may fail on a release Apple says blocks the certificates in them (a note); the
       // reason then doesn't say the error was not a block, which nobody has measured there
       const why = appleUnknownNote(inc, rt, r, { os: platform(), macos });
       if (why) { r.reason = r.reason.split("a certificate error that is not the runtime's block of these keys").join("a certificate error, which on this release may be Apple's own block (see below)"); row.reason = r.reason; }
       if (r.status === 'UNKNOWN') note('33', r.reason);
       if (why) { note('2', why); row.appleNote = why; }
+      if (skipped && r.status === 'UNKNOWN') { note('2', skipped); row.fileCheckSkipped = skipped; }
       if (r.note) note('2', r.note);
       if (row.fix) note('2', `fix: ${row.fix}`);
     }
@@ -439,7 +443,14 @@ for (const inc of chosen) {
     if (platform() === 'darwin' && inc.appleFix) {
       // a note must never cost a row: anything it throws becomes a line saying the note could not be made
       let notes;
-      try { notes = appleNote(inc, { version: macos, certText: readText('/etc/ssl/cert.pem', 4 * 1024 * 1024) }); } catch (e) { notes = [`what Apple says of this Mac's release could not be worked out here (${String(e?.message ?? e).slice(0, 120)})`]; }
+      try {
+        // every cert.pem.* beside it, whatever made it (the Mac fix's dated .bak, the advisory's .bak, Apple's .orig, a
+        // .bak.1 from a second run): read, never changed; the note names the ones that still hold a withdrawn root
+        const etc = listDir('/etc/ssl');
+        const backups = (etc.entries ?? []).map((e) => e.name).filter((n) => n.startsWith('cert.pem.')).sort().map((n) => ({ file: `/etc/ssl/${n}`, text: readText(`/etc/ssl/${n}`, 4 * 1024 * 1024) }));
+        if (etc.denied) backups.push({ file: '/etc/ssl (its list of files)', text: null });
+        notes = appleNote(inc, { version: macos, certText: readText('/etc/ssl/cert.pem', 4 * 1024 * 1024), backups });
+      } catch (e) { notes = [`what Apple says of this Mac's release could not be worked out here (${String(e?.message ?? e).slice(0, 120)})`]; }
       for (const n of notes) note('2', n);
       appleSaid = { version: macos, appleFix: appleFixState(macos, inc.appleFix.releases), source: inc.appleFix.source, notes };
     }
