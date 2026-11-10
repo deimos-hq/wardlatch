@@ -50,6 +50,10 @@ holds the tests.
   They name Apple's releases now, and the Undo line says Apple's own limit on it: don't undo after updating to 27.2.1,
   26.7.3 or 15.8.3. No line of its logic changed, and no verdict or exit code. Its SHA-256 is
   `0dae0dc901a23aba216211f4ef6002a6d75b232fe479ef79db463d5c1dc9b98c`; a copy with SHA-256 `893f53cb...` needn't be replaced.
+- **The Mac fix's test suite could fail on a run that was fine.** `test/fix-macos.check.sh` piped the output into
+  `grep -q`, and under `pipefail` grep stopping at its first match can kill the writer, so a case read "printed no line"
+  while it had printed two. Seen once in four runs under load; the old form failed 7 times in 300 on a 5,000-line output.
+  It reads a here-string now.
 
 ## [0.1.13] - 2026-11-03
 

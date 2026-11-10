@@ -80,7 +80,10 @@ run() {
     left=$(find "$work/tmp" -mindepth 1 -maxdepth 1 -exec basename {} \; | tr '\n' ' ')
     [ -z "$left" ] || fail "the fix left temporary files behind: $left"
   fi
-  if [ "$(uname -s)" = Darwin ] && [ -z "$silent_ok" ] && ! printf '%s\n' "$out" | grep -qE '^(SAFE|EXPOSED|UNKNOWN) '; then
+  # From a here-string, not a pipe: under pipefail, grep -q exiting at its first match can kill printf with SIGPIPE, and
+  # the pipeline then fails though the line is there. MEASURED 9 Nov 2026: this case read "printed no line" on a run that
+  # printed two, under load (the 0.1.14 run beside a mutation sweep).
+  if [ "$(uname -s)" = Darwin ] && [ -z "$silent_ok" ] && ! grep -qE '^(SAFE|EXPOSED|UNKNOWN) ' <<<"$out"; then
     fail "the fix exited $code and printed no line starting SAFE, EXPOSED or UNKNOWN"
   fi
   return 0
@@ -534,7 +537,7 @@ sigrun() {
   [ ! -s "$r2/sig.err" ] || sed 's/^/    ! /' "$r2/sig.err"
   left=$(find "$work/tmp" -mindepth 1 -maxdepth 1 -exec basename {} \; | tr '\n' ' ')
   [ -z "$left" ] || fail "a stopped run left temporary files behind: $left"
-  printf '%s\n' "$out" | grep -qE '^(SAFE|EXPOSED|UNKNOWN) ' || fail "a stopped run exited $code and printed no line starting SAFE, EXPOSED or UNKNOWN"
+  grep -qE '^(SAFE|EXPOSED|UNKNOWN) ' <<<"$out" || fail "a stopped run exited $code and printed no line starting SAFE, EXPOSED or UNKNOWN"
 }
 offline='https_proxy=http://127.0.0.1:9'
 OFFLINE='HTTPS_PROXY=http://127.0.0.1:9'
