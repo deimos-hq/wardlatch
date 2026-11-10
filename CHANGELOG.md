@@ -41,7 +41,8 @@ holds the tests.
   `{ version, appleFix, source, notes }`.
 - **An UNKNOWN for the built-in curl or python3 on 27.2.1, 26.7.3, 15.8.3 or later says why it may be one.** Apple says
   those releases block the 12 certificates in the built-in tools themselves, which could make the test's forced-roots
-  control fail too. We haven't measured that on an updated Mac, so the row stays UNKNOWN and says so.
+  control fail too. We haven't measured that on an updated Mac, so the row stays UNKNOWN and says so, and its reason
+  no longer says the error was not a block.
 - **The words "a macOS update puts Apple's original file back" are now about a Mac that can't update to those
   releases.** We measured updates to 26.7.2 (27 Oct) and 27.2 (28 Oct) doing it. We haven't measured what an update to
   27.2.1, 26.7.3 or 15.8.3 does to a file already changed by hand, and nothing here says.

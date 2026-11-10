@@ -83,7 +83,7 @@ update in each case. Check your browser on the advisory's own page.
 
 ## The Mac fix
 
-**Apple fixed this on 9 November 2026: update to macOS 27.2.1, 26.7.3 or 15.8.3.** Apple says these releases remove
+**Apple shipped its fix on 9 November 2026: update to macOS 27.2.1, 26.7.3 or 15.8.3.** Apple says these releases remove
 the two roots from `/etc/ssl/cert.pem`, along with three other eMudhra roots, and that on them the built-in command-line
 tools stop accepting the 12 compromised certificates ([Apple](https://support.apple.com/en-us/149555)). The Mac fix is
 for a Mac that can't update.

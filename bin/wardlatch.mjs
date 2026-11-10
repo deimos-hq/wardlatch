@@ -416,9 +416,11 @@ for (const inc of chosen) {
       results.push(row);
       const what = rt.label ? `${rt.label} ${rt.version}` : `${rt.kind} ${rt.version}  ${short(rt.bin)}${rt.env ? `  (${short(rt.env)})` : ''}`;
       print(r.status, what, r.status === 'EXPOSED' ? c('31', `  trusts ${r.trusted.length}/${r.tested}`) : '');
-      if (r.status === 'UNKNOWN') note('33', r.reason);
-      // why the built-in tools' control may fail on a release Apple says blocks the certificates in them (a note)
+      // why the built-in tools' control may fail on a release Apple says blocks the certificates in them (a note); the
+      // reason then doesn't say the error was not a block, which nobody has measured there
       const why = appleUnknownNote(inc, rt, r, { os: platform(), macos });
+      if (why) { r.reason = r.reason.split("a certificate error that is not the runtime's block of these keys").join("a certificate error, which on this release may be Apple's own block (see below)"); row.reason = r.reason; }
+      if (r.status === 'UNKNOWN') note('33', r.reason);
       if (why) { note('2', why); row.appleNote = why; }
       if (r.note) note('2', r.note);
       if (row.fix) note('2', `fix: ${row.fix}`);

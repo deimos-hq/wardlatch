@@ -69,6 +69,9 @@ test('rootsHeld: Apple\'s 27.2 file holds all three other roots, a file cleaned 
   // a TRUSTED CERTIFICATE block (LibreSSL takes it as an anchor) and a block with no END line are counted, not skipped
   assert.deepEqual(rootsHeld('-----BEGIN TRUSTED CERTIFICATE-----\nAAAA\n-----END TRUSTED CERTIFICATE-----\n', inc.appleFix.alsoRemoved), { held: [], read: 0, unreadable: 1 });
   assert.equal(rootsHeld(`${APPLE_272}-----BEGIN CERTIFICATE-----\nAAAA\n`, inc.appleFix.alsoRemoved).unreadable, 1);
+  // the old X509 CERTIFICATE label, which OpenSSL and LibreSSL load: counted as unreadable, never skipped
+  const relabelled = APPLE_272.replace(/-----(BEGIN|END) CERTIFICATE-----/g, '-----$1 X509 CERTIFICATE-----');
+  assert.deepEqual(rootsHeld(relabelled, inc.appleFix.alsoRemoved), { held: [], read: 0, unreadable: 128 });
   // and many BEGIN lines with no END are read in linear time (a whole-file regex took 2 s for 512 KB)
   const t0 = Date.now(); rootsHeld('-----BEGIN CERTIFICATE-----\nAAAA\n'.repeat(120000), inc.appleFix.alsoRemoved);
   assert.ok(Date.now() - t0 < 1500, `${Date.now() - t0} ms`);
@@ -303,6 +306,9 @@ test('the command on a stand-in Mac whose curl refuses even with the roots force
   assert.match(runs.fixed.curl.reason, /^positive control failed/);
   assert.match(runs.fixed.curl.appleNote, /^on macOS 27\.2\.1 Apple says the built-in command-line tools themselves stop accepting/);
   assert.match(runs.fixed.text, /We haven't measured it on an updated Mac, so this row says only that this tool could not be tested this way/);
+  // and the reason beside it no longer says the error was not a block, which is unmeasured there
+  assert.doesNotMatch(runs.fixed.curl.reason, /not the runtime's block/); assert.match(runs.fixed.curl.reason, /which on this release may be Apple's own block \(see below\)/);
+  assert.match(runs.before.curl.reason, /a certificate error that is not the runtime's block of these keys/, 'unchanged before the fix');
   assert.equal(runs.before.curl.appleNote, undefined);
   assert.equal(runs.baseline.curl.appleNote, undefined);
   for (const n of ['fixed', 'before']) { assert.deepEqual(shape(runs[n].out), shape(runs.baseline.out), n); assert.equal(runs[n].code, runs.baseline.code, n); }
