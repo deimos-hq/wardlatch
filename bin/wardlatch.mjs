@@ -20,6 +20,7 @@ import { reposUnder, workflowsAddedSince, windowStart, NOT_WALKED as REPO_NOT_WA
 import { scanRepo } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite, checkPluginsFolder, isCopyName, NOT_WALKED as WP_NOT_WALKED } from '../lib/wordpress.mjs';
 import { scanHeaders } from '../lib/headers.mjs';
+import { kevLines, kevRows } from '../lib/kev.mjs';
 import { pathState, readText, listDir, realPath, entriesByMetadata, denialCode, mandatoryRefusal, statBits, epermCauses, VENV_PACKAGES_SAID, joinAsWritten } from '../lib/files.mjs';
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
 import { safe, saw, withdrawUnreceipted } from '../lib/report.mjs';
@@ -87,6 +88,8 @@ a local socket is). Changes nothing.`);
   process.exit(0);
 }
 const incidents = (listDir(join(LIB, 'incidents')).entries ?? []).map((e) => e.name).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readText(join(LIB, 'incidents', f), 4 * 1024 * 1024))).sort((a, b) => b.date.localeCompare(a.date));
+// a malformed KEV row is a broken incident file: it stops the run here (exit 2), before any line is printed
+for (const i of incidents) kevRows(i);
 if (flag('--list')) { for (const i of incidents) console.log(clean(`${i.id}  ${i.date}  ${i.title}`)); process.exit(0); }
 // --incident is repeatable, like --paths: every one named is checked (0.1.8 checked only the first)
 const ids = args.filter((a, i) => args[i - 1] === '--incident');
@@ -350,6 +353,8 @@ if (!json) {
 
 for (const inc of chosen) {
   if (!json) console.log(`\n${c('1', inc.title)} ${c('2', `(${inc.date})`)}`);
+  // CISA's KEV rows the incident file carries (lib/kev.mjs): copied from the catalog before release, never fetched here
+  if (!json) for (const line of kevLines(inc)) console.log(c('33', clean(line)));
   const results = [];
   // only where the home folder is read: the trust check (the probes' ~/.curlrc, the go env file, the engine's config),
   // installs and headers always; the folder checks only when their usual folders, in the home, are the ones searched;
@@ -761,7 +766,7 @@ const n = (s) => count[s];
 // lib/escape.mjs says which characters count as hidden. Up to this fix only DEL and C1 were escaped, and only the second way.
 const prose = (v) => (Array.isArray(v) ? v.map(prose) : v && typeof v === 'object'
   ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, k === 'reason' && typeof x === 'string' ? clean(x) : prose(x)])) : v);
-if (json) console.log(escapeJsonHidden(JSON.stringify(prose({ tool: 'wardlatch', version: VERSION, incidents: chosen.map((i) => ({ id: i.id, title: i.title, advisory: i.advisory })), results: all, ...(appleSaid ? { macos: appleSaid } : {}) }), null, 1)));
+if (json) console.log(escapeJsonHidden(JSON.stringify(prose({ tool: 'wardlatch', version: VERSION, incidents: chosen.map((i) => ({ id: i.id, title: i.title, advisory: i.advisory, ...(i.kev ? { kev: kevRows(i) } : {}) })), results: all, ...(appleSaid ? { macos: appleSaid } : {}) }), null, 1)));
 else {
   console.log(`\n${count.SAFE} safe · ${n('EXPOSED')} exposed · ${n('UNKNOWN')} could not be tested${n('REVIEW') ? ` · ${n('REVIEW')} to review` : ''}`);
   const trust = chosen.find((i) => i.type === 'trust');

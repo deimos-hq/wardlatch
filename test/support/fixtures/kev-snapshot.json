@@ -1,0 +1,78 @@
+{
+  "source": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+  "catalogVersion": "2026.11.09",
+  "dateReleased": "2026-11-09T19:54:37.4945Z",
+  "count": 1773,
+  "read": 1773,
+  "listed": {
+    "brotli-2026-10": [
+      {
+        "cve": "CVE-2026-111497",
+        "vendorProject": "Google",
+        "product": "Brotli",
+        "dateAdded": "2026-10-27",
+        "dueDate": "2026-11-10"
+      }
+    ],
+    "php-2026-10": [
+      {
+        "cve": "CVE-2026-109618",
+        "vendorProject": "PHP Group",
+        "product": "PHP",
+        "dateAdded": "2026-10-26",
+        "dueDate": "2026-10-29"
+      },
+      {
+        "cve": "CVE-2026-109619",
+        "vendorProject": "PHP Group",
+        "product": "PHP",
+        "dateAdded": "2026-10-26",
+        "dueDate": "2026-10-29"
+      }
+    ],
+    "plex-2026-10": [
+      {
+        "cve": "CVE-2026-96652",
+        "vendorProject": "Plex",
+        "product": "Media Server",
+        "dateAdded": "2026-10-20",
+        "dueDate": "2026-11-03"
+      },
+      {
+        "cve": "CVE-2026-96654",
+        "vendorProject": "Plex",
+        "product": "Media Server",
+        "dateAdded": "2026-10-20",
+        "dueDate": "2026-10-23"
+      },
+      {
+        "cve": "CVE-2026-96655",
+        "vendorProject": "Plex",
+        "product": "Media Server",
+        "dateAdded": "2026-10-20",
+        "dueDate": "2026-11-03"
+      },
+      {
+        "cve": "CVE-2026-96656",
+        "vendorProject": "Plex",
+        "product": "Media Server",
+        "dateAdded": "2026-10-20",
+        "dueDate": "2026-10-23"
+      }
+    ],
+    "sshole-2026-11": [
+      {
+        "cve": "CVE-2026-123158",
+        "vendorProject": "OpenBSD",
+        "product": "OpenSSH",
+        "dateAdded": "2026-11-09",
+        "dueDate": "2026-11-12"
+      }
+    ]
+  },
+  "notListed": {
+    "gitlab-2026-10": [
+      "CVE-2026-110264"
+    ]
+  }
+}

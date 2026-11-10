@@ -3,6 +3,7 @@
   "type": "sshd",
   "title": "SSHole: OpenSSH sshd password bypass on musl Linux without PAM (CVE-2026-123158)",
   "date": "2026-11-05",
+  "kev": [{"cve": "CVE-2026-123158", "vendorProject": "OpenBSD", "product": "OpenSSH", "dateAdded": "2026-11-09", "dueDate": "2026-11-12"}],
   "summary": "sshd in OpenSSH before 10.6p2, on Linux with musl libc and without PAM, accepts a very long password (257 to 1024 bytes, Alpine says; the CVE record says between 256 and 1024 characters) for an account whose password field is * (no password set, as for key-only accounts) when another local account has a $5$ or $6$ password hash. Alpine Linux is such a system. CISA added it to its Known Exploited Vulnerabilities catalog on 9 Nov 2026, due 12 Nov. Root is reachable this way only with PermitRootLogin yes, since the default is prohibit-password, but an attacker who gets into another account that can become root (for example through doas) still gets root. Wardlatch reads files only: it never runs sshd and never connects to it.",
   "advisory": "https://alpinelinux.org/posts/2026-11-05-openssh-password-authentication-bypass/",
   "sources": [
