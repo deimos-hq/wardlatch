@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 
 const DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'incidents');
 const incidents = readdirSync(DIR).filter((f) => f.endsWith('.json')).map((f) => ({ file: f, ...JSON.parse(readFileSync(join(DIR, f), 'utf8')) }));
-const TYPES = ['trust', 'binaries', 'workflows', 'secrets', 'wordpress', 'installs', 'headers'];
+const TYPES = ['sshd', 'trust', 'binaries', 'workflows', 'secrets', 'wordpress', 'installs', 'headers'];
 const https = (u) => typeof u === 'string' && new URL(u).protocol === 'https:';
 // the start of a date window: an explicit instant in UTC, to the second (lib/workflows.mjs windowStart reads only this)
 const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;

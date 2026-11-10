@@ -1,0 +1,34 @@
+{
+  "id": "sshole-2026-11",
+  "type": "sshd",
+  "title": "SSHole: OpenSSH sshd password bypass on musl Linux without PAM (CVE-2026-123158)",
+  "date": "2026-11-05",
+  "summary": "sshd in OpenSSH before 10.6p2, on Linux with musl libc and without PAM, accepts a very long password (257 to 1024 bytes, Alpine says; the CVE record says between 256 and 1024 characters) for an account whose password field is * (no password set, as for key-only accounts) when another local account has a $5$ or $6$ password hash. Alpine Linux is such a system. CISA added it to its Known Exploited Vulnerabilities catalog on 9 Nov 2026, due 12 Nov. Root is reachable this way only with PermitRootLogin yes, since the default is prohibit-password, but an attacker who gets into another account that can become root (for example through doas) still gets root. Wardlatch reads files only: it never runs sshd and never connects to it.",
+  "advisory": "https://alpinelinux.org/posts/2026-11-05-openssh-password-authentication-bypass/",
+  "sources": [
+    "https://www.cve.org/CVERecord?id=CVE-2026-123158",
+    "https://www.openssh.org/releasenotes.html#10.6p2",
+    "https://secdb.alpinelinux.org/",
+    "https://www.cisa.gov/known-exploited-vulnerabilities-catalog?field_cve=CVE-2026-123158"
+  ],
+  "sshd": {
+    "cve": "CVE-2026-123158",
+    "scope": "the flaw is in sshd on Linux with musl libc and without PAM (CVE-2026-123158)",
+    "upstream": "10.6_p2-r0",
+    "fixedSource": "https://secdb.alpinelinux.org/ (each branch's main.json, openssh secfixes), matching the table in Alpine's advisory",
+    "fixed": {
+      "edge": "10.6_p2-r0",
+      "3.24": "10.3_p1-r2",
+      "3.23": "10.2_p1-r1",
+      "3.22": "10.0_p1-r11",
+      "3.21": "9.9_p2-r1",
+      "3.20": "9.7_p1-r6",
+      "3.19": "9.6_p1-r3",
+      "3.18": "9.3_p2-r4",
+      "3.17": "9.1_p1-r7",
+      "3.16": "9.0_p1-r6"
+    }
+  },
+  "fix": "Update openssh and restart sshd: apk upgrade -U -a, then rc-service sshd restart. Alpine says upgrading the package alone does not replace the running daemon. On Alpine 3.15 or older, Alpine published no fixed package: move to a release Alpine lists, or turn password logins off. If you can't update yet, turn password logins off: first make sure your key login works, and keep this session open until a new login works; then set PasswordAuthentication no in your sshd configuration, check it with sshd -t, and restart sshd (Alpine's advisory gives the exact commands). To look for a break-in, Alpine says to look in /var/log/messages for sshd lines reading \"Accepted password for\" an account that has no password, and to review doas use and recently created users, files and authorized keys. If you cannot rule out a login, Alpine says to treat the machine as compromised.",
+  "notCovered": "Only this machine is read. sshd inside a container or an image isn't checked: a container that runs sshd on Alpine needs the same update inside it (Alpine: containers that don't run sshd are not affected). Wardlatch doesn't read logs, so it can't say whether anyone got in. A package pinned from edge onto a stable branch can carry the same version string as that branch's fixed build while being unfixed (edge built 10.0_p1-r11 in Sep 2025: aports commit d3958a79, https://gitlab.alpinelinux.org/alpine/aports/-/commit/d3958a79fa83630bedf35a445abfed366e8d8680); a version can't tell them apart, so on such a machine check where the package came from."
+}

@@ -11,6 +11,57 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-11-10
+
+The first new incident since 22 October: SSHole, CVE-2026-123158. sshd in OpenSSH before 10.6p2, on Linux with musl
+libc and without PAM, accepts a very long password for an account whose password field is `*` (no password set, as for a
+key-only account) when another local account has a `$5$` or `$6$` hash. Alpine's advisory says 257 to 1024 bytes; the CVE
+record says between 256 and 1024 characters. Alpine is such a system. CISA added it to its Known Exploited
+Vulnerabilities catalog on 9 Nov 2026, due 12 Nov. Sources:
+[Alpine's advisory](https://alpinelinux.org/posts/2026-11-05-openssh-password-authentication-bypass/) (5 Nov),
+[the CVE record](https://www.cve.org/CVERecord?id=CVE-2026-123158),
+[OpenSSH 10.6p2's release notes](https://www.openssh.org/releasenotes.html#10.6p2),
+[Alpine's secdb](https://secdb.alpinelinux.org/) for each branch's fixed build, and
+[CISA's catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog?field_cve=CVE-2026-123158).
+This fixes no security defect in Wardlatch, so there is no advisory. `test/sshole-0.1.15.test.mjs` holds the tests.
+
+### Added
+
+- **`sshole-2026-11`**, Linux only, read-only. It never runs sshd (not even `sshd -T`) and never connects to a port.
+  - **musl or not**: `/etc/alpine-release`, or musl's loader `/lib/ld-musl-*.so.1`. A glibc system is SAFE only when
+    every sshd program found names glibc's loader; one that doesn't may be built against musl, and is UNKNOWN.
+  - **The package**: `openssh-server`, and Alpine's two PAM builds `openssh-server-pam` and `openssh-server-krb5` (both
+    built `--with-pam`, per aports `main/openssh/APKBUILD`), in
+    `/lib/apk/db/installed`, judged against Alpine's fixed builds (edge 10.6_p2-r0, 3.24 10.3_p1-r2 … 3.16 9.0_p1-r6).
+    Alpine backported the fix, so on 3.24 10.3_p1-r2 is fixed though it is below 10.6p2, and 10.3_p1-r1 is not. At or
+    above 10.6_p2 a build is fixed anywhere. Below it, only the fix of the branch `/etc/alpine-release` names counts:
+    revision numbers mean nothing across branches (edge built an unfixed 10.0_p1-r11 in September 2025, the very
+    version of 3.22's fixed build), so a newer build pinned from another branch is UNKNOWN, and on edge, on 3.15 or
+    older, or where the release can't be read, anything below 10.6_p2 is not fixed, except a version that is one of
+    Alpine's fixed builds, which can't be told apart there and is UNKNOWN (so is 3.23's fixed build on 3.24). A version
+    that can't be read is UNKNOWN. An sshd program apk didn't install, or a link where apk installed one, makes a
+    fixed package UNKNOWN. Beside an unfixed one it is named as not read, and since it may read a configuration other than
+    `/etc/ssh`'s,
+    nothing in `/etc/ssh` can make the row REVIEW then; only the account reasons can.
+  - **A fixed package with an older daemon**: Alpine says upgrading doesn't restart a running sshd. A running `sshd`
+    (or `sshd.pam`, `sshd.krb5`) that started before its program was installed is UNKNOWN with "restart sshd". The
+    install time is the file's inode change time, since apk sets each file's modification time from the package. The start
+    times come from `/proc`, and are believed only when this process's own start, read the same way, comes out right.
+  - **An unfixed package** is EXPOSED, unless something Alpine's advisory says the flaw needs was read as missing,
+    which makes it REVIEW (still to update): `PasswordAuthentication no` with no `Match` block setting it again, a PAM
+    build alone with `UsePAM yes`, no account with `*` that the flaw can use, or no `$`-hash. Any setting in
+    `/etc/conf.d/sshd`, a second sshd instance, or a running sshd started with `-o` or `-f` on its command line (read
+    from `/proc/<pid>/cmdline`) makes the settings "not read", as does a command line or a process list this can't read,
+    or an `Include` it can't read. A REVIEW line names what wasn't read, as an EXPOSED line does.
+    `/etc/shadow` is read only when this user may (usually root), and only counted: no name, field or hash is printed.
+    `/etc/passwd` is read for accounts with `*` and no shadow line. Root counts only with `PermitRootLogin yes`, as
+    Alpine says. Accounts from a directory service can't be seen here, so they never make it REVIEW. What couldn't be
+    read is named on the line.
+  - The fix is Alpine's: `apk upgrade -U -a`, then restart sshd, or turn password logins off until then (after checking
+    that a key login works). Wardlatch doesn't read logs, so it can't say whether anyone got in; it gives Alpine's
+    advice on where to look.
+  - Not covered: sshd in containers and images.
+
 ## [0.1.14] - 2026-11-10
 
 Apple shipped its fix for `/etc/ssl/cert.pem` on 9 November 2026, and from that day Wardlatch's words "no macOS release
@@ -1984,7 +2035,8 @@ Published 05:14 UTC. npm `gitHead`: `4d4f295`. The first release.
 npm also lists `0.0.0-stage` (21 October, 05:13 UTC), a 331-byte, two-file placeholder from npm's staged publishing,
 described on npm as a "Temporary package placeholder". It is not a release and holds none of Wardlatch's code.
 
-[Unreleased]: https://github.com/deimos-hq/wardlatch/compare/v0.1.14...main
+[Unreleased]: https://github.com/deimos-hq/wardlatch/compare/v0.1.15...main
+[0.1.15]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.15
 [0.1.14]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.14
 [0.1.13]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.13
 [0.1.12]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.12

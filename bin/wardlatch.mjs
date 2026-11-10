@@ -24,6 +24,7 @@ import { ownedByPerson, ownerName } from '../lib/owners.mjs';
 import { safe, saw, withdrawUnreceipted } from '../lib/report.mjs';
 import { escapeHidden, escapeJsonHidden } from '../lib/escape.mjs';
 import { trustFix, readMacosVersion, appleNote, appleFixState, appleUnknownNote } from '../lib/macos.mjs';
+import { checkSshole } from '../lib/sshd.mjs';
 
 // npx puts the current project's node_modules/.bin, and each parent folder's, first on PATH. Wardlatch finds git,
 // python3, node, curl, php, go and the container engines on PATH and runs some of them, so a project could otherwise
@@ -507,6 +508,18 @@ for (const inc of chosen) {
     print('UNKNOWN', short(repo)); note('33', `git could not read it: ${error}`);
   };
   const repoCount = (n) => `${n} local repositor${n === 1 ? 'y' : 'ies'}`;
+
+  // sshd's own files on this machine (lib/sshd.mjs): read only; sshd is never run and never connected to
+  if (inc.type === 'sshd') {
+    // a throw here is one UNKNOWN row, never a stopped run that loses every other incident's rows
+    let r;
+    try { r = checkSshole(inc); } catch (e) { r = { status: 'UNKNOWN', reason: `this check stopped on an error, so sshd was not checked: ${String(e?.message ?? e).slice(0, 160)}` }; }
+    const row = { incident: inc.id, kind: 'sshd', ...r, fix: r.status === 'EXPOSED' || r.status === 'REVIEW' ? inc.fix : undefined };
+    results.push(row);
+    print(r.status, r.reason);
+    if (r.status === 'EXPOSED' || r.status === 'REVIEW') note('2', `${r.status === 'EXPOSED' ? 'fix' : 'check'}: ${inc.fix}`);
+    note('2', `not covered: ${inc.notCovered}`);
+  }
 
   if (inc.type === 'installs') {
     // Read-only: versions from the product's own files, dropped files in site-packages by hash, local image digests.
