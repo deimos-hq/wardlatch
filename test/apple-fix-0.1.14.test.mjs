@@ -123,7 +123,7 @@ test('trustFix: the built-in curl\'s text follows the macOS release; every other
   for (const t of [before, fixed, old]) {
     assert.ok(t.includes(ADVISORY_CMD), 'the advisory\'s own command is still given');
     assert.ok(t.includes('www.deimoscore.com/wardlatch/#mac'));
-    assert.match(t, /support\.apple\.com\/en-us\/149555/);
+    assert.ok(t.includes('support.apple.com/en-us/149555'));
   }
   // off macOS, and for every other runtime, the version changes nothing
   assert.equal(trustFix(inc, usrCurl, { os: 'linux', macos: '27.2.1' }), inc.fixes['curl:linux']);
@@ -133,7 +133,7 @@ test('trustFix: the built-in curl\'s text follows the macOS release; every other
   assert.equal(py('26.7.2'), inc.fixes['python:/usr/bin/python3:darwin']);
   assert.match(py('26.7.3'), /^Apple's update should have removed the withdrawn roots from \/etc\/ssl\/cert\.pem, but Apple's built-in Python still accepted the test hosts\. This Mac runs macOS 26\.7\.3, /);
   assert.match(py('13.6'), /Apple names none for macOS 13\.6/);
-  for (const v of ['26.7.2', '26.7.3', '13.6']) { assert.doesNotMatch(py(v), /see the curl line/); assert.ok(py(v).includes(ADVISORY_CMD)); assert.match(py(v), /support\.apple\.com\/en-us\/149555/); }
+  for (const v of ['26.7.2', '26.7.3', '13.6']) { assert.doesNotMatch(py(v), /see the curl line/); assert.ok(py(v).includes(ADVISORY_CMD)); assert.ok(py(v).includes('support.apple.com/en-us/149555')); }
   assert.equal(trustFix(inc, { kind: 'macos-system', bin: '/usr/bin/nscurl' }, { os: 'darwin', macos: '27.2.1' }), inc.fixes['macos-system']);
   assert.equal(trustFix(inc, { kind: 'curl', bin: '/opt/homebrew/bin/curl' }, { os: 'darwin', macos: '27.2.1' }), inc.fixes.curl);
   assert.equal(trustFix(inc, { kind: 'curl', bin: '/usr/bin/curl', fixKey: 'requests-ca-bundle' }, { os: 'darwin', macos: '27.2.1' }), inc.fixes['requests-ca-bundle']);

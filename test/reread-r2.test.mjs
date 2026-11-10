@@ -80,7 +80,7 @@ test('the eMudhra macOS fix names the releases of 9 Nov 2026 that fix the file, 
   const fix = inc.fixes['curl:/usr/bin/curl:darwin'];
   assert.doesNotMatch(fix, /27\.0\.1|26\.7\.1|15\.8\.1|28 Sep|26\.7\.2|15\.8\.2|no macOS release|future macOS update/, fix);
   assert.match(fix, /27\.2\.1, 26\.7\.3 and 15\.8\.3, released on 9 Nov 2026/, fix);
-  assert.match(fix, /support\.apple\.com\/en-us\/149555/, 'the source, beside the claim');
+  assert.ok(fix.includes('support.apple.com/en-us/149555'), 'the source, beside the claim');
 });
 
 // ---- W1: the escaper let format, line-separator, private-use and tag characters through ---------------------------------
