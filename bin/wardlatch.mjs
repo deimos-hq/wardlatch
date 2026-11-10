@@ -23,6 +23,7 @@ import { pathState, readText, listDir, realPath, entriesByMetadata, denialCode, 
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
 import { safe, saw, withdrawUnreceipted } from '../lib/report.mjs';
 import { escapeHidden, escapeJsonHidden } from '../lib/escape.mjs';
+import { trustFix, readMacosVersion, appleNote, appleFixState } from '../lib/macos.mjs';
 
 // npx puts the current project's node_modules/.bin, and each parent folder's, first on PATH. Wardlatch finds git,
 // python3, node, curl, php, go and the container engines on PATH and runs some of them, so a project could otherwise
@@ -125,6 +126,8 @@ const short = (p) => p.replace(HOME, '~');
 // an EXPOSED line sets the exit code as it is printed, so a crash after it can't turn it into "could not be tested"
 const print = (status, what, extra = '') => { if (status === 'EXPOSED') process.exitCode = 1; if (!json) console.log(`${STATUS[status]}  ${clean(what)}${extra}`); };
 const note = (code, text) => { if (!json) console.log(c(code, `         ${text}`)); };
+// what lib/macos.mjs appleNote() said on a Mac, for --json: a note, not a result
+let appleSaid = null;
 const all = [];
 // SAFE needs a receipt (lib/report.mjs). Every summary all-clear goes through here: it is a result row too (0.1.8
 // printed it but left it out of --json, so a reader couldn't tell "clean" from "not checked"), it names what it
@@ -376,13 +379,10 @@ for (const inc of chosen) {
 
   if (inc.type === 'trust') {
     if (!json) console.log(c('2', `Asks each runtime to connect to ${inc.canaries.length} test hosts signed with the compromised keys.`));
-    const fixFor = (rt) => {
-      const os = platform();
-      if (rt.fixKey) return inc.fixes[rt.fixKey];
-      if (rt.kind === 'macos-system') return inc.fixes['macos-system'];
-      if (rt.system) return inc.fixes['curl:linux'];
-      return inc.fixes[`${rt.kind}:${rt.bin}:${os}`] ?? inc.fixes[`${rt.kind}:${os}`] ?? inc.fixes[rt.kind];
-    };
+    // On a Mac the macOS version chooses between the fix texts for the built-in curl (lib/macos.mjs): Apple's update to
+    // 27.2.1, 26.7.3 or 15.8.3 is the fix for /etc/ssl/cert.pem from 9 Nov 2026. It never changes a status.
+    const macos = platform() === 'darwin' && inc.appleFix ? readMacosVersion() : '';
+    const fixFor = (rt) => trustFix(inc, rt, { os: platform(), macos });
     // a test host counts as up only when it presents the compromised chain's issuer: a TLS-inspecting firewall or a DNS
     // filter answering in its place would otherwise make every refusal look like the runtime's own (0.1.4 to 0.1.8)
     const issuerOk = (issuer) => !inc.canaryIssuer || new RegExp(inc.canaryIssuer).test(issuer);
@@ -419,6 +419,12 @@ for (const inc of chosen) {
       if (r.status === 'UNKNOWN') note('33', r.reason);
       if (r.note) note('2', r.note);
       if (row.fix) note('2', `fix: ${row.fix}`);
+    }
+    // A note, never a row: what Apple says of this Mac's release, and the three other roots Apple's update removes.
+    if (platform() === 'darwin' && inc.appleFix) {
+      const notes = appleNote(inc, { version: macos, certText: readText('/etc/ssl/cert.pem', 4 * 1024 * 1024) });
+      for (const n of notes) note('2', n);
+      appleSaid = { version: macos, appleFix: appleFixState(macos, inc.appleFix.releases), source: inc.appleFix.source, notes };
     }
     gaps(results, inc, 'search', deniedVenvs, { found: foundUnread, links, deep, levels: 5 });
     // found, but not tested (lib/discover.mjs says why): UNKNOWN, never dropped
@@ -703,7 +709,7 @@ const n = (s) => count[s];
 // lib/escape.mjs says which characters count as hidden. Up to this fix only DEL and C1 were escaped, and only the second way.
 const prose = (v) => (Array.isArray(v) ? v.map(prose) : v && typeof v === 'object'
   ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, k === 'reason' && typeof x === 'string' ? clean(x) : prose(x)])) : v);
-if (json) console.log(escapeJsonHidden(JSON.stringify(prose({ tool: 'wardlatch', version: VERSION, incidents: chosen.map((i) => ({ id: i.id, title: i.title, advisory: i.advisory })), results: all }), null, 1)));
+if (json) console.log(escapeJsonHidden(JSON.stringify(prose({ tool: 'wardlatch', version: VERSION, incidents: chosen.map((i) => ({ id: i.id, title: i.title, advisory: i.advisory })), results: all, ...(appleSaid ? { macos: appleSaid } : {}) }), null, 1)));
 else {
   console.log(`\n${count.SAFE} safe · ${n('EXPOSED')} exposed · ${n('UNKNOWN')} could not be tested${n('REVIEW') ? ` · ${n('REVIEW')} to review` : ''}`);
   const trust = chosen.find((i) => i.type === 'trust');

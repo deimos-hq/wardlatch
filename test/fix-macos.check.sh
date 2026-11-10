@@ -3353,7 +3353,11 @@ run "$d/clean/cert.pem" WARDLATCH_CURL="$r2/curl" STUB_CONTROL=47 STUB_TEST=60
 grep -q 'Not checked: whether anything else on this Mac still trusts the compromised keys\.' <<<"$out" || fail "already clean, no control: it did not say what was not checked"
 grep -q 'This covers the built-in curl, git, python3 and openssl' <<<"$out" || fail "already clean, no control: the scope block is missing"
 grep -q 'For everything else: npx wardlatch@latest' <<<"$out" || fail "already clean, no control: it did not say where to test the rest"
-grep -q 'A macOS update puts Apple.s original file back' <<<"$out" || fail "already clean, no control: it did not say an update undoes this"
+# 0.1.14: Apple's fix shipped on 9 Nov 2026 (support.apple.com/en-us/149555), so "a macOS update puts Apple's original
+# file back" is true only of an update to an older release, and the line says which.
+grep -q 'macOS 27.2.1, 26.7.3 and 15.8.3 remove these roots themselves (Apple: support.apple.com/en-us/149555)' <<<"$out" || fail "already clean, no control: it did not name the releases that fix the file, with Apple's page"
+grep -q 'An update to an older release puts Apple.s original file back: on those, run this again after one' <<<"$out" || fail "already clean, no control: it did not say an update to an older release undoes this"
+grep -q 'A macOS update puts Apple.s original file back: run this again after every update' <<<"$out" && fail "already clean, no control: it still says every macOS update undoes this, which Apple's 9 Nov releases do not"
 grep -q 'wardlatch: verdict=SAFE scope=file online=not-tested reason=control-47 removed=0 kept=126' <<<"$out" || fail "already clean, no control: the trailer is wrong, or the answer did not come from the stand-in"
 # And the other direction, which nothing asserted until a mutant survived on it: a control that did not get far
 # enough to refuse a certificate must NOT be described as one that refused it. 47 is not 60.
@@ -3385,7 +3389,11 @@ grep -q 'wardlatch: verdict=SAFE scope=file online=not-tested reason=test-28 rem
 # every SAFE is supposed to carry could have gone missing from the path most runs take.
 grep -q 'This covers the built-in curl, git, python3 and openssl' <<<"$out" || fail "fix path, test host silent: the scope block is missing"
 grep -q 'For everything else: npx wardlatch@latest' <<<"$out" || fail "fix path, test host silent: it did not say where to test the rest"
-grep -q 'A macOS update puts Apple.s original file back' <<<"$out" || fail "fix path, test host silent: it did not say an update undoes this"
+grep -q 'macOS 27.2.1, 26.7.3 and 15.8.3 remove these roots themselves (Apple: support.apple.com/en-us/149555)' <<<"$out" || fail "fix path, test host silent: it did not name the releases that fix the file"
+grep -q 'An update to an older release puts Apple.s original file back: on those, run this again after one' <<<"$out" || fail "fix path, test host silent: it did not say an update to an older release undoes this"
+grep -q 'A macOS update puts Apple.s original file back: run this again after every update' <<<"$out" && fail "fix path, test host silent: it still says every macOS update undoes this"
+# The Undo line names the one case Apple says it must not be used in: a backup made before an update to a fixed release.
+grep -q 'Not after updating to macOS 27.2.1, 26.7.3 or 15.8.3: Apple says not to restore a backup made before it' <<<"$out" || fail "fix path, test host silent: the Undo line did not say Apple's own limit on it"
 # Every non-SAFE headline must say the file was still fixed AND that the backup must not be put back: a user who
 # reads a warning as failure and restores a backup holding both withdrawn roots has undone the fix, which
 # SECURITY.md names a vulnerability outright.
