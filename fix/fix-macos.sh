@@ -4,10 +4,10 @@
 # Removes the two roots tied to the compromised eMudhra keys (AAA Certificate Services, emSign ECC Root CA - G3) from
 # /etc/ssl/cert.pem, the file macOS's built-in curl, git, python3 and openssl read. Apple says macOS 27.2.1, 26.7.3 and
 # 15.8.3 (9 Nov 2026) remove these roots from that file themselves (support.apple.com/en-us/149555): updating to one of
-# them is Apple's fix, and this script is for a Mac that can't update. An update to an older release puts Apple's
-# original file back (26.7.2 and 27.2 did): on those, run this again after every update. What an update to 27.2.1,
-# 26.7.3 or 15.8.3 does to a file this script changed has not been measured; Apple says not to restore a backup made
-# before that update.
+# them is Apple's fix, and this script is for a Mac that can't update. On such a Mac, run this again after each
+# software update: updates to 26.7.2 and 27.2 put Apple's original file back. What an update to 27.2.1, 26.7.3 or
+# 15.8.3 does to a file this script changed has not been measured; Apple says not to restore a backup made before
+# that update.
 # The removal is the advisory's (emudhra.we-have-a-problem.com); this script adds the safety around it:
 #   - finds the two roots by their SHA-256 fingerprints, not by the name lines some copies of the file don't have,
 #     and by their public keys too, compared as openssl decodes them whatever encoding a certificate stores them in,
@@ -505,7 +505,7 @@ stopped() {
     if [ -n "$published" ]; then
       echo "         Backup: $backup"
       echo "         Undo:   sudo cp -p '$backup' '$FILE'"
-      echo "         (Not after updating to macOS 27.2.1, 26.7.3 or 15.8.3: Apple says not to restore a backup made before it.)"
+      echo "         Don't undo after you update to macOS 27.2.1, 26.7.3 or 15.8.3: Apple says not to restore a backup made before that update."
     fi
   elif [ -n "$orig" ] && [ "$now" = "$orig" ]; then
     echo "UNKNOWN  Stopped. $FILE is the file this run read, and still holds $(held). Run this again."
@@ -602,8 +602,8 @@ scope_lines() {
   echo "         This covers the built-in curl, git, python3 and openssl: the four we measured. Apple's pip3 keeps its"
   echo "         own copy, and we have not measured the built-in perl or ruby. The page has both."
   echo "         For everything else: npx wardlatch@latest"
-  echo "         macOS 27.2.1, 26.7.3 and 15.8.3 remove these roots themselves (Apple: support.apple.com/en-us/149555)."
-  echo "         An update to an older release puts Apple's original file back: on those, run this again after one."
+  echo "         Apple says macOS 27.2.1, 26.7.3 and 15.8.3 remove these roots (support.apple.com/en-us/149555)."
+  echo "         If this Mac can't update to one of them, run this again after each software update."
 }
 # One machine-readable line, last, so a fleet can tell a corroborated verdict from an uncorroborated one by choice
 # instead of by exit code. The exit-code table is published, on the page whose own section tells administrators to
@@ -1236,6 +1236,6 @@ else
 fi
 echo "         Backup: $backup"
 echo "         Undo:   sudo cp -p '$backup' '$FILE'"
-echo "         (Not after updating to macOS 27.2.1, 26.7.3 or 15.8.3: Apple says not to restore a backup made before it.)"
+echo "         Don't undo after you update to macOS 27.2.1, 26.7.3 or 15.8.3: Apple says not to restore a backup made before that update."
 scope_lines
 trailer SAFE "$tos" "$tre" "$todrop" "$after"

@@ -20,7 +20,7 @@ sent, nothing changed) and quick to act on (a fix on every line).
 ## Next: the coming months
 
 - **Keep the current incidents current.** Done so far: PHP's fixed versions (0.1.3), Node's fixed releases (0.1.4),
-  OVHcloud's published hashes (0.1.6), and Apple's macOS 27.2.1, 26.7.3 and 15.8.3, which remove the roots from
+  OVHcloud's published hashes (0.1.6), and Apple's macOS 27.2.1, 26.7.3 and 15.8.3, which Apple says remove the roots from
   `/etc/ssl/cert.pem` (0.1.14). Each change gets a dated changelog line.
 - **New incidents as they happen**, when there is a public source and something checkable on a machine. That is the
   reason the tool exists, and it outranks everything else on this list.

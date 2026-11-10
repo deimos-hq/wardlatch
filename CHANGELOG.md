@@ -15,33 +15,41 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 Apple shipped its fix for `/etc/ssl/cert.pem` on 9 November 2026, and from that day Wardlatch's words "no macOS release
 has fixed it yet" and "run this again after every update" were wrong. Apple says macOS 27.2.1, 26.7.3 and 15.8.3 remove
-the two withdrawn roots from the file, "along with three other eMudhra root CA certificates", and that from 27.2.1 the
-built-in command-line tools stop accepting the 12 compromised certificates
+the two withdrawn roots from the file, "along with three other eMudhra root CA certificates", and that on these releases
+the built-in command-line tools stop accepting the 12 compromised certificates
 ([Apple, support.apple.com/en-us/149555](https://support.apple.com/en-us/149555), as published on 9 Nov 2026). This
 release says so. No result changes: SAFE, EXPOSED and UNKNOWN still come from what each tool does with the test hosts,
-not from a version number. `test/apple-fix-0.1.14.test.mjs` holds the tests.
+not from a version number. This fixes no security defect, so there is no advisory. `test/apple-fix-0.1.14.test.mjs`
+holds the tests.
 
 ### Changed
 
-- **The built-in curl's fix text follows the macOS release.** On a Mac, Wardlatch reads `ProductVersion` from
-  `/System/Library/CoreServices/SystemVersion.plist` (a file read; nothing is run for it). On 27.2, 26.7.2, 15.8.2 or
-  any earlier release of those three, or when the version can't be read, an EXPOSED `/usr/bin/curl` is told to update
-  macOS, and to use the Mac fix if it can't. On macOS 14 or older, for which Apple names no update, it is told to use the
-  Mac fix. On 27.2.1, 26.7.3, 15.8.3 or later, where Apple says the roots are gone, an EXPOSED `/usr/bin/curl` is told
-  how to look at the file, that Apple says not to restore a backup made before the update, and how to remove the roots.
+- **The built-in curl's and python3's fix texts follow the macOS release.** On a Mac, Wardlatch reads `ProductVersion`
+  from `/System/Library/CoreServices/SystemVersion.plist` (a file read; nothing is run for it).
+  - On 27.2, 26.7.2, 15.8.2 or any earlier release of those three, or when the version can't be read, an EXPOSED
+    `/usr/bin/curl` or `/usr/bin/python3` is told to update macOS, and to use the Mac fix if it can't.
+  - On macOS 14 or older, for which Apple names no update, it is told to update to macOS 15 or later if it can, and
+    otherwise to use the Mac fix.
+  - On 27.2.1, 26.7.3, 15.8.3 or later, where Apple says the roots are gone, it is told how to look at the file, that
+    Apple says not to restore a backup made before the update, and how to remove the roots.
+  - The python3 text no longer says "see the curl line", which wasn't there when curl read SAFE.
 - **A note under the eMudhra rows on a Mac**: the macOS version, what Apple says of it, and whether `/etc/ssl/cert.pem`
   still holds `emSign Root CA - G1`, `emSign Root CA - C1` or `emSign ECC Root CA - C3`, the three other roots Apple's
   update removes. Apple did not say their keys were compromised, so they are a note and change no result. On a release
   Apple says removes them, a file that still holds them is not what Apple says the update installs, and the note says so.
-  `--json` carries the same as `macos`: `{ version, appleFix, source, notes }`.
-- **The words "a macOS update puts Apple's original file back" are now about older releases only.** We measured updates
-  to 26.7.2 (27 Oct) and 27.2 (28 Oct) doing it. We haven't measured what an update to 27.2.1, 26.7.3 or 15.8.3 does to a
-  file already changed by hand, and nothing here says.
+  A file from which no certificate can be read says that, rather than nothing. `--json` carries the note as `macos`:
+  `{ version, appleFix, source, notes }`.
+- **An UNKNOWN for the built-in curl or python3 on 27.2.1, 26.7.3, 15.8.3 or later says why it may be one.** Apple says
+  those releases block the 12 certificates in the built-in tools themselves, which would make the test's forced-roots
+  control fail too. We haven't measured that on an updated Mac, so the row stays UNKNOWN and says so.
+- **The words "a macOS update puts Apple's original file back" are now about a Mac that can't update to those
+  releases.** We measured updates to 26.7.2 (27 Oct) and 27.2 (28 Oct) doing it. We haven't measured what an update to
+  27.2.1, 26.7.3 or 15.8.3 does to a file already changed by hand, and nothing here says.
 - **The Mac fix download has a new digest, for its words only.** Its opening comment, the scope lines under every SAFE
   and the message for a damaged file said that no macOS release had fixed the file and that every update undoes the fix.
-  They name Apple's releases now, and the Undo line under a fix says Apple's own limit on it: not after updating to
-  27.2.1, 26.7.3 or 15.8.3. No line of its logic changed, and no verdict or exit code. Its SHA-256 is `15c46da0ceaec023890a4e2556228334c096f5b802d0c29a051e129cf38104ef`; a copy
-  with SHA-256 `893f53cb...` needn't be replaced.
+  They name Apple's releases now, and the Undo line says Apple's own limit on it: don't undo after updating to 27.2.1,
+  26.7.3 or 15.8.3. No line of its logic changed, and no verdict or exit code. Its SHA-256 is
+  `0dae0dc901a23aba216211f4ef6002a6d75b232fe479ef79db463d5c1dc9b98c`; a copy with SHA-256 `893f53cb...` needn't be replaced.
 
 ## [0.1.13] - 2026-11-03
 
