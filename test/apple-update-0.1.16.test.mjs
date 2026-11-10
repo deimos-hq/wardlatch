@@ -304,6 +304,10 @@ test('W4 pip\'s own list, read by key: a REVIEW row when it holds a withdrawn ro
   assert.match(new312.reason, /pip 26\.2 on Python 3\.12 asks the system's trust by default and uses this list only when run with --use-deprecated=legacy-certs/);
   assert.match(new312.reason, /connected to a compromised test host of the emSign family/);
   assert.match(new39.reason, /pip 24\.2 on Python 3\.9 uses this list for every download/, 'Python 3.9 cannot use the system trust in pip');
+  // the 24.2 cutoff itself, on one Python: 24.1 uses the list for every download, 24.2 asks the system's trust
+  const [p241, p242] = pipListRows(inc, [pip('python3.12', '24.1.2'), pip('python3.12', '24.2')]);
+  assert.match(p241.reason, /pip 24\.1 on Python 3\.12 uses this list for every download/);
+  assert.match(p242.reason, /pip 24\.2 on Python 3\.12 asks the system's trust by default/);
   assert.match(rows[1].reason, /1 of 124 certificates could not be read here/);
   assert.match(rows[2].reason, /cacert\.pem could not be read here, so whether it holds the withdrawn roots was not checked/, 'the unreadable file, said as unreadable');
   assert.ok(rows.every((r) => r.kind === 'pip-list' && r.status === 'REVIEW'), 'never SAFE or EXPOSED: it takes a flag to be used');

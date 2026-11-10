@@ -88,6 +88,9 @@ test('K5 a malformed row is a broken incident file: dates, ids and fields are ch
   assert.throws(() => kevRows({ id: 'x', kev: [{ ...ok, cve: 'CVE-2026-1' }] }), /needs cve/);
   for (const k of ['cve', 'vendorProject', 'product', 'dateAdded', 'dueDate']) { const r = { ...ok, cve: 'CVE-2026-12345' }; delete r[k]; assert.throws(() => kevRows({ id: 'x', kev: [r] }), undefined, k); }
   assert.throws(() => kevRows({ id: 'x', kev: [] }), /non-empty/);
+  // a due date before the date added is a broken row (review 1 of 0.1.16)
+  assert.throws(() => kevRows({ id: 'x', kev: [{ ...ok, cve: 'CVE-2026-9999', dateAdded: '2026-11-10', dueDate: '2026-11-09' }] }), /due date is before the date it was added/);
+  assert.doesNotThrow(() => kevRows({ id: 'x', kev: [{ ...ok, cve: 'CVE-2026-9999', dateAdded: '2026-11-09', dueDate: '2026-11-09' }] }), 'same day is allowed');
   assert.throws(() => kevRows({ id: 'x', kev: {} }), /non-empty/);
   // end to end, on a copy of the tool whose SSHole file has a bad date
   const copy = fresh('copy');
