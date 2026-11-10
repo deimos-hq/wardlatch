@@ -25,7 +25,7 @@ import { pathState, readText, listDir, realPath, entriesByMetadata, denialCode, 
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
 import { safe, saw, withdrawUnreceipted } from '../lib/report.mjs';
 import { escapeHidden, escapeJsonHidden } from '../lib/escape.mjs';
-import { trustFix, readMacosVersion, appleNote, appleFixState, appleUnknownNote, appleFileCheck } from '../lib/macos.mjs';
+import { trustFix, readMacosVersion, appleNote, appleFixState, appleUnknownNote, appleFileCheck, appleSystemRow } from '../lib/macos.mjs';
 import { checkSshole } from '../lib/sshd.mjs';
 
 // npx puts the current project's node_modules/.bin, and each parent folder's, first on PATH. Wardlatch finds git,
@@ -639,6 +639,11 @@ for (const inc of chosen) {
     const siteDirs = sitePackagesDirs({ roots: searchable, denied, found: foundUnread, links, walked, deep, kept: macKept });
     const places = { osRelease: '/etc/os-release', dpkgStatus: '/var/lib/dpkg/status', dpkgInfo: '/var/lib/dpkg/info', apkInstalled: '/lib/apk/db/installed', ldSoConf: '/etc/ld.so.conf', ldSoConfDir: '/etc/ld.so.conf.d', ldMuslPath: '/etc/ld-musl-*.path', ldSoPreload: '/etc/ld.so.preload' };
     const { rows, looked } = checkBundled(inc, { execPath: process.execPath, siteDirs, denied, places });
+    // macOS's own copy (Apple's notes of 9 Nov 2026): one row from the version and Apple's words, never from its bytes,
+    // which are inside the system and not a file read here; the row says so. It is its own row and stands in for no
+    // other: the all-clear for copies on disk below still comes, naming where it looked.
+    const apple = platform() === 'darwin' && inc.appleSystem ? appleSystemRow(inc, readMacosVersion()) : null;
+    if (apple) rows.unshift(apple);
     for (const r of rows) {
       results.push({ incident: inc.id, kind: 'bundled', ...r });
       const who = r.owner ? r.owner : r.label ? r.label : `${r.what}${r.version ? ` ${r.version}` : ''}`;
@@ -647,7 +652,7 @@ for (const inc of chosen) {
       if (r.fix) note('2', `fix: ${r.fix}`);
     }
     gaps(results, inc, 'bundled', denied, { found: foundUnread, links, deep, levels: 5 });
-    if (!counted(results).length) allClear(results, inc, 'bundled', `${inc.safeText} (looked at node and bun on PATH and in ${(inc.nodeDirs ?? []).length + (inc.bunDirs ?? []).length} version-manager places, ${siteDirs.length} site-packages folder${siteDirs.length === 1 ? '' : 's'} and ${(inc.libPlaces ?? []).length} library places${searchable.length || !explicitPaths ? '; pass --paths for a folder elsewhere' : ''})`, looked, [...VENV_NOT_WALKED, LIBRARY, VENV_PACKAGES_SAID, ...(macKept.length ? [keptSaid(macKept)] : [])]);
+    if (!counted(results).filter((r) => r.what !== 'macOS').length) allClear(results, inc, 'bundled', `${inc.safeText} (looked at node and bun on PATH and in ${(inc.nodeDirs ?? []).length + (inc.bunDirs ?? []).length} version-manager places, ${siteDirs.length} site-packages folder${siteDirs.length === 1 ? '' : 's'} and ${(inc.libPlaces ?? []).length} library places${searchable.length || !explicitPaths ? '; pass --paths for a folder elsewhere' : ''})`, looked, [...VENV_NOT_WALKED, LIBRARY, VENV_PACKAGES_SAID, ...(macKept.length ? [keptSaid(macKept)] : [])]);
     else if (macKept.length) note('2', keptSaid(macKept));
     note('2', `not covered: ${inc.notCovered}`);
   }

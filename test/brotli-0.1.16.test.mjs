@@ -38,7 +38,8 @@ test('0.1.16 B1 a folder past the walk\'s depth cap is a Brotli row of its own (
   const r = cli(['--incident', 'brotli-2026-10', '--json', '--paths', root], { HOME: home, PATH: fresh('b1-path') });
   assert.doesNotMatch(r.out + r.err, /stopped on an error/, 'the run must not stop on an error');
   const rows = rowsOf(r);
-  assert.deepEqual(rows.filter((x) => x.status === 'SAFE'), [], JSON.stringify(rows).slice(0, 1500));
+  // macOS's own copy is a row of its own on a Mac (appleSystemRow), not an all-clear for the folders
+  assert.deepEqual(rows.filter((x) => x.status === 'SAFE' && x.what !== 'macOS'), [], JSON.stringify(rows).slice(0, 1500));
   assert.ok(rows.some((x) => x.status === 'UNKNOWN' && x.what === 'depth limit'), JSON.stringify(rows).slice(0, 1500));
   assert.equal(r.code, 2);
   // the control: one level nearer, the same venv is walked, and with nothing in it the check is one receipted SAFE
@@ -61,4 +62,47 @@ test('0.1.16 B2 a link the walk declines is said beside the Brotli check, not dr
   const said = (rs) => rs.filter((x) => x.status !== 'SAFE').map((x) => x.what).sort();
   assert.ok(said(twin).length, `the control must say something of the link: ${JSON.stringify(twin).slice(0, 800)}`);
   assert.deepEqual(said(rows), said(twin), `${JSON.stringify(rows).slice(0, 1200)}\nvs\n${JSON.stringify(twin).slice(0, 1200)}`);
+});
+
+// ---- macOS's own Brotli (Apple's security notes, 9 Nov 2026) ---------------------------------------------------------
+import { appleSystemRow, SYSTEM_VERSION_PLIST } from '../lib/macos.mjs';
+const INC = JSON.parse((await import('node:fs')).readFileSync(join(ROOT, 'lib', 'incidents', 'brotli-2026-10.json'), 'utf8'));
+
+test('0.1.16 B3 macOS\'s own copy: one row from the version and Apple\'s notes, in every state, and it says it read no bytes', () => {
+  const a = INC.appleSystem;
+  assert.deepEqual(a.releases, ['27.2.1', '26.7.3', '15.8.3']);
+  assert.deepEqual(a.sources, ['https://support.apple.com/en-us/149718', 'https://support.apple.com/en-us/149719', 'https://support.apple.com/en-us/149720']);
+  for (const v of ['27.2.1', '27.3', '26.7.3', '26.8', '15.8.3', '15.9', '28.0']) {
+    const r = appleSystemRow(INC, v);
+    assert.equal(r.status, 'SAFE', v); assert.deepEqual(r.searched, [SYSTEM_VERSION_PLIST]);
+    assert.match(r.reason, /Apple's copy is inside the system and is not read here: this rests on the version and Apple's notes$/);
+  }
+  for (const [v, want] of [['27.2', '27.2.1'], ['27.0', '27.2.1'], ['26.7.2', '26.7.3'], ['15.8.2', '15.8.3'], ['15.0', '15.8.3']]) {
+    const r = appleSystemRow(INC, v);
+    assert.equal(r.status, 'EXPOSED', v); assert.equal(r.fix, `Update macOS to ${want} or later (System Settings, General, Software Update): Apple's notes list the fix for its own Brotli there (macOS 27.2.1, 26.7.3 and 15.8.3, 9 Nov 2026).`);
+    assert.match(r.reason, /this Mac doesn't have that update yet$/);
+  }
+  // Apple names no update for 14 and older, and its notes don't say they're unaffected: UNKNOWN, never SAFE
+  for (const v of ['14.7.1', '13.0', '10.15.7']) { const r = appleSystemRow(INC, v); assert.equal(r.status, 'UNKNOWN', v); assert.match(r.reason, /Apple's notes don't say whether this release is affected$/); }
+  assert.equal(appleSystemRow(INC, '').status, 'UNKNOWN'); assert.match(appleSystemRow(INC, '').reason, /^the macOS version could not be read/);
+  assert.equal(appleSystemRow(INC, '20.1').status, 'UNKNOWN');
+  assert.equal(appleSystemRow({ ...INC, appleSystem: undefined }, '27.2'), null);
+});
+
+test('0.1.16 B4 on a Mac, the command prints that row first, with Apple\'s fix when the release is older', { skip: process.platform !== 'darwin' && 'macOS only: the row is read on a Mac' }, () => {
+  const home = fresh('b4-home'), v = join(fresh('b4-plist'), 'SystemVersion.plist'), pre = join(fresh('b4-pre'), 'as-272.cjs');
+  writeFileSync(v, '<plist version="1.0">\n<dict>\n  <key>ProductVersion</key>\n  <string>27.2</string>\n</dict>\n</plist>\n');
+  writeFileSync(pre, `const fs = require('node:fs'); const P = ${JSON.stringify(SYSTEM_VERSION_PLIST)}, V = ${JSON.stringify(v)};
+for (const k of ['statSync', 'lstatSync', 'realpathSync', 'openSync', 'existsSync']) { const o = fs[k]; fs[k] = (p, ...a) => o(String(p) === P ? V : p, ...a); }
+require('node:module').syncBuiltinESMExports();\n`);
+  const { NODE_OPTIONS, ...rest } = process.env;
+  const r = spawnSync(process.execPath, [...PRELOAD, '--require', pre, BIN, '--incident', 'brotli-2026-10', '--paths', fresh('b4-root')], { encoding: 'utf8', env: { ...rest, ...Object.fromEntries(VM_VARS.map((k) => [k, ''])), WARDLATCH_TEST_OWN_DIR: dir, HOME: home, PATH: fresh('b4-path') } });
+  const lines = r.stdout.split('\n');
+  const at = lines.findIndex((l) => l.startsWith('EXPOSED  macOS\'s own Brotli (Safari and Apple\'s apps)'));
+  assert.ok(at > 0, r.stdout + r.stderr);
+  assert.match(lines[at + 1], /macOS 27\.2, read from \/System\/Library\/CoreServices\/SystemVersion\.plist: Apple's security notes of 9 Nov 2026 list CVE-2026-111497/);
+  assert.match(r.stdout, /fix: Update macOS to 27\.2\.1 or later/);
+  // the all-clear for copies on disk is still there: the macOS row stands in for no other
+  assert.match(r.stdout, /^SAFE {5}no copy of the Brotli decoder found/m);
+  assert.equal(r.status, 1);
 });

@@ -2725,9 +2725,10 @@ test('site-packages: every copy found, owned through RECORD (both owners of a sh
   });
   const row = (rel) => rows.find((r) => r.file === join(sp, rel));
   // a bundled copy with no fixed release yet: EXPOSED, and the fix says what to do until one ships
-  assert.equal(row('PIL/.dylibs/libbrotlidec.1.2.0.dylib').fix, 'No Pillow release had a fixed Brotli on 24 October 2026: update Pillow when one ships, since this copy is fixed by a Pillow release with a fixed Brotli.');
+  assert.equal(row('PIL/.dylibs/libbrotlidec.1.2.0.dylib').fix, INC.dists.pillow.fix);
+  assert.match(INC.dists.pillow.fix, /^No Pillow release had a fixed Brotli on 10 November 2026 \(the newest on PyPI, 13\.0\.0, came out on 16 October, before Brotli's fix of 21 October\): update Pillow when one ships/);
   const cv = row('cv2/.dylibs/libbrotlidec.1.1.0.dylib');
-  assert.match(cv.fix, /^No (opencv-python|opencv-contrib-python) release had a fixed Brotli on 24 October 2026: update \1 when one ships, since this copy is fixed by an \1 release with a fixed Brotli\.$/);
+  assert.match(cv.fix, /^No (opencv-python|opencv-contrib-python) release had a fixed Brotli on 10 November 2026 \([^)]*\): update \1 when one ships, since this copy is fixed by an \1 release with a fixed Brotli\.$/);
   assert.match(cv.owner, /opencv-python 5\.0\.0\.93/); assert.match(cv.owner, /opencv-contrib-python 5\.0\.0\.93/);
   assert.match(row('_brotli.cpython-314-darwin.so').fix, /'Brotli>=1\.2\.1'/);
   assert.match(row('examplepkg/driver/node').fix, /Node\.js runtime that examplepkg carries/);
@@ -3198,10 +3199,11 @@ test('a distribution\'s library without the marker: its own package version deci
   dpkg();
   assert.equal(go().lib.status, 'UNKNOWN');
   assert.equal(go({ osRelease: osr }).lib.status, 'UNKNOWN');
-  // Debian testing, no fix yet: the binNMU 1.2.0-4+b1 of the unfixed source is EXPOSED, and the fix says so
+  // Debian testing: the binNMU 1.2.0-4+b1 of the unfixed source is EXPOSED, and the fix names forky's fixed package
+  // (1.2.0-4.1, which Debian's tracker listed by 10 November 2026; on 24 October it had none)
   writeFileSync(osr, 'ID=debian\nVERSION_CODENAME=forky\n');
   dpkg(stanza('1.2.0-4+b1', '1.2.0-4'));
-  assert.equal(go().lib.status, 'EXPOSED'); assert.match(go().lib.fix, /Debian had no fixed package for this release on 24 October 2026/);
+  assert.equal(go().lib.status, 'EXPOSED'); assert.match(go().lib.fix, /Debian forky's fixed package is 1\.2\.0-4\.1/);
   // Alpine's record is read, but nothing for Alpine is in the table yet: UNKNOWN
   writeFileSync(osr, 'ID=alpine\nVERSION_ID=3.22.2\n');
   writeFileSync(apk, 'C:Q1x\nP:musl\nV:1.2.5-r10\n\nC:Q1y\nP:brotli-libs\nV:1.1.0-r2\n\n');
@@ -3359,7 +3361,7 @@ test('words that agree with the by-hand guide: each line\'s fixed release, the l
   assert.match(INC.notCovered, /a Brotli library a program loads under another name \(a link of another name, or a name it puts together while it runs\)/);
   // the bundled copies' lines say only what the guide says: no fixed release yet, update when one ships
   for (const k of ['pillow', 'opencv-python', 'opencv-contrib-python']) {
-    assert.match(INC.dists[k].fix, /^No [A-Za-z-]+ release had a fixed Brotli on 24 October 2026: update [A-Za-z-]+ when one ships/);
+    assert.match(INC.dists[k].fix, /^No [A-Za-z-]+ release had a fixed Brotli on 10 November 2026 \([^)]*\): update [A-Za-z-]+ when one ships/);
     assert.doesNotMatch(INC.dists[k].fix, /WOFF2|FreeType|FFmpeg|way in|5\.0\.0\.93|1\.1\.0|1\.2\.0/);
   }
 });
@@ -3434,7 +3436,7 @@ test('CLI: an exposed copy is exit 1 with its fix, a fixed-only machine exit 0 w
   assert.equal(nvm.status, 'SAFE'); assert.ok(nvm.searched.length);
   const text = cli(['--incident', 'brotli-2026-10', '--paths', join(home, 'Development')], env);
   assert.match(text.out, /EXPOSED {2}Pillow 12\.3\.0 {2}~\/Development\/app\/\.venv\/lib\/python3\.14\/site-packages\/PIL\/\.dylibs\/libbrotlidec\.1\.2\.0\.dylib/);
-  assert.match(text.out, /fix: No Pillow release had a fixed Brotli on 24 October 2026/);
+  assert.match(text.out, /fix: No Pillow release had a fixed Brotli on 10 November 2026/);
   assert.match(text.out, /SAFE {5}node 26\.12\.1 {2}~\/\.nvm\/versions\/node\/v26\.12\.1\/bin\/node/);
   assert.match(text.out, /runs nothing/);
   assert.match(text.out, /not covered: .*Envoy and Istio.*https:\/\/www\.deimoscore\.com\/wardlatch\/brotli\//);
@@ -3459,7 +3461,11 @@ test('CLI: an exposed copy is exit 1 with its fix, a fixed-only machine exit 0 w
   const empty = fresh('cli-empty');
   const none = cli(['--incident', 'brotli-2026-10', '--json', '--paths', empty], { HOME: fresh('cli-empty-home'), PATH: fresh('cli-empty-path') });
   assert.equal(none.code, 0, none.out);
-  const rows = JSON.parse(none.out).results;
+  // on a Mac the first row is macOS's own copy (0.1.16, lib/macos.mjs appleSystemRow; the preload serves 27.2.1): its own
+  // row, which stands in for no other, so the all-clear for copies on disk is still there beside it
+  const all = JSON.parse(none.out).results, mac = all.filter((r) => r.what === 'macOS');
+  assert.equal(mac.length, process.platform === 'darwin' ? 1 : 0); if (mac.length) assert.equal(mac[0].status, 'SAFE');
+  const rows = all.filter((r) => r.what !== 'macOS');
   assert.equal(rows.length, 1); assert.equal(rows[0].status, 'SAFE'); assert.ok(rows[0].searched.some((s) => s.startsWith('node on PATH')));
   // a --paths folder that isn't there is not an all-clear: its own UNKNOWN row, in --json and in the text
   const menv = { HOME: fresh('cli-m-home'), PATH: fresh('cli-m-path') };

@@ -20,11 +20,16 @@ const own = process.env.WARDLATCH_TEST_OWN_DIR;
 delete process.env.WARDLATCH_TEST_OWN_DIR;
 const hidden = hiddenPlaces({ root: resolve(__dirname, '..', '..'), own, self, real });
 const gone = () => Object.assign(new Error('hidden by the test'), { code: 'ENOENT' });
+// 0.1.16: on a Mac the Brotli check reads the macOS version for Apple's own copy (lib/macos.mjs appleSystemRow). The
+// machine's real version would decide that row, so the tests see a fixed release (27.2.1) instead; a test of the row
+// itself maps the file to its own copy.
+const PLIST = '/System/Library/CoreServices/SystemVersion.plist';
+const asPlist = (p) => (String(p) === PLIST ? resolve(__dirname, 'fixtures', 'SystemVersion-27.2.1.plist') : p);
 const exists = fs.existsSync;
-fs.existsSync = (p) => !hidden(p) && exists(p);
+fs.existsSync = (p) => !hidden(asPlist(p)) && exists(asPlist(p));
 for (const k of ['statSync', 'lstatSync', 'realpathSync', 'readdirSync', 'openSync']) {
   const o = fs[k];
-  fs[k] = (p, ...a) => { if (hidden(p)) throw gone(); return o(p, ...a); };
+  fs[k] = (p0, ...a) => { const p = typeof p0 === 'number' ? p0 : asPlist(p0); if (typeof p !== 'number' && hidden(p)) throw gone(); return o(p, ...a); };
   // realpathSync.native (the OS's realpath, which lib/files.mjs realPathAsWritten uses) hides the same places
   if (o.native) fs[k].native = (p, ...a) => { if (hidden(p)) throw gone(); return o.native(p, ...a); };
 }
