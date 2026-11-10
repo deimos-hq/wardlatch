@@ -511,7 +511,9 @@ for (const inc of chosen) {
 
   // sshd's own files on this machine (lib/sshd.mjs): read only; sshd is never run and never connected to
   if (inc.type === 'sshd') {
-    const r = checkSshole(inc);
+    // a throw here is one UNKNOWN row, never a stopped run that loses every other incident's rows
+    let r;
+    try { r = checkSshole(inc); } catch (e) { r = { status: 'UNKNOWN', reason: `this check stopped on an error, so sshd was not checked: ${String(e?.message ?? e).slice(0, 160)}` }; }
     const row = { incident: inc.id, kind: 'sshd', ...r, fix: r.status === 'EXPOSED' || r.status === 'REVIEW' ? inc.fix : undefined };
     results.push(row);
     print(r.status, r.reason);

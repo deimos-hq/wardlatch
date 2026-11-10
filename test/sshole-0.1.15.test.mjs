@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { apkParse, apkCompare, alpineBranch, packageState, installedVersions, readSshdConfig, maybeOn, shadowCounts, directoryAccounts, sshdProcesses, checkSshole } from '../lib/sshd.mjs';
+import { apkParse, apkCompare, alpineBranch, packageState, installedPackages, readSshdConfig, maybeOn, shadowCounts, passwdCounts, directoryAccounts, sshdProcesses, checkSshole } from '../lib/sshd.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
@@ -35,7 +35,7 @@ const SYSP = /^\/(etc|lib|usr|sbin|bin|proc)(\/|$)/;
 const realStat = fs.statSync;
 fs.statSync = function (p, ...a) { return realStat.call(this, ROOTNOW && typeof p === 'string' && SYSP.test(p) ? ROOTNOW + p : p, ...a); };
 syncBuiltinESMExports();
-function machine({ files = {}, dirs = {}, mtimes = {}, procs = { procs: [] } } = {}) {
+function machine({ files = {}, dirs = {}, changed = {}, procs = { procs: [] } } = {}) {
   const root = mkdtempSync(join(dir, 'm-'));
   for (const d of ['/proc', ...Object.keys(dirs)]) mkdirSync(join(root, d), { recursive: true });
   for (const [p, t] of Object.entries(files)) { mkdirSync(dirname(join(root, p)), { recursive: true }); writeFileSync(join(root, p), t ?? ''); }
@@ -43,19 +43,24 @@ function machine({ files = {}, dirs = {}, mtimes = {}, procs = { procs: [] } } =
   const list = (d) => (d in dirs ? dirs[d] : null);
   const state = (p) => (p in files ? (files[p] === null ? 'denied' : 'file') : p in dirs ? 'dir' : 'gone');
   const asked = [];
-  return { root, read: (p) => { asked.push(p); return read(p); }, list, state, mtime: (p) => mtimes[p], procs: () => procs, asked };
+  const head = (p) => (typeof files[p] === 'string' ? Buffer.from(files[p], 'latin1') : null);
+  return { root, read: (p) => { asked.push(p); return read(p); }, list, state, head, real: (p) => p, changed: (p) => changed[p], procs: () => procs, asked };
 }
-const db = (pkgs) => Object.entries(pkgs).map(([p, v]) => `C:Q1abc=\nP:${p}\nV:${v}\nA:x86_64\nS:1\nI:2\nT:t\n`).join('\n') + '\n';
+// a stanza as apk writes it, with the files each server package installs (aports main/openssh: sshd, sshd.pam, sshd.krb5)
+const OWN = { 'openssh-server': 'sshd', 'openssh-server-pam': 'sshd.pam', 'openssh-server-krb5': 'sshd.krb5' };
+const db = (pkgs) => Object.entries(pkgs).map(([p, v]) => `C:Q1abc=\nP:${p}\nV:${v}\nA:x86_64\nS:1\nI:2\nT:t\n${OWN[p] ? `F:usr/sbin\nR:${OWN[p]}\nZ:Q1x=\n` : ''}`).join('\n') + '\n';
 const SHADOW = 'root:*::0:::::\nbin:!::0:::::\nada:$6$salt$hash:20000:0:99999:7:::\ndeploy:*:20000:0:99999:7:::\n';
-function alpine({ branch = '3.24', version, pkg = 'openssh-server', extra = {}, config = 'Include /etc/ssh/sshd_config.d/*.conf\n', confd = '#SSHD_OPTS=""\n', shadow = SHADOW, dropins = {}, procs, mtimes } = {}) {
+function alpine({ branch = '3.24', version, pkg = 'openssh-server', extra = {}, config = 'Include /etc/ssh/sshd_config.d/*.conf\n', confd = '#SSHD_OPTS=""\n', shadow = SHADOW, dropins = {}, procs, changed, files: more = {}, dirs: moreDirs = {} } = {}) {
   const files = {
     '/etc/alpine-release': `${RELEASE[branch]}\n`,
     '/lib/apk/db/installed': db({ 'musl': '1.2.5-r10', [pkg]: version ?? SECDB[branch], ...extra }),
-    '/etc/ssh/sshd_config': config, '/etc/conf.d/sshd': confd, '/usr/sbin/sshd': 'ELF',
+    '/etc/ssh/sshd_config': config, '/etc/conf.d/sshd': confd,
+    ...Object.fromEntries(Object.keys({ [pkg]: 1, ...extra }).filter((p) => OWN[p]).map((p) => [`/usr/sbin/${OWN[p]}`, 'ELF'])),
     ...(shadow === undefined ? {} : { '/etc/shadow': shadow }),
   };
   for (const [n, t] of Object.entries(dropins)) files[`/etc/ssh/sshd_config.d/${n}`] = t;
-  return machine({ files, dirs: { '/lib': ['ld-musl-x86_64.so.1', 'apk'], '/etc/ssh/sshd_config.d': Object.keys(dropins) }, procs, mtimes: mtimes ?? { '/usr/sbin/sshd': 1000 } });
+  Object.assign(files, more);
+  return machine({ files, dirs: { '/lib': ['ld-musl-x86_64.so.1', 'apk'], '/etc/ssh/sshd_config.d': Object.keys(dropins), ...moreDirs }, procs, changed: changed ?? { '/usr/sbin/sshd': 1000, '/usr/sbin/sshd.pam': 1000, '/usr/sbin/sshd.krb5': 1000 } });
 }
 const run = (m, platform = 'linux') => { ROOTNOW = m.root; try { return checkSshole(inc, { platform, ...m }); } finally { ROOTNOW = null; } };
 
@@ -96,26 +101,29 @@ test('the branch is read from /etc/alpine-release, and edge from a development s
 
 test('each branch\'s fix is fixed, the revision before it is not, and an unlisted branch is unknown', () => {
   for (const [branch, fixed] of Object.entries(SECDB)) {
-    assert.equal(packageState(fixed, branch, inc.sshd), 'fixed', `${branch} ${fixed}`);
-    if (!fixed.endsWith('-r0')) assert.equal(packageState(prior(fixed), branch, inc.sshd), 'unfixed', `${branch} ${prior(fixed)}`);
+    assert.equal(packageState(fixed, inc.sshd), 'fixed', `${branch} ${fixed}`);
+    if (!fixed.endsWith('-r0')) assert.equal(packageState(prior(fixed), inc.sshd), 'unfixed', `${branch} ${prior(fixed)}`);
   }
   // the backport trap: 10.3_p1-r1 is fixed nowhere, though 10.3 < 10.6 says nothing
-  assert.equal(packageState('10.3_p1-r1', '3.24', inc.sshd), 'unfixed');
-  // edge's fix is the upstream one; one below it
-  assert.equal(packageState('10.6_p1-r0', 'edge', inc.sshd), 'unfixed');
-  // at or above the upstream fix, on any branch, listed or not
-  assert.equal(packageState('10.6_p2-r0', '3.15', inc.sshd), 'fixed');
-  assert.equal(packageState('10.7_p1-r0', '', inc.sshd), 'fixed');
-  // below it on a branch Alpine doesn't list: not judged
-  assert.equal(packageState('8.8_p1-r9', '3.15', inc.sshd), 'unknown');
-  assert.equal(packageState('10.3_p1-r9', '', inc.sshd), 'unknown');
-  assert.equal(packageState('garbage', '3.24', inc.sshd), 'unknown');
+  assert.equal(packageState('10.3_p1-r1', inc.sshd), 'unfixed');
+  // edge's fix is the upstream one; one below it, of an upstream version Alpine has no fixed build of
+  assert.equal(packageState('10.6_p1-r0', inc.sshd), 'unfixed');
+  // at or above the upstream fix, on any branch
+  assert.equal(packageState('10.6_p2-r0', inc.sshd), 'fixed');
+  assert.equal(packageState('10.7_p1-r0', inc.sshd), 'fixed');
+  // a later revision of a fixed build keeps the patch; an older version Alpine never fixed (3.15's 8.8) is not fixed
+  assert.equal(packageState('10.3_p1-r9', inc.sshd), 'fixed');
+  assert.equal(packageState('8.8_p1-r9', inc.sshd), 'unfixed');
+  assert.equal(packageState('10.1_p1-r3', inc.sshd), 'unfixed', 'no fixed build of 10.1 exists');
+  assert.equal(packageState('garbage', inc.sshd), 'unknown');
 });
 
 test('the package database is read by stanza, and only the packages asked for', () => {
   const text = db({ 'openssh-server': '10.3_p1-r2', 'openssh-server-pam': '10.3_p1-r2', 'openssh-client-default': '10.3_p1-r1' });
-  assert.deepEqual(installedVersions(text, ['openssh-server', 'openssh-server-pam']), { 'openssh-server': '10.3_p1-r2', 'openssh-server-pam': '10.3_p1-r2' });
-  assert.deepEqual(installedVersions(db({ 'openssh-server-common': '1' }), ['openssh-server']), {});
+  assert.deepEqual(installedPackages(text, ['openssh-server', 'openssh-server-pam']), { 'openssh-server': { version: '10.3_p1-r2', files: ['/usr/sbin/sshd'] }, 'openssh-server-pam': { version: '10.3_p1-r2', files: ['/usr/sbin/sshd.pam'] } });
+  assert.deepEqual(installedPackages(db({ 'openssh-server-common': '1' }), ['openssh-server']), {});
+  // CRLF and a repeated stanza: the first wins, the line ends don't stick to the version
+  assert.deepEqual(installedPackages(text.replace(/\n/g, '\r\n') + 'P:openssh-server\nV:1.0-r0\n', ['openssh-server']), { 'openssh-server': { version: '10.3_p1-r2', files: ['/usr/sbin/sshd'] } });
 });
 
 test('sshd_config: first value wins, Include is read in place, a Match block is conditional', () => {
@@ -164,7 +172,7 @@ test('every branch: the revision before the fix is EXPOSED, the fix itself is SA
     const ok = run(alpine({ branch, version: fixed }));
     assert.equal(ok.status, 'SAFE', `${branch} ${fixed}: ${ok.reason}`);
     assert.ok(ok.searched.includes('/lib/apk/db/installed') && ok.searched.includes('/etc/alpine-release'), ok.searched.join());
-    assert.match(ok.reason, new RegExp(`fixed \\(Alpine's fix on this branch is ${fixed.replace(/\./g, '\\.')}\\)`));
+    assert.match(ok.reason, new RegExp(`fixed \\(Alpine's fixed build is ${fixed.replace(/\./g, '\\.')}\\)`));
     assert.match(ok.reason, /no sshd process is running/);
     if (fixed.endsWith('-r0')) continue;
     const bad = run(alpine({ branch, version: prior(fixed) }));
@@ -176,20 +184,21 @@ test('every branch: the revision before the fix is EXPOSED, the fix itself is SA
 test('an unfixed package: what Alpine says closes the hole makes REVIEW, never SAFE; anything unread stays EXPOSED', () => {
   const v = '10.3_p1-r1';
   const off = run(alpine({ version: v, dropins: { '00-no.conf': 'PasswordAuthentication no\n' } }));
-  assert.equal(off.status, 'REVIEW'); assert.match(off.reason, /PasswordAuthentication is no in \/etc\/ssh\/sshd_config, \/etc\/ssh\/sshd_config\.d\/00-no\.conf/);
+  assert.equal(off.status, 'REVIEW'); assert.match(off.reason, /PasswordAuthentication is no \(\/etc\/ssh\/sshd_config, \/etc\/ssh\/sshd_config\.d\/00-no\.conf\)/);
+  assert.match(off.reason, /Alpine's advisory says the flaw needs that\. Update anyway: if that changes later, the hole is open again$/);
   // off in a drop-in, on in a Match block: not ruled out
   const match = run(alpine({ version: v, dropins: { '00-no.conf': 'PasswordAuthentication no\n' }, config: 'Include /etc/ssh/sshd_config.d/*.conf\nMatch User git\n  PasswordAuthentication yes\n' }));
-  assert.equal(match.status, 'EXPOSED'); assert.match(match.reason, /set otherwise inside one/);
+  assert.equal(match.status, 'EXPOSED'); assert.match(match.reason, /PasswordAuthentication is no, but a Match block in .* sets it again for some logins/);
   // the PAM build with UsePAM yes, alone
   const pam = run(alpine({ version: v, pkg: 'openssh-server-pam', dropins: { 'pam.conf': 'UsePAM yes\n' } }));
-  assert.equal(pam.status, 'REVIEW'); assert.match(pam.reason, /only openssh-server-pam is installed, and UsePAM is yes/);
+  assert.equal(pam.status, 'REVIEW'); assert.match(pam.reason, /only Alpine's PAM build is installed \(openssh-server-pam\), with UsePAM yes/);
   // the PAM build with UsePAM no (the default), or beside the plain build: open
   assert.equal(run(alpine({ version: v, pkg: 'openssh-server-pam' })).status, 'EXPOSED');
   assert.equal(run(alpine({ version: v, pkg: 'openssh-server-pam', extra: { 'openssh-server': v }, dropins: { 'pam.conf': 'UsePAM yes\n' } })).status, 'EXPOSED');
   // no $-hash at all, or no account with * that can log in
   assert.equal(run(alpine({ version: v, shadow: 'root:*::0:::::\ndeploy:*:1::::::\n' })).status, 'REVIEW');
   const rootOnly = run(alpine({ version: v, shadow: 'root:*::0:::::\nada:$6$s$h:1::::::\n' }));
-  assert.equal(rootOnly.status, 'REVIEW'); assert.match(rootOnly.reason, /root has, and PermitRootLogin is not yes/);
+  assert.equal(rootOnly.status, 'REVIEW'); assert.match(rootOnly.reason, /no account has the field \* \(root does, but PermitRootLogin is not yes\) \(2 accounts read\)/);
   assert.equal(run(alpine({ version: v, shadow: 'root:*::0:::::\nada:$6$s$h:1::::::\n', dropins: { 'r.conf': 'PermitRootLogin yes\n' } })).status, 'EXPOSED', 'root with PermitRootLogin yes counts');
   // a directory service's accounts have no shadow entry
   const nss = alpine({ version: v, shadow: 'ada:$6$s$h:1::::::\n' }); nss.read2 = nss.read;
@@ -199,10 +208,14 @@ test('an unfixed package: what Alpine says closes the hole makes REVIEW, never S
   assert.equal(run(alpine({ version: v, shadow: 'deploy:*:1::::::\nada:$y$j9T$x:1::::::\n' })).status, 'EXPOSED');
   // /etc/shadow unreadable (not root): EXPOSED, and the reason says what was not read
   const noShadow = run(alpine({ version: v, shadow: null }));
-  assert.equal(noShadow.status, 'EXPOSED'); assert.match(noShadow.reason, /Not read: \/etc\/shadow \(only root can read it\)/);
+  assert.equal(noShadow.status, 'EXPOSED'); assert.match(noShadow.reason, /Not read: \/etc\/shadow \(usually only root can read it\), so it was not checked whether there is both/);
   // start-up options in /etc/conf.d/sshd can change any setting: they are named as not read, and nothing is ruled out by config
   const opts = run(alpine({ version: v, confd: 'SSHD_OPTS="-o PasswordAuthentication=yes"\n', dropins: { '00-no.conf': 'PasswordAuthentication no\n' } }));
   assert.equal(opts.status, 'EXPOSED'); assert.match(opts.reason, /\/etc\/conf\.d\/sshd sets start-up options/);
+  for (const confd of ['export command_args="-o PasswordAuthentication=yes"\n', 'SSHD_OPTS=" -o PasswordAuthentication=yes"\n', 'SSHD_OPTS="\n-o PasswordAuthentication=yes"\n', 'cfgfile=/etc/ssh/other_config\n']) assert.equal(run(alpine({ version: v, confd, dropins: { '00-no.conf': 'PasswordAuthentication no\n' } })).status, 'EXPOSED', confd);
+  // a second instance of sshd has its own options and its own configuration
+  const two = run(alpine({ version: v, dropins: { '00-no.conf': 'PasswordAuthentication no\n' }, dirs: { '/etc/conf.d': ['sshd', 'sshd.two'], '/etc/init.d': ['sshd', 'sshd.two'] } }));
+  assert.equal(two.status, 'EXPOSED'); assert.match(two.reason, /another sshd instance is set up \(\/etc\/conf\.d\/sshd\.two, \/etc\/init\.d\/sshd\.two\)/);
   // an unreadable drop-in: the same
   const m = alpine({ version: v, dropins: { 'a.conf': 'PasswordAuthentication no\n' } });
   const lockedDrop = { ...m, read: (p) => (p === '/etc/ssh/sshd_config.d/a.conf' ? null : m.read(p)) };
@@ -213,14 +226,16 @@ test('an unfixed package: what Alpine says closes the hole makes REVIEW, never S
 
 test('a fixed package with an sshd started before the program changed is UNKNOWN: restart it', () => {
   const fixed = SECDB['3.24'];
-  const stale = run(alpine({ version: fixed, procs: { procs: [{ pid: 412, start: 500 }] }, mtimes: { '/usr/sbin/sshd': 1000 } }));
-  assert.equal(stale.status, 'UNKNOWN'); assert.match(stale.reason, /sshd process 412 started before/); assert.match(stale.reason, /rc-service sshd restart/);
+  const stale = run(alpine({ version: fixed, procs: { procs: [{ pid: 412, start: 500 }] }, changed: { '/usr/sbin/sshd': 1000 } }));
+  assert.equal(stale.status, 'UNKNOWN'); assert.match(stale.reason, /sshd \(process 412\) was started before the fixed program was installed/); assert.match(stale.reason, /rc-service sshd restart/);
   // within two seconds is not told apart
-  assert.equal(run(alpine({ version: fixed, procs: { procs: [{ pid: 9, start: 2500 }] }, mtimes: { '/usr/sbin/sshd': 1000 } })).status, 'UNKNOWN');
-  const fresh = run(alpine({ version: fixed, procs: { procs: [{ pid: 9, start: 5000 }] }, mtimes: { '/usr/sbin/sshd': 1000 } }));
-  assert.equal(fresh.status, 'SAFE'); assert.match(fresh.reason, /every running sshd \(1\) started after its program was last changed/);
+  assert.equal(run(alpine({ version: fixed, procs: { procs: [{ pid: 9, start: 2500 }] }, changed: { '/usr/sbin/sshd': 1000 } })).status, 'UNKNOWN');
+  const fresh = run(alpine({ version: fixed, procs: { procs: [{ pid: 9, start: 5000 }] }, changed: { '/usr/sbin/sshd': 1000 } }));
+  assert.equal(fresh.status, 'SAFE'); assert.match(fresh.reason, /every running sshd \(1\) started after its program was installed/);
   assert.equal(run(alpine({ version: fixed, procs: { procs: [], problem: 'process 1 is not listed in /proc' } })).status, 'UNKNOWN');
-  assert.equal(run(alpine({ version: fixed, procs: { procs: [{ pid: 9, start: 5000 }] }, mtimes: {} })).status, 'UNKNOWN', 'a program time that cannot be read');
+  assert.equal(run(alpine({ version: fixed, procs: { procs: [{ pid: 9, start: 5000 }] }, changed: {} })).status, 'UNKNOWN', 'a program time that cannot be read');
+  // the PAM build's program is the one that counts when it is installed
+  assert.equal(run(alpine({ version: fixed, pkg: 'openssh-server-pam', procs: { procs: [{ pid: 9, start: 1500 }] }, changed: { '/usr/sbin/sshd.pam': 3000 } })).status, 'UNKNOWN');
 });
 
 test('what can\'t be placed is UNKNOWN; what is not this flaw\'s ground is SAFE with what it read', () => {
@@ -238,16 +253,20 @@ test('what can\'t be placed is UNKNOWN; what is not this flaw\'s ground is SAFE 
   const nb = run(bare); assert.equal(nb.status, 'UNKNOWN', nb.reason); assert.match(nb.reason, /^\/lib\/apk\/db\/installed could not be read/);
   // Alpine with no openssh-server: SAFE when no sshd program is there, UNKNOWN when one is
   const none = machine({ files: { '/etc/alpine-release': '3.24.4\n', '/lib/apk/db/installed': db({ musl: '1' }) }, dirs: { '/lib': ['ld-musl-x86_64.so.1'] } });
-  const noPkg = run(none); assert.equal(noPkg.status, 'SAFE'); assert.match(noPkg.reason, /neither openssh-server nor openssh-server-pam is installed/);
+  const noPkg = run(none); assert.equal(noPkg.status, 'SAFE'); assert.match(noPkg.reason, /no openssh server package is installed/);
   const built = machine({ files: { '/etc/alpine-release': '3.24.4\n', '/lib/apk/db/installed': db({ musl: '1' }), '/usr/local/sbin/sshd': 'ELF' }, dirs: { '/lib': ['ld-musl-x86_64.so.1'] } });
   assert.equal(run(built).status, 'UNKNOWN');
   // musl without apk (Void, Chimera): sshd there → UNKNOWN; none → SAFE
   const voidSshd = machine({ files: { '/usr/sbin/sshd': 'ELF' }, dirs: { '/lib': ['ld-musl-x86_64.so.1'] } });
   assert.equal(run(voidSshd).status, 'UNKNOWN');
-  assert.equal(run(machine({ dirs: { '/lib': ['ld-musl-aarch64.so.1'] } })).status, 'SAFE');
+  const voidNone = run(machine({ dirs: { '/lib': ['ld-musl-aarch64.so.1'] } }));
+  assert.equal(voidNone.status, 'SAFE'); assert.match(voidNone.reason, /^musl libc \(\/lib\/ld-musl-aarch64\.so\.1\), and no sshd program at /);
   // a branch Alpine doesn't list, below the upstream fix; a release file this can't read as a branch
-  assert.equal(run(machine({ files: { '/etc/alpine-release': '3.15.11\n', '/lib/apk/db/installed': db({ 'openssh-server': '8.8_p1-r9' }) }, dirs: { '/lib': ['ld-musl-x86_64.so.1'] } })).status, 'UNKNOWN');
-  assert.equal(run(machine({ files: { '/etc/alpine-release': 'weird\n', '/lib/apk/db/installed': db({ 'openssh-server': '10.3_p1-r2' }) }, dirs: { '/lib': ['ld-musl-x86_64.so.1'] } })).status, 'UNKNOWN');
+  // 3.15, which Alpine published no fix for: its 8.8 build is not a fixed one, so it is judged as unfixed, never SAFE
+  const old = run(machine({ files: { '/etc/alpine-release': '3.15.11\n', '/lib/apk/db/installed': db({ 'openssh-server': '8.8_p1-r9' }), '/usr/sbin/sshd': 'ELF', '/etc/ssh/sshd_config': '', '/etc/shadow': SHADOW }, dirs: { '/lib': ['ld-musl-x86_64.so.1'] } }));
+  assert.equal(old.status, 'EXPOSED', old.reason); assert.match(old.reason, /Alpine lists no fixed build of this OpenSSH version/);
+  // a release file this can't name, with a fixed build: judged by the build
+  assert.equal(run(machine({ files: { '/etc/alpine-release': 'weird\n', '/lib/apk/db/installed': db({ 'openssh-server': '10.3_p1-r2' }), '/usr/sbin/sshd': 'ELF' }, dirs: { '/lib': ['ld-musl-x86_64.so.1'] } })).status, 'SAFE');
   // an unreadable version in the database
   assert.equal(run(alpine({ version: '10.3p1' })).status, 'UNKNOWN');
 });
@@ -273,7 +292,7 @@ test('sshdProcesses: the start-time reading is checked on this process before it
 function rig(build) {
   const root = mkdtempSync(join(dir, 'root-'));
   const put = (p, t) => { mkdirSync(dirname(join(root, p)), { recursive: true }); writeFileSync(join(root, p), t); };
-  build(put);
+  build(put, root);
   const startMs = Date.now();
   const btime = Math.floor(startMs / 1000) - 3600;
   put('/proc/stat', `cpu 1\nbtime ${btime}\n`);
@@ -287,12 +306,12 @@ function rig(build) {
   };
   return go;
 }
-const alpineRoot = (version, extra = () => {}) => (put) => {
+const alpineRoot = (version, extra = () => {}) => (put, root) => {
   put('/etc/alpine-release', '3.24.3\n'); put('/lib/ld-musl-x86_64.so.1', 'ELF');
   put('/lib/apk/db/installed', db({ musl: '1.2.5-r10', 'openssh-server': version }));
   put('/etc/ssh/sshd_config', 'Include /etc/ssh/sshd_config.d/*.conf\n'); put('/etc/ssh/sshd_config.d/.keep', '');
   put('/usr/sbin/sshd', 'ELF'); put('/etc/shadow', SHADOW);
-  extra(put);
+  extra(put, root);
 };
 
 test('the command: an unfixed Alpine sshd is EXPOSED with exit 1, its fix is Alpine\'s, and no account leaks', () => {
@@ -342,4 +361,87 @@ test('no account name, password field or hash from /etc/shadow reaches any line,
   }
   // the loop reached the paths that read the file: EXPOSED, REVIEW and SAFE all came up
   assert.deepEqual([...seen].sort(), ['EXPOSED', 'REVIEW', 'SAFE']);
+});
+
+// ---- the 0.1.15 review (9 Nov 2026): each of these read SAFE, or REVIEW where Alpine says exposed, or stopped the run -------
+test('R1 a package pinned from another branch is judged as the build it is', () => {
+  // 3.23's release file with 3.24's unfixed build read SAFE ("fixed on this branch is 10.2_p1-r1")
+  const pinned = run(alpine({ branch: '3.23', version: '10.3_p1-r1' }));
+  assert.equal(pinned.status, 'EXPOSED', pinned.reason); assert.match(pinned.reason, /Alpine's fixed build is 10\.3_p1-r2/);
+  assert.equal(run(alpine({ branch: '3.23', version: '10.3_p1-r2' })).status, 'SAFE');
+  // edge's 10.6_p1 on a 3.2x release
+  assert.equal(run(alpine({ branch: '3.22', version: '10.6_p1-r1' })).status, 'EXPOSED');
+});
+
+test('R2 the Kerberos build is a PAM build: on its own with UsePAM no it is exposed, and its daemon counts', () => {
+  const k = run(alpine({ version: '10.3_p1-r1', pkg: 'openssh-server-krb5', dropins: { 'k.conf': 'GSSAPIAuthentication yes\n' } }));
+  assert.equal(k.status, 'EXPOSED', k.reason); assert.match(k.reason, /^openssh-server-krb5 10\.3_p1-r1 on Alpine 3\.24/);
+  assert.equal(run(alpine({ version: '10.3_p1-r1', pkg: 'openssh-server-krb5', dropins: { 'k.conf': 'UsePAM yes\n' } })).status, 'REVIEW');
+  // a running sshd.krb5 is a running sshd
+  const now = 1_800_000_000_000, uptime = 5, btime = 1_799_990_000;
+  const stat = (pid, name, ms) => `${pid} (${name}) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 ${Math.round((ms / 1000 - btime) * 100)} 0 0`;
+  const files = { '/proc/stat': `btime ${btime}\n`, '/proc/self/stat': stat(7, 'node', now - uptime * 1000), '/proc/1/stat': stat(1, 'init', now - 9e6), '/proc/50/stat': stat(50, 'sshd.krb5', now - 1000), '/proc/51/stat': stat(51, 'sshd.pam', now - 1000) };
+  const p = sshdProcesses({ read: (x) => files[x] ?? null, list: () => ['1', '50', '51', 'self'], now, uptime });
+  assert.deepEqual(p.procs.map((x) => x.pid), [50, 51]);
+});
+
+test('R3 the stale-daemon check uses when the program was installed, not the time apk stamps on it', () => {
+  // apk sets a file's mtime from the package (build time); only the inode's change time says when it was installed
+  const go = rig(alpineRoot('10.3_p1-r2', (put, root) => {
+    put('/proc/412/stat', `412 (sshd) S 1 412 412 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 ${(3600 - 60) * 100} 0 0`);   // started a minute ago
+    const old = new Date(Date.now() - 3 * 86400e3); fs.utimesSync(join(root, 'usr/sbin/sshd'), old, old);           // "built" three days ago
+  }));
+  // the program was installed just now (its ctime), after the daemon started: UNKNOWN, restart it
+  const row = JSON.parse(go(true).out).results.find((x) => x.incident === 'sshole-2026-11');
+  assert.equal(row.status, 'UNKNOWN', row.reason); assert.match(row.reason, /was started before the fixed program was installed/);
+});
+
+test('R4 an sshd apk didn\'t install, beside a fixed package, is UNKNOWN', () => {
+  const m = run(alpine({ version: '10.3_p1-r2', files: { '/usr/local/sbin/sshd': 'ELF' } }));
+  assert.equal(m.status, 'UNKNOWN', m.reason); assert.match(m.reason, /an sshd apk didn't install at \/usr\/local\/sbin\/sshd/);
+});
+
+test('R5 a [ in an Include pattern is a setting not read, never a stopped run', () => {
+  const r = run(alpine({ version: '10.3_p1-r1', config: 'Include /etc/ssh/sshd_config.d/*[.conf\nPasswordAuthentication no\n' }));
+  assert.equal(r.status, 'EXPOSED', r.reason); assert.match(r.reason, /uses a \[ \] pattern/);
+  // through the command: the row is there and the run ends as an EXPOSED run does (0.1.15's first build stopped, exit 2)
+  const go = rig(alpineRoot('10.3_p1-r1', (put) => put('/etc/ssh/sshd_config', 'Include /etc/ssh/sshd_config.d/*[.conf\n')));
+  const j = go(true);
+  assert.ok(j.out, j.err);
+  const row = JSON.parse(j.out).results.find((x) => x.incident === 'sshole-2026-11');
+  assert.equal(row?.status, 'EXPOSED', j.err); assert.equal(j.code, 1);
+});
+
+test('R6 quoted values are the word inside, and only an exact no closes the hole', () => {
+  const q = run(alpine({ version: '10.3_p1-r1', dropins: { 'q.conf': 'PasswordAuthentication "yes"\n' } }));
+  assert.equal(q.status, 'EXPOSED', q.reason);
+  assert.equal(run(alpine({ version: '10.3_p1-r1', dropins: { 'q.conf': 'PasswordAuthentication "no"\n' } })).status, 'REVIEW');
+  assert.equal(run(alpine({ version: '10.3_p1-r1', pkg: 'openssh-server-pam', dropins: { 'q.conf': 'UsePAM "no"\n' } })).status, 'EXPOSED');
+  assert.equal(run(alpine({ version: '10.3_p1-r1', pkg: 'openssh-server-pam', dropins: { 'q.conf': 'UsePAM maybe\n' } })).status, 'EXPOSED', 'only an exact yes turns PAM on');
+  assert.equal(run(alpine({ version: '10.3_p1-r1', dropins: { 'q.conf': 'PasswordAuthentication maybe\n' } })).status, 'EXPOSED', 'a value sshd would refuse is not "no"');
+});
+
+test('R8 accounts this check can\'t see in /etc/shadow are not ruled out', () => {
+  // a directory service: its accounts have no shadow line and their hashes are not read, so "no $-hash" proves nothing
+  const nss = alpine({ version: '10.3_p1-r1', shadow: 'root:*::0:::::\ndeploy:*:1::::::\n' });
+  const withNss = { ...nss, read: (p) => (p === '/etc/nsswitch.conf' ? 'passwd: files sss\n' : nss.read(p)) };
+  const d = run(withNss); assert.equal(d.status, 'EXPOSED', d.reason); assert.match(d.reason, /directory service/);
+  // a local account with * in /etc/passwd and no shadow line counts as one with no password
+  const pw = alpine({ version: '10.3_p1-r1', shadow: 'root:*::0:::::\nada:$6$s$h:1::::::\n' });
+  const withPw = { ...pw, read: (p) => (p === '/etc/passwd' ? 'root:x:0:0::/root:/bin/sh\nada:x:1:1::/home/ada:/bin/sh\nsvc:*:2:2::/home/svc:/bin/sh\n' : pw.read(p)) };
+  assert.equal(run(withPw).status, 'EXPOSED');
+  assert.deepEqual(passwdCounts('svc:*:2:2:::\nada:x:1:1:::\nold:$6$a$b:3:3:::\n', new Set(['ada'])), { star: 1, sha: 1, otherHash: 0 });
+  assert.deepEqual(passwdCounts('svc:*:2:2:::\n', null), { star: 0, sha: 0, otherHash: 0 });
+  // an unsplittable shadow line with no hash: not ruled out, and the reason says so
+  const bad = run(alpine({ version: '10.3_p1-r1', shadow: 'garbage\ndeploy:*:1::::::\n' }));
+  assert.equal(bad.status, 'EXPOSED', bad.reason); assert.match(bad.reason, /1 line of \/etc\/shadow/);
+  // a $-hash Alpine doesn't name is named as not read
+  assert.match(run(alpine({ version: '10.3_p1-r1', shadow: 'deploy:*:1::::::\nada:$y$j9T$x:1::::::\n' })).reason, /\$-style hash that is not \$5\$ or \$6\$/);
+});
+
+test('R9 on a glibc system, an sshd that does not name glibc\'s loader may be built against musl', () => {
+  const stat = machine({ files: { '/usr/sbin/sshd': '\u007fELF static' }, dirs: { '/lib': ['ld-linux-x86-64.so.2'] } });
+  const r = run(stat); assert.equal(r.status, 'UNKNOWN', r.reason); assert.match(r.reason, /does not name glibc's loader/);
+  const glibc = machine({ files: { '/usr/sbin/sshd': '\u007fELF /lib64/ld-linux-x86-64.so.2 x' }, dirs: { '/lib': ['ld-linux-x86-64.so.2'] } });
+  const g = run(glibc); assert.equal(g.status, 'SAFE', g.reason); assert.match(g.reason, /names glibc's loader/); assert.ok(g.searched.includes('/usr/sbin/sshd'));
 });

@@ -14,68 +14,43 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 ## [0.1.15] - 2026-11-10
 
 The first new incident since 22 October: SSHole, CVE-2026-123158. sshd in OpenSSH before 10.6p2, on Linux with musl
-libc and without PAM, accepts any password of 257 to 1024 bytes for an account whose password field is `*` (no password
-set, as for a key-only account) when another local account has a `$5# Changelog
-
-What changed in each release of the `wardlatch` package on npm, newest first, written to help you decide whether to
-update. Run `npx wardlatch@latest` to get the latest release: a bare `npx wardlatch` runs any copy already installed
-globally or in the current project, whatever its version (and npm older than 9.6.5 also reuses a copy npx cached
-earlier).
-
-Every release has a signed tag (`v0.1.0` onwards; 0.1.0 to 0.1.2 were tagged afterwards at the commit npm recorded as
-each one's `gitHead`), and 0.1.3 onwards were built and attested by the release workflow. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
-
- or `$6# Changelog
-
-What changed in each release of the `wardlatch` package on npm, newest first, written to help you decide whether to
-update. Run `npx wardlatch@latest` to get the latest release: a bare `npx wardlatch` runs any copy already installed
-globally or in the current project, whatever its version (and npm older than 9.6.5 also reuses a copy npx cached
-earlier).
-
-Every release has a signed tag (`v0.1.0` onwards; 0.1.0 to 0.1.2 were tagged afterwards at the commit npm recorded as
-each one's `gitHead`), and 0.1.3 onwards were built and attested by the release workflow. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
-
- hash. Alpine is such a system. CISA
-added it to its Known Exploited Vulnerabilities catalog on 9 Nov 2026, due 12 Nov. Sources:
+libc and without PAM, accepts a very long password for an account whose password field is `*` (no password set, as for a
+key-only account) when another local account has a `$5$` or `$6$` hash. Alpine's advisory says 257 to 1024 bytes; the CVE
+record says between 256 and 1024 characters. Alpine is such a system. CISA added it to its Known Exploited
+Vulnerabilities catalog on 9 Nov 2026, due 12 Nov. Sources:
 [Alpine's advisory](https://alpinelinux.org/posts/2026-11-05-openssh-password-authentication-bypass/) (5 Nov),
 [the CVE record](https://www.cve.org/CVERecord?id=CVE-2026-123158),
 [OpenSSH 10.6p2's release notes](https://www.openssh.org/releasenotes.html#10.6p2),
-[Alpine's secdb](https://secdb.alpinelinux.org/) for each branch's fixed version, and
+[Alpine's secdb](https://secdb.alpinelinux.org/) for each branch's fixed build, and
 [CISA's catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog?field_cve=CVE-2026-123158).
-This fixes no defect in Wardlatch, so there is no advisory. `test/sshole-0.1.15.test.mjs` holds the tests.
+This fixes no security defect in Wardlatch, so there is no advisory. `test/sshole-0.1.15.test.mjs` holds the tests.
 
 ### Added
 
 - **`sshole-2026-11`**, Linux only, read-only. It never runs sshd (not even `sshd -T`) and never connects to a port.
-  - **musl or not**: `/etc/alpine-release`, or musl's loader `/lib/ld-musl-*.so.1`. A glibc system is SAFE, saying so.
-  - **The package**: `openssh-server` and `openssh-server-pam` in `/lib/apk/db/installed`, judged against Alpine's
-    fixed version for the branch in `/etc/alpine-release` (edge 10.6_p2-r0, 3.24 10.3_p1-r2 … 3.16 9.0_p1-r6). Alpine
-    backported the fix, so 10.3_p1-r2 is fixed on 3.24 though it is below 10.6p2. A version at or above 10.6_p2 is fixed
-    on any branch. A branch Alpine doesn't list, a version that can't be read, or musl without Alpine's package
-    database is UNKNOWN.
-  - **A fixed package with an older daemon**: Alpine says upgrading does not restart a running sshd. A running `sshd`
-    that started before its program last changed is UNKNOWN with "restart sshd". The start times come from `/proc`, and
-    are believed only when this process's own start, read the same way, comes out right.
-  - **An unfixed package** is EXPOSED, unless something Alpine says closes the hole was read, which makes it REVIEW
-    (still to update): `PasswordAuthentication no` with no `Match` block turning it back on, the PAM build alone with
-    `UsePAM yes`, no account the flaw can use in `/etc/shadow`, or no `# Changelog
-
-What changed in each release of the `wardlatch` package on npm, newest first, written to help you decide whether to
-update. Run `npx wardlatch@latest` to get the latest release: a bare `npx wardlatch` runs any copy already installed
-globally or in the current project, whatever its version (and npm older than 9.6.5 also reuses a copy npx cached
-earlier).
-
-Every release has a signed tag (`v0.1.0` onwards; 0.1.0 to 0.1.2 were tagged afterwards at the commit npm recorded as
-each one's `gitHead`), and 0.1.3 onwards were built and attested by the release workflow. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
-
--hash there. `/etc/shadow` is read only when
-    this user may (usually root), and only counted: no name, field or hash is printed. Root counts only with
-    `PermitRootLogin yes`, as Alpine says. What couldn't be read is named in the line.
-  - The fix is Alpine's: `apk upgrade -U -a`, then restart sshd, or turn password logins off until then. Wardlatch
-    doesn't read logs, so it can't say whether anyone got in; it gives Alpine's advice on where to look.
+  - **musl or not**: `/etc/alpine-release`, or musl's loader `/lib/ld-musl-*.so.1`. A glibc system is SAFE only when
+    every sshd program found names glibc's loader; one that doesn't may be built against musl, and is UNKNOWN.
+  - **The package**: `openssh-server`, and Alpine's two PAM builds `openssh-server-pam` and `openssh-server-krb5`, in
+    `/lib/apk/db/installed`, judged against Alpine's fixed builds (edge 10.6_p2-r0, 3.24 10.3_p1-r2 … 3.16 9.0_p1-r6).
+    Alpine backported the fix, so 10.3_p1-r2 is fixed though it is below 10.6p2, and 10.3_p1-r1 is not. A build is
+    matched to the fixed build of the same OpenSSH version whatever branch `/etc/alpine-release` names, so a package
+    pinned from another branch is judged as what it is. At or above 10.6_p2 it is fixed; any other build below it is
+    not one Alpine fixed. A version that can't be read is UNKNOWN, and so is an sshd program apk didn't install.
+  - **A fixed package with an older daemon**: Alpine says upgrading doesn't restart a running sshd. A running `sshd`
+    (or `sshd.pam`, `sshd.krb5`) that started before its program was installed is UNKNOWN with "restart sshd". The
+    install time is the file's inode change time, since apk stamps each file with the package's own time. The start
+    times come from `/proc`, and are believed only when this process's own start, read the same way, comes out right.
+  - **An unfixed package** is EXPOSED, unless something Alpine's advisory says the flaw needs was read as missing,
+    which makes it REVIEW (still to update): `PasswordAuthentication no` with no `Match` block setting it again, a PAM
+    build alone with `UsePAM yes`, no account with `*` that the flaw can use, or no `$`-hash. Any setting in
+    `/etc/conf.d/sshd`, or a second sshd instance, makes the settings "not read", as does an `Include` this can't read.
+    `/etc/shadow` is read only when this user may (usually root), and only counted: no name, field or hash is printed.
+    `/etc/passwd` is read for accounts with `*` and no shadow line. Root counts only with `PermitRootLogin yes`, as
+    Alpine says. Accounts from a directory service can't be seen here, so they never make it REVIEW. What couldn't be
+    read is named on the line.
+  - The fix is Alpine's: `apk upgrade -U -a`, then restart sshd, or turn password logins off until then (after checking
+    that a key login works). Wardlatch doesn't read logs, so it can't say whether anyone got in; it gives Alpine's
+    advice on where to look.
   - Not covered: sshd in containers and images.
 
 ## [0.1.14] - 2026-11-10
