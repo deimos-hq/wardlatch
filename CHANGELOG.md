@@ -30,20 +30,25 @@ This fixes no security defect in Wardlatch, so there is no advisory. `test/sshol
 - **`sshole-2026-11`**, Linux only, read-only. It never runs sshd (not even `sshd -T`) and never connects to a port.
   - **musl or not**: `/etc/alpine-release`, or musl's loader `/lib/ld-musl-*.so.1`. A glibc system is SAFE only when
     every sshd program found names glibc's loader; one that doesn't may be built against musl, and is UNKNOWN.
-  - **The package**: `openssh-server`, and Alpine's two PAM builds `openssh-server-pam` and `openssh-server-krb5`, in
+  - **The package**: `openssh-server`, and Alpine's two PAM builds `openssh-server-pam` and `openssh-server-krb5` (both
+    built `--with-pam`, per aports `main/openssh/APKBUILD`), in
     `/lib/apk/db/installed`, judged against Alpine's fixed builds (edge 10.6_p2-r0, 3.24 10.3_p1-r2 … 3.16 9.0_p1-r6).
-    Alpine backported the fix, so 10.3_p1-r2 is fixed though it is below 10.6p2, and 10.3_p1-r1 is not. A build is
-    matched to the fixed build of the same OpenSSH version whatever branch `/etc/alpine-release` names, so a package
-    pinned from another branch is judged as what it is. At or above 10.6_p2 it is fixed; any other build below it is
-    not one Alpine fixed. A version that can't be read is UNKNOWN, and so is an sshd program apk didn't install.
+    Alpine backported the fix, so on 3.24 10.3_p1-r2 is fixed though it is below 10.6p2, and 10.3_p1-r1 is not. At or
+    above 10.6_p2 a build is fixed anywhere. Below it, only the fix of the branch `/etc/alpine-release` names counts:
+    revision numbers mean nothing across branches (edge built an unfixed 10.0_p1-r11 in September 2025, the very
+    version of 3.22's fixed build), so a newer build pinned from another branch is UNKNOWN, and on edge, on 3.15 or
+    older, or where the release can't be read, anything below 10.6_p2 is not fixed. A version that can't be read is
+    UNKNOWN. An sshd program apk didn't install, or a link where apk installed one, makes a fixed package UNKNOWN, and is
+    named as not read beside an unfixed one.
   - **A fixed package with an older daemon**: Alpine says upgrading doesn't restart a running sshd. A running `sshd`
     (or `sshd.pam`, `sshd.krb5`) that started before its program was installed is UNKNOWN with "restart sshd". The
-    install time is the file's inode change time, since apk stamps each file with the package's own time. The start
+    install time is the file's inode change time, since apk sets each file's modification time from the package. The start
     times come from `/proc`, and are believed only when this process's own start, read the same way, comes out right.
   - **An unfixed package** is EXPOSED, unless something Alpine's advisory says the flaw needs was read as missing,
     which makes it REVIEW (still to update): `PasswordAuthentication no` with no `Match` block setting it again, a PAM
     build alone with `UsePAM yes`, no account with `*` that the flaw can use, or no `$`-hash. Any setting in
-    `/etc/conf.d/sshd`, or a second sshd instance, makes the settings "not read", as does an `Include` this can't read.
+    `/etc/conf.d/sshd`, a second sshd instance, or a running sshd started with `-o` or `-f` on its command line (read
+    from `/proc/<pid>/cmdline`) makes the settings "not read", as does an `Include` this can't read.
     `/etc/shadow` is read only when this user may (usually root), and only counted: no name, field or hash is printed.
     `/etc/passwd` is read for accounts with `*` and no shadow line. Root counts only with `PermitRootLogin yes`, as
     Alpine says. Accounts from a directory service can't be seen here, so they never make it REVIEW. What couldn't be
