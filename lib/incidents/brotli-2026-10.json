@@ -18,7 +18,7 @@
   "appleSystem": {
     "cve": "CVE-2026-111497",
     "component": "brotli",
-    "label": "macOS's own Brotli (Safari and Apple's apps)",
+    "label": "macOS's own Brotli (the copy inside macOS)",
     "date": "9 Nov 2026",
     "releases": ["27.2.1", "26.7.3", "15.8.3"],
     "sources": ["https://support.apple.com/en-us/149718", "https://support.apple.com/en-us/149719", "https://support.apple.com/en-us/149720"],
@@ -118,7 +118,7 @@
     "brotli": { "fix": "Update it with the Python of the environment it is in: '/path/to/env/bin/python3' -m pip install --upgrade 'Brotli>=1.2.1' (uv: uv pip install --python '/path/to/env/bin/python3' --upgrade 'brotli>=1.2.1'; conda: conda install -n ENV 'brotli-python>=1.2.1')." },
     "brotlicffi": { "fix": "Update it with the Python of the environment it is in: '/path/to/env/bin/python3' -m pip install --upgrade 'brotlicffi>=1.2.1.0' (uv: uv pip install --python '/path/to/env/bin/python3' --upgrade 'brotlicffi>=1.2.1.0'; conda: conda install -n ENV 'brotlicffi>=1.2.1.0')." },
     "pillow": { "fix": "No Pillow release had a fixed Brotli on 10 November 2026 (the newest on PyPI, 13.0.0, came out on 16 October, before Brotli's fix of 21 October): update Pillow when one ships, since this copy is fixed by a Pillow release with a fixed Brotli." },
-    "opencv-python": { "fix": "No opencv-python release had a fixed Brotli on 10 November 2026 (the newest on PyPI, 4.14.0.94, came out on 28 July): update opencv-python when one ships, since this copy is fixed by an opencv-python release with a fixed Brotli." },
+    "opencv-python": { "fix": "No opencv-python release had a fixed Brotli on 10 November 2026 (PyPI shows no opencv-python release published after Brotli's fix of 21 October): update opencv-python when one ships, since this copy is fixed by an opencv-python release with a fixed Brotli." },
     "opencv-contrib-python": { "fix": "No opencv-contrib-python release had a fixed Brotli on 10 November 2026 (it is released with opencv-python): update opencv-contrib-python when one ships, since this copy is fixed by an opencv-contrib-python release with a fixed Brotli." }
   },
   "fixes": {

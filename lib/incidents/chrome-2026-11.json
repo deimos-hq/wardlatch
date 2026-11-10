@@ -3,7 +3,8 @@
   "type": "installs",
   "title": "Google Chrome: use after free in XML, exploited (CVE-2026-125350)",
   "date": "2026-11-09",
-  "summary": "Google updated Chrome's stable channel on 9 November 2026 to 157.0.8103.50/.51 for Windows and Mac and 157.0.8103.50 for Linux. The update fixes CVE-2026-125350, a use after free in XML, which the CVE record (published 10 November) says allowed a remote attacker to execute arbitrary code inside the sandbox via a crafted HTML page, in Chrome before 157.0.8103.50. Google's post says: \"Google is aware that an exploit for CVE-2026-125350 exists in the wild.\" CISA had not listed it in its Known Exploited Vulnerabilities catalog by its catalog of 9 November. Wardlatch reads the version of the Chrome that is installed (the app's Info.plist on a Mac, dpkg's record on Debian and Ubuntu); it never starts Chrome.",
+  "kev": [{"cve": "CVE-2026-125350", "vendorProject": "Google", "product": "Chromium", "dateAdded": "2026-11-10", "dueDate": "2026-11-24"}],
+  "summary": "Google updated Chrome's stable channel on 9 November 2026 to 157.0.8103.50/.51 for Windows and Mac and 157.0.8103.50 for Linux. The update fixes CVE-2026-125350, a use after free in XML, which the CVE record (published 10 November) says allowed a remote attacker to execute arbitrary code inside the sandbox via a crafted HTML page, in Chrome before 157.0.8103.50. Google's post says: \"Google is aware that an exploit for CVE-2026-125350 exists in the wild.\" CISA added it to its Known Exploited Vulnerabilities catalog on 10 Nov 2026, due 24 Nov. Wardlatch reads the version of the Chrome that is installed (the app's Info.plist on a Mac, dpkg's record on Debian and Ubuntu); it never starts Chrome.",
   "advisory": "https://chromereleases.googleblog.com/2026/11/stable-channel-update-for-desktop_018223192.html",
   "sources": [
     "https://www.cve.org/CVERecord?id=CVE-2026-125350",
@@ -28,7 +29,7 @@
       {
         "path": "/var/lib/dpkg/status",
         "presentRe": "^Package: google-chrome-stable$",
-        "re": "^Package: google-chrome-stable\\n(?:[^\\n]+\\n)*?Version: (\\d+(?:\\.\\d+)+)",
+        "re": "^Package: google-chrome-stable\\nStatus: install ok installed\\n(?:[^\\n]+\\n)*?Version: (\\d+(?:\\.\\d+)+)",
         "label": "Debian or Ubuntu package",
         "maxBytes": 33554432,
         "reviewWhenFixed": "this Chrome, as installed, has the fix; a Chrome that was open when it updated runs the old version until it restarts, and Wardlatch can't see which version is running"

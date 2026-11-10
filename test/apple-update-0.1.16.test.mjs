@@ -233,12 +233,14 @@ import { outcome } from '../lib/probe.mjs';
 // --cacert, as curl does. `blockForced`: with a withdrawn root forced in, it answers 23 (certificate revoked), as macOS
 // 27.2.1's curl does, offline too; `binding`: with only the negative control's certificate it can't open a normal site
 // (as a curl that keeps to its CA file does); without it, it opens it anyway (Apple's keychain fallback, measured).
-const measuredCurl = ({ blockForced = true, binding = false } = {}) => `#!/bin/sh
+const measuredCurl = ({ blockForced = true, binding = false, oneFamily = false } = {}) => `#!/bin/sh
 case "$1" in --version) echo "curl 8.7.1 (x86_64-apple-darwin26.0)"; exit 0;; esac
 ca=""; prev=""; for a; do [ "$prev" = --cacert ] && ca="$a"; prev="$a"; u="$a"; done
 case "$ca" in *negative-control.pem) [ "$u" = ${JSON.stringify(inc.advisory)} ] && { ${binding ? 'printf 20; exit 60' : 'printf 0; exit 0'}; };; esac
 [ "$u" = ${JSON.stringify(inc.advisory)} ] && { printf 0; exit 0; }
 case "$ca" in *emudhra-2026-10-root-*) ${blockForced ? 'printf 23; exit 60' : 'printf 0; exit 0'};; esac
+# as measured on 27.2.1 (review 1 of 0.1.16): with any CA file, the 12 test hosts are refused as revoked
+${blockForced ? '[ -n "$ca" ] && { printf 23; exit 60; }' : ''}
 printf 20; exit 60
 `;
 
@@ -291,10 +293,19 @@ test('W4 pip\'s own list, read by key: a REVIEW row when it holds a withdrawn ro
   const rows = pipListRows(inc, [held, clean, none, broken, locked]);
   assert.deepEqual(rows.map((r) => [r.file.split('/w4/')[1], r.status]), [['held/site-packages/pip/_vendor/certifi/cacert.pem', 'REVIEW'], ['broken/site-packages/pip/_vendor/certifi/cacert.pem', 'REVIEW'], ['locked/site-packages/pip/_vendor/certifi/cacert.pem', 'REVIEW']]);
   assert.deepEqual(rows[0].heldRoots, [AAA, G3]);
-  assert.match(rows[0].reason, /pip uses this list only when run with --use-deprecated=legacy-certs/);
-  assert.match(rows[0].reason, /a compromised test host of the emSign family \(the AAA family was refused/);
+  // no pip version or Python version to read in this folder: said, not guessed
+  assert.match(rows[0].reason, /Which pip or Python this is could not be read here/);
+  assert.match(rows[1].reason, /no certificate in it could not be read|1 of 124 certificates could not be read here/);
+  // review 2 of 0.1.16: which pip on which Python decides whether the list is used by default (pip's index_command.py)
+  const pip = (py, v) => { const d = join(dir, 'w4', `lib-${py}-${v}`, 'lib', py, 'site-packages'); mkdirSync(join(d, 'pip', '_vendor', 'certifi'), { recursive: true }); writeFileSync(join(d, 'pip', '__init__.py'), `__version__ = "${v}"\n`); writeFileSync(join(d, 'pip', '_vendor', 'certifi', 'cacert.pem'), APPLE_272); return d; };
+  const [old39, old38, new312, new39] = pipListRows(inc, [pip('python3.9', '21.2.4'), pip('python3.8', '24.1.2'), pip('python3.12', '26.2.1'), pip('python3.9', '24.2')]);
+  assert.match(old39.reason, /pip 21\.2 on Python 3\.9 uses this list for every download/);
+  assert.match(old38.reason, /pip 24\.1 on Python 3\.8 uses this list for every download/);
+  assert.match(new312.reason, /pip 26\.2 on Python 3\.12 asks the system's trust by default and uses this list only when run with --use-deprecated=legacy-certs/);
+  assert.match(new312.reason, /connected to a compromised test host of the emSign family/);
+  assert.match(new39.reason, /pip 24\.2 on Python 3\.9 uses this list for every download/, 'Python 3.9 cannot use the system trust in pip');
   assert.match(rows[1].reason, /1 of 124 certificates could not be read here/);
-  assert.match(rows[2].reason, /could not be read here, so whether it holds the withdrawn roots was not checked/);
+  assert.match(rows[2].reason, /cacert\.pem could not be read here, so whether it holds the withdrawn roots was not checked/, 'the unreadable file, said as unreadable');
   assert.ok(rows.every((r) => r.kind === 'pip-list' && r.status === 'REVIEW'), 'never SAFE or EXPOSED: it takes a flag to be used');
   chmodSync(join(locked, 'pip', '_vendor', 'certifi', 'cacert.pem'), 0o644);
 });
@@ -314,4 +325,39 @@ test('W3 the certifi an app\'s own Python carries (Blender, Unity) is read by ke
   assert.deepEqual(rows.map((r) => [r.file.split('/w3/')[1], r.status, r.heldRoots]), [['unity-like/certifi/cacert.pem', 'REVIEW', [AAA, G3]], ['blender-like/certifi/cacert.pem', 'REVIEW', [G3]]]);
   assert.match(rows[0].reason, /Whether the app itself connects that way is not known/);
   assert.match(rows[0].reason, /its plain ssl default reads no list/);
+});
+
+test('R1 (review 1 of 0.1.16) Apple\'s curl answers 23 for every host whatever CA file it is given: a venv certifi holding the roots is EXPOSED by key, not UNKNOWN', () => {
+  const bad = standIn({ venvPem: APPLE_272, curl: measuredCurl() }).go();
+  assert.equal(bad.certifi.status, 'EXPOSED', JSON.stringify(bad.certifi));
+  assert.deepEqual(bad.certifi.heldRoots, [AAA, G3]);
+  const clean = standIn({ venvPem: APPLE_2721, curl: measuredCurl() }).go();
+  assert.equal(clean.certifi.status, 'SAFE', JSON.stringify(clean.certifi));
+});
+
+test('R2 (review 1 of 0.1.16) a curl that keeps to its file and blocks only the emSign family: a bundle holding only emSign ECC G3 is EXPOSED by key, never SAFE', () => {
+  const oneFamily = `#!/bin/sh
+case "$1" in --version) echo "curl 8.7.1"; exit 0;; esac
+ca=""; prev=""; for a; do [ "$prev" = --cacert ] && ca="$a"; prev="$a"; u="$a"; done
+[ "$u" = ${JSON.stringify(inc.advisory)} ] && { case "$ca" in *negative-control.pem) printf 20; exit 60;; esac; printf 0; exit 0; }
+case "$u" in
+  *-aaa-*) case "$ca" in *root-aaa*) printf 0; exit 0;; esac; printf 20; exit 60;;
+  *) [ -n "$ca" ] && { printf 23; exit 60; }; printf 20; exit 60;;
+esac
+`;
+  const g3only = (APPLE_272.match(PEM) ?? []).filter((b) => !bundleHolds(b, inc).held.includes(AAA)).join('\n') + '\n';
+  const r = standIn({ version: '27.2', venvPem: g3only, curl: oneFamily }).go();
+  assert.equal(r.certifi.status, 'EXPOSED', JSON.stringify(r.certifi));
+  assert.deepEqual(r.certifi.heldRoots, [G3]);
+});
+
+import { PY } from '../lib/probe.mjs';
+test('W1 python\'s probe itself exits 4 for verify code 23 and 1 for any other verification error (run, with urlopen replaced)', { skip: spawnSync('python3', ['-c', 'pass']).status !== 0 && 'no python3' }, () => {
+  const as = (code) => spawnSync('python3', ['-I', '-S', '-c', `import ssl,urllib.request,urllib.error
+def f(*a, **k):
+    e = ssl.SSLCertVerificationError(1, 'certificate verify failed'); e.verify_code = ${code}; raise urllib.error.URLError(e)
+urllib.request.urlopen = f
+import sys; sys.argv = ['x', 'https://example.invalid/']
+exec(compile(${JSON.stringify(PY(1000))}, 'probe', 'exec'))`], { encoding: 'utf8' }).status;
+  assert.equal(as(23), 4); assert.equal(as(20), 1); assert.equal(as(10), 1);
 });

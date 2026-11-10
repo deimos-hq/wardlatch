@@ -150,7 +150,8 @@ test('no text says a macOS release has not fixed the file, or that an update alw
   }
   // what is measured is said as measured, what isn't as Apple's word
   assert.match(inc.fixes['macos-system'], /updates to 26\.7\.2 on 27 Oct and 27\.2 on 28 Oct did, as we measured/);
-  assert.match(inc.fixes['macos-system'], /We haven't measured what an update to 27\.2\.1, 26\.7\.3 or 15\.8\.3 does to a file already changed by hand/);
+  // 0.1.16: measured on one Mac, and said as one Mac
+  assert.match(inc.fixes['macos-system'], /We measured one Mac on 10 Nov 2026 whose update from 27\.2 to 27\.2\.1 replaced a file already changed by hand with Apple's; other Macs and the 26\.7\.3 and 15\.8\.3 updates weren't measured\./);
   // and nothing claims the three other roots were compromised
   for (const [k, t] of texts) assert.doesNotMatch(t, /G1|C1|ECC Root CA - C3/, k);
 });

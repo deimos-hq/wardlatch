@@ -47,9 +47,9 @@ test('K2 an incident whose CVE CISA lists carries exactly that row; one CISA doe
     assert.deepEqual(have, want, `${file}: its kev rows must be the catalog's`);
     carried += have.length;
   }
-  // the brief named SSHole and Brotli; the rule found PHP's two and Plex's four too
-  assert.equal(carried, 8);
-  assert.deepEqual(Object.keys(SNAP.listed).sort(), ['brotli-2026-10', 'php-2026-10', 'plex-2026-10', 'sshole-2026-11']);
+  // the brief named SSHole and Brotli; the rule found PHP's two and Plex's four too, and CISA listed Chrome's on 10 Nov
+  assert.equal(carried, 9);
+  assert.deepEqual(Object.keys(SNAP.listed).sort(), ['brotli-2026-10', 'chrome-2026-11', 'php-2026-10', 'plex-2026-10', 'sshole-2026-11']);
 });
 
 test('K3 the line names CISA\'s vendor and product (Google Brotli, not Node.js), both dates and the catalog link', () => {

@@ -13,15 +13,16 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [0.1.16] - 2026-11-11
 
-Three incidents, and Macs that took Apple's 9 November update now get answers instead of "could not be tested".
+Two new incidents, CISA's dates under five, and Macs that took Apple's 9 November update now get answers instead of
+"could not be tested".
 
 - **Brotli, CVE-2026-111497** (`brotli-2026-10`). The decoder flaw in Node.js, Bun, Python packages (Brotli, brotlicffi,
   Pillow, opencv-python) and Brotli libraries. CISA lists Google's Brotli as known to be exploited (added 27 Oct 2026,
   due 10 Nov). Wardlatch reads each decoder's own bytes, because version numbers mislead here (Node.js 26.12.1 is fixed
   and reports Brotli 1.2.0). On a Mac it also says what Apple's notes of 9 Nov say of macOS's own copy.
-- **Google Chrome, CVE-2026-125350** (`chrome-2026-11`). Fixed in 157.0.8103.50 (.51 on Mac and Windows) on 9 Nov;
-  Google says an exploit exists in the wild. Wardlatch reads the installed version and never starts Chrome.
-- **CISA's catalog dates** under every incident CISA lists as exploited: SSHole, Brotli, PHP and Plex.
+- **Google Chrome, CVE-2026-125350** (`chrome-2026-11`). Fixed in 157.0.8103.50 (.50 or .51 on Mac and Windows) on
+  9 Nov; Google says an exploit exists in the wild, and CISA added it to its catalog on 10 Nov (due 24 Nov). Wardlatch reads the installed version and never starts Chrome.
+- **CISA's catalog dates** under every incident CISA lists as exploited: SSHole, Brotli, PHP, Plex and Chrome.
 - **After Apple's update** (macOS 27.2.1, 26.7.3, 15.8.3): 0.1.14 and 0.1.15 read the built-in curl and python3 as
   "could not be tested" on an updated Mac, because those tools now refuse the compromised certificates even when the
   withdrawn roots are put back. That refusal is now counted for what it is, Apple's own block.
@@ -31,27 +32,19 @@ Sources: [CISA's catalog](https://www.cisa.gov/known-exploited-vulnerabilities-c
 [Apple's notes for macOS 27.2.1](https://support.apple.com/en-us/149718), [26.7.3](https://support.apple.com/en-us/149719)
 and [15.8.3](https://support.apple.com/en-us/149720), [Apple's eMudhra page](https://support.apple.com/en-us/149555),
 [Chrome's stable update of 9 Nov](https://chromereleases.googleblog.com/2026/11/stable-channel-update-for-desktop_018223192.html).
-What we measured on one Mac on 10 Nov 2026, before and after its update to 27.2.1, is in
-`test/support/fixtures/README.md`; the tests are `test/brotli-0.1.16.test.mjs`, `test/brotli.test.mjs`,
+The two `cert.pem` files measured on one Mac on 10 Nov 2026, before and after its update to 27.2.1, are described in
+`test/support/fixtures/README.md` (the other measurements quoted here are in our inspection records, not in this
+repository); the tests are `test/brotli-0.1.16.test.mjs`, `test/brotli.test.mjs`,
 `test/kev.test.mjs`, `test/apple-update-0.1.16.test.mjs` and `test/chrome-0.1.16.test.mjs`.
 
 ### Security
 
-Two defects in released code that could read SAFE where something was wrong. ADVISORY: owner's decision, pending.
+One defect in released code that could read SAFE where something was wrong.
 
-- **On a Mac, a virtual environment's certifi could read SAFE because of Apple's trust, not certifi's list** (0.1.x
-  to 0.1.15, macOS only). Wardlatch tested a venv's certifi bundle by giving it to the built-in curl with `--cacert`.
-  Apple's curl doesn't keep to a CA file: when the file can't vouch for a site it falls back to the system's trust
-  (long-standing: curl issue #12604, 2023, which Apple says is intended). So the row measured Apple's trust, which
-  blocks the compromised certificates, and a certifi list that still held a withdrawn root could read SAFE, while a
-  program using that list with its own OpenSSL would trust the chain. A bundle row now first gives the curl a CA file
-  holding only a certificate that vouches for no site (`lib/negative-control.pem`, made for this; no private key is
-  kept). If the curl still opens a normal site, or if it blocks the compromised keys itself, the bundle is read by key
-  instead (below). Found on 10 Nov 2026 by an inspection of an updated Mac; fixed the same day.
 - **A path with `..` after a link was cleaned up as text, so Wardlatch read, ran or hashed another file than the one
-  your programs use** (0.1.0 to 0.1.15). The fix was written on the Brotli branch in late October and recorded on
-  1 Nov 2026 as a defect in released code, then held with that branch until this release: nine days longer than this
-  policy allows, because it was not split out of an unfinished branch. Details under Fixed below.
+  your programs use** (0.1.0 to 0.1.15). Found on 25 Oct 2026 while building the Brotli check (fixed there in
+  28a72c2), recorded on 1 Nov as a defect in released code, and shipped only now: past SECURITY.md's 7 days, because
+  it was not split out of an unfinished branch. Details under Fixed below.
 
 ### Added
 
@@ -60,8 +53,9 @@ Two defects in released code that could read SAFE where something was wrong. ADV
   added 27 Oct 2026 · due date for US federal agencies 10 Nov 2026 · <link>"), and `--json` carries the rows with their
   links under `incidents[].kev`. Wardlatch never fetches the catalog: `scripts/kev-snapshot.mjs` copies the rows from a
   whole read of CISA's feed before a release (it refuses a partial one), and `test/kev.test.mjs` fails if an incident
-  file and that copy disagree in either direction. Catalog 2026.11.09: SSHole, Brotli, PHP (two CVEs) and Plex (four)
-  are listed; GitLab's CVE-2026-110264 and Chrome's CVE-2026-125350 are not.
+  file and that copy disagree in either direction. Catalog 2026.11.10: SSHole, Brotli, PHP (two CVEs), Plex (four) and
+  Chrome are listed; GitLab's CVE-2026-110264 is not. A date that is not a real day, or a due date before the date
+  added, stops the run.
 - **`chrome-2026-11`.** Reads Chrome's `Info.plist` in `/Applications` and `~/Applications` and dpkg's record of
   `google-chrome-stable`. Below 157.0.8103.50 is EXPOSED. At or past it is REVIEW, not SAFE: a Chrome left open since
   it updated runs the old version until it restarts, and no file says which version is running. Other Chromium
@@ -71,12 +65,15 @@ Two defects in released code that could read SAFE where something was wrong. ADV
   27.2.1, 26.7.3, 15.8.3 or later; EXPOSED, with "update macOS", before them; could not be tested on macOS 14 or older,
   for which Apple names no update. It stands in for no other row: the all-clear for copies on disk is still given.
 - **Leftover copies of `/etc/ssl/cert.pem`.** On a release Apple names, each `/etc/ssl/cert.pem.*` that still holds a
-  withdrawn root (by key) is a REVIEW line, the Mac fix's own backup included, with Apple's words: don't restore it,
-  even if a program stops connecting after the update, and delete it once you have updated. Read, never changed.
+  withdrawn root (by key) is a REVIEW line, the Mac fix's own backup included. Apple says not to restore a backup made
+  before the update, and to delete it once you have updated; Wardlatch adds: don't restore it even if a program stops
+  connecting after the update. Read, never changed.
 - **pip's own CA list** (`pip/_vendor/certifi/cacert.pem`, in the machine's Python folders and in apps' Pythons) is read
-  by key: a REVIEW line when it still holds a withdrawn root. pip uses it only with `--use-deprecated=legacy-certs`, and
-  on one Mac on 27.2.1, pip 26.1.2 and 26.2.1 given that flag connected to a compromised test host of the emSign family
-  (the AAA family was refused, since pip's own list had dropped AAA).
+  by key: a REVIEW line when it still holds a withdrawn root, saying which pip on which Python it is. pip 24.2 and later
+  on Python 3.10 or later ask the system's trust and use this list only with `--use-deprecated=legacy-certs` (on one
+  Mac on 27.2.1, pip 26.1.2 and 26.2.1 given that flag connected to a compromised test host of the emSign family);
+  older pips, and any pip on Python 3.9 or older, use it for every download (pip's own `index_command.py`). Whether
+  such a line should be EXPOSED is left open: whether a download is refused depends on that Python's TLS library.
 - **certifi inside apps' own Pythons** (Blender, Unity's Emscripten Python) is read by key: a REVIEW line when it holds
   a withdrawn root. Those Pythons' plain `ssl` default reads no list; their bundled certifi and requests accepted
   compromised hosts on one Mac. Whether the apps themselves connect that way was not shown.
@@ -116,7 +113,7 @@ Two defects in released code that could read SAFE where something was wrong. ADV
     its security build 1.0.9-2+deb12u1 adds `BLOCK_SWITCH` in its place and reads SAFE by its table alone); a Debian
     package built from a source version its table lists as without the fix (every rebuild, such as 1.1.0-2+b7, keeps
     its source's version), again for the file that package installed. A bundled copy with no fixed release yet
-    (Pillow, opencv-python) is EXPOSED, and its fix line says no release had a fixed Brotli on 24 October and to update
+    (Pillow, opencv-python) is EXPOSED, and its fix line says no release had a fixed Brotli on 10 November and to update
     when one ships.
   - What a file links is read as the loader reads it (maintainer's decision #24, 2026-10-25), from the binary format,
     never from strings that look like paths: a Mach-O build's header and load commands (`LC_LOAD_DYLIB`,
@@ -329,9 +326,9 @@ Two defects in released code that could read SAFE where something was wrong. ADV
 
 ### Changed
 
-- **Apple's own block is counted as a block.** On macOS 27.2.1 the built-in curl and python3 refuse the 12 certificates
-  as revoked even when the withdrawn roots are given to them, offline too (curl exits 60 with "certificate revoked";
-  the certificate error is 23). The probes now tell that refusal from any other: curl prints its verification result,
+- **Apple's own block is counted as a block.** On one Mac on macOS 27.2.1 (10 Nov 2026), the built-in curl and python3
+  refused the compromised test hosts with "certificate revoked" (X509 error 23; curl's exit code is 60) even when the
+  withdrawn roots were given to them, and Apple's openssl did the same offline. The probes now tell that refusal from any other: curl prints its verification result,
   and python3's probe reports verify code 23 as a block. As for Node.js, a block counts only if the same tool still
   opens a normal site. On an updated Mac the built-in curl and python3 read SAFE, "blocks the compromised keys
   themselves", from what they do.
@@ -352,6 +349,15 @@ Two defects in released code that could read SAFE where something was wrong. ADV
 
 ### Fixed
 
+- **On a Mac, a bundle row measured Apple's trust, not the bundle** (0.1.3 to 0.1.15 for a venv's certifi, 0.1.10 to
+  0.1.15 for `REQUESTS_CA_BUNDLE`, macOS only). Wardlatch tested the bundle by giving it to the built-in curl with
+  `--cacert`, and Apple's curl doesn't keep to a CA file: when the file can't vouch for a site it falls back to the
+  system's trust (long-standing: curl issue #12604, 2023, which Apple says is intended). So the answer said nothing
+  about the list, and on an updated Mac every such row read "could not be tested". We have not shown a SAFE from it in
+  released code, which is why it is here and not under Security. A bundle row now first gives the curl a CA file
+  holding only a certificate that vouches for no site (`lib/negative-control.pem`, made for this; no private key is
+  kept). If the curl still opens a normal site, or blocks the compromised keys itself, the bundle is read by key.
+  Found on 10 Nov 2026 by an inspection of an updated Mac.
 - **A failed forced-roots control no longer hides a connection.** When one root's control passed and the other's was
   refused, the check returned "could not be tested" before probing any test host plainly, so a tool that connected to a
   compromised chain read exit 2 instead of 1. Every control failure now probes the hosts plainly first, and a connection
@@ -2395,7 +2401,8 @@ Published 05:14 UTC. npm `gitHead`: `4d4f295`. The first release.
 npm also lists `0.0.0-stage` (21 October, 05:13 UTC), a 331-byte, two-file placeholder from npm's staged publishing,
 described on npm as a "Temporary package placeholder". It is not a release and holds none of Wardlatch's code.
 
-[Unreleased]: https://github.com/deimos-hq/wardlatch/compare/v0.1.15...main
+[Unreleased]: https://github.com/deimos-hq/wardlatch/compare/v0.1.16...main
+[0.1.16]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.16
 [0.1.15]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.15
 [0.1.14]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.14
 [0.1.13]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.13

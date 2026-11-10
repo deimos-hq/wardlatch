@@ -98,7 +98,7 @@ require('node:module').syncBuiltinESMExports();\n`);
   const { NODE_OPTIONS, ...rest } = process.env;
   const r = spawnSync(process.execPath, [...PRELOAD, '--require', pre, BIN, '--incident', 'brotli-2026-10', '--paths', fresh('b4-root')], { encoding: 'utf8', env: { ...rest, ...Object.fromEntries(VM_VARS.map((k) => [k, ''])), WARDLATCH_TEST_OWN_DIR: dir, HOME: home, PATH: fresh('b4-path') } });
   const lines = r.stdout.split('\n');
-  const at = lines.findIndex((l) => l.startsWith('EXPOSED  macOS\'s own Brotli (Safari and Apple\'s apps)'));
+  const at = lines.findIndex((l) => l.startsWith('EXPOSED  macOS\'s own Brotli (the copy inside macOS)'));
   assert.ok(at > 0, r.stdout + r.stderr);
   assert.match(lines[at + 1], /macOS 27\.2, read from \/System\/Library\/CoreServices\/SystemVersion\.plist: Apple's security notes of 9 Nov 2026 list CVE-2026-111497/);
   assert.match(r.stdout, /fix: Update macOS to 27\.2\.1 or later/);

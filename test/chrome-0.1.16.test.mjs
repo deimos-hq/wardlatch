@@ -35,8 +35,9 @@ test('C1 the facts are Google\'s and the CVE record\'s: the fixed version, the s
   assert.equal(INC.versionFiles.minVersion, '157.0.8103.50');
   assert.equal(INC.advisory, 'https://chromereleases.googleblog.com/2026/11/stable-channel-update-for-desktop_018223192.html');
   assert.match(INC.summary, /Google's post says: "Google is aware that an exploit for CVE-2026-125350 exists in the wild\."/);
-  assert.match(INC.summary, /CISA had not listed it/);
-  assert.equal(INC.kev, undefined, 'not in KEV (test/kev.test.mjs holds this to the snapshot)');
+  // CISA listed it on 10 Nov 2026 (catalog 2026.11.10); test/kev.test.mjs holds the row to the snapshot
+  assert.match(INC.summary, /CISA added it to its Known Exploited Vulnerabilities catalog on 10 Nov 2026, due 24 Nov\./);
+  assert.deepEqual(INC.kev, [{ cve: 'CVE-2026-125350', vendorProject: 'Google', product: 'Chromium', dateAdded: '2026-11-10', dueDate: '2026-11-24' }]);
 });
 
 test('C2 the Mac app: below the fix is EXPOSED, at or past it is REVIEW (it may still be running the old one), and an unread version is UNKNOWN', () => {
