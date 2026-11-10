@@ -361,3 +361,17 @@ import sys; sys.argv = ['x', 'https://example.invalid/']
 exec(compile(${JSON.stringify(PY(1000))}, 'probe', 'exec'))`], { encoding: 'utf8' }).status;
   assert.equal(as(23), 4); assert.equal(as(20), 1); assert.equal(as(10), 1);
 });
+
+test('R3 (review 1) settings and folders that move the built-in tools elsewhere keep the file check off, and say which', () => {
+  const o = { os: 'darwin', macos: '27.2.1', env: {}, home: '/h', exists: () => false, certsDir: 0 };
+  const curl = { kind: 'curl', bin: '/usr/bin/curl' }, py = { kind: 'python', bin: '/usr/bin/python3' };
+  assert.match(appleFileCheck(inc, curl, { ...o, env: { CURL_CA_BUNDLE: '/x.pem' } }).skipped, /^CURL_CA_BUNDLE is set/);
+  assert.ok(appleFileCheck(inc, py, { ...o, env: { CURL_CA_BUNDLE: '/x.pem' } }).fileCheck, 'python3 does not read CURL_CA_BUNDLE');
+  // set but empty: LibreSSL then loads no file at all, which is not /etc/ssl/cert.pem
+  assert.match(appleFileCheck(inc, curl, { ...o, env: { SSL_CERT_FILE: '' } }).skipped, /^SSL_CERT_FILE is set/);
+  // python3 also reads /etc/ssl/certs: only an empty folder lets the file stand in
+  assert.match(appleFileCheck(inc, py, { ...o, certsDir: 2 }).skipped, /^\/etc\/ssl\/certs holds 2 files, and python3 reads that folder as well/);
+  assert.match(appleFileCheck(inc, py, { ...o, certsDir: -1 }).skipped, /^\/etc\/ssl\/certs could not be listed/);
+  assert.ok(appleFileCheck(inc, py, o).fileCheck);
+  assert.ok(appleFileCheck(inc, curl, { ...o, certsDir: 2 }).fileCheck, 'curl reads the file, not the folder');
+});

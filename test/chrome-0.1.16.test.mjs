@@ -67,6 +67,10 @@ test('C3 Debian and Ubuntu: dpkg\'s google-chrome-stable stanza, whatever is aro
   assert.equal(r(stanza('google-chrome-stable', '157.0.8103.50-1') + stanza('zlib1g', '1:1.3.dfsg-3'))[0].status, 'REVIEW');
   // a beta beside it is not stable's version: stable's stanza is the one read
   assert.equal(r(stanza('google-chrome-beta', '158.0.8150.10-1') + stanza('google-chrome-stable', '157.0.8103.40-1'))[0].status, 'EXPOSED');
+  // removed but not purged (review 1): its old version is not an installed Chrome; never EXPOSED from it
+  const gone = r(stanza('google-chrome-stable', '150.0.7000.1-1').replace('Status: install ok installed', 'Status: deinstall ok config-files'));
+  assert.notEqual(gone[0]?.status, 'EXPOSED', JSON.stringify(gone));
+  assert.equal(gone[0]?.status, 'UNKNOWN'); assert.match(gone[0].reason, /no version could be read/);
   // no stable package: nothing
   assert.deepEqual(r(stanza('google-chrome-beta', '158.0.8150.10-1') + stanza('libc6', '2.41-6')), []);
 });
