@@ -2,8 +2,12 @@
 # Wardlatch Mac fix · a free tool from Deimos AI LLC · Apache-2.0 · https://www.deimoscore.com/wardlatch/#mac
 #
 # Removes the two roots tied to the compromised eMudhra keys (AAA Certificate Services, emSign ECC Root CA - G3) from
-# /etc/ssl/cert.pem, the file macOS's built-in curl, git, python3 and openssl read. No macOS release has fixed it yet,
-# and a macOS update puts Apple's original file back (26.7.2 did): run this again after every update.
+# /etc/ssl/cert.pem, the file macOS's built-in curl, git, python3 and openssl read. Apple says macOS 27.2.1, 26.7.3 and
+# 15.8.3 (9 Nov 2026) remove these roots from that file themselves (support.apple.com/en-us/149555): updating to one of
+# them is Apple's fix, and this script is for a Mac that can't update. On such a Mac, run this again after each
+# software update: updates to 26.7.2 and 27.2 put Apple's original file back. What an update to 27.2.1, 26.7.3 or
+# 15.8.3 does to a file this script changed has not been measured; Apple says not to restore a backup made before
+# that update.
 # The removal is the advisory's (emudhra.we-have-a-problem.com); this script adds the safety around it:
 #   - finds the two roots by their SHA-256 fingerprints, not by the name lines some copies of the file don't have,
 #     and by their public keys too, compared as openssl decodes them whatever encoding a certificate stores them in,
@@ -501,6 +505,7 @@ stopped() {
     if [ -n "$published" ]; then
       echo "         Backup: $backup"
       echo "         Undo:   sudo cp -p '$backup' '$FILE'"
+      echo "         Don't undo after you update to macOS 27.2.1, 26.7.3 or 15.8.3: Apple says not to restore a backup made before that update."
     fi
   elif [ -n "$orig" ] && [ "$now" = "$orig" ]; then
     echo "UNKNOWN  Stopped. $FILE is the file this run read, and still holds $(held). Run this again."
@@ -597,7 +602,8 @@ scope_lines() {
   echo "         This covers the built-in curl, git, python3 and openssl: the four we measured. Apple's pip3 keeps its"
   echo "         own copy, and we have not measured the built-in perl or ruby. The page has both."
   echo "         For everything else: npx wardlatch@latest"
-  echo "         A macOS update puts Apple's original file back: run this again after every update."
+  echo "         Apple says macOS 27.2.1, 26.7.3 and 15.8.3 remove these roots (support.apple.com/en-us/149555)."
+  echo "         If this Mac can't update to one of them, run this again after each software update."
 }
 # One machine-readable line, last, so a fleet can tell a corroborated verdict from an uncorroborated one by choice
 # instead of by exit code. The exit-code table is published, on the page whose own section tells administrators to
@@ -918,7 +924,8 @@ if [ "$before" -lt 50 ]; then
     echo "         looks damaged -- and it still holds a withdrawn root. This fix rebuilds the file it is given and"
     echo "         will not rebuild one that small. Nothing changed."
     echo "         Don't put an older copy of this file back: a copy from before this fix ran holds the withdrawn"
-    echo "         roots too. A macOS update restores Apple's own cert.pem -- run this again after one."
+    echo "         roots too. Apple says macOS 27.2.1, 26.7.3 and 15.8.3 remove those roots from this file; what an"
+    echo "         update does to a damaged one hasn't been measured. After an update, run this again."
   else
     # Small, no withdrawn root, but a certificate carrying one of the other seven keys: a corporate or hand-built
     # bundle, most likely, so this does not call it damaged. It still must not read SAFE.
@@ -1229,5 +1236,6 @@ else
 fi
 echo "         Backup: $backup"
 echo "         Undo:   sudo cp -p '$backup' '$FILE'"
+echo "         Don't undo after you update to macOS 27.2.1, 26.7.3 or 15.8.3: Apple says not to restore a backup made before that update."
 scope_lines
 trailer SAFE "$tos" "$tre" "$todrop" "$after"

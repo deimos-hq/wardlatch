@@ -115,10 +115,11 @@ GitHub release; 0.1.3 and every release since went through it. How to check one:
 [docs/RELEASING.md](docs/RELEASING.md#verifying-a-release).
 
 `fix/fix-macos.sh` in this repository has SHA-256
-`893f53cb96abe5a5afb800a70e5e1233f9089398fbd261840ae8dc8ddd9bd73d`. CI pins that hash and also checks that the
+`0dae0dc901a23aba216211f4ef6002a6d75b232fe479ef79db463d5c1dc9b98c`. CI pins that hash and also checks that the
 hash printed here, the pin and the file itself are one string, so a change to the script fails CI until all
 three move together (`test/digest-chain.sh`).
 
-www.deimoscore.com has served this file since 2 Nov 2026, the Record's CL-55. When a change ships, the download, the
+The site's Record entry for this digest is CL-62, and the one before it is in CL-60; the download on www.deimoscore.com
+changes when CL-62 is deployed. When a change ships, the download, the
 page's hash, a new entry in the site's public record naming its predecessor, the changelog, the pin and this line all
 move together.

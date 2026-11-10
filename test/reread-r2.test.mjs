@@ -72,12 +72,15 @@ function repoWith(path, files, author = 't') {
 // test/support/fixtures/macos-27.2-cert.pem, so the sentence's claim still holds and only its "newest" was stale. Apple's
 // page on the incident (support.apple.com/en-us/149555, published 29 Oct 2026) names no version; it says the file will be
 // updated in a future macOS update.
-test('the eMudhra macOS fix names the releases of 26 Oct 2026 as the newest, not those of 28 Sep', () => {
+// 0.1.14: that future update shipped. Apple's page, republished 9 Nov 2026, says macOS 27.2.1, 26.7.3 and 15.8.3 remove
+// the roots from the file, so "no macOS release has updated it" became false that day. The text now names those
+// releases, and none of the earlier ones as the newest (test/apple-fix-0.1.14.test.mjs holds the rest).
+test('the eMudhra macOS fix names the releases of 9 Nov 2026 that fix the file, and no earlier one as the newest', () => {
   const inc = JSON.parse(readFileSync(join(ROOT, 'lib', 'incidents', 'emudhra-2026-10.json'), 'utf8'));
   const fix = inc.fixes['curl:/usr/bin/curl:darwin'];
-  assert.doesNotMatch(fix, /27\.0\.1|26\.7\.1|15\.8\.1|28 Sep/, fix);
-  assert.match(fix, /27\.2, 26\.7\.2 and 15\.8\.2, shipped on 26 Oct 2026/, fix);
-  assert.match(fix, /future macOS update/, 'what Apple says of the file, as Apple says it');
+  assert.doesNotMatch(fix, /27\.0\.1|26\.7\.1|15\.8\.1|28 Sep|26\.7\.2|15\.8\.2|no macOS release|future macOS update/, fix);
+  assert.match(fix, /27\.2\.1, 26\.7\.3 and 15\.8\.3, released on 9 Nov 2026/, fix);
+  assert.ok(fix.includes('support.apple.com/en-us/149555'), 'the source, beside the claim');
 });
 
 // ---- W1: the escaper let format, line-separator, private-use and tag characters through ---------------------------------

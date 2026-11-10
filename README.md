@@ -83,6 +83,18 @@ update in each case. Check your browser on the advisory's own page.
 
 ## The Mac fix
 
+**Apple shipped its fix on 9 November 2026: update to macOS 27.2.1, 26.7.3 or 15.8.3.** Apple says these releases remove
+the two roots from `/etc/ssl/cert.pem`, along with three other eMudhra roots, and that on them the built-in command-line
+tools stop accepting the 12 compromised certificates ([Apple](https://support.apple.com/en-us/149555)). The Mac fix is
+for a Mac that can't update.
+
+On a Mac, Wardlatch reads the macOS version from
+`/System/Library/CoreServices/SystemVersion.plist` (a file read) and chooses the built-in curl's fix text by it;
+the version never changes a result, which is what the tools themselves do with the test hosts. It also says, as a note,
+whether the file still holds the three other roots Apple's update removes: Apple did not say their keys were compromised,
+so they change no result. We haven't measured what an update to one of those releases does to a file already changed by
+hand, so Wardlatch doesn't say; Apple says not to restore a backup made before the update.
+
 `fix/fix-macos.sh` removes the two roots tied to the compromised eMudhra keys from `/etc/ssl/cert.pem` (the advisory's
 change), and any other certificate carrying either root's key in whatever encoding (a copy with a bit changed, a root
 re-issued with the same key, an EC point stored compressed, a key relabelled). It also removes any certificate

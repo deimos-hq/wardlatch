@@ -80,7 +80,10 @@ run() {
     left=$(find "$work/tmp" -mindepth 1 -maxdepth 1 -exec basename {} \; | tr '\n' ' ')
     [ -z "$left" ] || fail "the fix left temporary files behind: $left"
   fi
-  if [ "$(uname -s)" = Darwin ] && [ -z "$silent_ok" ] && ! printf '%s\n' "$out" | grep -qE '^(SAFE|EXPOSED|UNKNOWN) '; then
+  # From a here-string, not a pipe: under pipefail, grep -q exiting at its first match can kill printf with SIGPIPE, and
+  # the pipeline then fails though the line is there. MEASURED 9 Nov 2026: this case read "printed no line" on a run that
+  # printed two, under load (the 0.1.14 run beside a mutation sweep).
+  if [ "$(uname -s)" = Darwin ] && [ -z "$silent_ok" ] && ! grep -qE '^(SAFE|EXPOSED|UNKNOWN) ' <<<"$out"; then
     fail "the fix exited $code and printed no line starting SAFE, EXPOSED or UNKNOWN"
   fi
   return 0
@@ -534,7 +537,7 @@ sigrun() {
   [ ! -s "$r2/sig.err" ] || sed 's/^/    ! /' "$r2/sig.err"
   left=$(find "$work/tmp" -mindepth 1 -maxdepth 1 -exec basename {} \; | tr '\n' ' ')
   [ -z "$left" ] || fail "a stopped run left temporary files behind: $left"
-  printf '%s\n' "$out" | grep -qE '^(SAFE|EXPOSED|UNKNOWN) ' || fail "a stopped run exited $code and printed no line starting SAFE, EXPOSED or UNKNOWN"
+  grep -qE '^(SAFE|EXPOSED|UNKNOWN) ' <<<"$out" || fail "a stopped run exited $code and printed no line starting SAFE, EXPOSED or UNKNOWN"
 }
 offline='https_proxy=http://127.0.0.1:9'
 OFFLINE='HTTPS_PROXY=http://127.0.0.1:9'
@@ -1209,6 +1212,7 @@ if [ "$found" -gt 0 ]; then
   grep -q 'had already been replaced' <<<"$out" || fail "an interrupt after the write: it did not say the file had been replaced"
   grep -q "Backup: $work/afterwrite.pem.wardlatch-" <<<"$out" || fail "an interrupt after the write: it did not name the backup"
   grep -q 'Undo:' <<<"$out" || fail "an interrupt after the write: it did not give the way back"
+  grep -q "Don't undo after you update to macOS 27.2.1, 26.7.3 or 15.8.3" <<<"$out" || fail "an interrupt after the write: the way back did not say Apple's own limit on it"
   # Proof it discriminates: with that report taken out, the same interrupt does not say that the file it had already
   # changed was replaced. (Until 31 Oct 2026 this asserted that it then printed nothing at all. Every stopped run now
   # prints a line, so what the report adds is the statement that the file was replaced, and that is what is tested.)
@@ -3353,7 +3357,11 @@ run "$d/clean/cert.pem" WARDLATCH_CURL="$r2/curl" STUB_CONTROL=47 STUB_TEST=60
 grep -q 'Not checked: whether anything else on this Mac still trusts the compromised keys\.' <<<"$out" || fail "already clean, no control: it did not say what was not checked"
 grep -q 'This covers the built-in curl, git, python3 and openssl' <<<"$out" || fail "already clean, no control: the scope block is missing"
 grep -q 'For everything else: npx wardlatch@latest' <<<"$out" || fail "already clean, no control: it did not say where to test the rest"
-grep -q 'A macOS update puts Apple.s original file back' <<<"$out" || fail "already clean, no control: it did not say an update undoes this"
+# 0.1.14: Apple's fix shipped on 9 Nov 2026 (support.apple.com/en-us/149555), so "a macOS update puts Apple's original
+# file back" is true only of an update to an older release, and the line says which.
+grep -q 'Apple says macOS 27.2.1, 26.7.3 and 15.8.3 remove these roots (support.apple.com/en-us/149555)' <<<"$out" || fail "already clean, no control: it did not name the releases that fix the file, with Apple's page"
+grep -q "If this Mac can't update to one of them, run this again after each software update" <<<"$out" || fail "already clean, no control: it did not say what a Mac that can't update must do"
+grep -q 'A macOS update puts Apple.s original file back: run this again after every update' <<<"$out" && fail "already clean, no control: it still says every macOS update undoes this, which Apple's 9 Nov releases do not"
 grep -q 'wardlatch: verdict=SAFE scope=file online=not-tested reason=control-47 removed=0 kept=126' <<<"$out" || fail "already clean, no control: the trailer is wrong, or the answer did not come from the stand-in"
 # And the other direction, which nothing asserted until a mutant survived on it: a control that did not get far
 # enough to refuse a certificate must NOT be described as one that refused it. 47 is not 60.
@@ -3385,7 +3393,11 @@ grep -q 'wardlatch: verdict=SAFE scope=file online=not-tested reason=test-28 rem
 # every SAFE is supposed to carry could have gone missing from the path most runs take.
 grep -q 'This covers the built-in curl, git, python3 and openssl' <<<"$out" || fail "fix path, test host silent: the scope block is missing"
 grep -q 'For everything else: npx wardlatch@latest' <<<"$out" || fail "fix path, test host silent: it did not say where to test the rest"
-grep -q 'A macOS update puts Apple.s original file back' <<<"$out" || fail "fix path, test host silent: it did not say an update undoes this"
+grep -q 'Apple says macOS 27.2.1, 26.7.3 and 15.8.3 remove these roots (support.apple.com/en-us/149555)' <<<"$out" || fail "fix path, test host silent: it did not name the releases that fix the file"
+grep -q "If this Mac can't update to one of them, run this again after each software update" <<<"$out" || fail "fix path, test host silent: it did not say what a Mac that can't update must do"
+grep -q 'A macOS update puts Apple.s original file back: run this again after every update' <<<"$out" && fail "fix path, test host silent: it still says every macOS update undoes this"
+# The Undo line names the one case Apple says it must not be used in: a backup made before an update to a fixed release.
+grep -q "Don't undo after you update to macOS 27.2.1, 26.7.3 or 15.8.3: Apple says not to restore a backup made before that update" <<<"$out" || fail "fix path, test host silent: the Undo line did not say Apple's own limit on it"
 # Every non-SAFE headline must say the file was still fixed AND that the backup must not be put back: a user who
 # reads a warning as failure and restores a backup holding both withdrawn roots has undone the fix, which
 # SECURITY.md names a vulnerability outright.
