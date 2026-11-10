@@ -180,7 +180,7 @@ test('every branch: the revision before the fix is EXPOSED, the fix itself is SA
     const ok = run(alpine({ branch, version: fixed }));
     assert.equal(ok.status, 'SAFE', `${branch} ${fixed}: ${ok.reason}`);
     assert.ok(ok.searched.includes('/lib/apk/db/installed') && ok.searched.includes('/etc/alpine-release'), ok.searched.join());
-    assert.match(ok.reason, new RegExp(`fixed \\(Alpine's fixed build is ${fixed.replace(/\./g, '\\.')}\\)`));
+    assert.match(ok.reason, branch === 'edge' ? /fixed \(at or above OpenSSH 10\.6p2, which has the fix\)/ : new RegExp(`fixed \\(Alpine's fixed build for ${branch.replace(/\./g, '\\.')} is ${fixed.replace(/\./g, '\\.')}\\)`));
     assert.match(ok.reason, /no sshd process is running/);
     if (fixed.endsWith('-r0')) continue;
     const bad = run(alpine({ branch, version: prior(fixed) }));
@@ -193,13 +193,13 @@ test('an unfixed package: what Alpine says closes the hole makes REVIEW, never S
   const v = '10.3_p1-r1';
   const off = run(alpine({ version: v, dropins: { '00-no.conf': 'PasswordAuthentication no\n' } }));
   assert.equal(off.status, 'REVIEW'); assert.match(off.reason, /PasswordAuthentication is no \(\/etc\/ssh\/sshd_config, \/etc\/ssh\/sshd_config\.d\/00-no\.conf\)/);
-  assert.match(off.reason, /and the advisories say the flaw needs that \(Alpine's; the CVE record\)\. Update anyway: if that changes later, the hole is open again$/);
+  assert.match(off.reason, /, and Alpine's advisory says the flaw needs that\. Update anyway: if that changes later, the hole is open again$/);
   // off in a drop-in, on in a Match block: not ruled out
   const match = run(alpine({ version: v, dropins: { '00-no.conf': 'PasswordAuthentication no\n' }, config: 'Include /etc/ssh/sshd_config.d/*.conf\nMatch User git\n  PasswordAuthentication yes\n' }));
   assert.equal(match.status, 'EXPOSED'); assert.match(match.reason, /PasswordAuthentication is no, but a Match block in .* turns it on again for some logins/);
   // the PAM build with UsePAM yes, alone
   const pam = run(alpine({ version: v, pkg: 'openssh-server-pam', dropins: { 'pam.conf': 'UsePAM yes\n' } }));
-  assert.equal(pam.status, 'REVIEW'); assert.match(pam.reason, /only a PAM build is installed \(openssh-server-pam; Alpine builds openssh-server-pam and -krb5 with PAM\), with UsePAM yes/);
+  assert.equal(pam.status, 'REVIEW'); assert.match(pam.reason, /only a PAM build is installed \(openssh-server-pam\), with UsePAM yes; the flaw needs sshd without PAM/);
   // the PAM build with UsePAM no (the default), or beside the plain build: open
   assert.equal(run(alpine({ version: v, pkg: 'openssh-server-pam' })).status, 'EXPOSED');
   assert.equal(run(alpine({ version: v, pkg: 'openssh-server-pam', extra: { 'openssh-server': v }, dropins: { 'pam.conf': 'UsePAM yes\n' } })).status, 'EXPOSED');
@@ -272,7 +272,7 @@ test('what can\'t be placed is UNKNOWN; what is not this flaw\'s ground is SAFE 
   // a branch Alpine doesn't list, below the upstream fix; a release file this can't read as a branch
   // 3.15, which Alpine published no fix for: its 8.8 build is not a fixed one, so it is judged as unfixed, never SAFE
   const old = run(machine({ files: { '/etc/alpine-release': '3.15.11\n', '/lib/apk/db/installed': db({ 'openssh-server': '8.8_p1-r9' }), '/usr/sbin/sshd': 'ELF', '/etc/ssh/sshd_config': '', '/etc/shadow': SHADOW }, dirs: { '/lib': ['ld-musl-x86_64.so.1'] } }));
-  assert.equal(old.status, 'EXPOSED', old.reason); assert.match(old.reason, /not fixed \(Alpine lists no fixed build of OpenSSH 8\.8_p1: it published fixes back to 3\.16, and the fix upstream is in 10\.6p2\)/);
+  assert.equal(old.status, 'EXPOSED', old.reason); assert.match(old.reason, /not fixed \(Alpine lists no fixed build for this release: it published fixes back to 3\.16, and the fix upstream is in 10\.6p2\)/);
   // a release file this can't name, with a fixed build: judged by the build
   assert.equal(run(machine({ files: { '/etc/alpine-release': 'weird\n', '/lib/apk/db/installed': db({ 'openssh-server': '10.3_p1-r2' }), '/usr/sbin/sshd': 'ELF' }, dirs: { '/lib': ['ld-musl-x86_64.so.1'] } })).status, 'UNKNOWN');
   assert.equal(run(machine({ files: { '/etc/alpine-release': 'weird\n', '/lib/apk/db/installed': db({ 'openssh-server': '10.6_p2-r0' }), '/usr/sbin/sshd': 'ELF' }, dirs: { '/lib': ['ld-musl-x86_64.so.1'] } })).status, 'SAFE');
@@ -376,7 +376,7 @@ test('no account name, password field or hash from /etc/shadow reaches any line,
 test('R1 a package pinned from another branch is judged as the build it is', () => {
   // 3.23's release file with 3.24's unfixed build read SAFE in the first build ("fixed on this branch is 10.2_p1-r1")
   const pinned = run(alpine({ branch: '3.23', version: '10.3_p1-r1' }));
-  assert.equal(pinned.status, 'UNKNOWN', pinned.reason); assert.match(pinned.reason, /not this release's own .* revision numbers differ between branches/);
+  assert.equal(pinned.status, 'UNKNOWN', pinned.reason); assert.match(pinned.reason, /this build is not Alpine 3\.23's own \(it may come from another branch\), and the same version can be fixed on one branch and not on another/);
   // and 3.24's FIXED build on 3.23 can't be told from an unfixed one by its version either: never SAFE
   assert.equal(run(alpine({ branch: '3.23', version: '10.3_p1-r2' })).status, 'UNKNOWN');
   assert.equal(run(alpine({ branch: '3.22', version: '10.6_p1-r1' })).status, 'UNKNOWN');
@@ -468,12 +468,12 @@ test('R10 the line never names a fixed build older than the one installed, and a
   const r = run(alpine({ branch: 'edge', version: '10.4_p1-r0' }));
   assert.equal(r.status, 'EXPOSED');
   assert.doesNotMatch(r.reason, /fixed build is 10\.3_p1-r2/);
-  assert.match(r.reason, /Alpine lists no fixed build of OpenSSH 10\.4_p1/);
+  assert.match(r.reason, /not fixed \(Alpine's fixed build for edge is 10\.6_p2-r0\)/);
   const k = run(alpine({ version: '10.3_p1-r1', pkg: 'openssh-server-krb5', dropins: { 'k.conf': 'UsePAM yes\n' } }));
-  assert.match(k.reason, /only a PAM build is installed \(openssh-server-krb5; Alpine builds openssh-server-pam and -krb5 with PAM\), with UsePAM yes, and the flaw needs sshd without PAM/);
+  assert.match(k.reason, /only a PAM build is installed \(openssh-server-krb5\), with UsePAM yes; the flaw needs sshd without PAM \(the CVE record/);
   // a Match block was read: it is its own sentence, not under "Not read"
   const m = run(alpine({ version: '10.3_p1-r1', dropins: { '00-no.conf': 'PasswordAuthentication no\n' }, config: 'Include /etc/ssh/sshd_config.d/*.conf\nMatch User git\n  PasswordAuthentication yes\n' }));
-  assert.match(m.reason, /nothing read here rules it out\. PasswordAuthentication is no, but a Match block in .* turns it on again for some logins\./);
+  assert.match(m.reason, /nothing read here rules it out\. PasswordAuthentication is no, but a Match block in .* turns it on again for some logins/);
   assert.doesNotMatch(m.reason, /Not read: PasswordAuthentication/);
   // no doubled brackets, no capitalised "Sshd"
   assert.doesNotMatch(run(alpine({ version: '10.3_p1-r1', shadow: 'root:*::0:::::\nada:$6$s$h:1::::::\n' })).reason, /\) \(/);
@@ -494,7 +494,7 @@ test('R11 the second review: a stray sshd never hides an EXPOSED, a link is not 
   const now = Date.now();
   const opts = alpine({ version: '10.3_p1-r1', dropins: { '00-no.conf': 'PasswordAuthentication no\n' }, procs: { procs: [{ pid: 77, start: now }] } });
   const withCmd = { ...opts, read: (p) => (p === '/proc/77/cmdline' ? 'sshd: /usr/sbin/sshd -o PasswordAuthentication=yes [listener] 0 of 10-100 startups\0' : opts.read(p)) };
-  const o = run(withCmd); assert.equal(o.status, 'EXPOSED', o.reason); assert.match(o.reason, /process 77\) was started with options on its command line/);
+  const o = run(withCmd); assert.equal(o.status, 'EXPOSED', o.reason); assert.match(o.reason, /Not read: sshd's settings, because sshd process 77 was started with options on its command line/);
   const plain = { ...opts, read: (p) => (p === '/proc/77/cmdline' ? 'sshd: /usr/sbin/sshd -D [listener] 0 of 10-100 startups\0' : opts.read(p)) };
   assert.equal(run(plain).status, 'REVIEW', '-D alone changes no setting');
   // an unreadable /etc/conf.d/sshd: not read, never ruled out (the review's surviving mutant)
@@ -518,4 +518,49 @@ test('isLink and changedAt read the disk as they say, on real files', () => {
   const old = new Date(Date.now() - 86400e3); fs.utimesSync(join(d, 'f'), old, old);
   assert.ok(changedAt(join(d, 'f')) > old.getTime() + 3600e3, 'ctime, not the stamped mtime');
   assert.equal(changedAt(join(d, 'none')), undefined);
+});
+
+test('R12 the bracket after fixed / not fixed follows the verdict, never contradicts it, and each reason names its own source', () => {
+  // the installed version is never offered as the fix of an unfixed build
+  const e = run(alpine({ branch: 'edge', version: '10.0_p1-r11' }));
+  assert.equal(e.status, 'EXPOSED'); assert.match(e.reason, /not fixed \(Alpine's fixed build for edge is 10\.6_p2-r0\)/); assert.doesNotMatch(e.reason, /fixed build for edge is 10\.0_p1-r11/);
+  // 3.23's fixed build on 3.24 may be exactly that fixed build: UNKNOWN, never a self-contradicting EXPOSED
+  const p = run(alpine({ branch: '3.24', version: '10.2_p1-r1' }));
+  assert.equal(p.status, 'UNKNOWN', p.reason);
+  assert.equal(run(alpine({ branch: '3.24', version: '10.2_p1-r0' })).status, 'EXPOSED', 'an older build that is no branch\'s fix');
+  // at or above the upstream fix
+  assert.match(run(alpine({ branch: '3.24', version: '10.7_p1-r0' })).reason, /fixed \(at or above OpenSSH 10\.6p2, which has the fix\)/);
+  // the CVE record is credited for PAM only, Alpine's advisory for the settings and accounts
+  const pam = run(alpine({ version: '10.3_p1-r1', pkg: 'openssh-server-pam', dropins: { 'p.conf': 'UsePAM yes\n' } }));
+  assert.match(pam.reason, /only a PAM build is installed \(openssh-server-pam\), with UsePAM yes; the flaw needs sshd without PAM \(the CVE record; Alpine's advisory says so of openssh-server-pam\)\. Update anyway/);
+  assert.doesNotMatch(pam.reason, /Alpine builds|advisories say/);
+  const pw = run(alpine({ version: '10.3_p1-r1', dropins: { 'n.conf': 'PasswordAuthentication no\n' } }));
+  assert.doesNotMatch(pw.reason, /CVE record/);
+  // no line ends with a full stop
+  for (const r of [e, p, pam, pw, run(alpine({ version: '10.3_p1-r1', shadow: null }))]) assert.doesNotMatch(r.reason, /\.$/, r.reason);
+  assert.match(inc.notCovered, /aports commit d3958a79/);
+});
+
+test('R13 the third review: a stray sshd voids the config reasons, and a command line that can\'t be read is not read', () => {
+  const v = '10.3_p1-r1';
+  // unfixed + /usr/local/sbin/sshd + PasswordAuthentication no in /etc/ssh: the stray reads its own config, so EXPOSED
+  const st = run(alpine({ version: v, dropins: { '00-no.conf': 'PasswordAuthentication no\n' }, files: { '/usr/local/sbin/sshd': 'ELF' } }));
+  assert.equal(st.status, 'EXPOSED', st.reason); assert.match(st.reason, /the sshd at \/usr\/local\/sbin\/sshd, which apk didn't install/);
+  // the account reasons hold for any sshd: REVIEW, and it still names the stray
+  const acc = run(alpine({ version: v, shadow: 'root:*::0:::::\ndeploy:*:1::::::\n', files: { '/usr/local/sbin/sshd': 'ELF' } }));
+  assert.equal(acc.status, 'REVIEW', acc.reason); assert.match(acc.reason, /Not read: the sshd at \/usr\/local\/sbin\/sshd/);
+  // /proc hiding other users' processes: whether a running sshd had options can't be read
+  const hid = run(alpine({ version: v, dropins: { '00-no.conf': 'PasswordAuthentication no\n' }, procs: { procs: [], problem: 'process 1 is not listed in /proc' } }));
+  assert.equal(hid.status, 'EXPOSED', hid.reason); assert.match(hid.reason, /whether a running sshd was started with options could not be read/);
+  // a command line that can't be read
+  const now = Date.now();
+  const m = alpine({ version: v, dropins: { '00-no.conf': 'PasswordAuthentication no\n' }, procs: { procs: [{ pid: 9, start: now }] } });
+  assert.equal(run(m).status, 'EXPOSED', 'no /proc/9/cmdline');
+  // -f, and a command line sshd hasn't retitled (NUL-separated)
+  const cmd = (c) => ({ ...m, read: (p) => (p === '/proc/9/cmdline' ? c : m.read(p)) });
+  assert.equal(run(cmd('sshd: /usr/sbin/sshd -f /etc/ssh/other [listener] 0 of 10-100 startups')).status, 'EXPOSED', '-f');
+  assert.equal(run(cmd('/usr/sbin/sshd\0-oPasswordAuthentication=yes\0')).status, 'EXPOSED', 'unretitled, NUL-separated');
+  assert.equal(run(cmd('/usr/sbin/sshd\0-D\0')).status, 'REVIEW', 'unretitled -D');
+  // 32-bit mips/ppc glibc loader
+  assert.equal(run(machine({ files: { '/usr/sbin/sshd': 'ELF /lib/ld.so.1 x' }, dirs: { '/lib': ['libc.so.6'] } })).status, 'SAFE');
 });

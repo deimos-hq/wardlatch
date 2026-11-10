@@ -37,8 +37,9 @@ This fixes no security defect in Wardlatch, so there is no advisory. `test/sshol
     above 10.6_p2 a build is fixed anywhere. Below it, only the fix of the branch `/etc/alpine-release` names counts:
     revision numbers mean nothing across branches (edge built an unfixed 10.0_p1-r11 in September 2025, the very
     version of 3.22's fixed build), so a newer build pinned from another branch is UNKNOWN, and on edge, on 3.15 or
-    older, or where the release can't be read, anything below 10.6_p2 is not fixed. A version that can't be read is
-    UNKNOWN. An sshd program apk didn't install, or a link where apk installed one, makes a fixed package UNKNOWN, and is
+    older, or where the release can't be read, anything below 10.6_p2 is not fixed, except a version that is one of
+    Alpine's fixed builds, which can't be told apart there and is UNKNOWN (so is 3.23's fixed build on 3.24). A version
+    that can't be read is UNKNOWN. An sshd program apk didn't install, or a link where apk installed one, makes a fixed package UNKNOWN, and is
     named as not read beside an unfixed one.
   - **A fixed package with an older daemon**: Alpine says upgrading doesn't restart a running sshd. A running `sshd`
     (or `sshd.pam`, `sshd.krb5`) that started before its program was installed is UNKNOWN with "restart sshd". The
