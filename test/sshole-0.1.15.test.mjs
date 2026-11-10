@@ -180,7 +180,8 @@ test('every branch: the revision before the fix is EXPOSED, the fix itself is SA
     const ok = run(alpine({ branch, version: fixed }));
     assert.equal(ok.status, 'SAFE', `${branch} ${fixed}: ${ok.reason}`);
     assert.ok(ok.searched.includes('/lib/apk/db/installed') && ok.searched.includes('/etc/alpine-release'), ok.searched.join());
-    assert.match(ok.reason, branch === 'edge' ? /fixed \(at or above OpenSSH 10\.6p2, which has the fix\)/ : new RegExp(`fixed \\(Alpine's fixed build for ${branch.replace(/\./g, '\\.')} is ${fixed.replace(/\./g, '\\.')}\\)`));
+    if (branch === 'edge') assert.match(ok.reason, /fixed \(at or above OpenSSH 10\.6p2, which has the fix\)/);
+    else assert.ok(ok.reason.includes(`fixed (Alpine's fixed build for ${branch} is ${fixed})`), ok.reason);
     assert.match(ok.reason, /no sshd process is running/);
     if (fixed.endsWith('-r0')) continue;
     const bad = run(alpine({ branch, version: prior(fixed) }));
