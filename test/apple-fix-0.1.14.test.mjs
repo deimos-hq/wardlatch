@@ -238,7 +238,7 @@ require('node:module').syncBuiltinESMExports();
 `);
   const empty = join(d, 'empty-path'); mkdirSync(empty);
   const home = join(d, 'home'); mkdirSync(home);
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(XDG_[A-Z_]+|GOENV|GOTOOLCHAIN|SSL_CERT_FILE|SSL_CERT_DIR|CURL_CA_BUNDLE|REQUESTS_CA_BUNDLE|NODE_EXTRA_CA_CERTS)$/.test(k)));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(XDG_[A-Z_]+|GOENV|GOTOOLCHAIN|SSL_CERT_FILE|SSL_CERT_DIR|CURL_CA_BUNDLE|REQUESTS_CA_BUNDLE|NODE_EXTRA_CA_CERTS|NODE_OPTIONS)$/.test(k)));
   const go = (json) => {
     const r = spawnSync(process.execPath, ['--require', pre, BIN, '--incident', 'emudhra-2026-10', '--no-containers', ...(json ? ['--json'] : [])], { encoding: 'utf8', env: { ...env, HOME: home, PATH: empty }, maxBuffer: 64 * 1024 * 1024 });
     return { code: r.status, out: r.stdout, err: r.stderr };
