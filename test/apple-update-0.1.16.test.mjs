@@ -18,7 +18,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bundleHolds, appleFileCheck, appleNote } from '../lib/macos.mjs';
+import { bundleHolds, appleFileCheck, appleNote, backupRows } from '../lib/macos.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'wardlatch.mjs');
@@ -84,14 +84,14 @@ test('U2 appleFileCheck: only on a release Apple names, only for the built-in to
 // The stand-in curl does what the measured one did: it refuses every test host (60), forced roots or not, and opens the
 // normal site (the advisory's own page). `accepts` names a test host it connects to; `errors` one it fails on another way;
 // `noControl` makes it fail the normal site too.
-function standIn({ version = '27.2.1', pem = APPLE_2721, backups = {}, accepts = '', errors = '', noControl = false, env = {}, curlrc = false, venvPem } = {}) {
+function standIn({ version = '27.2.1', pem = APPLE_2721, backups = {}, accepts = '', errors = '', noControl = false, env = {}, curlrc = false, venvPem, curl } = {}) {
   const d = mkdtempSync(join(dir, 'mac-'));
   const ssl = join(d, 'etc-ssl'); mkdirSync(ssl);
   if (pem !== null) writeFileSync(join(ssl, 'cert.pem'), pem);   // null: no cert.pem at all
   for (const [n, text] of Object.entries(backups)) { writeFileSync(join(ssl, n), text ?? ''); if (text === null) chmodSync(join(ssl, n), 0); }
   const files = { plist: join(d, 'SystemVersion.plist'), curl: join(d, 'curl') };
   writeFileSync(files.plist, plist(version));
-  writeFileSync(files.curl, `#!/bin/sh\ncase "$1" in --version) echo "curl 8.7.1 (x86_64-apple-darwin26.0)"; exit 0;; esac\nfor u; do :; done\ncase "$u" in\n  ${JSON.stringify(inc.advisory)}) ${noControl ? 'exit 60' : 'exit 0'};;\n  ${accepts ? `*${accepts}*) exit 0;;` : ''}\n  ${errors ? `*${errors}*) exit 7;;` : ''}\nesac\nexit 60\n`, { mode: 0o755 });
+  writeFileSync(files.curl, curl ?? `#!/bin/sh\ncase "$1" in --version) echo "curl 8.7.1 (x86_64-apple-darwin26.0)"; exit 0;; esac\nfor u; do :; done\ncase "$u" in\n  ${JSON.stringify(inc.advisory)}) ${noControl ? 'exit 60' : 'exit 0'};;\n  ${accepts ? `*${accepts}*) exit 0;;` : ''}\n  ${errors ? `*${errors}*) exit 7;;` : ''}\nesac\nexit 60\n`, { mode: 0o755 });
   const home = join(d, 'home'); mkdirSync(home);
   if (curlrc) writeFileSync(join(home, '.curlrc'), 'cacert = /somewhere/else.pem\n');
   const roots = [];
@@ -193,22 +193,26 @@ test('U6 a venv\'s certifi tested through the built-in curl: read by key, SAFE w
   assert.match(standIn({ venvPem: APPLE_272 }).go(false).out, /EXPOSED +certifi 2026\.10\.19 .* holds AAA Certificate Services/);
 });
 
-test('U7 a backup in /etc/ssl that still holds a withdrawn root is named, with Apple\'s words; read, never changed; only on a release Apple names', () => {
+test('U7 a backup in /etc/ssl that still holds a withdrawn root is a REVIEW row, with Apple\'s words; read, never changed; only on a release Apple names', () => {
   const backups = { 'cert.pem.bak': APPLE_272, 'cert.pem.wardlatch-20261102-124354.bak': APPLE_272, 'cert.pem.bak.1': APPLE_2721, 'cert.pem.orig': null, 'other.pem': APPLE_272 };
   const r = standIn({ backups }).go();
-  const notes = r.out.macos.notes.join('\n');
-  assert.match(notes, /\/etc\/ssl\/cert\.pem\.bak holds AAA Certificate Services .* and emSign ECC Root CA - G3 \(by key\): don't restore it\. Apple says not to restore a backup made before the update, and to delete it after updating/);
-  assert.match(notes, /\/etc\/ssl\/cert\.pem\.wardlatch-20261102-124354\.bak holds/);
-  assert.doesNotMatch(notes, /cert\.pem\.bak\.1 holds/, 'a clean copy is not named');
-  assert.doesNotMatch(notes, /other\.pem/, 'only copies of cert.pem');
-  assert.match(notes, /\/etc\/ssl\/cert\.pem\.orig could not be read here/);
-  // a note: no row, no change to the exit code
+  const rows = r.out.results.filter((x) => x.kind === 'backup');
+  assert.deepEqual(rows.map((x) => [x.file, x.status]), [['/etc/ssl/cert.pem.bak', 'REVIEW'], ['/etc/ssl/cert.pem.orig', 'REVIEW'], ['/etc/ssl/cert.pem.wardlatch-20261102-124354.bak', 'REVIEW']]);
+  const [bak, orig, ours] = rows;
+  assert.deepEqual(bak.heldRoots, [AAA, G3]);
+  assert.match(bak.reason, /^\/etc\/ssl\/cert\.pem\.bak is a copy of cert\.pem that still holds AAA Certificate Services .* and emSign ECC Root CA - G3 \(by key\)\. Don't restore it, even if a program stops connecting after the update: Apple says not to restore a backup made before the update, and to delete it once you have updated/);
+  assert.match(bak.reason, /Wardlatch read it and changed nothing\.$/);
+  assert.match(ours.reason, /^\/etc\/ssl\/cert\.pem\.wardlatch-20261102-124354\.bak \(the Mac fix's own backup\) is a copy/);
+  assert.match(orig.reason, /could not be read here/);
+  // a clean copy and a file that isn't a copy of cert.pem: nothing
+  assert.ok(!rows.some((x) => /bak\.1|other\.pem/.test(x.file)));
+  // REVIEW rows never move the exit code
   assert.equal(r.code, standIn().go().code);
-  assert.equal(r.out.results.length, standIn().go().out.results.length);
+  assert.match(standIn({ backups }).go(false).out, /^REVIEW +\/etc\/ssl\/cert\.pem\.bak$/m);
   // before the update the backups are the person's undo: nothing is said of them
-  assert.doesNotMatch(standIn({ version: '27.2', backups }).go().out.macos.notes.join('\n'), /don't restore it/);
-  // the unit: the same rule without a Mac
-  assert.deepEqual(appleNote(inc, { version: '27.2.1', certText: APPLE_2721, backups: [{ file: '/etc/ssl/cert.pem.bak', text: 'nothing\n' }] }).filter((n) => n.includes('cert.pem.bak')), []);
+  assert.deepEqual(standIn({ version: '27.2', backups }).go().out.results.filter((x) => x.kind === 'backup'), []);
+  assert.deepEqual(backupRows(inc, '27.2.1', [{ file: '/etc/ssl/cert.pem.bak', text: 'nothing\n' }]), []);
+  assert.deepEqual(backupRows({ ...inc, appleFix: undefined }, '27.2.1', [{ file: '/etc/ssl/cert.pem.bak', text: APPLE_272 }]), []);
 });
 
 test('U8 a failed forced-roots control never hides a connection: a host the tool opens with nothing forced in is EXPOSED, on any release', () => {
@@ -221,4 +225,60 @@ test('U8 a failed forced-roots control never hides a connection: a host the tool
   assert.equal(r.code, 1);
   // the control for the same release: nothing accepted, still UNKNOWN for the control
   assert.equal(standIn({ version: '27.2' }).go().curl.status, 'UNKNOWN');
+});
+
+// ---- W1, W2, W9 (the 10 Nov inspection of the updated Mac) ------------------------------------------------------------
+import { outcome } from '../lib/probe.mjs';
+// A stand-in curl that reports its verification result as curl's -w %{ssl_verify_result} does. It reads the LAST
+// --cacert, as curl does. `blockForced`: with a withdrawn root forced in, it answers 23 (certificate revoked), as macOS
+// 27.2.1's curl does, offline too; `binding`: with only the negative control's certificate it can't open a normal site
+// (as a curl that keeps to its CA file does); without it, it opens it anyway (Apple's keychain fallback, measured).
+const measuredCurl = ({ blockForced = true, binding = false } = {}) => `#!/bin/sh
+case "$1" in --version) echo "curl 8.7.1 (x86_64-apple-darwin26.0)"; exit 0;; esac
+ca=""; prev=""; for a; do [ "$prev" = --cacert ] && ca="$a"; prev="$a"; u="$a"; done
+case "$ca" in *negative-control.pem) [ "$u" = ${JSON.stringify(inc.advisory)} ] && { ${binding ? 'printf 20; exit 60' : 'printf 0; exit 0'}; };; esac
+[ "$u" = ${JSON.stringify(inc.advisory)} ] && { printf 0; exit 0; }
+case "$ca" in *emudhra-2026-10-root-*) ${blockForced ? 'printf 23; exit 60' : 'printf 0; exit 0'};; esac
+printf 20; exit 60
+`;
+
+test('W1 the exit code alone never says "blocked": curl\'s 60 is a block only with verify result 23; python\'s probe exits 4 for it', () => {
+  const e = (code) => ({ code });
+  assert.equal(outcome('curl', e(60), '23'), 'blocked');
+  assert.equal(outcome('curl', e(60), '23\n'), 'blocked');
+  for (const v of ['20', '', '2', '230', '0']) assert.equal(outcome('curl', e(60), v), 'refused', v);
+  assert.equal(outcome('curl', e(7), '23'), 'error');
+  assert.equal(outcome('curl', null, ''), 'ok');
+  assert.equal(outcome('python', e(4)), 'blocked'); assert.equal(outcome('python', e(1)), 'refused'); assert.equal(outcome('python', e(3)), 'error');
+  assert.equal(outcome('node', e(4)), 'blocked');
+});
+
+test('W1 Apple\'s curl answering "certificate revoked" with the roots forced in is SAFE by its own block, on the fixed release and before it', () => {
+  for (const version of ['27.2.1', '27.2']) {
+    const r = standIn({ version, curl: measuredCurl() }).go();
+    assert.equal(r.curl.status, 'SAFE', `${version}: ${JSON.stringify(r.curl)}`);
+    assert.equal(r.curl.note, 'blocks the compromised keys themselves, even with their roots trusted', version);
+    assert.equal(r.curl.fileRead, undefined, `${version}: the tool's own answer, not the file`);
+  }
+  // the control: a curl that gives 20 with the roots forced in is not blocked; on 27.2.1 the file decides (fileVerdict)
+  const r = standIn({ curl: measuredCurl({ blockForced: false }) }).go();
+  assert.notEqual(r.curl.note, 'blocks the compromised keys themselves, even with their roots trusted');
+});
+
+test('W2/W9 a venv\'s certifi tested through a curl that doesn\'t keep to its CA file is read by key, on any release; a curl that does is tested as before', () => {
+  for (const version of ['27.2.1', '27.2']) {
+    const clean = standIn({ version, venvPem: APPLE_2721, curl: measuredCurl() }).go();
+    assert.equal(clean.certifi.status, 'SAFE', `${version}: ${JSON.stringify(clean.certifi)}`);
+    assert.match(clean.certifi.note, /Read by key because this curl does not keep to a CA file it is given/);
+    const bad = standIn({ version, venvPem: APPLE_272, curl: measuredCurl() }).go();
+    assert.equal(bad.certifi.status, 'EXPOSED', version); assert.deepEqual(bad.certifi.heldRoots, [AAA, G3]);
+    // Apple's curl blocks the keys and refuses every host, but that is Apple's trust, not certifi's: never SAFE here
+    assert.notEqual(bad.certifi.note, 'blocks the compromised keys themselves, even with their roots trusted');
+  }
+  // a curl that keeps to its file and blocks the keys itself: the block says nothing of the bundle, which is read by key
+  const blk = standIn({ venvPem: APPLE_272, curl: measuredCurl({ binding: true }) }).go();
+  assert.equal(blk.certifi.status, 'EXPOSED'); assert.match(blk.certifi.reason, /holds AAA/);
+  // a curl that keeps to its file and does not block: the test hosts decide, as before 0.1.16 (no file read)
+  const lin = standIn({ version: '27.2', venvPem: APPLE_2721, curl: measuredCurl({ binding: true, blockForced: false }) }).go();
+  assert.equal(lin.certifi.status, 'SAFE', JSON.stringify(lin.certifi)); assert.equal(lin.certifi.fileRead, undefined);
 });

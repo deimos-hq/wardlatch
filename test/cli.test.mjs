@@ -356,7 +356,8 @@ test('a container engine that hangs or fails is UNKNOWN (exit 2), never "not run
   assert.equal(failing.code, 2); assert.match(rows(failing)[0]?.[2] ?? '', /^could not list its containers \(error during connect: Get /);
   const stopped = engine('stopped', "echo 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?' >&2; exit 1");
   assert.deepEqual(rows(trust(stopped)), [], 'a daemon that is not running has no containers to check');
-  assert.match(trust(stopped, false).out, /docker: not running, so no running containers to check/);
+  // 0.1.16 (W10): in plain words, and how to include them
+  assert.match(trust(stopped, false).out, /Docker is not running, so it has no running containers to check \(start it and run again to include them\)/);
 });
 
 test('with PATH unset, git is never looked up in the current folder: a git planted there does not run', () => {

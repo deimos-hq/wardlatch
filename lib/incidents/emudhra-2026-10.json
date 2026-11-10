@@ -173,7 +173,7 @@
       }
     ]
   },
-  "notCovered": "A compiled program does not pick this change up from the system, so it has to be rebuilt or replaced: rebuild Go programs with Go 1.27.3 or 1.26.10; update Electron apps to 44.9.1, 43.8.1 or 42.11.16; Rust: rustls-webpki 0.103.16, webpki-roots 1.0.10. Browsers: Chrome, Edge, Firefox and Safari block the intermediates through their own updates; check yours at the advisory's #check page.",
+  "notCovered": "A compiled program does not pick this change up from the system, so it has to be rebuilt or replaced: rebuild Go programs with Go 1.27.3 or 1.26.10 (on Linux and in containers: on a Mac, Go programs use Apple's own certificate check, and one Go 1.26.2 program on macOS 27.2.1 was measured refusing the 12 certificates, whatever SSL_CERT_FILE said); update Electron apps to 44.9.1, 43.8.1 or 42.11.16; Rust: rustls-webpki 0.103.16, webpki-roots 1.0.10. Browsers: Chrome, Edge, Firefox and Safari block the intermediates through their own updates; check yours at the advisory's #check page.",
   "type": "trust",
   "binaries": [
     {

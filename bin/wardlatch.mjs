@@ -25,7 +25,7 @@ import { pathState, readText, listDir, realPath, entriesByMetadata, denialCode, 
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
 import { safe, saw, withdrawUnreceipted } from '../lib/report.mjs';
 import { escapeHidden, escapeJsonHidden } from '../lib/escape.mjs';
-import { trustFix, readMacosVersion, appleNote, appleFixState, appleUnknownNote, appleFileCheck, appleSystemRow } from '../lib/macos.mjs';
+import { trustFix, readMacosVersion, appleNote, appleFixState, appleUnknownNote, appleFileCheck, appleSystemRow, backupRows } from '../lib/macos.mjs';
 import { checkSshole } from '../lib/sshd.mjs';
 
 // npx puts the current project's node_modules/.bin, and each parent folder's, first on PATH. Wardlatch finds git,
@@ -424,7 +424,7 @@ for (const inc of chosen) {
       // on a release where Apple says the built-in tools block the 12 certificates themselves, the file they read stands
       // in for the forced-roots control (lib/probe.mjs fileVerdict); settings that point them elsewhere keep it UNKNOWN
       const { fileCheck, skipped } = appleFileCheck(inc, rt, { os: platform(), macos, env: process.env, home: homedir(), exists: (f) => pathState(f) === 'file' });
-      const r = await check(rt, canaries, { rootsPem, controlUrl: inc.advisory, fileCheck });
+      const r = await check(rt, canaries, { rootsPem, controlUrl: inc.advisory, fileCheck, bundleCheck: { inc, negativeCa: join(LIB, 'negative-control.pem') } });
       const row = { incident: inc.id, ...rt, ...r, fix: r.status === 'EXPOSED' ? fixFor(rt) : undefined };
       results.push(row);
       const what = rt.label ? `${rt.label} ${rt.version}` : `${rt.kind} ${rt.version}  ${short(rt.bin)}${rt.env ? `  (${short(rt.env)})` : ''}`;
@@ -449,7 +449,9 @@ for (const inc of chosen) {
         const etc = listDir('/etc/ssl');
         const backups = (etc.entries ?? []).map((e) => e.name).filter((n) => n.startsWith('cert.pem.')).sort().map((n) => ({ file: `/etc/ssl/${n}`, text: readText(`/etc/ssl/${n}`, 4 * 1024 * 1024) }));
         if (etc.denied) backups.push({ file: '/etc/ssl (its list of files)', text: null });
-        notes = appleNote(inc, { version: macos, certText: readText('/etc/ssl/cert.pem', 4 * 1024 * 1024), backups });
+        notes = appleNote(inc, { version: macos, certText: readText('/etc/ssl/cert.pem', 4 * 1024 * 1024) });
+        // REVIEW rows, never a status that moves the exit code: the files Apple says not to put back
+        for (const row of backupRows(inc, macos, backups)) { results.push({ incident: inc.id, ...row }); print('REVIEW', short(row.file)); note('33', row.reason); }
       } catch (e) { notes = [`what Apple says of this Mac's release could not be worked out here (${String(e?.message ?? e).slice(0, 120)})`]; }
       for (const n of notes) note('2', n);
       appleSaid = { version: macos, appleFix: appleFixState(macos, inc.appleFix.releases), source: inc.appleFix.source, notes };
@@ -467,9 +469,11 @@ for (const inc of chosen) {
     if (expired) note('33', `the test hosts' certificates expired on ${inc.canaryNotAfter}: containers can't be tested against them`);
     hostVarsRow(results, inc, 'containers');
     // Running containers keep their image's trust list, whatever the host has.
+    // W10: say what wasn't looked at, in words: a stopped engine, or containers left out on purpose
+    if (flag('--no-containers')) note('2', 'containers were not checked (--no-containers)');
     for (const engine of flag('--no-containers') ? [] : ['docker', 'podman'].filter((e) => findOnPath(e))) {
       const list = listContainers(engine);
-      if (list === null) { note('2', `${engine}: not running, so no running containers to check`); continue; }
+      if (list === null) { note('2', `${engine === 'docker' ? 'Docker' : 'Podman'} is not running, so it has no running containers to check (start it and run again to include them)`); continue; }
       if (list.error) { results.push({ incident: inc.id, kind: 'containers', engine, status: 'UNKNOWN', reason: list.error }); print('UNKNOWN', `${engine} containers`); note('33', list.error); continue; }
       for (const ct of list) {
         const r = expired ? { status: 'UNKNOWN', trusted: [], tested: 0, reason: `the test hosts' certificates expired on ${inc.canaryNotAfter}, so a refusal here would prove nothing` } : await checkContainer(engine, ct, canaries, { controlUrl: inc.advisory });
