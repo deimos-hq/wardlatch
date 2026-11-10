@@ -22,6 +22,8 @@ exports.fakeHome = (name, folder) => {
   for (const k of ['existsSync', 'statSync', 'lstatSync', 'readdirSync', 'openSync']) { const o = saved[k] = fs[k]; fs[k] = (p, ...a) => o(to(p), ...a); }
   const rp = saved.realpathSync = fs.realpathSync;
   fs.realpathSync = (p, ...a) => back(rp(to(p), ...a));
+  // and the OS's realpath (lib/files.mjs realPathAsWritten) the same way
+  if (rp.native) fs.realpathSync.native = (p, ...a) => back(rp.native(to(p), ...a));
   syncBuiltinESMExports();
   return () => { Object.assign(fs, saved); syncBuiltinESMExports(); };
 };
