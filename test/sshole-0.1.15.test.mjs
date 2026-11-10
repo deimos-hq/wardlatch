@@ -545,7 +545,10 @@ test('R13 the third review: a stray sshd voids the config reasons, and a command
   const v = '10.3_p1-r1';
   // unfixed + /usr/local/sbin/sshd + PasswordAuthentication no in /etc/ssh: the stray reads its own config, so EXPOSED
   const st = run(alpine({ version: v, dropins: { '00-no.conf': 'PasswordAuthentication no\n' }, files: { '/usr/local/sbin/sshd': 'ELF' } }));
-  assert.equal(st.status, 'EXPOSED', st.reason); assert.match(st.reason, /the sshd at \/usr\/local\/sbin\/sshd, which apk didn't install/);
+  assert.equal(st.status, 'EXPOSED', st.reason); assert.match(st.reason, /the sshd at \/usr\/local\/sbin\/sshd, which apk didn't install and which may not use \/etc\/ssh\/sshd_config/);
+  // a release that can't be named is not said to have no fix
+  const weird = run(machine({ files: { '/etc/alpine-release': 'weird\n', '/lib/apk/db/installed': db({ 'openssh-server': '10.5_p1-r0' }), '/usr/sbin/sshd': 'ELF', '/etc/ssh/sshd_config': '', '/etc/shadow': SHADOW }, dirs: { '/lib': ['ld-musl-x86_64.so.1'] } }));
+  assert.equal(weird.status, 'EXPOSED'); assert.match(weird.reason, /not fixed \(this release can't be named, so its fixed build isn't known; the fix upstream is in 10\.6p2\)/);
   // the account reasons hold for any sshd: REVIEW, and it still names the stray
   const acc = run(alpine({ version: v, shadow: 'root:*::0:::::\ndeploy:*:1::::::\n', files: { '/usr/local/sbin/sshd': 'ELF' } }));
   assert.equal(acc.status, 'REVIEW', acc.reason); assert.match(acc.reason, /Not read: the sshd at \/usr\/local\/sbin\/sshd/);

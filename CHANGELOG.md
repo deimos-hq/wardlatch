@@ -40,7 +40,8 @@ This fixes no security defect in Wardlatch, so there is no advisory. `test/sshol
     older, or where the release can't be read, anything below 10.6_p2 is not fixed, except a version that is one of
     Alpine's fixed builds, which can't be told apart there and is UNKNOWN (so is 3.23's fixed build on 3.24). A version
     that can't be read is UNKNOWN. An sshd program apk didn't install, or a link where apk installed one, makes a
-    fixed package UNKNOWN. Beside an unfixed one it is named as not read, and since it reads its own configuration,
+    fixed package UNKNOWN. Beside an unfixed one it is named as not read, and since it may read a configuration other than
+    `/etc/ssh`'s,
     nothing in `/etc/ssh` can make the row REVIEW then; only the account reasons can.
   - **A fixed package with an older daemon**: Alpine says upgrading doesn't restart a running sshd. A running `sshd`
     (or `sshd.pam`, `sshd.krb5`) that started before its program was installed is UNKNOWN with "restart sshd". The
