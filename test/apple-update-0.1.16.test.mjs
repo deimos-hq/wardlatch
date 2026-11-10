@@ -112,7 +112,7 @@ Object.defineProperty(process, 'platform', { value: 'darwin' });
 require('node:os').platform = () => 'darwin';
 const MAP = ${JSON.stringify({ '/System/Library/CoreServices/SystemVersion.plist': files.plist, '/usr/bin/curl': files.curl })};
 const SSL = ${JSON.stringify(ssl)};
-const SYS = /^\\/(usr|etc|opt|bin|sbin|System|Library)(\\/|$)/;
+const SYS = /^\\/(usr|etc|opt|bin|sbin|System|Library|Applications)(\\/|$)/;
 const gone = () => Object.assign(new Error('hidden by the test'), { code: 'ENOENT' });
 const m = (p) => { const s = String(p); if (MAP[s]) return MAP[s]; if (s === '/etc/ssl' || s.startsWith('/etc/ssl/')) return SSL + s.slice(8); if (SYS.test(s)) throw gone(); return p; };
 const exists = fs.existsSync; fs.existsSync = (p) => { try { return exists(m(p)); } catch { return false; } };
@@ -281,4 +281,23 @@ test('W2/W9 a venv\'s certifi tested through a curl that doesn\'t keep to its CA
   // a curl that keeps to its file and does not block: the test hosts decide, as before 0.1.16 (no file read)
   const lin = standIn({ version: '27.2', venvPem: APPLE_2721, curl: measuredCurl({ binding: true, blockForced: false }) }).go();
   assert.equal(lin.certifi.status, 'SAFE', JSON.stringify(lin.certifi)); assert.equal(lin.certifi.fileRead, undefined);
+});
+
+import { pipListRows } from '../lib/probe.mjs';
+test('W4 pip\'s own list, read by key: a REVIEW row when it holds a withdrawn root or can\'t be read; nothing when clean or absent', () => {
+  const site = (name, text) => { const d = join(dir, 'w4', name, 'site-packages'); mkdirSync(join(d, 'pip', '_vendor', 'certifi'), { recursive: true }); if (text !== undefined) writeFileSync(join(d, 'pip', '_vendor', 'certifi', 'cacert.pem'), text); return d; };
+  const held = site('held', APPLE_272), clean = site('clean', APPLE_2721), none = site('none'), broken = site('broken', `${APPLE_2721}\n-----BEGIN TRUSTED CERTIFICATE-----\nAAAA\n-----END TRUSTED CERTIFICATE-----\n`);
+  const locked = site('locked', APPLE_272); chmodSync(join(locked, 'pip', '_vendor', 'certifi', 'cacert.pem'), 0);
+  const rows = pipListRows(inc, [held, clean, none, broken, locked]);
+  assert.deepEqual(rows.map((r) => [r.file.split('/w4/')[1], r.status]), [['held/site-packages/pip/_vendor/certifi/cacert.pem', 'REVIEW'], ['broken/site-packages/pip/_vendor/certifi/cacert.pem', 'REVIEW'], ['locked/site-packages/pip/_vendor/certifi/cacert.pem', 'REVIEW']]);
+  assert.deepEqual(rows[0].heldRoots, [AAA, G3]);
+  assert.match(rows[0].reason, /pip uses this list only when run with --use-deprecated=legacy-certs/);
+  assert.match(rows[1].reason, /1 of 124 certificates could not be read here/);
+  assert.match(rows[2].reason, /could not be read here, so whether it holds the withdrawn roots was not checked/);
+  assert.ok(rows.every((r) => r.kind === 'pip-list' && r.status === 'REVIEW'), 'never SAFE or EXPOSED: it takes a flag to be used');
+  chmodSync(join(locked, 'pip', '_vendor', 'certifi', 'cacert.pem'), 0o644);
+});
+
+test('W8 the Go rebuild advice says it is for Linux and containers, and what was measured on a Mac', () => {
+  assert.match(inc.notCovered, /rebuild Go programs with Go 1\.27\.3 or 1\.26\.10 \(on Linux and in containers: on a Mac, Go programs use Apple's own certificate check, and one Go 1\.26\.2 program on macOS 27\.2\.1 was measured refusing the 12 certificates, whatever SSL_CERT_FILE said\);/);
 });

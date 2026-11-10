@@ -229,7 +229,7 @@ const cp = require('node:child_process'), { EventEmitter } = require('node:event
 Object.defineProperty(process, 'platform', { value: 'darwin' });
 require('node:os').platform = () => 'darwin';
 const MAP = ${JSON.stringify(map)};
-const SYS = /^\\/(usr|etc|opt|bin|sbin|System|Library)(\\/|$)/;
+const SYS = /^\\/(usr|etc|opt|bin|sbin|System|Library|Applications)(\\/|$)/;
 const gone = () => Object.assign(new Error('hidden by the test'), { code: 'ENOENT' });
 const m = (p) => { const s = String(p); if (MAP[s]) { fs.appendFileSync(${JSON.stringify(files.log)}, s + '\\n'); return MAP[s]; } if (SYS.test(s)) throw gone(); return p; };
 const exists = fs.existsSync; fs.existsSync = (p) => { try { return exists(m(p)); } catch { return false; } };

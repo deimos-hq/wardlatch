@@ -10,10 +10,10 @@ import { join, dirname, basename, delimiter, isAbsolute, resolve } from 'node:pa
 import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { discover, NOT_WALKED as TRUST_NOT_WALKED } from '../lib/discover.mjs';
-import { canaryExpired, check, reachable } from '../lib/probe.mjs';
+import { canaryExpired, check, reachable, pipListRows } from '../lib/probe.mjs';
 import { droppedNodeOptions } from '../lib/run.mjs';
 import { checkBinaryAll, findOnPath, tmpTraces, tempDirs } from '../lib/binaries.mjs';
-import { checkVersionFiles, sitePackagesDirs, checkSitePackages, localImageDigests, checkImages, NOT_WALKED as VENV_NOT_WALKED } from '../lib/installs.mjs';
+import { checkVersionFiles, sitePackagesDirs, checkSitePackages, localImageDigests, checkImages, NOT_WALKED as VENV_NOT_WALKED, SITE_PATTERNS, expand } from '../lib/installs.mjs';
 import { checkBundled } from '../lib/brotli.mjs';
 import { listContainers, checkContainer, engineHost } from '../lib/containers.mjs';
 import { reposUnder, workflowsAddedSince, windowStart, NOT_WALKED as REPO_NOT_WALKED, NESTED_SAID } from '../lib/workflows.mjs';
@@ -463,6 +463,11 @@ for (const inc of chosen) {
       print('UNKNOWN', u.label); note('33', u.reason);
     }
     notRunRow(results, inc, 'trust', notRun);
+    // W4: pip's own list in the machine's Python folders, read by key: REVIEW rows only (it takes a flag to be used)
+    {
+      const pipDirs = [...new Set(SITE_PATTERNS.flatMap((p) => expand(p, [], [])).map((d) => realPath(d) ?? d))];
+      for (const row of pipListRows(inc, pipDirs)) { results.push({ incident: inc.id, ...row }); print('REVIEW', `pip's own list  ${short(row.file)}`); note('33', row.reason); }
+    }
     // the test hosts' certificates expire: after that a container (which has no forced-roots control) would read every
     // refusal as SAFE, so containers are UNKNOWN once the incident's notAfter has passed
     const expired = canaryExpired(inc);
