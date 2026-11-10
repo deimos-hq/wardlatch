@@ -11,113 +11,81 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
-## [0.1.15] - 2026-11-10
+## [0.1.16] - 2026-11-11
 
-The first new incident since 22 October: SSHole, CVE-2026-123158. sshd in OpenSSH before 10.6p2, on Linux with musl
-libc and without PAM, accepts a very long password for an account whose password field is `*` (no password set, as for a
-key-only account) when another local account has a `$5$` or `$6$` hash. Alpine's advisory says 257 to 1024 bytes; the CVE
-record says between 256 and 1024 characters. Alpine is such a system. CISA added it to its Known Exploited
-Vulnerabilities catalog on 9 Nov 2026, due 12 Nov. Sources:
-[Alpine's advisory](https://alpinelinux.org/posts/2026-11-05-openssh-password-authentication-bypass/) (5 Nov),
-[the CVE record](https://www.cve.org/CVERecord?id=CVE-2026-123158),
-[OpenSSH 10.6p2's release notes](https://www.openssh.org/releasenotes.html#10.6p2),
-[Alpine's secdb](https://secdb.alpinelinux.org/) for each branch's fixed build, and
-[CISA's catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog?field_cve=CVE-2026-123158).
-This fixes no security defect in Wardlatch, so there is no advisory. `test/sshole-0.1.15.test.mjs` holds the tests.
+Three incidents, and Macs that took Apple's 9 November update now get answers instead of "could not be tested".
 
-### Added
+- **Brotli, CVE-2026-111497** (`brotli-2026-10`). The decoder flaw in Node.js, Bun, Python packages (Brotli, brotlicffi,
+  Pillow, opencv-python) and Brotli libraries. CISA lists Google's Brotli as known to be exploited (added 27 Oct 2026,
+  due 10 Nov). Wardlatch reads each decoder's own bytes, because version numbers mislead here (Node.js 26.12.1 is fixed
+  and reports Brotli 1.2.0). On a Mac it also says what Apple's notes of 9 Nov say of macOS's own copy.
+- **Google Chrome, CVE-2026-125350** (`chrome-2026-11`). Fixed in 157.0.8103.50 (.51 on Mac and Windows) on 9 Nov;
+  Google says an exploit exists in the wild. Wardlatch reads the installed version and never starts Chrome.
+- **CISA's catalog dates** under every incident CISA lists as exploited: SSHole, Brotli, PHP and Plex.
+- **After Apple's update** (macOS 27.2.1, 26.7.3, 15.8.3): 0.1.14 and 0.1.15 read the built-in curl and python3 as
+  "could not be tested" on an updated Mac, because those tools now refuse the compromised certificates even when the
+  withdrawn roots are put back. That refusal is now counted for what it is, Apple's own block.
 
-- **`sshole-2026-11`**, Linux only, read-only. It never runs sshd (not even `sshd -T`) and never connects to a port.
-  - **musl or not**: `/etc/alpine-release`, or musl's loader `/lib/ld-musl-*.so.1`. A glibc system is SAFE only when
-    every sshd program found names glibc's loader; one that doesn't may be built against musl, and is UNKNOWN.
-  - **The package**: `openssh-server`, and Alpine's two PAM builds `openssh-server-pam` and `openssh-server-krb5` (both
-    built `--with-pam`, per aports `main/openssh/APKBUILD`), in
-    `/lib/apk/db/installed`, judged against Alpine's fixed builds (edge 10.6_p2-r0, 3.24 10.3_p1-r2 … 3.16 9.0_p1-r6).
-    Alpine backported the fix, so on 3.24 10.3_p1-r2 is fixed though it is below 10.6p2, and 10.3_p1-r1 is not. At or
-    above 10.6_p2 a build is fixed anywhere. Below it, only the fix of the branch `/etc/alpine-release` names counts:
-    revision numbers mean nothing across branches (edge built an unfixed 10.0_p1-r11 in September 2025, the very
-    version of 3.22's fixed build), so a newer build pinned from another branch is UNKNOWN, and on edge, on 3.15 or
-    older, or where the release can't be read, anything below 10.6_p2 is not fixed, except a version that is one of
-    Alpine's fixed builds, which can't be told apart there and is UNKNOWN (so is 3.23's fixed build on 3.24). A version
-    that can't be read is UNKNOWN. An sshd program apk didn't install, or a link where apk installed one, makes a
-    fixed package UNKNOWN. Beside an unfixed one it is named as not read, and since it may read a configuration other than
-    `/etc/ssh`'s,
-    nothing in `/etc/ssh` can make the row REVIEW then; only the account reasons can.
-  - **A fixed package with an older daemon**: Alpine says upgrading doesn't restart a running sshd. A running `sshd`
-    (or `sshd.pam`, `sshd.krb5`) that started before its program was installed is UNKNOWN with "restart sshd". The
-    install time is the file's inode change time, since apk sets each file's modification time from the package. The start
-    times come from `/proc`, and are believed only when this process's own start, read the same way, comes out right.
-  - **An unfixed package** is EXPOSED, unless something Alpine's advisory says the flaw needs was read as missing,
-    which makes it REVIEW (still to update): `PasswordAuthentication no` with no `Match` block setting it again, a PAM
-    build alone with `UsePAM yes`, no account with `*` that the flaw can use, or no `$`-hash. Any setting in
-    `/etc/conf.d/sshd`, a second sshd instance, or a running sshd started with `-o` or `-f` on its command line (read
-    from `/proc/<pid>/cmdline`) makes the settings "not read", as does a command line or a process list this can't read,
-    or an `Include` it can't read. A REVIEW line names what wasn't read, as an EXPOSED line does.
-    `/etc/shadow` is read only when this user may (usually root), and only counted: no name, field or hash is printed.
-    `/etc/passwd` is read for accounts with `*` and no shadow line. Root counts only with `PermitRootLogin yes`, as
-    Alpine says. Accounts from a directory service can't be seen here, so they never make it REVIEW. What couldn't be
-    read is named on the line.
-  - The fix is Alpine's: `apk upgrade -U -a`, then restart sshd, or turn password logins off until then (after checking
-    that a key login works). Wardlatch doesn't read logs, so it can't say whether anyone got in; it gives Alpine's
-    advice on where to look.
-  - Not covered: sshd in containers and images.
+Sources: [CISA's catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog),
+[Brotli 1.2.1](https://github.com/google/brotli/releases/tag/v1.2.1),
+[Apple's notes for macOS 27.2.1](https://support.apple.com/en-us/149718), [26.7.3](https://support.apple.com/en-us/149719)
+and [15.8.3](https://support.apple.com/en-us/149720), [Apple's eMudhra page](https://support.apple.com/en-us/149555),
+[Chrome's stable update of 9 Nov](https://chromereleases.googleblog.com/2026/11/stable-channel-update-for-desktop_018223192.html).
+What we measured on one Mac on 10 Nov 2026, before and after its update to 27.2.1, is in
+`test/support/fixtures/README.md`; the tests are `test/brotli-0.1.16.test.mjs`, `test/brotli.test.mjs`,
+`test/kev.test.mjs`, `test/apple-update-0.1.16.test.mjs` and `test/chrome-0.1.16.test.mjs`.
 
-## [0.1.14] - 2026-11-10
+### Security
 
-Apple shipped its fix for `/etc/ssl/cert.pem` on 9 November 2026, and from that day Wardlatch's words "no macOS release
-has fixed it yet" and "run this again after every update" were wrong. Apple says macOS 27.2.1, 26.7.3 and 15.8.3 remove
-the two withdrawn roots from the file, "along with three other eMudhra root CA certificates", and that on these releases
-the built-in command-line tools stop accepting the 12 compromised certificates
-([Apple, support.apple.com/en-us/149555](https://support.apple.com/en-us/149555), as published on 9 Nov 2026). This
-release says so. No result changes: SAFE, EXPOSED and UNKNOWN still come from what each tool does with the test hosts,
-not from a version number. This fixes no security defect, so there is no advisory. `test/apple-fix-0.1.14.test.mjs`
-holds the tests.
+Two defects in released code that could read SAFE where something was wrong. ADVISORY: owner's decision, pending.
 
-### Changed
-
-- **The built-in curl's and python3's fix texts follow the macOS release.** On a Mac, Wardlatch reads `ProductVersion`
-  from `/System/Library/CoreServices/SystemVersion.plist` (a file read; nothing is run for it).
-  - On 27.2, 26.7.2, 15.8.2 or any earlier release of those three, or when the version can't be read, an EXPOSED
-    `/usr/bin/curl` or `/usr/bin/python3` is told to update macOS, and to use the Mac fix if it can't.
-  - On macOS 14 or older, for which Apple names no update, it is told to update to macOS 15 or later if it can, and
-    otherwise to use the Mac fix.
-  - On 27.2.1, 26.7.3, 15.8.3 or later, where Apple says the roots are gone, it is told how to look at the file, that
-    Apple says not to restore a backup made before the update, and how to remove the roots.
-  - The python3 text no longer says "see the curl line", which wasn't there when curl read SAFE.
-- **A note under the eMudhra rows on a Mac**: the macOS version, what Apple says of it, and whether `/etc/ssl/cert.pem`
-  still holds `emSign Root CA - G1`, `emSign Root CA - C1` or `emSign ECC Root CA - C3`, the three other roots Apple's
-  update removes. Apple did not say their keys were compromised, so they are a note and change no result. On a release
-  Apple says removes them, a file that still holds them is not what Apple says the update installs, and the note says so.
-  A file from which no certificate can be read says that, rather than nothing. `--json` carries the note as `macos`:
-  `{ version, appleFix, source, notes }`.
-- **An UNKNOWN for the built-in curl or python3 on 27.2.1, 26.7.3, 15.8.3 or later says why it may be one.** Apple says
-  those releases block the 12 certificates in the built-in tools themselves, which could make the test's forced-roots
-  control fail too. We haven't measured that on an updated Mac, so the row stays UNKNOWN and says so, and its reason
-  no longer says the error was not a block.
-- **The words "a macOS update puts Apple's original file back" are now about a Mac that can't update to those
-  releases.** We measured updates to 26.7.2 (27 Oct) and 27.2 (28 Oct) doing it. We haven't measured what an update to
-  27.2.1, 26.7.3 or 15.8.3 does to a file already changed by hand, and nothing here says.
-- **The Mac fix download has a new digest, for its words only.** Its opening comment, the scope lines under every SAFE
-  and the message for a damaged file said that no macOS release had fixed the file and that every update undoes the fix.
-  They name Apple's releases now, and the Undo line says Apple's own limit on it: don't undo after updating to 27.2.1,
-  26.7.3 or 15.8.3. No line of its logic changed, and no verdict or exit code. Its SHA-256 is
-  `0dae0dc901a23aba216211f4ef6002a6d75b232fe479ef79db463d5c1dc9b98c`; a copy with SHA-256 `893f53cb...` needn't be replaced.
-- **The Mac fix's test suite could fail on a run that was fine.** `test/fix-macos.check.sh` piped the output into
-  `grep -q`, and under `pipefail` grep stopping at its first match can kill the writer, so a case read "printed no line"
-  while it had printed two. Seen once in four runs under load; the old form failed 7 times in 300 on a 5,000-line output.
-  It reads a here-string now.
-
-## [0.1.13] - 2026-11-03
-
-We found every defect under Security below ourselves, on 2 November 2026, while checking the advisories for 0.1.11 and
-0.1.12. Each could read `SAFE` where something was wrong. If 0.1.12 or earlier said `SAFE`, run this version. The advisory is
-GHSA-2q92-ggx3-wq82. `test/seat11.test.mjs` holds the tests; L1 runs on Linux only.
+- **On a Mac, a virtual environment's certifi could read SAFE because of Apple's trust, not certifi's list** (0.1.x
+  to 0.1.15, macOS only). Wardlatch tested a venv's certifi bundle by giving it to the built-in curl with `--cacert`.
+  Apple's curl doesn't keep to a CA file: when the file can't vouch for a site it falls back to the system's trust
+  (long-standing: curl issue #12604, 2023, which Apple says is intended). So the row measured Apple's trust, which
+  blocks the compromised certificates, and a certifi list that still held a withdrawn root could read SAFE, while a
+  program using that list with its own OpenSSL would trust the chain. A bundle row now first gives the curl a CA file
+  holding only a certificate that vouches for no site (`lib/negative-control.pem`, made for this; no private key is
+  kept). If the curl still opens a normal site, or if it blocks the compromised keys itself, the bundle is read by key
+  instead (below). Found on 10 Nov 2026 by an inspection of an updated Mac; fixed the same day.
+- **A path with `..` after a link was cleaned up as text, so Wardlatch read, ran or hashed another file than the one
+  your programs use** (0.1.0 to 0.1.15). The fix was written on the Brotli branch in late October and recorded on
+  1 Nov 2026 as a defect in released code, then held with that branch until this release: nine days longer than this
+  policy allows, because it was not split out of an unfinished branch. Details under Fixed below.
 
 ### Added
+
+- **CISA KEV lines.** An incident whose CVE is in CISA's Known Exploited Vulnerabilities catalog prints one line under
+  its title, in CISA's own vendor and product words ("CISA KEV: Google Brotli CVE-2026-111497 is known to be exploited ·
+  added 27 Oct 2026 · due date for US federal agencies 10 Nov 2026 · <link>"), and `--json` carries the rows with their
+  links under `incidents[].kev`. Wardlatch never fetches the catalog: `scripts/kev-snapshot.mjs` copies the rows from a
+  whole read of CISA's feed before a release (it refuses a partial one), and `test/kev.test.mjs` fails if an incident
+  file and that copy disagree in either direction. Catalog 2026.11.09: SSHole, Brotli, PHP (two CVEs) and Plex (four)
+  are listed; GitLab's CVE-2026-110264 and Chrome's CVE-2026-125350 are not.
+- **`chrome-2026-11`.** Reads Chrome's `Info.plist` in `/Applications` and `~/Applications` and dpkg's record of
+  `google-chrome-stable`. Below 157.0.8103.50 is EXPOSED. At or past it is REVIEW, not SAFE: a Chrome left open since
+  it updated runs the old version until it restarts, and no file says which version is running. Other Chromium
+  browsers, Chrome's other channels and Chrome from snap, Flatpak or an RPM are named under "not covered".
+- **macOS's own Brotli.** On a Mac the Brotli check gives one row from the macOS version and Apple's notes of 9 Nov
+  2026, and says that is all it rests on (Apple's copy is inside the system, not a file Wardlatch reads): SAFE on
+  27.2.1, 26.7.3, 15.8.3 or later; EXPOSED, with "update macOS", before them; could not be tested on macOS 14 or older,
+  for which Apple names no update. It stands in for no other row: the all-clear for copies on disk is still given.
+- **Leftover copies of `/etc/ssl/cert.pem`.** On a release Apple names, each `/etc/ssl/cert.pem.*` that still holds a
+  withdrawn root (by key) is a REVIEW line, the Mac fix's own backup included, with Apple's words: don't restore it,
+  even if a program stops connecting after the update, and delete it once you have updated. Read, never changed.
+- **pip's own CA list** (`pip/_vendor/certifi/cacert.pem`, in the machine's Python folders and in apps' Pythons) is read
+  by key: a REVIEW line when it still holds a withdrawn root. pip uses it only with `--use-deprecated=legacy-certs`, and
+  on one Mac on 27.2.1, pip 26.1.2 and 26.2.1 given that flag connected to a compromised test host of the emSign family
+  (the AAA family was refused, since pip's own list had dropped AAA).
+- **certifi inside apps' own Pythons** (Blender, Unity's Emscripten Python) is read by key: a REVIEW line when it holds
+  a withdrawn root. Those Pythons' plain `ssl` default reads no list; their bundled certifi and requests accepted
+  compromised hosts on one Mac. Whether the apps themselves connect that way was not shown.
+- **Read by key.** Where a CA file is judged as a file (`lib/macos.mjs` `bundleHolds`), each certificate's public key is
+  compared with the two withdrawn roots and the seven withdrawn keys, so a relabelled, re-issued or cross-signed copy
+  is caught; a block that can't be read keeps the line at "could not be tested", never SAFE.
 
 - **`brotli-2026-10`: the Brotli decoder flaw (CVE-2026-111497), in Node.js, Bun, Python packages and Brotli
-  libraries.** Not reviewed or released yet: it needs the maintainer's approval of its spec, an independent strict
-  check and the critical-mutant gate, and the release freeze runs to at least 31 October. A new kind of check
+  libraries.** Built over twelve review rounds (24 Oct to 1 Nov 2026) on a side branch, and landed in 0.1.16. A new kind of check
   (`bundled`, `lib/brotli.mjs`) that reads the decoder itself instead of a version number, because the version numbers
   mislead here: Node.js 26.12.1 is fixed and reports Brotli 1.2.0, Homebrew's node uses Homebrew's Brotli, Debian's
   fixed packages keep 1.0.9 and 1.1.0. The fix added an error code, so a fixed decoder's error table holds the string
@@ -358,6 +326,152 @@ GHSA-2q92-ggx3-wq82. `test/seat11.test.mjs` holds the tests; L1 runs on Linux on
   in the test and in every Node process it starts, and drops the home's folders from the `PATH` the tests start with.
   The sudo test and the two tests of macOS's own Library build a `/Users/<name>` home of their own
   (`test/support/fake-home.cjs`); `test/cli.test.mjs` gives the command an empty HOME of its own.
+
+### Changed
+
+- **Apple's own block is counted as a block.** On macOS 27.2.1 the built-in curl and python3 refuse the 12 certificates
+  as revoked even when the withdrawn roots are given to them, offline too (curl exits 60 with "certificate revoked";
+  the certificate error is 23). The probes now tell that refusal from any other: curl prints its verification result,
+  and python3's probe reports verify code 23 as a block. As for Node.js, a block counts only if the same tool still
+  opens a normal site. On an updated Mac the built-in curl and python3 read SAFE, "blocks the compromised keys
+  themselves", from what they do.
+- **When a tool's refusal can't be read either way**, on a release Apple names, the file it reads stands in: SAFE only
+  when it refused every test host, opened a normal site, and `/etc/ssl/cert.pem` holds none of the withdrawn roots or
+  keys with every certificate read. A host it opens is EXPOSED on every path. `SSL_CERT_FILE`, `SSL_CERT_DIR` or a
+  `.curlrc` keep the line at "could not be tested" and say why.
+- **"We haven't measured what an update does to a file changed by hand"** is now what we measured: on one Mac on 10 Nov
+  2026, the update from 27.2 to 27.2.1 replaced a hand-changed `cert.pem` with Apple's file. Other Macs and the 26.7.3
+  and 15.8.3 updates were not measured.
+- **Brotli facts, re-read on 10 Nov 2026**: Debian's tracker now lists 1.2.0-4.1 as forky's fix (it had none on
+  24 Oct); the newest Pillow (13.0.0, 16 Oct) and opencv-python (4.14.0.94, 28 Jul) on PyPI predate Brotli's fix, so the
+  fix texts say so with dates; iPhones and iPads are named under "not covered".
+- **The Go rebuild advice** says it is for Linux and containers: on a Mac, Go checks certificates through Apple's
+  trust, which Apple says blocks the 12 for apps that use it.
+- **Docker**: "Docker is not running, so it has no running containers to check (start it and run again to include
+  them)", and "containers were not checked (--no-containers)".
+
+### Fixed
+
+- **A failed forced-roots control no longer hides a connection.** When one root's control passed and the other's was
+  refused, the check returned "could not be tested" before probing any test host plainly, so a tool that connected to a
+  compromised chain read exit 2 instead of 1. Every control failure now probes the hosts plainly first, and a connection
+  is EXPOSED.
+- **A path with `..` after a link was cleaned up as text, so Wardlatch read, ran or hashed another file than the one
+  your programs use** (0.1.0 to 0.1.15). With `PATH` holding `x/link/../bin`, the shell runs the program in the folder
+  above the link's target, then `bin`; Wardlatch put `x/bin/<name>` together with `path.join` and checked that one
+  (and a second real file in `x/bin` was dropped as one already read). Each `PATH` copy is now the folder and the name
+  as written, `${folder}/${name}`, resolved by the operating system (`realpath(3)`), and copies are told apart by that
+  real path; the same for PHP's versioned names on `PATH`, the trust check's runtimes and the curl that tests the
+  Linux trust store, `$TMPDIR` (a temp folder could be taken for `/tmp`, and `/tmp` left unsearched), a relative CA
+  setting made absolute (`SSL_CERT_FILE=lnk/../ca.pem`), a Python package's `RECORD` path, and the folders the home
+  folder or a variable names (a version manager's, `XDG_CONFIG_HOME`, `CURL_HOME`, `NPM_CONFIG_USERCONFIG`, a library
+  or site-packages place under `~`). Where the programs that read a path disagree (git, curl, wget, Codex, the shell
+  and volta, mise, proto and nodenv take a `..` after the link; npm, the Node-based agents and editors, and asdf's Go
+  clean it up as text), both readings are read. An `ld.so.conf` `include` with a `..` is not followed (a gap, so an ELF
+  soname is "could not be tested"). Folders named with `--paths` are still read as text, as the shell's `cd` reads
+  them.
+
+## [0.1.15] - 2026-11-10
+
+The first new incident since 22 October: SSHole, CVE-2026-123158. sshd in OpenSSH before 10.6p2, on Linux with musl
+libc and without PAM, accepts a very long password for an account whose password field is `*` (no password set, as for a
+key-only account) when another local account has a `$5$` or `$6$` hash. Alpine's advisory says 257 to 1024 bytes; the CVE
+record says between 256 and 1024 characters. Alpine is such a system. CISA added it to its Known Exploited
+Vulnerabilities catalog on 9 Nov 2026, due 12 Nov. Sources:
+[Alpine's advisory](https://alpinelinux.org/posts/2026-11-05-openssh-password-authentication-bypass/) (5 Nov),
+[the CVE record](https://www.cve.org/CVERecord?id=CVE-2026-123158),
+[OpenSSH 10.6p2's release notes](https://www.openssh.org/releasenotes.html#10.6p2),
+[Alpine's secdb](https://secdb.alpinelinux.org/) for each branch's fixed build, and
+[CISA's catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog?field_cve=CVE-2026-123158).
+This fixes no security defect in Wardlatch, so there is no advisory. `test/sshole-0.1.15.test.mjs` holds the tests.
+
+### Added
+
+- **`sshole-2026-11`**, Linux only, read-only. It never runs sshd (not even `sshd -T`) and never connects to a port.
+  - **musl or not**: `/etc/alpine-release`, or musl's loader `/lib/ld-musl-*.so.1`. A glibc system is SAFE only when
+    every sshd program found names glibc's loader; one that doesn't may be built against musl, and is UNKNOWN.
+  - **The package**: `openssh-server`, and Alpine's two PAM builds `openssh-server-pam` and `openssh-server-krb5` (both
+    built `--with-pam`, per aports `main/openssh/APKBUILD`), in
+    `/lib/apk/db/installed`, judged against Alpine's fixed builds (edge 10.6_p2-r0, 3.24 10.3_p1-r2 … 3.16 9.0_p1-r6).
+    Alpine backported the fix, so on 3.24 10.3_p1-r2 is fixed though it is below 10.6p2, and 10.3_p1-r1 is not. At or
+    above 10.6_p2 a build is fixed anywhere. Below it, only the fix of the branch `/etc/alpine-release` names counts:
+    revision numbers mean nothing across branches (edge built an unfixed 10.0_p1-r11 in September 2025, the very
+    version of 3.22's fixed build), so a newer build pinned from another branch is UNKNOWN, and on edge, on 3.15 or
+    older, or where the release can't be read, anything below 10.6_p2 is not fixed, except a version that is one of
+    Alpine's fixed builds, which can't be told apart there and is UNKNOWN (so is 3.23's fixed build on 3.24). A version
+    that can't be read is UNKNOWN. An sshd program apk didn't install, or a link where apk installed one, makes a
+    fixed package UNKNOWN. Beside an unfixed one it is named as not read, and since it may read a configuration other than
+    `/etc/ssh`'s,
+    nothing in `/etc/ssh` can make the row REVIEW then; only the account reasons can.
+  - **A fixed package with an older daemon**: Alpine says upgrading doesn't restart a running sshd. A running `sshd`
+    (or `sshd.pam`, `sshd.krb5`) that started before its program was installed is UNKNOWN with "restart sshd". The
+    install time is the file's inode change time, since apk sets each file's modification time from the package. The start
+    times come from `/proc`, and are believed only when this process's own start, read the same way, comes out right.
+  - **An unfixed package** is EXPOSED, unless something Alpine's advisory says the flaw needs was read as missing,
+    which makes it REVIEW (still to update): `PasswordAuthentication no` with no `Match` block setting it again, a PAM
+    build alone with `UsePAM yes`, no account with `*` that the flaw can use, or no `$`-hash. Any setting in
+    `/etc/conf.d/sshd`, a second sshd instance, or a running sshd started with `-o` or `-f` on its command line (read
+    from `/proc/<pid>/cmdline`) makes the settings "not read", as does a command line or a process list this can't read,
+    or an `Include` it can't read. A REVIEW line names what wasn't read, as an EXPOSED line does.
+    `/etc/shadow` is read only when this user may (usually root), and only counted: no name, field or hash is printed.
+    `/etc/passwd` is read for accounts with `*` and no shadow line. Root counts only with `PermitRootLogin yes`, as
+    Alpine says. Accounts from a directory service can't be seen here, so they never make it REVIEW. What couldn't be
+    read is named on the line.
+  - The fix is Alpine's: `apk upgrade -U -a`, then restart sshd, or turn password logins off until then (after checking
+    that a key login works). Wardlatch doesn't read logs, so it can't say whether anyone got in; it gives Alpine's
+    advice on where to look.
+  - Not covered: sshd in containers and images.
+
+## [0.1.14] - 2026-11-10
+
+Apple shipped its fix for `/etc/ssl/cert.pem` on 9 November 2026, and from that day Wardlatch's words "no macOS release
+has fixed it yet" and "run this again after every update" were wrong. Apple says macOS 27.2.1, 26.7.3 and 15.8.3 remove
+the two withdrawn roots from the file, "along with three other eMudhra root CA certificates", and that on these releases
+the built-in command-line tools stop accepting the 12 compromised certificates
+([Apple, support.apple.com/en-us/149555](https://support.apple.com/en-us/149555), as published on 9 Nov 2026). This
+release says so. No result changes: SAFE, EXPOSED and UNKNOWN still come from what each tool does with the test hosts,
+not from a version number. This fixes no security defect, so there is no advisory. `test/apple-fix-0.1.14.test.mjs`
+holds the tests.
+
+### Changed
+
+- **The built-in curl's and python3's fix texts follow the macOS release.** On a Mac, Wardlatch reads `ProductVersion`
+  from `/System/Library/CoreServices/SystemVersion.plist` (a file read; nothing is run for it).
+  - On 27.2, 26.7.2, 15.8.2 or any earlier release of those three, or when the version can't be read, an EXPOSED
+    `/usr/bin/curl` or `/usr/bin/python3` is told to update macOS, and to use the Mac fix if it can't.
+  - On macOS 14 or older, for which Apple names no update, it is told to update to macOS 15 or later if it can, and
+    otherwise to use the Mac fix.
+  - On 27.2.1, 26.7.3, 15.8.3 or later, where Apple says the roots are gone, it is told how to look at the file, that
+    Apple says not to restore a backup made before the update, and how to remove the roots.
+  - The python3 text no longer says "see the curl line", which wasn't there when curl read SAFE.
+- **A note under the eMudhra rows on a Mac**: the macOS version, what Apple says of it, and whether `/etc/ssl/cert.pem`
+  still holds `emSign Root CA - G1`, `emSign Root CA - C1` or `emSign ECC Root CA - C3`, the three other roots Apple's
+  update removes. Apple did not say their keys were compromised, so they are a note and change no result. On a release
+  Apple says removes them, a file that still holds them is not what Apple says the update installs, and the note says so.
+  A file from which no certificate can be read says that, rather than nothing. `--json` carries the note as `macos`:
+  `{ version, appleFix, source, notes }`.
+- **An UNKNOWN for the built-in curl or python3 on 27.2.1, 26.7.3, 15.8.3 or later says why it may be one.** Apple says
+  those releases block the 12 certificates in the built-in tools themselves, which could make the test's forced-roots
+  control fail too. We haven't measured that on an updated Mac, so the row stays UNKNOWN and says so, and its reason
+  no longer says the error was not a block.
+- **The words "a macOS update puts Apple's original file back" are now about a Mac that can't update to those
+  releases.** We measured updates to 26.7.2 (27 Oct) and 27.2 (28 Oct) doing it. We haven't measured what an update to
+  27.2.1, 26.7.3 or 15.8.3 does to a file already changed by hand, and nothing here says.
+- **The Mac fix download has a new digest, for its words only.** Its opening comment, the scope lines under every SAFE
+  and the message for a damaged file said that no macOS release had fixed the file and that every update undoes the fix.
+  They name Apple's releases now, and the Undo line says Apple's own limit on it: don't undo after updating to 27.2.1,
+  26.7.3 or 15.8.3. No line of its logic changed, and no verdict or exit code. Its SHA-256 is
+  `0dae0dc901a23aba216211f4ef6002a6d75b232fe479ef79db463d5c1dc9b98c`; a copy with SHA-256 `893f53cb...` needn't be replaced.
+- **The Mac fix's test suite could fail on a run that was fine.** `test/fix-macos.check.sh` piped the output into
+  `grep -q`, and under `pipefail` grep stopping at its first match can kill the writer, so a case read "printed no line"
+  while it had printed two. Seen once in four runs under load; the old form failed 7 times in 300 on a 5,000-line output.
+  It reads a here-string now.
+
+## [0.1.13] - 2026-11-03
+
+We found every defect under Security below ourselves, on 2 November 2026, while checking the advisories for 0.1.11 and
+0.1.12. Each could read `SAFE` where something was wrong. If 0.1.12 or earlier said `SAFE`, run this version. The advisory is
+GHSA-2q92-ggx3-wq82. `test/seat11.test.mjs` holds the tests; L1 runs on Linux only.
 
 ### Security
 
@@ -1153,20 +1267,6 @@ and an attacker's reading of the specification. Each fix below has a test that f
   now printed only when it is plain. *Found and fixed 31 Oct 2026 (d979f6e).*
 
 ### Fixed
-- **A path with `..` after a link was cleaned up as text, so Wardlatch read, ran or hashed another file than the one
-  your programs use** (0.1.0 to 0.1.9). With `PATH` holding `x/link/../bin`, the shell runs the program in the folder
-  above the link's target, then `bin`; Wardlatch put `x/bin/<name>` together with `path.join` and checked that one
-  (and a second real file in `x/bin` was dropped as one already read). Each `PATH` copy is now the folder and the name
-  as written, `${folder}/${name}`, resolved by the operating system (`realpath(3)`), and copies are told apart by that
-  real path; the same for PHP's versioned names on `PATH`, the trust check's runtimes and the curl that tests the
-  Linux trust store, `$TMPDIR` (a temp folder could be taken for `/tmp`, and `/tmp` left unsearched), a relative CA
-  setting made absolute (`SSL_CERT_FILE=lnk/../ca.pem`), a Python package's `RECORD` path, and the folders the home
-  folder or a variable names (a version manager's, `XDG_CONFIG_HOME`, `CURL_HOME`, `NPM_CONFIG_USERCONFIG`, a library
-  or site-packages place under `~`). Where the programs that read a path disagree (git, curl, wget, Codex, the shell
-  and volta, mise, proto and nodenv take a `..` after the link; npm, the Node-based agents and editors, and asdf's Go
-  clean it up as text), both readings are read. An `ld.so.conf` `include` with a `..` is not followed (a gap, so an ELF
-  soname is "could not be tested"). Folders named with `--paths` are still read as text, as the shell's `cd` reads
-  them.
 - **359 of the 361 folders a run called "could not be tested" on one Mac were not gaps at all, and the two
   sentences printed about them were false.** Measured there: `--incident wordpress-plugins-2026-10 --paths ~` gave
   311 could-not-be-tested, 0 safe, exit 2; `--incident github-actions-2026-10 --paths ~` gave 50. Of the 311, **310**

@@ -1,7 +1,7 @@
 {
   "name": "wardlatch",
-  "version": "0.1.15",
-  "description": "Does the wrong key still turn? Checks your machine against this week's leaks: runtimes that still trust a compromised CA (eMudhra), OVHcloud CLI builds swapped for a stealer (checked by hash, never run), PHP older than its critical fix, GitLab older than its CVE-2026-110264 patch, the LiteLLM 1.107.0 stealer, Plex Media Server's exploited flaws, compromised WordPress plugins (Rank Math PRO, UpdraftPlus keys), GitHub workflow files to review, keys committed to your code, your name or email in the headers your tools send, and SSHole (CVE-2026-123158), the OpenSSH password bypass on Alpine and other musl Linux, by reading files only. Runs locally, changes nothing.",
+  "version": "0.1.16",
+  "description": "Does the wrong key still turn? Checks your machine against this week's leaks: runtimes that still trust a compromised CA (eMudhra), OVHcloud CLI builds swapped for a stealer (checked by hash, never run), PHP older than its critical fix, GitLab older than its CVE-2026-110264 patch, the LiteLLM 1.107.0 stealer, Plex Media Server's exploited flaws, compromised WordPress plugins (Rank Math PRO, UpdraftPlus keys), GitHub workflow files to review, keys committed to your code, your name or email in the headers your tools send, the Brotli decoder flaw in Node.js, Bun, Python packages and Brotli libraries (read from each decoder's own bytes), Google Chrome older than its 9 November fix for an exploited flaw, and SSHole (CVE-2026-123158), the OpenSSH password bypass on Alpine and other musl Linux, by reading files only. Runs locally, changes nothing.",
   "type": "module",
   "bin": {
     "wardlatch": "bin/wardlatch.mjs"
@@ -22,8 +22,11 @@
   },
   "keywords": [
     "alpine",
+    "brotli",
     "ca",
     "certificate",
+    "chrome",
+    "cisa-kev",
     "cloudflared",
     "emudhra",
     "github-actions",
