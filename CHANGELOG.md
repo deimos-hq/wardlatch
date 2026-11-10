@@ -39,8 +39,9 @@ This fixes no security defect in Wardlatch, so there is no advisory. `test/sshol
     version of 3.22's fixed build), so a newer build pinned from another branch is UNKNOWN, and on edge, on 3.15 or
     older, or where the release can't be read, anything below 10.6_p2 is not fixed, except a version that is one of
     Alpine's fixed builds, which can't be told apart there and is UNKNOWN (so is 3.23's fixed build on 3.24). A version
-    that can't be read is UNKNOWN. An sshd program apk didn't install, or a link where apk installed one, makes a fixed package UNKNOWN, and is
-    named as not read beside an unfixed one.
+    that can't be read is UNKNOWN. An sshd program apk didn't install, or a link where apk installed one, makes a
+    fixed package UNKNOWN. Beside an unfixed one it is named as not read, and since it reads its own configuration,
+    nothing in `/etc/ssh` can make the row REVIEW then; only the account reasons can.
   - **A fixed package with an older daemon**: Alpine says upgrading doesn't restart a running sshd. A running `sshd`
     (or `sshd.pam`, `sshd.krb5`) that started before its program was installed is UNKNOWN with "restart sshd". The
     install time is the file's inode change time, since apk sets each file's modification time from the package. The start
@@ -49,7 +50,8 @@ This fixes no security defect in Wardlatch, so there is no advisory. `test/sshol
     which makes it REVIEW (still to update): `PasswordAuthentication no` with no `Match` block setting it again, a PAM
     build alone with `UsePAM yes`, no account with `*` that the flaw can use, or no `$`-hash. Any setting in
     `/etc/conf.d/sshd`, a second sshd instance, or a running sshd started with `-o` or `-f` on its command line (read
-    from `/proc/<pid>/cmdline`) makes the settings "not read", as does an `Include` this can't read.
+    from `/proc/<pid>/cmdline`) makes the settings "not read", as does a command line or a process list this can't read,
+    or an `Include` it can't read. A REVIEW line names what wasn't read, as an EXPOSED line does.
     `/etc/shadow` is read only when this user may (usually root), and only counted: no name, field or hash is printed.
     `/etc/passwd` is read for accounts with `*` and no shadow line. Root counts only with `PermitRootLogin yes`, as
     Alpine says. Accounts from a directory service can't be seen here, so they never make it REVIEW. What couldn't be
