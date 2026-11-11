@@ -379,3 +379,26 @@ test('R3 (review 1) settings and folders that move the built-in tools elsewhere 
   assert.ok(appleFileCheck(inc, py, o).fileCheck);
   assert.ok(appleFileCheck(inc, curl, { ...o, certsDir: 2 }).fileCheck, 'curl reads the file, not the folder');
 });
+
+// a curl like Apple's (refuses the 12 as blocked, opens a normal site, ignores its CA file) but with one test host
+// failing another way (exit 7, a connection error), so the plain-probe "failed" gate fires
+const flakeCurl = `#!/bin/sh
+case "$1" in --version) echo "curl 8.7.1"; exit 0;; esac
+ca=""; prev=""; for a; do [ "$prev" = --cacert ] && ca="$a"; prev="$a"; u="$a"; done
+case "$u" in *negative-control.pem) :;; esac
+[ "$u" = ${JSON.stringify(inc.advisory)} ] && { printf 0; exit 0; }
+case "$u" in *ov-g3c-emudhra*) exit 7;; esac
+[ -n "$ca" ] && { printf 23; exit 60; }
+printf 20; exit 60
+`;
+test('R3b (review 2) a bundle holding a withdrawn root is EXPOSED by key even when a test host flakes: a network gate never downgrades a definite file finding', () => {
+  // the bundle holds both roots; one host errors (exit 7). Before this fix the plain-probe "failed" branch returned
+  // UNKNOWN before the file was ever read; the bundle fact alone is EXPOSED, whatever the network does
+  const r = standIn({ venvPem: APPLE_272, curl: flakeCurl }).go();
+  assert.equal(r.certifi.status, 'EXPOSED', JSON.stringify(r.certifi));
+  assert.deepEqual(r.certifi.heldRoots, [AAA, G3]);
+  // the clean twin, same flake: nothing in the file to find, so the failed host keeps it UNKNOWN (the gate still works)
+  const clean = standIn({ venvPem: APPLE_2721, curl: flakeCurl }).go();
+  assert.equal(clean.certifi.status, 'UNKNOWN', JSON.stringify(clean.certifi));
+  assert.match(clean.certifi.reason, /failed for a reason other than a certificate refusal/);
+});
