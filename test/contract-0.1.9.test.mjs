@@ -239,25 +239,35 @@ const tlsHost = async (leaf) => {
   host.server = createHttpsServer(leaf, (_q, res) => { host.requests++; res.end('x'); });
   await listen(host.server);
   host.url = `https://127.0.0.1:${host.server.address().port}/`;
-  host.close = () => host.server.close();
+  // close() alone leaves a connection that finished its handshake and never sent a request open for good: closing the
+  // server also stops the timers that would have ended it (Node 18 to 22). A probe killed at its timeout leaves one, and
+  // the test process then never exits (the CI hang of 11 Nov 2026, Node 20 on Linux, 5 of 20 runs). So: every connection.
+  host.close = () => { host.server.close(); host.server.closeAllConnections(); };
+  host.open = () => new Promise((r) => host.server.getConnections((_e, n) => r(n ?? 0)));
   return host;
 };
 /** A TCP front for `target` whose FIRST connection is reset ('reset') or held without an answer ('hang'). */
 const flakyFront = async (target, mode) => {
-  let n = 0; const held = [];
+  // every socket this front opens or accepts is tracked and destroyed by close(). pipe() ends its destination only when
+  // the source ENDS: a client that is reset or killed gives an error, the upstream socket was then left open and paused,
+  // and with it the test host's side of that connection (see tlsHost)
+  let n = 0; const held = [], all = new Set();
+  const track = (x) => { all.add(x); x.on('close', () => all.delete(x)); return x; };
   const server = createNetServer((sock) => {
-    n++; sock.on('error', () => {});
+    n++; sock.on('error', () => {}); track(sock);
     if (n === 1) {
       if (mode === 'reset') sock.resetAndDestroy();
       else { held.push(sock); setTimeout(() => sock.destroy(), 20000).unref(); }
       return;
     }
-    const up = netConnect(target.server.address().port, '127.0.0.1');
+    const up = track(netConnect(target.server.address().port, '127.0.0.1'));
     up.on('error', () => sock.destroy());
+    // when either side is gone, however it went, the other goes too
+    sock.on('close', () => up.destroy()); up.on('close', () => sock.destroy());
     sock.pipe(up).pipe(sock);
   });
   await listen(server);
-  return { url: `https://127.0.0.1:${server.address().port}/`, close: () => { held.forEach((s) => s.destroy()); server.close(); } };
+  return { url: `https://127.0.0.1:${server.address().port}/`, port: server.address().port, open: () => all.size, close: () => { held.forEach((s) => s.destroy()); all.forEach((s) => s.destroy()); server.close(); } };
 };
 const runtimes = () => {
   const { ctlCa } = certs();
@@ -281,6 +291,35 @@ test('R1 harness: a runtime that does not trust the local bad root, with a worki
       } finally { canary.close(); }
     }
   } finally { control.close(); }
+});
+
+test('R1 harness: a client that drops its connection through the flaky front leaves no socket open, in the front or in the test host, once both are closed', { skip: !OPENSSL && 'no openssl' }, async () => {
+  // The hang of 11 Nov 2026: every test in this file passed and the process never exited, because a probe killed at its
+  // timeout left its proxied connection open in the front and in the test host behind it. Three clients here, each the
+  // way a probe can go: one that closes after a complete TLS handshake, one that resets in the middle of one, and one
+  // that completes the handshake and is still connected when the hosts are closed.
+  const { connect: tlsConnect } = await import('node:tls');
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const { canary: cl } = certs();
+  const canary = await tlsHost(cl), front = await flakyFront(canary, 'reset');
+  const clients = [];
+  try {
+    await new Promise((r) => { const c = netConnect(front.port, '127.0.0.1'); c.on('error', () => {}); c.on('close', r); });   // the first connection: reset by the front
+    const shaken = () => new Promise((r, j) => { const c = tlsConnect({ host: '127.0.0.1', port: front.port, rejectUnauthorized: false }, () => r(c)); c.on('error', j); clients.push(c); });   // an error after the handshake is a no-op here
+    const a = await shaken(); a.destroy();
+    const b = netConnect(front.port, '127.0.0.1'); b.on('error', () => {}); clients.push(b);
+    await new Promise((r) => b.on('connect', r)); b.write(Buffer.from([0x16, 0x03, 0x01])); await sleep(50); b.resetAndDestroy();
+    await shaken();
+    await sleep(100);
+    // the fixture: the connections really went through to the test host, and one is still there before close
+    assert.ok((await canary.open()) >= 1, 'no connection reached the test host: this test would show nothing');
+    assert.ok(front.open() >= 2, 'the front is tracking nothing');
+  } finally { front.close(); canary.close(); }
+  const until = Date.now() + 3000;
+  while (Date.now() < until && (front.open() || (await canary.open()))) await sleep(25);
+  assert.equal(front.open(), 0, 'the front still holds a socket after close()');
+  assert.equal(await canary.open(), 0, 'the test host still holds a connection after close()');
+  for (const x of clients) x.destroy();
 });
 
 for (const mode of ['reset', 'hang']) {
