@@ -1,0 +1,61 @@
+{
+  "id": "react-rsc-2026-11",
+  "type": "lockfiles",
+  "title": "React Server Components: remote code execution in react-server-dom-webpack, -parcel and -turbopack (CVE-2026-126187)",
+  "date": "2026-11-10",
+  "summary": "React's advisory GHSA-xqc2-xf4c-x3h3 (CVE-2026-126187; critical, CVSS 4.0 score 9.5) says: \"Crafted payloads targeting frameworks supporting React Server Components can lead to remote code execution. This only affects extremely rare cases where responses transport multiple typed arrays and an attacker-controlled value.\" It names three npm packages, react-server-dom-webpack, react-server-dom-parcel and react-server-dom-turbopack, in versions 19.0.0 through 19.0.8, 19.1.0 through 19.1.9, 19.2.0 through 19.2.8 and 19.3.0, fixed in 19.0.9, 19.1.10, 19.2.9 and 19.3.1. It does not name the react or react-dom packages. The advisory is dated 14 October 2026 on React's repository, the day the fixed versions were released; the CVE record was published on 10 November 2026. Next.js has an advisory of its own, GHSA-673q-mjm6-r5xr (dated 14 October 2026 on its repository, with no CVE number), for remote code execution in a use cache function that returns multiple typed arrays: it lists next 16.0.0 through 16.4.0, fixed in 16.4.1, and its fix updates the copies of react-server-dom-webpack and react-server-dom-turbopack that Next.js carries inside its own package, which no lockfile shows. Neither advisory names the other. As read on 11 November 2026, CISA's Known Exploited Vulnerabilities catalog (version 2026.11.10) lists neither. Wardlatch reads the lockfiles under the folders searched (package-lock.json, npm-shrinkwrap.json, yarn.lock, pnpm-lock.yaml) as text; it runs and imports nothing from a project, does not open node_modules, and asks no registry.",
+  "advisory": "https://github.com/react/react/security/advisories/GHSA-xqc2-xf4c-x3h3",
+  "sources": [
+    "https://www.cve.org/CVERecord?id=CVE-2026-126187",
+    "https://github.com/advisories/GHSA-xqc2-xf4c-x3h3",
+    "https://github.com/vercel/next.js/security/advisories/GHSA-673q-mjm6-r5xr"
+  ],
+  "lockfiles": {
+    "packages": [
+      {
+        "name": "react-server-dom-webpack",
+        "source": "React's advisory GHSA-xqc2-xf4c-x3h3, CVE-2026-126187",
+        "ranges": [
+          { "introduced": "19.0.0", "fixed": "19.0.9" },
+          { "introduced": "19.1.0", "fixed": "19.1.10" },
+          { "introduced": "19.2.0", "fixed": "19.2.9" },
+          { "introduced": "19.3.0", "fixed": "19.3.1" }
+        ],
+        "fix": "Update react-server-dom-webpack to the fixed version of its line (19.0.9, 19.1.10, 19.2.9 or 19.3.1) or later, install, then rebuild and redeploy: the lockfile says what an install fetches, not what a server is running."
+      },
+      {
+        "name": "react-server-dom-parcel",
+        "source": "React's advisory GHSA-xqc2-xf4c-x3h3, CVE-2026-126187",
+        "ranges": [
+          { "introduced": "19.0.0", "fixed": "19.0.9" },
+          { "introduced": "19.1.0", "fixed": "19.1.10" },
+          { "introduced": "19.2.0", "fixed": "19.2.9" },
+          { "introduced": "19.3.0", "fixed": "19.3.1" }
+        ],
+        "fix": "Update react-server-dom-parcel to the fixed version of its line (19.0.9, 19.1.10, 19.2.9 or 19.3.1) or later, install, then rebuild and redeploy: the lockfile says what an install fetches, not what a server is running."
+      },
+      {
+        "name": "react-server-dom-turbopack",
+        "source": "React's advisory GHSA-xqc2-xf4c-x3h3, CVE-2026-126187",
+        "ranges": [
+          { "introduced": "19.0.0", "fixed": "19.0.9" },
+          { "introduced": "19.1.0", "fixed": "19.1.10" },
+          { "introduced": "19.2.0", "fixed": "19.2.9" },
+          { "introduced": "19.3.0", "fixed": "19.3.1" }
+        ],
+        "fix": "Update react-server-dom-turbopack to the fixed version of its line (19.0.9, 19.1.10, 19.2.9 or 19.3.1) or later, install, then rebuild and redeploy: the lockfile says what an install fetches, not what a server is running."
+      },
+      {
+        "name": "next",
+        "source": "Next.js's own advisory GHSA-673q-mjm6-r5xr, which has no CVE number",
+        "ranges": [
+          { "introduced": "16.0.0", "lastAffected": "16.4.0", "fixed": "16.4.1" }
+        ],
+        "fix": "Update next to 16.4.1 or later, install, then rebuild and redeploy. Next.js's advisory says there is no known workaround, and: \"You should upgrade immediately even if your application does not have similar functions.\""
+      }
+    ],
+    "bunNote": "is Bun's lockfile, which this check does not read yet, so what it pins is not known: look in it for react-server-dom-webpack, react-server-dom-parcel, react-server-dom-turbopack and next"
+  },
+  "safeText": "no lockfile pins react-server-dom-webpack, react-server-dom-parcel, react-server-dom-turbopack or next",
+  "notCovered": "What is installed in node_modules or running on a server (a lockfile says what an install would fetch); a project with no lockfile; Bun's lockfiles, which are named and not read; canary, experimental and pre-release builds, which read as could not be tested; copies of these packages built into a framework or a bundle, other than Next.js 16 by its own advisory (Next.js 15 and older, and other frameworks that support React Server Components: check each one's own advisory); lockfiles of other ecosystems."
+}

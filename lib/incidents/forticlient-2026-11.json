@@ -1,0 +1,38 @@
+{
+  "id": "forticlient-2026-11",
+  "type": "installs",
+  "title": "Fortinet FortiClient for Mac: origin validation error in a local API endpoint (CVE-2026-121529)",
+  "date": "2026-11-10",
+  "summary": "Fortinet published advisory FG-IR-26-194 on 10 November 2026 for CVE-2026-121529, an origin validation error in a local API endpoint of FortiClient, which in Fortinet's words \"may allow an unauthorized remote attacker to execute unauthorized code or commands. Successful exploitation requires interaction with the victim.\" On a Mac, Fortinet lists FortiClientMac 7.4.0 through 7.4.7 as affected, fixed in 7.4.8; it lists FortiClientMac 8.0 and 7.2 as not affected, and names no older line. Fortinet rates it Critical, with a CVSS 3.1 score of 9.1. As read on 11 November 2026, Fortinet's page says Known Exploited: No, and CISA's Known Exploited Vulnerabilities catalog (version 2026.11.10) does not list it. Wardlatch reads the version of the FortiClient that is installed from the app's Info.plist; it never starts FortiClient and sends nothing.",
+  "advisory": "https://fortiguard.fortinet.com/psirt/FG-IR-26-194",
+  "sources": [
+    "https://www.cve.org/CVERecord?id=CVE-2026-121529"
+  ],
+  "versionFiles": {
+    "product": "FortiClient",
+    "notNamedBelow": "7.2",
+    "notNamedNote": "Fortinet's advisory FG-IR-26-194 names FortiClient for Mac 8.0, 7.4 and 7.2 and gives no verdict for an older line, so this version could not be judged: update to 7.4.8 or later, or ask Fortinet",
+    "affectedFrom": "7.4.0",
+    "bad": {
+      "from": "7.4.0",
+      "to": "7.4.7"
+    },
+    "minVersion": "7.4.8",
+    "files": [
+      {
+        "path": "/Applications/FortiClient.app/Contents/Info.plist",
+        "re": "<key>CFBundleShortVersionString</key>\\s*<string>(\\d+(?:\\.\\d+)+)</string>",
+        "label": "Mac app"
+      },
+      {
+        "path": "~/Applications/FortiClient.app/Contents/Info.plist",
+        "re": "<key>CFBundleShortVersionString</key>\\s*<string>(\\d+(?:\\.\\d+)+)</string>",
+        "label": "Mac app"
+      }
+    ],
+    "fix": "Update FortiClient to 7.4.8 or later (Fortinet: \"Upgrade to 7.4.8 or above\"). If your organisation installs FortiClient for you, ask whoever manages it. After the update, quit and reopen FortiClient, or restart the Mac, so the version that runs is the one installed.",
+    "lookedIn": "FortiClient's Info.plist in /Applications and ~/Applications"
+  },
+  "safeText": "no FortiClient found in the places this check reads",
+  "notCovered": "FortiClient for Windows and FortiClient Windows PAM, which Fortinet's advisory also lists as affected (7.4.0 through 7.4.7 and 7.2.0 through 7.2.14; Wardlatch does not run on Windows); FortiClient for Linux, which the advisory does not list; a FortiClient installed anywhere but /Applications or ~/Applications, or under another name; which version is running, if FortiClient was updated while it was open; FortiClient EMS and Fortinet's other products."
+}
