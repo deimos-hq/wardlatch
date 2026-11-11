@@ -2529,8 +2529,12 @@ test('the loader\'s configuration: anything not read (an include elsewhere, a fi
 
 test('musl\'s loader path file: its folders are searched too', () => {
   const d = fresh('musl'), std = fresh('musl-std'), extra = fresh('musl-extra'), path = fresh('musl-path');
+  // two more folders the path file lists, colon- then newline-separated, so this exercises both splits. They are the
+  // test's own empty folders, never real system ones: /lib and /usr/local/lib hold real libraries on a Linux box, and
+  // a copy the scan can't classify there would pull this verdict to UNKNOWN (what this test is not about).
+  const other1 = fresh('musl-other1'), other2 = fresh('musl-other2');
   fixedLib(join(std, 'libbrotlidec.so.1')); oldLib(join(extra, 'libbrotlidec.so.1'));
-  writeFileSync(join(d, 'ld-musl-x86_64.path'), `/lib:/usr/local/lib\n${extra}\n`);
+  writeFileSync(join(d, 'ld-musl-x86_64.path'), `${other1}:${other2}\n${extra}\n`);
   elf(join(path, 'node'), [NODE_CONTROL], { needed: ['libbrotlidec.so.1'] });
   const at = (places) => run({}, { pathEnv: path, sonameDirs: [std], places }).rows.find((r) => r.file === join(path, 'node'));
   // the file's folder's unfixed copy beside the standard folder's fixed one: UNKNOWN (round 8: EXPOSED); both unfixed,
