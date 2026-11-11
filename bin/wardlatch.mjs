@@ -10,20 +10,22 @@ import { join, dirname, basename, delimiter, isAbsolute, resolve } from 'node:pa
 import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { discover, NOT_WALKED as TRUST_NOT_WALKED } from '../lib/discover.mjs';
-import { canaryExpired, check, reachable } from '../lib/probe.mjs';
+import { canaryExpired, check, reachable, pipListRows, appCertifiRows } from '../lib/probe.mjs';
 import { droppedNodeOptions } from '../lib/run.mjs';
 import { checkBinaryAll, findOnPath, tmpTraces, tempDirs } from '../lib/binaries.mjs';
-import { checkVersionFiles, sitePackagesDirs, checkSitePackages, localImageDigests, checkImages, NOT_WALKED as VENV_NOT_WALKED } from '../lib/installs.mjs';
+import { checkVersionFiles, sitePackagesDirs, checkSitePackages, localImageDigests, checkImages, NOT_WALKED as VENV_NOT_WALKED, SITE_PATTERNS, expand } from '../lib/installs.mjs';
+import { checkBundled } from '../lib/brotli.mjs';
 import { listContainers, checkContainer, engineHost } from '../lib/containers.mjs';
 import { reposUnder, workflowsAddedSince, windowStart, NOT_WALKED as REPO_NOT_WALKED, NESTED_SAID } from '../lib/workflows.mjs';
 import { scanRepo } from '../lib/secrets.mjs';
 import { wordpressUnder, checkSite, checkPluginsFolder, isCopyName, NOT_WALKED as WP_NOT_WALKED } from '../lib/wordpress.mjs';
 import { scanHeaders } from '../lib/headers.mjs';
-import { pathState, readText, listDir, realPath, entriesByMetadata, denialCode, mandatoryRefusal, statBits, epermCauses, VENV_PACKAGES_SAID } from '../lib/files.mjs';
+import { kevLines, kevRows } from '../lib/kev.mjs';
+import { pathState, readText, listDir, realPath, entriesByMetadata, denialCode, mandatoryRefusal, statBits, epermCauses, VENV_PACKAGES_SAID, joinAsWritten } from '../lib/files.mjs';
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
 import { safe, saw, withdrawUnreceipted } from '../lib/report.mjs';
 import { escapeHidden, escapeJsonHidden } from '../lib/escape.mjs';
-import { trustFix, readMacosVersion, appleNote, appleFixState, appleUnknownNote } from '../lib/macos.mjs';
+import { trustFix, readMacosVersion, appleNote, appleFixState, appleUnknownNote, appleFileCheck, appleSystemRow, backupRows } from '../lib/macos.mjs';
 import { checkSshole } from '../lib/sshd.mjs';
 
 // npx puts the current project's node_modules/.bin, and each parent folder's, first on PATH. Wardlatch finds git,
@@ -36,12 +38,14 @@ import { checkSshole } from '../lib/sshd.mjs';
 const kept = (process.env.PATH ?? '').split(delimiter).filter((d) => d && isAbsolute(d) && !/[\\/]node_modules[\\/]\.bin[\\/]?$/.test(d));
 process.env.PATH = kept.length ? kept.join(delimiter) : ['/usr/bin', '/bin'].join(delimiter);
 // Programs run from /, so a relative CA file or folder in the person's own environment is made absolute first, against
-// the folder Wardlatch was started from, as their own programs would read it.
+// the folder Wardlatch was started from, as their own programs would read it: put in front of it as written, so a '..'
+// in it is still taken after the link before it (path.resolve cleaned it up as text, which may be another file).
+const absolute = (p) => joinAsWritten(process.cwd(), p);
 for (const k of ['SSL_CERT_FILE', 'SSL_CERT_DIR', 'CURL_CA_BUNDLE', 'NODE_EXTRA_CA_CERTS', 'REQUESTS_CA_BUNDLE']) {
   if (!process.env[k]) continue;
   // SSL_CERT_DIR may be a list of folders
-  process.env[k] = k === 'SSL_CERT_DIR' ? process.env[k].split(delimiter).map((d) => (d && !isAbsolute(d) ? resolve(d) : d)).join(delimiter)
-    : isAbsolute(process.env[k]) ? process.env[k] : resolve(process.env[k]);
+  process.env[k] = k === 'SSL_CERT_DIR' ? process.env[k].split(delimiter).map((d) => (d && !isAbsolute(d) ? absolute(d) : d)).join(delimiter)
+    : isAbsolute(process.env[k]) ? process.env[k] : absolute(process.env[k]);
 }
 
 const LIB = join(dirname(fileURLToPath(import.meta.url)), '..', 'lib');
@@ -84,6 +88,8 @@ a local socket is). Changes nothing.`);
   process.exit(0);
 }
 const incidents = (listDir(join(LIB, 'incidents')).entries ?? []).map((e) => e.name).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readText(join(LIB, 'incidents', f), 4 * 1024 * 1024))).sort((a, b) => b.date.localeCompare(a.date));
+// a malformed KEV row is a broken incident file: it stops the run here (exit 2), before any line is printed
+for (const i of incidents) kevRows(i);
 if (flag('--list')) { for (const i of incidents) console.log(clean(`${i.id}  ${i.date}  ${i.title}`)); process.exit(0); }
 // --incident is repeatable, like --paths: every one named is checked (0.1.8 checked only the first)
 const ids = args.filter((a, i) => args[i - 1] === '--incident');
@@ -347,11 +353,13 @@ if (!json) {
 
 for (const inc of chosen) {
   if (!json) console.log(`\n${c('1', inc.title)} ${c('2', `(${inc.date})`)}`);
+  // CISA's KEV rows the incident file carries (lib/kev.mjs): copied from the catalog before release, never fetched here
+  if (!json) for (const line of kevLines(inc)) console.log(c('33', clean(line)));
   const results = [];
   // only where the home folder is read: the trust check (the probes' ~/.curlrc, the go env file, the engine's config),
   // installs and headers always; the folder checks only when their usual folders, in the home, are the ones searched;
   // never the version checks, which read PATH
-  const readsHome = ['trust', 'installs', 'headers'].includes(inc.type) || (['workflows', 'secrets', 'wordpress'].includes(inc.type) && !explicitPaths);
+  const readsHome = ['trust', 'installs', 'bundled', 'headers'].includes(inc.type) || (['workflows', 'secrets', 'wordpress'].includes(inc.type) && !explicitPaths);
   if (sudoHomeMissing && readsHome) { results.push({ incident: inc.id, kind: 'home', status: 'UNKNOWN', reason: sudoHomeMissing }); print('UNKNOWN', 'home folder'); note('33', sudoHomeMissing); }
   // Windows is not supported yet: the program checks look only for macOS and Linux names (no .exe), so on Windows they
   // would read SAFE without having looked. Say so instead (README). A malware's temp-folder trace still counts: the
@@ -371,8 +379,9 @@ for (const inc of chosen) {
     }
     all.push(...results); if (!json) console.log(c('2', `Source: ${inc.advisory}`)); continue;
   }
-  // installed software is looked for only in macOS and Linux places (no Windows Python folders or install paths)
-  if (platform() === 'win32' && inc.type === 'installs') {
+  // installed software and bundled decoders are looked for only in macOS and Linux places (no Windows Python folders,
+  // install paths or DLL names)
+  if (platform() === 'win32' && (inc.type === 'installs' || inc.type === 'bundled')) {
     results.push({ incident: inc.id, kind: 'install', status: 'UNKNOWN', reason: 'not checked on Windows yet (Windows is not supported)' });
     print('UNKNOWN', 'not checked on Windows yet'); note('33', 'this check looks only in macOS and Linux locations; Windows is not supported yet');
     all.push(...results); if (!json) console.log(c('2', `Source: ${inc.advisory}`)); continue;
@@ -412,17 +421,22 @@ for (const inc of chosen) {
     const rootsPem = join(LIB, 'incidents', inc.rootsPem);
     const deniedVenvs = [...lockedRoots], foundUnread = [], notRun = [], untested = [], links = [], deep = [];
     for (const rt of discover({ roots: searchable, denied: deniedVenvs, found: foundUnread, notRun, untested, links, deep })) {
-      const r = await check(rt, canaries, { rootsPem, controlUrl: inc.advisory });
+      // on a release where Apple says the built-in tools block the 12 certificates themselves, the file they read stands
+      // in for the forced-roots control (lib/probe.mjs fileVerdict); settings that point them elsewhere keep it UNKNOWN
+      const certsList = listDir('/etc/ssl/certs');
+      const { fileCheck, skipped } = appleFileCheck(inc, rt, { os: platform(), macos, env: process.env, home: homedir(), exists: (f) => pathState(f) === 'file', certsDir: certsList.gone ? 0 : certsList.entries ? certsList.entries.length : -1 });
+      const r = await check(rt, canaries, { rootsPem, controlUrl: inc.advisory, fileCheck, bundleCheck: { inc, negativeCa: join(LIB, 'negative-control.pem') } });
       const row = { incident: inc.id, ...rt, ...r, fix: r.status === 'EXPOSED' ? fixFor(rt) : undefined };
       results.push(row);
       const what = rt.label ? `${rt.label} ${rt.version}` : `${rt.kind} ${rt.version}  ${short(rt.bin)}${rt.env ? `  (${short(rt.env)})` : ''}`;
-      print(r.status, what, r.status === 'EXPOSED' ? c('31', `  trusts ${r.trusted.length}/${r.tested}`) : '');
+      print(r.status, what, r.status === 'EXPOSED' ? c('31', r.heldRoots ? `  holds ${r.heldRoots.join(', ')}` : `  trusts ${r.trusted.length}/${r.tested}`) : '');
       // why the built-in tools' control may fail on a release Apple says blocks the certificates in them (a note); the
       // reason then doesn't say the error was not a block, which nobody has measured there
       const why = appleUnknownNote(inc, rt, r, { os: platform(), macos });
       if (why) { r.reason = r.reason.split("a certificate error that is not the runtime's block of these keys").join("a certificate error, which on this release may be Apple's own block (see below)"); row.reason = r.reason; }
       if (r.status === 'UNKNOWN') note('33', r.reason);
       if (why) { note('2', why); row.appleNote = why; }
+      if (skipped && r.status === 'UNKNOWN') { note('2', skipped); row.fileCheckSkipped = skipped; }
       if (r.note) note('2', r.note);
       if (row.fix) note('2', `fix: ${row.fix}`);
     }
@@ -430,7 +444,16 @@ for (const inc of chosen) {
     if (platform() === 'darwin' && inc.appleFix) {
       // a note must never cost a row: anything it throws becomes a line saying the note could not be made
       let notes;
-      try { notes = appleNote(inc, { version: macos, certText: readText('/etc/ssl/cert.pem', 4 * 1024 * 1024) }); } catch (e) { notes = [`what Apple says of this Mac's release could not be worked out here (${String(e?.message ?? e).slice(0, 120)})`]; }
+      try {
+        // every cert.pem.* beside it, whatever made it (the Mac fix's dated .bak, the advisory's .bak, Apple's .orig, a
+        // .bak.1 from a second run): read, never changed; the note names the ones that still hold a withdrawn root
+        const etc = listDir('/etc/ssl');
+        const backups = (etc.entries ?? []).map((e) => e.name).filter((n) => n.startsWith('cert.pem.')).sort().map((n) => ({ file: `/etc/ssl/${n}`, text: readText(`/etc/ssl/${n}`, 4 * 1024 * 1024) }));
+        if (etc.denied) backups.push({ file: '/etc/ssl (its list of files)', text: null });
+        notes = appleNote(inc, { version: macos, certText: readText('/etc/ssl/cert.pem', 4 * 1024 * 1024) });
+        // REVIEW rows, never a status that moves the exit code: the files Apple says not to put back
+        for (const row of backupRows(inc, macos, backups)) { results.push({ incident: inc.id, ...row }); print('REVIEW', short(row.file)); note('33', row.reason); }
+      } catch (e) { notes = [`what Apple says of this Mac's release could not be worked out here (${String(e?.message ?? e).slice(0, 120)})`]; }
       for (const n of notes) note('2', n);
       appleSaid = { version: macos, appleFix: appleFixState(macos, inc.appleFix.releases), source: inc.appleFix.source, notes };
     }
@@ -441,15 +464,25 @@ for (const inc of chosen) {
       print('UNKNOWN', u.label); note('33', u.reason);
     }
     notRunRow(results, inc, 'trust', notRun);
+    // W4: pip's own list in the machine's Python folders, read by key: REVIEW rows only (it takes a flag to be used)
+    {
+      const pipDirs = [...new Set(SITE_PATTERNS.flatMap((p) => expand(p, [], [])).map((d) => realPath(d) ?? d))];
+      // W3: the Pythons apps carry (Blender, Unity's Emscripten): their bundled certifi, and pip's list beside it
+      const appDirs = [...new Set((inc.appPythons ?? []).flatMap((p) => expand(p, [], [])).map((d) => realPath(d) ?? d))].filter((d) => !pipDirs.includes(d));
+      for (const row of pipListRows(inc, [...pipDirs, ...appDirs])) { results.push({ incident: inc.id, ...row }); print('REVIEW', `pip's own list  ${short(row.file)}`); note('33', row.reason); }
+      for (const row of appCertifiRows(inc, appDirs)) { results.push({ incident: inc.id, ...row }); print('REVIEW', `an app's bundled certifi  ${short(row.file)}`); note('33', row.reason); }
+    }
     // the test hosts' certificates expire: after that a container (which has no forced-roots control) would read every
     // refusal as SAFE, so containers are UNKNOWN once the incident's notAfter has passed
     const expired = canaryExpired(inc);
     if (expired) note('33', `the test hosts' certificates expired on ${inc.canaryNotAfter}: containers can't be tested against them`);
     hostVarsRow(results, inc, 'containers');
     // Running containers keep their image's trust list, whatever the host has.
+    // W10: say what wasn't looked at, in words: a stopped engine, or containers left out on purpose
+    if (flag('--no-containers')) note('2', 'containers were not checked (--no-containers)');
     for (const engine of flag('--no-containers') ? [] : ['docker', 'podman'].filter((e) => findOnPath(e))) {
       const list = listContainers(engine);
-      if (list === null) { note('2', `${engine}: not running, so no running containers to check`); continue; }
+      if (list === null) { note('2', `${engine === 'docker' ? 'Docker' : 'Podman'} is not running, so it has no running containers to check (start it and run again to include them)`); continue; }
       if (list.error) { results.push({ incident: inc.id, kind: 'containers', engine, status: 'UNKNOWN', reason: list.error }); print('UNKNOWN', `${engine} containers`); note('33', list.error); continue; }
       for (const ct of list) {
         const r = expired ? { status: 'UNKNOWN', trusted: [], tested: 0, reason: `the test hosts' certificates expired on ${inc.canaryNotAfter}, so a refusal here would prove nothing` } : await checkContainer(engine, ct, canaries, { controlUrl: inc.advisory });
@@ -602,6 +635,41 @@ for (const inc of chosen) {
       const row = results.find((r) => r.incident === inc.id && r.status !== 'SAFE');
       if (row) row.notSearched = [...(row.notSearched ?? []), keptSaid(macKept)];
     }
+    // what this check doesn't read, where the incident file says (0.1.16: Chrome's other channels and Chromium browsers)
+    if (inc.notCovered) note('2', `not covered: ${inc.notCovered}`);
+  }
+
+  if (inc.type === 'bundled') {
+    // Read-only: the decoder's own bytes in node and bun programs, in Python packages' native files and in Brotli
+    // libraries, judged by the error text the fix added (lib/brotli.mjs). Nothing found is run.
+    if (!json) console.log(c('2', 'Reads the Brotli decoder inside node, bun, Python packages and Brotli libraries; runs nothing.'));
+    // every gap list the venv walk keeps is passed and reported, as for type installs: the links it declined, the folders
+    // past its depth cap, macOS's kept folders. Before 0.1.16 only `denied` and `found` were, so on the branch's old base
+    // those folders went unsaid beside a Brotli all-clear, and on today's base the walk refused to run without them.
+    const denied = [...lockedRoots], foundUnread = [], links = [], walked = [], deep = [], macKept = [];
+    if (explicitPaths && !searchable.length) {
+      const reason = `none of the folders given with --paths exist (${roots.map(short).join(', ')}), so no virtual environment there was searched`;
+      results.push({ incident: inc.id, kind: 'bundled', status: 'UNKNOWN', reason }); print('UNKNOWN', 'folders given with --paths'); note('33', reason);
+    }
+    const siteDirs = sitePackagesDirs({ roots: searchable, denied, found: foundUnread, links, walked, deep, kept: macKept });
+    const places = { osRelease: '/etc/os-release', dpkgStatus: '/var/lib/dpkg/status', dpkgInfo: '/var/lib/dpkg/info', apkInstalled: '/lib/apk/db/installed', ldSoConf: '/etc/ld.so.conf', ldSoConfDir: '/etc/ld.so.conf.d', ldMuslPath: '/etc/ld-musl-*.path', ldSoPreload: '/etc/ld.so.preload' };
+    const { rows, looked } = checkBundled(inc, { execPath: process.execPath, siteDirs, denied, places });
+    // macOS's own copy (Apple's notes of 9 Nov 2026): one row from the version and Apple's words, never from its bytes,
+    // which are inside the system and not a file read here; the row says so. It is its own row and stands in for no
+    // other: the all-clear for copies on disk below still comes, naming where it looked.
+    const apple = platform() === 'darwin' && inc.appleSystem ? appleSystemRow(inc, readMacosVersion()) : null;
+    if (apple) rows.unshift(apple);
+    for (const r of rows) {
+      results.push({ incident: inc.id, kind: 'bundled', ...r });
+      const who = r.owner ? r.owner : r.label ? r.label : `${r.what}${r.version ? ` ${r.version}` : ''}`;
+      print(r.status, `${who}  ${short(r.file)}`);
+      if (r.reason) note({ EXPOSED: '31', SAFE: '2' }[r.status] ?? '33', r.reason);
+      if (r.fix) note('2', `fix: ${r.fix}`);
+    }
+    gaps(results, inc, 'bundled', denied, { found: foundUnread, links, deep, levels: 5 });
+    if (!counted(results).filter((r) => r.what !== 'macOS').length) allClear(results, inc, 'bundled', `${inc.safeText} (looked at node and bun on PATH and in ${(inc.nodeDirs ?? []).length + (inc.bunDirs ?? []).length} version-manager places, ${siteDirs.length} site-packages folder${siteDirs.length === 1 ? '' : 's'} and ${(inc.libPlaces ?? []).length} library places${searchable.length || !explicitPaths ? '; pass --paths for a folder elsewhere' : ''})`, looked, [...VENV_NOT_WALKED, LIBRARY, VENV_PACKAGES_SAID, ...(macKept.length ? [keptSaid(macKept)] : [])]);
+    else if (macKept.length) note('2', keptSaid(macKept));
+    note('2', `not covered: ${inc.notCovered}`);
   }
 
   // the window's start: an explicit UTC instant, or the review is UNKNOWN (up to 0.1.9 a bare date read SAFE: see
@@ -729,7 +797,7 @@ const n = (s) => count[s];
 // lib/escape.mjs says which characters count as hidden. Up to this fix only DEL and C1 were escaped, and only the second way.
 const prose = (v) => (Array.isArray(v) ? v.map(prose) : v && typeof v === 'object'
   ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, k === 'reason' && typeof x === 'string' ? clean(x) : prose(x)])) : v);
-if (json) console.log(escapeJsonHidden(JSON.stringify(prose({ tool: 'wardlatch', version: VERSION, incidents: chosen.map((i) => ({ id: i.id, title: i.title, advisory: i.advisory })), results: all, ...(appleSaid ? { macos: appleSaid } : {}) }), null, 1)));
+if (json) console.log(escapeJsonHidden(JSON.stringify(prose({ tool: 'wardlatch', version: VERSION, incidents: chosen.map((i) => ({ id: i.id, title: i.title, advisory: i.advisory, ...(i.kev ? { kev: kevRows(i) } : {}) })), results: all, ...(appleSaid ? { macos: appleSaid } : {}) }), null, 1)));
 else {
   console.log(`\n${count.SAFE} safe · ${n('EXPOSED')} exposed · ${n('UNKNOWN')} could not be tested${n('REVIEW') ? ` · ${n('REVIEW')} to review` : ''}`);
   const trust = chosen.find((i) => i.type === 'trust');

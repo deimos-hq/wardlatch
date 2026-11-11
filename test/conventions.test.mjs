@@ -25,7 +25,11 @@ const VERBATIM = [
   // Apple's shipped /etc/ssl/cert.pem, vendored so the fix's tests do not require the machine running them to be
   // vulnerable. It is byte-identical to OpenBSD rev 1.22.2.1 and carries 223 lines with trailing spaces. Those
   // bytes are the point: reformat it and it stops being evidence of what Apple ships.
-  'test/support/fixtures/macos-27.2-cert.pem','LICENSE', 'LICENSES/Apache-2.0.txt'];                       // licence texts stay exactly as published
+  'test/support/fixtures/macos-27.2-cert.pem',
+  // the two files measured on one Mac on 10 Nov 2026, before (6bddc1e2…) and after (a386d6ce…) its update to 27.2.1:
+  // their digests are the measurement, so they keep Apple's trailing spaces too (test/support/fixtures/README.md)
+  'test/support/fixtures/macos-27.2.1-cert.pem', 'test/support/fixtures/macos-27.2-handfixed-cert.pem',
+  'LICENSE', 'LICENSES/Apache-2.0.txt'];                       // licence texts stay exactly as published
 const TEXT = FILES.filter((f) => (/\.(mjs|sh|ya?ml|md|json|toml|txt|pem)$/.test(f) || ['NOTICE', '.gitignore'].includes(f)) && !VERBATIM.includes(f));
 const imports = (src) => [...src.matchAll(/^\s*import\b[^'"]*?from\s*['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)/gm)].map((m) => m[1] ?? m[2]);
 const named = (src, mod) => [...src.matchAll(new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*'${mod}'`, 'g'))].flatMap((m) => m[1].split(',').map((s) => s.trim().split(/\s+as\s+/)[0]).filter(Boolean));

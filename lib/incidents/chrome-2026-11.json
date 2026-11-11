@@ -1,0 +1,44 @@
+{
+  "id": "chrome-2026-11",
+  "type": "installs",
+  "title": "Google Chrome: use after free in XML, exploited (CVE-2026-125350)",
+  "date": "2026-11-09",
+  "kev": [{"cve": "CVE-2026-125350", "vendorProject": "Google", "product": "Chromium", "dateAdded": "2026-11-10", "dueDate": "2026-11-24"}],
+  "summary": "Google updated Chrome's stable channel on 9 November 2026 to 157.0.8103.50/.51 for Windows and Mac and 157.0.8103.50 for Linux. The update fixes CVE-2026-125350, a use after free in XML, which the CVE record (published 10 November) says allowed a remote attacker to execute arbitrary code inside the sandbox via a crafted HTML page, in Chrome before 157.0.8103.50. Google's post says: \"Google is aware that an exploit for CVE-2026-125350 exists in the wild.\" CISA added it to its Known Exploited Vulnerabilities catalog on 10 Nov 2026, due 24 Nov. Wardlatch reads the version of the Chrome that is installed (the app's Info.plist on a Mac, dpkg's record on Debian and Ubuntu); it never starts Chrome.",
+  "advisory": "https://chromereleases.googleblog.com/2026/11/stable-channel-update-for-desktop_018223192.html",
+  "sources": [
+    "https://www.cve.org/CVERecord?id=CVE-2026-125350",
+    "https://issues.chromium.org/issues/582442907"
+  ],
+  "versionFiles": {
+    "product": "Google Chrome",
+    "minVersion": "157.0.8103.50",
+    "files": [
+      {
+        "path": "/Applications/Google Chrome.app/Contents/Info.plist",
+        "re": "<key>CFBundleShortVersionString</key>\\s*<string>(\\d+(?:\\.\\d+)+)</string>",
+        "label": "Mac app",
+        "reviewWhenFixed": "this Chrome, as installed, has the fix; if Chrome was open when it updated, it runs the old version until it restarts (Chrome's menu shows Relaunch), and Wardlatch can't see which version is running"
+      },
+      {
+        "path": "~/Applications/Google Chrome.app/Contents/Info.plist",
+        "re": "<key>CFBundleShortVersionString</key>\\s*<string>(\\d+(?:\\.\\d+)+)</string>",
+        "label": "Mac app",
+        "reviewWhenFixed": "this Chrome, as installed, has the fix; if Chrome was open when it updated, it runs the old version until it restarts (Chrome's menu shows Relaunch), and Wardlatch can't see which version is running"
+      },
+      {
+        "path": "/var/lib/dpkg/status",
+        "presentRe": "^Package: google-chrome-stable$",
+        "re": "^Package: google-chrome-stable\\nStatus: install ok installed\\n(?:[^\\n]+\\n)*?Version: (\\d+(?:\\.\\d+)+)",
+        "label": "Debian or Ubuntu package",
+        "maxBytes": 33554432,
+        "reviewWhenFixed": "this Chrome, as installed, has the fix; a Chrome that was open when it updated runs the old version until it restarts, and Wardlatch can't see which version is running"
+      }
+    ],
+    "fix": "Update Chrome to 157.0.8103.50 or later (on a Mac 157.0.8103.50 or .51): open Chrome, go to Settings, About Chrome, let it update, then press Relaunch. On Debian or Ubuntu: sudo apt update && sudo apt install --only-upgrade google-chrome-stable, then restart Chrome.",
+    "lookedIn": "Chrome's Info.plist in /Applications and ~/Applications, and dpkg's record of google-chrome-stable"
+  },
+  "reviewFix": "Restart Chrome (Chrome's menu shows Relaunch when an update is waiting), so the version that runs is the one installed.",
+  "safeText": "no Google Chrome found in the places this check reads",
+  "notCovered": "Other browsers built on Chromium (Edge, Brave, Opera, Vivaldi, Arc), which number their releases their own way and ship the fix on their own schedule; Chromium itself; Chrome's beta, dev and canary channels; Chrome installed by snap, Flatpak or an RPM; ChromeOS, Android and iOS; Electron apps; Windows. Check each one's own release notes."
+}

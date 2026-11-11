@@ -71,3 +71,21 @@ weakness INTEL's V58 named, so nothing derives a value from this file. Every key
 from certificate bytes three ways (LibreSSL 3.3.6, OpenSSL 4.0.3, node's `crypto`). A summariser can drop a row or
 mangle a digit; it cannot make a wrong value agree with bytes measured three other ways — and if Apple's list and
 our bytes ever disagree in a fingerprint, a name or an issuer, that test says which.
+
+## `macos-27.2-handfixed-cert.pem` and `macos-27.2.1-cert.pem`
+
+`/etc/ssl/cert.pem` on one Mac, copied before and after its update from macOS 27.2 (26B123) to 27.2.1 (26B131) on
+10 November 2026, read-only.
+
+- **Before:** sha256 `6bddc1e2bc758979a309b9932ef676f9e166903a27313609bad3a777c0577083`, 328,989 bytes, 126
+  certificates: the 27.2 file above with the two withdrawn roots taken out by hand on 2 November (the Mac fix). It
+  still held emSign Root CA - G1, emSign Root CA - C1 and emSign ECC Root CA - C3.
+- **After:** sha256 `a386d6cea5dc81a00217d48873a56c843511e05c60c203465aab85df34565bd5`, 322,786 bytes, 123
+  certificates, dated 5 November 21:22 by Apple's installer: no eMudhra or emSign root at all.
+
+**What it shows, and no more:** on this one Mac, the update replaced a `cert.pem` changed by hand with Apple's new
+file. Other Macs, and the 26.7.3 and 15.8.3 updates, were not measured. The two backups in `/etc/ssl` on that Mac
+(`cert.pem.bak`, 27 October, and `cert.pem.wardlatch-20261102-124354.bak`) were left in place and are both
+byte-identical to `macos-27.2-cert.pem` above, so the tests use that file for them. The built-in tools kept their
+versions (curl 8.7.1, LibreSSL 3.3.6, Python 3.9.6, git 2.54.0 Apple Git-157). Public root certificates only, kept
+byte for byte (they are listed in `test/conventions.test.mjs`'s VERBATIM).
