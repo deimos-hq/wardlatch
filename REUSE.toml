@@ -71,7 +71,7 @@ SPDX-License-Identifier = "Apache-2.0"
 
 # Test fixtures: public certificates and their fingerprints, unchanged, as NOTICE says of the roots above.
 [[annotations]]
-path = ["test/support/fixtures/macos-27.2-cert.pem", "test/support/fixtures/macos-27.2-handfixed-cert.pem", "test/support/fixtures/macos-27.2.1-cert.pem", "test/support/fixtures/emudhra-2026-10-compromised-keys.pem", "test/support/fixtures/emudhra-2026-10-apple-ht149555.tsv"]
+path = ["test/support/fixtures/macos-27.2-cert.pem", "test/support/fixtures/macos-27.2-handfixed-cert.pem", "test/support/fixtures/macos-27.2.1-cert.pem", "test/support/fixtures/emudhra-2026-10-compromised-keys.pem", "test/support/fixtures/emudhra-2026-10-apple-ht149555.tsv", "test/support/fixtures/emudhra-2026-11-g2-cas.pem", "test/support/fixtures/emudhra-2026-11-bug2083449-c82.tsv"]
 SPDX-FileCopyrightText = "The certificate authorities named in each certificate"
 SPDX-License-Identifier = "LicenseRef-Public-CA-Certificate"
 
