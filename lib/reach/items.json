@@ -1,0 +1,581 @@
+{
+  "about": "The places --reach opens and closes (docs/REACH.md). Each names the vendor page it comes from. Paths are relative to the home folder; an item with no path for a system is not applicable there. Checked 11 Nov 2026.",
+  "errnoSource": "https://developer.apple.com/forums/thread/678819",
+  "guards": {
+    "fda": {
+      "name": "Full Disk Access",
+      "blocked": "Apple lists this data among what an app needs Full Disk Access to open, and this terminal's app does not seem to have it. Wardlatch cannot tell that protection from a sandbox this run is inside",
+      "blockedSource": "https://support.apple.com/guide/mac-help/mchl211c911f/mac",
+      "fix": "the app this terminal runs in can open data macOS guards. If it does not need to, look at the apps listed under Apple menu > System Settings > Privacy & Security > Full Disk Access",
+      "fixSource": "https://support.apple.com/guide/mac-help/mchl211c911f/mac"
+    },
+    "container": {
+      "name": "another app's container",
+      "blocked": "it is inside another app's container. Apple's macOS 27 release notes say such access is \"denied by default\"; macOS 14 and 15 asked first. Wardlatch cannot tell that protection from a sandbox this run is inside",
+      "blockedSource": "https://developer.apple.com/documentation/macos-release-notes/macos-27-release-notes",
+      "fix": "the app this terminal runs in can open another app's container. Apple says this is \"managed by the user in Privacy & Security settings\": look at what this terminal's app is allowed there (Files & Folders, Full Disk Access)",
+      "fixSource": "https://developer.apple.com/documentation/macos-release-notes/macos-27-release-notes"
+    },
+    "appdata": {
+      "name": "app data protection (macOS 27)",
+      "blocked": "not confirmed. Apple's macOS 27 release notes say XProtect \"may now restrict access to app data that is commonly targeted by malicious software\"; Apple does not name this folder there, third-party write-ups do. A sandbox this run is inside refuses the same way",
+      "blockedSource": "https://developer.apple.com/documentation/macos-release-notes/macos-27-release-notes",
+      "fix": "on macOS 27 Apple says access to other developers' app data \"may be managed by the user in Privacy & Security settings\": look at what this terminal's app is allowed there. On macOS 26 and earlier, Wardlatch found no setting in the vendor's documentation that closes this to programs running as you",
+      "fixSource": "https://developer.apple.com/documentation/macos-release-notes/macos-27-release-notes"
+    }
+  },
+  "items": [
+    {
+      "id": "messages",
+      "group": "macOS-guarded data",
+      "label": "Messages history",
+      "kind": "file",
+      "paths": {
+        "darwin": [
+          "Library/Messages/chat.db"
+        ]
+      },
+      "guard": "fda",
+      "source": "https://support.apple.com/guide/mac-help/mchl211c911f/mac",
+      "sourceSays": "Full Disk Access covers \"data from other apps (for example, Mail, Messages, Safari, and Home)\". Apple names the data, not the path: the path is where macOS keeps it, and Apple does not publish it"
+    },
+    {
+      "id": "mail",
+      "group": "macOS-guarded data",
+      "label": "Mail folder",
+      "kind": "dir",
+      "paths": {
+        "darwin": [
+          "Library/Mail"
+        ]
+      },
+      "guard": "fda",
+      "source": "https://support.apple.com/guide/mac-help/mchl211c911f/mac",
+      "sourceSays": "Full Disk Access covers \"data from other apps (for example, Mail, Messages, Safari, and Home)\". Apple names the data, not the path: the path is where macOS keeps it, and Apple does not publish it"
+    },
+    {
+      "id": "safari-history",
+      "group": "macOS-guarded data",
+      "label": "Safari history",
+      "kind": "file",
+      "paths": {
+        "darwin": [
+          "Library/Safari/History.db"
+        ]
+      },
+      "guard": "fda",
+      "source": "https://support.apple.com/guide/mac-help/mchl211c911f/mac",
+      "sourceSays": "Full Disk Access covers \"data from other apps (for example, Mail, Messages, Safari, and Home)\". Apple names the data, not the path: the path is where macOS keeps it, and Apple does not publish it"
+    },
+    {
+      "id": "safari-cookies",
+      "group": "macOS-guarded data",
+      "label": "Safari cookies",
+      "kind": "file",
+      "paths": {
+        "darwin": [
+          "Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies"
+        ]
+      },
+      "guard": "container",
+      "source": "https://developer.apple.com/documentation/macos-release-notes/macos-27-release-notes",
+      "sourceSays": "\"Accessing files in other developer teams' app data containers and app group containers no longer prompts the user for authorization; such accesses are denied by default\". Apple names the data, not the path: the path is where macOS keeps it, and Apple does not publish it"
+    },
+    {
+      "id": "notes",
+      "group": "macOS-guarded data",
+      "label": "Notes database",
+      "kind": "file",
+      "paths": {
+        "darwin": [
+          "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
+        ]
+      },
+      "guard": "container",
+      "source": "https://developer.apple.com/documentation/macos-release-notes/macos-27-release-notes",
+      "sourceSays": "\"Accessing files in other developer teams' app data containers and app group containers no longer prompts the user for authorization; such accesses are denied by default\". Apple does not name Notes; its database is in an app group container. Apple names the data, not the path: the path is where macOS keeps it, and Apple does not publish it"
+    },
+    {
+      "id": "tcc-db",
+      "group": "macOS-guarded data",
+      "label": "Privacy permissions database (TCC), where macOS 26 and earlier keep it",
+      "kind": "file",
+      "paths": {
+        "darwin": [
+          "Library/Application Support/com.apple.TCC/TCC.db"
+        ]
+      },
+      "guard": "fda",
+      "mustExist": [
+        "darwin"
+      ],
+      "mustExistSays": "macOS 26 and earlier keep this file in every account, so \"not there\" cannot be believed on them. On macOS 27 Apple says \"Apps can no longer access the local TCC database directly\", and third parties report that the file moved; Wardlatch does not read the macOS version here and cannot tell which this is",
+      "source": "https://developer.apple.com/documentation/macos-release-notes/macos-27-release-notes",
+      "sourceSays": "\"Apps can no longer access the local TCC database directly.\" (macOS 27). Apple names the data, not the path: the path is where macOS keeps it, and Apple does not publish it"
+    },
+    {
+      "id": "chrome",
+      "group": "Browser data",
+      "label": "Google Chrome data folder",
+      "kind": "dir",
+      "paths": {
+        "darwin": [
+          "Library/Application Support/Google/Chrome"
+        ],
+        "linux": [
+          ".config/google-chrome"
+        ]
+      },
+      "guard": "appdata",
+      "moved": [
+        "CHROME_USER_DATA_DIR"
+      ],
+      "source": "https://chromium.googlesource.com/chromium/src/+/main/docs/user_data_dir.md",
+      "sourceSays": "The default locations of Chrome's user data directory on macOS (\"in the Application Support folder\") and Linux (\"in ~/.config\"); CHROME_USER_DATA_DIR moves it on Linux",
+      "fix": "Wardlatch found no setting in the vendor's documentation that closes this to programs running as you",
+      "fixSource": "https://chromium.googlesource.com/chromium/src/+/main/docs/user_data_dir.md"
+    },
+    {
+      "id": "chrome-cookies",
+      "group": "Browser data",
+      "label": "Google Chrome cookies, first profile",
+      "kind": "file",
+      "paths": {
+        "darwin": [
+          "Library/Application Support/Google/Chrome/Default/Cookies",
+          "Library/Application Support/Google/Chrome/Default/Network/Cookies"
+        ],
+        "linux": [
+          ".config/google-chrome/Default/Cookies",
+          ".config/google-chrome/Default/Network/Cookies"
+        ]
+      },
+      "guard": "appdata",
+      "moved": [
+        "CHROME_USER_DATA_DIR"
+      ],
+      "source": "https://chromium.googlesource.com/chromium/src/+/main/chrome/common/chrome_constants.h",
+      "sourceSays": "Chromium's source, not documentation: kInitialProfile \"Default\", kCookieFilename \"Cookies\", kNetworkDataDirname \"Network\". Both places are tried. Other profiles are not looked for",
+      "fix": "Wardlatch found no setting in the vendor's documentation that closes this to programs running as you",
+      "fixSource": "https://chromium.googlesource.com/chromium/src/+/main/docs/user_data_dir.md"
+    },
+    {
+      "id": "chrome-logins",
+      "group": "Browser data",
+      "label": "Google Chrome saved logins, first profile",
+      "kind": "file",
+      "paths": {
+        "darwin": [
+          "Library/Application Support/Google/Chrome/Default/Login Data"
+        ],
+        "linux": [
+          ".config/google-chrome/Default/Login Data"
+        ]
+      },
+      "guard": "appdata",
+      "moved": [
+        "CHROME_USER_DATA_DIR"
+      ],
+      "source": "https://chromium.googlesource.com/chromium/src/+/main/components/password_manager/core/browser/password_manager_constants.cc",
+      "sourceSays": "Chromium's source, not documentation: kLoginDataForProfileFileName \"Login Data\". Other profiles are not looked for",
+      "fix": "Wardlatch found no setting in the vendor's documentation that closes this to programs running as you",
+      "fixSource": "https://chromium.googlesource.com/chromium/src/+/main/docs/user_data_dir.md"
+    },
+    {
+      "id": "chromium",
+      "group": "Browser data",
+      "label": "Chromium data folder",
+      "kind": "dir",
+      "paths": {
+        "darwin": [
+          "Library/Application Support/Chromium"
+        ],
+        "linux": [
+          ".config/chromium"
+        ]
+      },
+      "guard": "appdata",
+      "moved": [
+        "CHROME_USER_DATA_DIR"
+      ],
+      "source": "https://chromium.googlesource.com/chromium/src/+/main/docs/user_data_dir.md",
+      "sourceSays": "The default locations of Chromium's user data directory on macOS and Linux",
+      "fix": "Wardlatch found no setting in the vendor's documentation that closes this to programs running as you",
+      "fixSource": "https://chromium.googlesource.com/chromium/src/+/main/docs/user_data_dir.md"
+    },
+    {
+      "id": "edge",
+      "group": "Browser data",
+      "label": "Microsoft Edge data folder",
+      "kind": "dir",
+      "paths": {
+        "darwin": [
+          "Library/Application Support/Microsoft Edge"
+        ],
+        "linux": [
+          ".config/microsoft-edge"
+        ]
+      },
+      "guard": "appdata",
+      "source": "https://learn.microsoft.com/en-us/microsoft-edge/extensions/developer-guide/alternate-distribution-options",
+      "sourceSays": "Microsoft names these folders as where Edge looks for \"External Extensions\"; no Microsoft page was found that calls them the user data folder",
+      "fix": "Wardlatch found no setting in the vendor's documentation that closes this to programs running as you",
+      "fixSource": "https://learn.microsoft.com/en-us/deployedge/microsoft-edge-browser-policies/userdatadir"
+    },
+    {
+      "id": "brave",
+      "group": "Browser data",
+      "label": "Brave data folder",
+      "kind": "dir",
+      "paths": {
+        "darwin": [
+          "Library/Application Support/BraveSoftware/Brave-Browser"
+        ]
+      },
+      "guard": "appdata",
+      "source": "https://support.brave.app/hc/en-us/articles/4413256282765-How-do-I-delete-my-data-in-Brave",
+      "sourceSays": "Brave's help names the macOS folder. Its Linux folder is left out: the help page's spelling of it differs from the one Brave's own issue tracker uses",
+      "fix": "Wardlatch found no setting in the vendor's documentation that closes this to programs running as you",
+      "fixSource": "https://support.brave.app/hc/en-us/articles/4413256282765-How-do-I-delete-my-data-in-Brave"
+    },
+    {
+      "id": "vivaldi",
+      "group": "Browser data",
+      "label": "Vivaldi data folder",
+      "kind": "dir",
+      "paths": {
+        "darwin": [
+          "Library/Application Support/Vivaldi"
+        ],
+        "linux": [
+          ".config/vivaldi"
+        ]
+      },
+      "guard": "appdata",
+      "source": "https://help.vivaldi.com/desktop/privacy/preventing-vivaldi-profiles-from-being-uploaded-to-git-repositories/",
+      "sourceSays": "Vivaldi's help gives the default profile folder inside it on macOS and Linux",
+      "fix": "Wardlatch found no setting in the vendor's documentation that closes this to programs running as you",
+      "fixSource": "https://help.vivaldi.com/desktop/privacy/preventing-vivaldi-profiles-from-being-uploaded-to-git-repositories/"
+    },
+    {
+      "id": "firefox",
+      "group": "Browser data",
+      "label": "Firefox data folder",
+      "kind": "dir",
+      "paths": {
+        "darwin": [
+          "Library/Application Support/Firefox"
+        ],
+        "linux": [
+          ".mozilla/firefox"
+        ]
+      },
+      "guard": "appdata",
+      "source": "https://support.mozilla.org/en-US/kb/profiles-where-firefox-stores-user-data",
+      "sourceSays": "Mozilla gives the folder as steps (Application Support, Firefox; .mozilla, firefox). Profiles inside it have names Wardlatch would have to list the folder to learn, and it never lists one. Snap and Flatpak installs keep it elsewhere and are not looked at",
+      "fix": "Wardlatch found no setting in the vendor's documentation that closes this to programs running as you",
+      "fixSource": "https://support.mozilla.org/en-US/kb/profiles-where-firefox-stores-user-data"
+    },
+    {
+      "id": "keychain",
+      "group": "Keychain",
+      "label": "Login keychain file (its items are encrypted)",
+      "kind": "file",
+      "paths": {
+        "darwin": [
+          "Library/Keychains/login.keychain-db"
+        ]
+      },
+      "source": "https://support.apple.com/guide/keychain-access/copy-keychains-kyca1121/mac",
+      "sourceSays": "Apple: keychains are \"in the Keychains folder in the Library folder in your home folder\" and \"typically end with .keychain-db\". The name login.keychain-db itself was not found on an Apple documentation page",
+      "fix": "nothing to switch off was found: being able to open this file is the usual state. Apple describes keychain items as encrypted; Wardlatch did not read the file and cannot say how strong your login password is",
+      "fixSource": "https://support.apple.com/guide/security/keychain-data-protection-secb0694df1a/web"
+    },
+    {
+      "id": "ssh",
+      "group": "Developer credentials",
+      "label": "SSH folder",
+      "kind": "dir",
+      "paths": {
+        "darwin": [
+          ".ssh"
+        ],
+        "linux": [
+          ".ssh"
+        ]
+      },
+      "source": "https://man.openbsd.org/ssh.1#FILES",
+      "sourceSays": "~/.ssh/ \"is the default location for all user-specific configuration and authentication information\"",
+      "fix": "OpenSSH documents two protections for a key kept here: a passphrase, which encrypts the private key file, and a FIDO key (an -sk key type), whose private part \"cannot be exported from the authenticator hardware\". Wardlatch did not look at which keys you have",
+      "fixSource": "https://man.openbsd.org/ssh-keygen.1"
+    },
+    {
+      "id": "npmrc",
+      "group": "Developer credentials",
+      "label": "npm user config (may hold a token)",
+      "kind": "file",
+      "paths": {
+        "darwin": [
+          ".npmrc"
+        ],
+        "linux": [
+          ".npmrc"
+        ]
+      },
+      "moved": [
+        "NPM_CONFIG_USERCONFIG",
+        "npm_config_userconfig"
+      ],
+      "source": "https://docs.npmjs.com/cli/v11/configuring-npm/npmrc",
+      "sourceSays": "\"Per-user config file $HOME/.npmrc (or the userconfig param, if set in the environment or on the command line)\"",
+      "fix": "npm's documentation: for publishing from CI, trusted publishing uses OpenID Connect, \"eliminating the need for long-lived npm tokens\"; for a person, granular access tokens with an expiry. Wardlatch did not read the file and does not know whether it holds a token",
+      "fixSource": "https://docs.npmjs.com/trusted-publishers"
+    },
+    {
+      "id": "gh",
+      "group": "Developer credentials",
+      "label": "GitHub CLI hosts file (may hold a token)",
+      "kind": "file",
+      "paths": {
+        "darwin": [
+          ".config/gh/hosts.yml"
+        ],
+        "linux": [
+          ".config/gh/hosts.yml"
+        ]
+      },
+      "moved": [
+        "GH_CONFIG_DIR",
+        "XDG_CONFIG_HOME"
+      ],
+      "source": "https://cli.github.com/manual/gh_help_environment",
+      "sourceSays": "The manual gives the folder (\"$HOME/.config/gh\"); the file name hosts.yml is from the vendor's source (github.com/cli/go-gh, pkg/config/config.go), not its manual",
+      "fix": "GitHub's manual: gh auth login stores the token \"securely in the system credential store\" and writes it to a plain text file only as a fallback or with --insecure-storage; gh auth status shows where yours is. Wardlatch did not read the file",
+      "fixSource": "https://cli.github.com/manual/gh_auth_login"
+    },
+    {
+      "id": "docker",
+      "group": "Developer credentials",
+      "label": "Docker CLI config (may hold registry logins)",
+      "kind": "file",
+      "paths": {
+        "darwin": [
+          ".docker/config.json"
+        ],
+        "linux": [
+          ".docker/config.json"
+        ]
+      },
+      "moved": [
+        "DOCKER_CONFIG"
+      ],
+      "source": "https://docs.docker.com/reference/cli/docker/login/",
+      "sourceSays": "\"$HOME/.docker/config.json\"; the CLI \"stores its configuration files in a directory called .docker within your $HOME directory\", which DOCKER_CONFIG moves",
+      "fix": "Docker's documentation: logins kept in config.json are only base64-encoded, and \"using an external store is more secure\" (a credential store or helper). Wardlatch did not read the file",
+      "fixSource": "https://docs.docker.com/reference/cli/docker/login/"
+    },
+    {
+      "id": "aws",
+      "group": "Developer credentials",
+      "label": "AWS shared credentials file",
+      "kind": "file",
+      "paths": {
+        "darwin": [
+          ".aws/credentials"
+        ],
+        "linux": [
+          ".aws/credentials"
+        ]
+      },
+      "moved": [
+        "AWS_SHARED_CREDENTIALS_FILE"
+      ],
+      "source": "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html",
+      "sourceSays": "\"a local file named credentials, in a folder named .aws in your home directory\"; AWS_SHARED_CREDENTIALS_FILE moves it",
+      "fix": "AWS's documentation calls long-term IAM user credentials \"not recommended\" and says to \"use federation with an identity provider such as AWS IAM Identity Center\" instead",
+      "fixSource": "https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-authentication.html"
+    },
+    {
+      "id": "aws-sso",
+      "group": "Developer credentials",
+      "label": "AWS sign-in token cache folder",
+      "kind": "dir",
+      "paths": {
+        "darwin": [
+          ".aws/sso/cache"
+        ],
+        "linux": [
+          ".aws/sso/cache"
+        ]
+      },
+      "source": "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html",
+      "sourceSays": "\"The authentication token is cached to disk under the ~/.aws/sso/cache directory\"",
+      "fix": "nothing to switch off was found in AWS's documentation: this folder is where the sign-in AWS recommends caches its token",
+      "fixSource": "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html"
+    },
+    {
+      "id": "netrc",
+      "group": "Developer credentials",
+      "label": ".netrc (logins for curl and other tools)",
+      "kind": "file",
+      "paths": {
+        "darwin": [
+          ".netrc"
+        ],
+        "linux": [
+          ".netrc"
+        ]
+      },
+      "source": "https://curl.se/docs/manpage.html#-n",
+      "sourceSays": "\"the .netrc file in the user's home directory\"",
+      "fix": "curl's manual gives no alternative; it says the file \"should be neither world- nor group-readable\", which does not stop a program running as you",
+      "fixSource": "https://curl.se/docs/manpage.html#-n"
+    },
+    {
+      "id": "git-credentials",
+      "group": "Developer credentials",
+      "label": "Git credential store file",
+      "kind": "file",
+      "paths": {
+        "darwin": [
+          ".git-credentials",
+          ".config/git/credentials"
+        ],
+        "linux": [
+          ".git-credentials",
+          ".config/git/credentials"
+        ]
+      },
+      "moved": [
+        "XDG_CONFIG_HOME"
+      ],
+      "source": "https://git-scm.com/docs/git-credential-store",
+      "sourceSays": "\"~/.git-credentials and $XDG_CONFIG_HOME/git/credentials\" (or $HOME/.config/git/credentials). Both places under the home folder are tried",
+      "fix": "Git's documentation: this helper stores passwords \"unencrypted on disk, protected only by filesystem permissions\"; it says to try git-credential-cache or \"a helper that integrates with secure storage provided by your operating system\"",
+      "fixSource": "https://git-scm.com/docs/git-credential-store"
+    },
+    {
+      "id": "gcloud-adc",
+      "group": "Developer credentials",
+      "label": "Google Cloud application default credentials",
+      "kind": "file",
+      "paths": {
+        "darwin": [
+          ".config/gcloud/application_default_credentials.json"
+        ],
+        "linux": [
+          ".config/gcloud/application_default_credentials.json"
+        ]
+      },
+      "moved": [
+        "CLOUDSDK_CONFIG"
+      ],
+      "source": "https://cloud.google.com/docs/authentication/application-default-credentials",
+      "sourceSays": "\"Linux, macOS: $HOME/.config/gcloud/application_default_credentials.json\"",
+      "fix": "Google's documentation says \"everything stored in $HOME/.config/gcloud should be considered a secret\", and of service account keys, to \"choose a more secure alternative for authentication whenever possible\"",
+      "fixSource": "https://cloud.google.com/iam/docs/best-practices-for-managing-service-account-keys"
+    },
+    {
+      "id": "gcloud",
+      "group": "Developer credentials",
+      "label": "Google Cloud CLI config folder",
+      "kind": "dir",
+      "paths": {
+        "darwin": [
+          ".config/gcloud"
+        ],
+        "linux": [
+          ".config/gcloud"
+        ]
+      },
+      "moved": [
+        "CLOUDSDK_CONFIG"
+      ],
+      "source": "https://cloud.google.com/sdk/docs/configurations",
+      "sourceSays": "\"typically ~/.config/gcloud on MacOS and Linux\"; CLOUDSDK_CONFIG moves it",
+      "fix": "Google's documentation says \"everything stored in $HOME/.config/gcloud should be considered a secret\"; no setting was found there that closes the folder to programs running as you",
+      "fixSource": "https://cloud.google.com/sdk/crypto"
+    },
+    {
+      "id": "azure",
+      "group": "Developer credentials",
+      "label": "Azure CLI folder (token cache)",
+      "kind": "dir",
+      "paths": {
+        "darwin": [
+          ".azure"
+        ],
+        "linux": [
+          ".azure"
+        ]
+      },
+      "moved": [
+        "AZURE_CONFIG_DIR"
+      ],
+      "source": "https://learn.microsoft.com/en-us/cli/azure/azure-cli-configuration",
+      "sourceSays": "\"The default value of AZURE_CONFIG_DIR is $HOME/.azure on Linux and macOS\". The token cache's file name on Linux and macOS was not found in Microsoft's documentation, so the folder is opened, not a file",
+      "fix": "Microsoft's documentation says the token cache is saved as \"plaintext files on Linux and macOS\" and names no encrypted store there; for automation it says a managed identity \"eliminates the need to manage secrets\"",
+      "fixSource": "https://learn.microsoft.com/en-us/cli/azure/msal-based-azure-cli"
+    },
+    {
+      "id": "kube",
+      "group": "Developer credentials",
+      "label": "Kubernetes kubeconfig",
+      "kind": "file",
+      "paths": {
+        "darwin": [
+          ".kube/config"
+        ],
+        "linux": [
+          ".kube/config"
+        ]
+      },
+      "moved": [
+        "KUBECONFIG"
+      ],
+      "source": "https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/",
+      "sourceSays": "\"the default kubeconfig file, $HOME/.kube/config\"; KUBECONFIG names others",
+      "fix": "no alternative was found on Kubernetes' kubeconfig page. Wardlatch did not read the file and does not know whether it holds a token or only names a sign-in plugin",
+      "fixSource": "https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/"
+    },
+    {
+      "id": "pypirc",
+      "group": "Developer credentials",
+      "label": "PyPI upload config (.pypirc)",
+      "kind": "file",
+      "paths": {
+        "darwin": [
+          ".pypirc"
+        ],
+        "linux": [
+          ".pypirc"
+        ]
+      },
+      "source": "https://packaging.python.org/en/latest/specifications/pypirc/",
+      "sourceSays": "\"$HOME/.pypirc\"",
+      "fix": "the Python packaging guide says a password here is stored \"in plain text\" and to \"consider an alternative like keyring\"; PyPI's Trusted Publishing needs no stored token for publishing from CI",
+      "fixSource": "https://docs.pypi.org/trusted-publishers/"
+    },
+    {
+      "id": "cargo",
+      "group": "Developer credentials",
+      "label": "Cargo registry credentials",
+      "kind": "file",
+      "paths": {
+        "darwin": [
+          ".cargo/credentials.toml"
+        ],
+        "linux": [
+          ".cargo/credentials.toml"
+        ]
+      },
+      "moved": [
+        "CARGO_HOME"
+      ],
+      "source": "https://doc.rust-lang.org/cargo/reference/config.html#credentials",
+      "sourceSays": "\"$CARGO_HOME/credentials.toml\"; \"By default, the Cargo home is located in $HOME/.cargo/\"",
+      "fix": "Cargo's documentation says its own credentials file holds tokens \"unencrypted in plain text\", and recommends configuring a credential provider",
+      "fixSource": "https://doc.rust-lang.org/cargo/reference/registry-authentication.html"
+    }
+  ]
+}
