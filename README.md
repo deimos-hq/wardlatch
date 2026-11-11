@@ -101,8 +101,14 @@ On a Mac, Wardlatch reads the macOS version from
 on a release Apple names it also decides whether the file the built-in tools read stands in for a control Apple's
 block makes fail, whether leftover backups are listed, and the one row for macOS's own Brotli; otherwise the results are
 what the tools themselves do with the test hosts. It also says, as a note,
-whether the file still holds the three other roots Apple's update removes: Apple did not say their keys were compromised,
-so they change no result. We measured one Mac (10 Nov 2026) whose update from 27.2 to 27.2.1 replaced a `cert.pem` already
+whether the file still holds the three other roots Apple's update removes. For two of them, `emSign Root CA - C1` and
+`emSign ECC Root CA - C3`, Apple did not say their keys were compromised, so they change no result. The third,
+`emSign Root CA - G1`, is the root above six RSA TLS CAs that eMudhra revoked on 7 Nov 2026 (reason
+cessationOfOperation; it says it cannot demonstrate that their keys stayed inside the HSM,
+[Mozilla bug 2083449, comment 82](https://bugzilla.mozilla.org/show_bug.cgi?id=2083449#c82)). From 0.1.17 a
+`cert.pem`, or a copy of it in `/etc/ssl`, that holds G1 or one of those eight CAs is a REVIEW line, on any macOS
+release, never EXPOSED and never a change to the exit code: the built-in tools read that file, and Apple says they don't
+check whether a certificate has been revoked. The Mac fix doesn't remove G1; Apple's update does. We measured one Mac (10 Nov 2026) whose update from 27.2 to 27.2.1 replaced a `cert.pem` already
 changed by hand with Apple's new file; other Macs and the 26.7.3 and 15.8.3 updates weren't measured. Apple says not to
 restore a backup made before the update, and on a release Apple names Wardlatch says so of any backup in `/etc/ssl` that
 still holds a withdrawn root (it reads them, never changes them).
