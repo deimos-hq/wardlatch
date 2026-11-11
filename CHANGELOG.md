@@ -11,6 +11,39 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
+## [0.1.17] - 2026-11-11
+
+eMudhra revoked eight more CAs on 7 November, for a different reason, and they are now REVIEW lines on a Mac. The
+October check reads exactly as it did.
+
+- **Eight eMudhra RSA CAs revoked on 7 Nov 2026** (`rsaRevocation` in `emudhra-2026-10`). They are `EM DV/OV/EV TLS CA -
+  G2B/G2C` and `EM OV CS CA - G2B/G2C`, all RSA-4096, revoked with reason cessationOfOperation. eMudhra says their key
+  material was handled in a Python process's memory on the ceremony host, so it cannot demonstrate that the keys stayed
+  inside the HSM. It also says the keys' integrity remained intact
+  ([Mozilla bug 2083449, comment 82](https://bugzilla.mozilla.org/show_bug.cgi?id=2083449#c82)). That is not the
+  October finding, so Wardlatch reports them as **REVIEW, never EXPOSED**. The six TLS CAs chain through `emSign Root
+  TLS CA - G1` to `emSign Root CA - G1`, one of the five roots Apple's 9 November update removes from
+  `/etc/ssl/cert.pem`. Mozilla and Chrome stop trusting what G1 issues after 16 Nov 2026; a CA file carries no such date.
+- **REVIEW lines on a Mac.** `/etc/ssl/cert.pem` gets one when it holds G1 or one of the CAs above, on any macOS
+  release, with what to do on that release. So does a copy of it in `/etc/ssl` (on a release Apple names) that holds
+  none of the October roots or keys but holds one of these, such as the Mac fix's own cleaned file: 0.1.16 said nothing
+  of it. REVIEW lines don't change the exit code.
+- **The note no longer says G1 "changes no result".** For `emSign Root CA - C1` and `emSign ECC Root CA - C3` it says
+  what it said.
+- **The October code-signing CAs**, `EM OV CS CA - G3B` and `G3C`, and their two cross-certificates under `AAA
+  Certificate Services`, are in the record (comment 82, Appendices A and B). 0.1.16 named "two sign code" but carried
+  only the six TLS keys. They are matched by fingerprint only, because their certificates aren't in this repository.
+  Their lines are REVIEW, because whether a TLS reader trusts a code-signing CA in its CA file was not measured.
+
+Not covered, and said so in the run's last line: certifi, Node.js and Linux bundles are not read for these keys. All of
+them still hold `emSign Root CA - G1`, and no certifi or Node.js release without it exists yet (11 Nov 2026). The Mac
+fix still removes only the October roots and keys, not G1.
+
+The certificates are `test/support/fixtures/emudhra-2026-11-g2-cas.pem`, eMudhra's list is
+`test/support/fixtures/emudhra-2026-11-bug2083449-c82.tsv` (both described in that folder's README), and the tests are
+`test/emudhra-g2-0.1.17.test.mjs` and new cases in `test/apple-update-0.1.16.test.mjs` and
+`test/apple-fix-0.1.14.test.mjs`.
+
 ## [0.1.16] - 2026-11-11
 
 Two new incidents, CISA's dates under five, and Macs that took Apple's 9 November update now get answers instead of
@@ -2401,7 +2434,8 @@ Published 05:14 UTC. npm `gitHead`: `4d4f295`. The first release.
 npm also lists `0.0.0-stage` (21 October, 05:13 UTC), a 331-byte, two-file placeholder from npm's staged publishing,
 described on npm as a "Temporary package placeholder". It is not a release and holds none of Wardlatch's code.
 
-[Unreleased]: https://github.com/deimos-hq/wardlatch/compare/v0.1.16...main
+[Unreleased]: https://github.com/deimos-hq/wardlatch/compare/v0.1.17...main
+[0.1.17]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.17
 [0.1.16]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.16
 [0.1.15]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.15
 [0.1.14]: https://github.com/deimos-hq/wardlatch/releases/tag/v0.1.14

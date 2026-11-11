@@ -25,7 +25,7 @@ import { pathState, readText, listDir, realPath, entriesByMetadata, denialCode, 
 import { ownedByPerson, ownerName } from '../lib/owners.mjs';
 import { safe, saw, withdrawUnreceipted } from '../lib/report.mjs';
 import { escapeHidden, escapeJsonHidden } from '../lib/escape.mjs';
-import { trustFix, readMacosVersion, appleNote, appleFixState, appleUnknownNote, appleFileCheck, appleSystemRow, backupRows } from '../lib/macos.mjs';
+import { trustFix, readMacosVersion, appleNote, appleFixState, appleUnknownNote, appleFileCheck, appleSystemRow, backupRows, certPemReviewRow } from '../lib/macos.mjs';
 import { checkSshole } from '../lib/sshd.mjs';
 
 // npx puts the current project's node_modules/.bin, and each parent folder's, first on PATH. Wardlatch finds git,
@@ -450,7 +450,11 @@ for (const inc of chosen) {
         const etc = listDir('/etc/ssl');
         const backups = (etc.entries ?? []).map((e) => e.name).filter((n) => n.startsWith('cert.pem.')).sort().map((n) => ({ file: `/etc/ssl/${n}`, text: readText(`/etc/ssl/${n}`, 4 * 1024 * 1024) }));
         if (etc.denied) backups.push({ file: '/etc/ssl (its list of files)', text: null });
-        notes = appleNote(inc, { version: macos, certText: readText('/etc/ssl/cert.pem', 4 * 1024 * 1024) });
+        const certText = readText('/etc/ssl/cert.pem', 4 * 1024 * 1024);
+        notes = appleNote(inc, { version: macos, certText });
+        // 0.1.17: the file itself, when it holds a CA eMudhra revoked on 7 Nov 2026 or the root above them (REVIEW)
+        const own = certPemReviewRow(inc, macos, certText);
+        if (own) { results.push({ incident: inc.id, ...own }); print('REVIEW', short(own.file)); note('33', own.reason); }
         // REVIEW rows, never a status that moves the exit code: the files Apple says not to put back
         for (const row of backupRows(inc, macos, backups)) { results.push({ incident: inc.id, ...row }); print('REVIEW', short(row.file)); note('33', row.reason); }
       } catch (e) { notes = [`what Apple says of this Mac's release could not be worked out here (${String(e?.message ?? e).slice(0, 120)})`]; }

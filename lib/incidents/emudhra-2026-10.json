@@ -2,7 +2,7 @@
   "id": "emudhra-2026-10",
   "title": "eMudhra intermediate CA compromise",
   "date": "2026-10-20",
-  "summary": "Private keys of eight eMudhra intermediate certificate authorities were compromised: six of them issue TLS certificates and two sign code. Anyone holding one of the six TLS keys could issue a certificate for any website. Those six hold 12 certificates between them, two each: one issued by AAA Certificate Services, one by emSign Root TLS CA - G3. A client is exposed where it still trusts the roots those intermediates chain to and does not itself block the intermediates; a fixed Node, Go, Electron or Deno, and Apple's own trust evaluation, block them whatever trust list they read.",
+  "summary": "Private keys of eight eMudhra intermediate certificate authorities were compromised: six of them issue TLS certificates and two sign code. Anyone holding one of the six TLS keys could issue a certificate for any website. Those six hold 12 certificates between them, two each: one issued by AAA Certificate Services, one by emSign Root TLS CA - G3. A client is exposed where it still trusts the roots those intermediates chain to and does not itself block the intermediates; a fixed Node, Go, Electron or Deno, and Apple's own trust evaluation, block them whatever trust list they read. Separately, on 7 Nov 2026 eMudhra revoked eight RSA CAs (G2B and G2C) for another reason, and those are REVIEW lines here, not EXPOSED (rsaRevocation below).",
   "advisory": "https://emudhra.we-have-a-problem.com/",
   "canarySource": "The 12 test hosts are the advisory's own (emudhra.we-have-a-problem.com/#check). Each serves a certificate chained to one compromised intermediate.",
   "distrustedRoots": [
@@ -84,6 +84,223 @@
     }
   ],
   "withdrawnKeysNote": "Seven keys that a bundle must not hold, over and above the two withdrawn roots in distrustedRoots. Six of them are the compromised TLS intermediate keys: six keys in 12 certificates, because each intermediate was issued twice, once under emSign Root TLS CA - G3 and once under AAA Certificate Services (Sectigo's cross-sign). The seventh is emSign Root TLS CA - G3's own key. These are keys, not trust anchors any root programme listed, so they are not in distrustedRoots: that array drives the probe's forced-roots control and has one PEM file and one canary group per entry. spkiSha256 is the SHA-256 of the SubjectPublicKeyInfo as it ships; ecX is the X coordinate of the EC point (48 bytes, lowercase hex), which every encoding of the point carries and which is what fix/fix-macos.sh compares. Each value was derived from the certificate twice, with LibreSSL 3.3.6 and with OpenSSL 4.0.3, and refused if it came out as the SHA-256 of no input (e3b0c442...).",
+  "rsaRevocation": {
+    "id": "emudhra-2026-11-rsa",
+    "title": "Eight eMudhra RSA CAs revoked on 7 Nov 2026",
+    "date": "2026-11-10",
+    "revoked": "2026-11-07",
+    "revocationReason": "cessationOfOperation",
+    "status": "REVIEW",
+    "summary": "On 7 Nov 2026 eMudhra revoked eight more of its subordinate CAs, all RSA-4096 (G2B and G2C), with the reason cessationOfOperation: six issue TLS certificates under emSign Root TLS CA - G1, which chains to emSign Root CA - G1, and two sign code under emSign Root CS CA - G2. eMudhra's report says their key material was handled in the memory of a Python process on the ceremony host, so it cannot demonstrate that the keys stayed inside the HSM (Mozilla bug 2083449, comment 82). eMudhra also says the private keys' integrity remained intact. That is a different finding from the October keys, which were recoverable: Wardlatch reports a CA file holding one of these, or the root above them, as REVIEW, never EXPOSED. A client that checks whether an intermediate was revoked refuses them (eMudhra's CRLs list all eight; Firefox's OneCRL lists the six TLS CAs). curl, Python's ssl, Node.js, Go and other programs that read a CA file without that check accept a certificate they issued wherever emSign Root CA - G1 is trusted.",
+    "sources": [
+      "https://bugzilla.mozilla.org/show_bug.cgi?id=2083449#c82",
+      "https://bugzilla.mozilla.org/show_bug.cgi?id=2083449#c83",
+      "https://crt.sh/?id=12478656983",
+      "https://crt.sh/?id=14658191777",
+      "https://crt.sh/?id=12478657241",
+      "https://crt.sh/?id=14658191773",
+      "https://support.apple.com/en-us/149555"
+    ],
+    "crls": [
+      {
+        "issuer": "emSign Root TLS CA - G1",
+        "url": "http://crl.emsign.com/?roottlscag1.crl",
+        "thisUpdate": "2026-11-07T09:43:43Z"
+      },
+      {
+        "issuer": "emSign Root CS CA - G2",
+        "url": "http://crl.emsign.com/?rootcscag2.crl",
+        "thisUpdate": "2026-11-07T09:44:31Z"
+      }
+    ],
+    "readOn": "2026-11-11"
+  },
+  "reviewKeys": [
+    {
+      "name": "EM DV TLS CA - G2B",
+      "spkiSha256": "04db3b7ddf683b1d4b5b64fe743a3a8d8c3d71f0c339d7dc25b343e665a9eb5b",
+      "certificates": [
+        "82:9E:C4:44:B8:BE:3D:FD:2D:03:0A:0D:9E:7A:1D:0D:D2:A3:C2:C3:25:D3:95:89:C2:7A:C9:A0:65:BA:E7:93"
+      ],
+      "issuer": "emSign Root TLS CA - G1",
+      "serial": "F0A030825E22BB2E1D88E3889DC073",
+      "eku": "serverAuth, clientAuth",
+      "revoked": "2026-11-07T09:37:11Z",
+      "revocationReason": "cessationOfOperation",
+      "group": "emudhra-2026-11-rsa"
+    },
+    {
+      "name": "EM DV TLS CA - G2C",
+      "spkiSha256": "34556838281688d1c967d43d1372a1bbaf389277222f03e1017b18b348a1f00e",
+      "certificates": [
+        "04:27:EA:3C:B4:A7:B4:CB:20:5E:77:A7:B1:66:D3:32:BE:DB:8E:8E:F4:69:BC:5E:88:31:69:C8:D0:AC:87:6D"
+      ],
+      "issuer": "emSign Root TLS CA - G1",
+      "serial": "AB5DEA38BDC920D5FA4736DA54BEBE",
+      "eku": "serverAuth, clientAuth",
+      "revoked": "2026-11-07T09:25:43Z",
+      "revocationReason": "cessationOfOperation",
+      "group": "emudhra-2026-11-rsa"
+    },
+    {
+      "name": "EM OV TLS CA - G2B",
+      "spkiSha256": "8429351035ba90ba14ef3f7ae38ca35480605a0296aa6c263c6a9b26bb9a48e1",
+      "certificates": [
+        "6A:7A:93:86:19:82:B6:64:00:17:10:A0:EF:D0:4C:8A:72:F6:A2:3E:25:2B:28:09:11:79:7E:0B:F1:BD:90:12"
+      ],
+      "issuer": "emSign Root TLS CA - G1",
+      "serial": "C164DB9804F563241ED32C4100A566",
+      "eku": "serverAuth, clientAuth",
+      "revoked": "2026-11-07T09:39:05Z",
+      "revocationReason": "cessationOfOperation",
+      "group": "emudhra-2026-11-rsa"
+    },
+    {
+      "name": "EM OV TLS CA - G2C",
+      "spkiSha256": "aa4216dc80a7299ae6de08444bea2c588dc873631ebc563c0776d83a1b61e3ce",
+      "certificates": [
+        "DE:76:77:92:E8:70:BD:32:F3:31:02:9F:C8:9D:C2:4C:53:F9:DF:97:0D:C7:0F:1E:A3:0C:F2:9D:B3:F9:4B:A9"
+      ],
+      "issuer": "emSign Root TLS CA - G1",
+      "serial": "CBDCFA0D64112709CF14B7E4858250",
+      "eku": "serverAuth, clientAuth",
+      "revoked": "2026-11-07T09:28:11Z",
+      "revocationReason": "cessationOfOperation",
+      "group": "emudhra-2026-11-rsa"
+    },
+    {
+      "name": "EM EV TLS CA - G2B",
+      "spkiSha256": "c2690b6bf35a9364e697735ec630bfd9d2cd59040e3908a66765168e3282b04e",
+      "certificates": [
+        "E0:72:B3:0D:7F:5B:8B:CF:00:80:E5:1D:6C:C7:76:57:67:07:2D:B2:31:9E:9B:B1:CD:3D:02:A0:86:89:87:50"
+      ],
+      "issuer": "emSign Root TLS CA - G1",
+      "serial": "8F06A3F1D6A2FC71D29393C71CD48E",
+      "eku": "serverAuth, clientAuth",
+      "revoked": "2026-11-07T09:40:54Z",
+      "revocationReason": "cessationOfOperation",
+      "group": "emudhra-2026-11-rsa"
+    },
+    {
+      "name": "EM EV TLS CA - G2C",
+      "spkiSha256": "1a942e3925b809896b4b291a8cd2e7bc5f1d533aa523b8353b2df377b0f0adbe",
+      "certificates": [
+        "C3:BC:2B:48:0F:B1:A1:AB:4D:0B:A1:ED:6C:7B:53:E0:96:44:70:45:73:36:20:99:1A:32:D6:79:8D:77:AA:20"
+      ],
+      "issuer": "emSign Root TLS CA - G1",
+      "serial": "B28103309375C0CBB9E9B80B66C430",
+      "eku": "serverAuth, clientAuth",
+      "revoked": "2026-11-07T09:30:17Z",
+      "revocationReason": "cessationOfOperation",
+      "group": "emudhra-2026-11-rsa"
+    },
+    {
+      "name": "EM OV CS CA - G2B",
+      "spkiSha256": "0169613548123dab14afffcb5a3f0e804c70ac903f29ecad55ed43dc75f13881",
+      "certificates": [
+        "91:3F:1A:04:B0:28:14:B6:04:AC:52:75:AC:B2:01:B1:C8:02:B2:C0:F1:B4:98:6F:B1:A1:EB:59:59:58:E0:72"
+      ],
+      "issuer": "emSign Root CS CA - G2",
+      "serial": "33E8C5A8046D443E8FA5F1AF733188",
+      "eku": "codeSigning",
+      "revoked": "2026-11-07T09:42:40Z",
+      "revocationReason": "cessationOfOperation",
+      "group": "emudhra-2026-11-rsa"
+    },
+    {
+      "name": "EM OV CS CA - G2C",
+      "spkiSha256": "c073efb31422ff4db99dc24d7442438e942c73cd3c61b529a8ba32542e946b86",
+      "certificates": [
+        "EB:AC:91:B8:EC:98:53:32:37:79:ED:B3:93:C5:95:FA:DB:29:DD:4D:DB:20:C4:7E:33:6F:2A:02:16:84:F2:7B"
+      ],
+      "issuer": "emSign Root CS CA - G2",
+      "serial": "7F7C7D863DC9B3541E9D0C4B91237E",
+      "eku": "codeSigning",
+      "revoked": "2026-11-07T09:34:24Z",
+      "revocationReason": "cessationOfOperation",
+      "group": "emudhra-2026-11-rsa"
+    },
+    {
+      "name": "emSign Root TLS CA - G1",
+      "group": "emudhra-2026-11-rsa",
+      "spkiSha256": "ece28e35289ce8621c72407949e5050052ad4607cc332eaf9b546029aacbfb7a",
+      "certificates": [
+        "CE:F7:1E:70:B7:C2:9A:DD:F6:C3:0C:D1:9E:61:4B:38:FD:5F:02:A4:35:A0:EE:DD:D0:08:7E:18:3D:10:1A:51",
+        "9B:91:34:76:EA:B4:76:E2:1E:08:87:DB:CD:E4:43:45:D1:35:9D:28:11:6B:83:B7:CD:3E:87:BD:80:7E:BF:68"
+      ],
+      "why": "The CA that issued the six RSA TLS CAs. It was not revoked, but a bundle holding either of its two certificates vouches for all six: curl, git and the built-in perl take every CA certificate in a --cacert file as a trust anchor, and the self-signed copy (which Microsoft lists as a root, CCADB) is a full anchor for every reader. Both certificates carry this one key, so matching by key covers both."
+    },
+    {
+      "name": "emSign Root CS CA - G2",
+      "group": "emudhra-2026-11-rsa",
+      "spkiSha256": "941ea0cbce0926d9f34ec667cee669b61fd39f4338fa0b91048d5749d8880d25",
+      "certificates": [
+        "0D:74:EF:67:C8:8D:E3:56:03:65:E2:25:AE:F9:76:F9:15:E9:01:34:7B:73:35:2D:81:AB:5B:41:32:BB:21:50",
+        "A4:55:EB:8D:8D:C0:3C:C7:18:9B:6A:94:38:30:0D:66:37:3E:B3:22:52:52:CE:D2:B1:2A:6D:25:F0:F9:40:E0"
+      ],
+      "why": "The CA that issued the two RSA code-signing CAs; its cross-certificate is issued by emSign Root CA - G2, a code-signing root Microsoft lists (CCADB). Both certificates carry this one key."
+    },
+    {
+      "name": "emSign Root CA - G1",
+      "group": "emudhra-2026-11-rsa",
+      "spkiSha256": "376a1a7082a593dccc20d561d119e9ab8d30f11cc321d0a37fa41f0df284e01c",
+      "certificates": [
+        "40:F6:AF:03:46:A9:9A:A1:CD:1D:55:5A:4E:9C:CE:62:C7:F9:63:46:03:EE:40:66:15:83:3D:C8:C8:D0:03:67"
+      ],
+      "rsaN48": "934bbbe9668aee9d5bd53493d01b1ec3e79eb864337f637868b4cd2e7175d79b20c64d29bcb668608af7219a56355af3",
+      "note": "the root above the six RSA TLS CAs eMudhra revoked on 7 Nov 2026",
+      "distrustAfter": {
+        "mozilla": "2026-11-16T23:59:59Z",
+        "chrome": "2026-11-16T23:59:59Z"
+      },
+      "why": "The root the six RSA TLS CAs chain to, through the cross-signed emSign Root TLS CA - G1. Mozilla (NSS certdata.txt CKA_NSS_SERVER_DISTRUST_AFTER 261116235959Z, and CCADB) and Chrome (root_store.textproto sct_not_after_sec 1794873599) stop trusting certificates it issues after 16 Nov 2026 23:59:59 UTC; a file that holds it carries no such date. Apple says macOS 27.2.1, 26.7.3 and 15.8.3 remove it from /etc/ssl/cert.pem (support.apple.com/en-us/149555). certifi 2026.10.23 and Node.js's bundled list still hold it (read 11 Nov 2026)."
+    },
+    {
+      "name": "EM OV CS CA - G3B",
+      "certificates": [
+        "9E:39:DE:28:81:27:3A:CC:22:5A:14:9C:72:BA:3E:0F:51:42:49:63:66:9A:B6:33:EE:1D:C7:DF:5D:B0:67:B4",
+        "A4:96:E2:3A:C0:CA:B8:15:5F:C9:B1:17:B9:7E:AE:36:8E:FC:BB:90:41:AE:C8:80:4D:5A:30:8D:2D:01:C2:D8"
+      ],
+      "issuer": "emSign Root CS CA - G3; cross-certificate: AAA Certificate Services",
+      "serials": [
+        "7818933f8f85b4619a2b35fba83d0a",
+        "41e32b73ac185d6ce0d7480bacf84e69"
+      ],
+      "eku": "codeSigning",
+      "revoked": "2026-10-18 (cross-certificate 2026-10-19)",
+      "revocationReason": "caCompromise",
+      "group": "emudhra-2026-10-code-signing",
+      "why": "One of the two October code-signing CAs (bug 2083449 comment 82, Appendices A and B: its key is among the eight eMudhra says were recoverable). Matched by certificate fingerprint only: the certificates were not saved here, so neither the key nor its other copies can be matched yet. A REVIEW line, not EXPOSED: it is a code-signing CA, and whether a TLS reader trusts a code-signing CA in its bundle was not measured."
+    },
+    {
+      "name": "EM OV CS CA - G3C",
+      "certificates": [
+        "4B:24:60:A4:66:F9:5F:D4:01:13:BC:DC:CA:2C:EB:29:B3:B0:93:92:1D:E4:54:74:DA:7D:F4:88:74:C6:30:B1",
+        "84:11:29:72:B8:E5:9D:14:56:0A:E7:E7:11:96:54:47:4A:AD:11:99:90:CF:37:22:BF:C1:E3:B9:16:15:E1:FD"
+      ],
+      "issuer": "emSign Root CS CA - G3; cross-certificate: AAA Certificate Services",
+      "serials": [
+        "544b7f922c31ae220a4a922916f6e6",
+        "d6a5ef613b390f32ef9cdf349f772841"
+      ],
+      "eku": "codeSigning",
+      "revoked": "2026-10-18 (cross-certificate 2026-10-19)",
+      "revocationReason": "caCompromise",
+      "group": "emudhra-2026-10-code-signing",
+      "why": "One of the two October code-signing CAs (bug 2083449 comment 82, Appendices A and B: its key is among the eight eMudhra says were recoverable). Matched by certificate fingerprint only: the certificates were not saved here, so neither the key nor its other copies can be matched yet. A REVIEW line, not EXPOSED: it is a code-signing CA, and whether a TLS reader trusts a code-signing CA in its bundle was not measured."
+    }
+  ],
+  "reviewGroups": [
+    {
+      "id": "emudhra-2026-11-rsa",
+      "line": "one of the eight CAs eMudhra revoked on 7 Nov 2026 (cessationOfOperation), or a CA or root above them, matched by key. eMudhra says it cannot demonstrate that those CAs' keys stayed inside the HSM (Mozilla bug 2083449, comment 82). A program that reads this file and does not check whether an intermediate was revoked (curl, Python's ssl, Node.js, Go) accepts a certificate they issued."
+    },
+    {
+      "id": "emudhra-2026-10-code-signing",
+      "line": "one of the two October code-signing CAs, whose keys eMudhra says were recoverable (Mozilla bug 2083449, comment 82, Appendices A and B), matched by certificate fingerprint. It is a line to review rather than EXPOSED because it signs code, and whether a TLS reader trusts a code-signing CA in its CA file was not measured."
+    }
+  ],
+  "reviewKeysNote": "Keys and certificates a CA file should not hold, reported as REVIEW lines and never as EXPOSED: for the RSA CAs nothing shows that anyone else holds their keys, and the two October code-signing CAs are not TLS CAs. Eleven are the eight RSA CAs of rsaRevocation, the two CAs that issued them and emSign Root CA - G1 above the six TLS ones, matched by key (spkiSha256, the SHA-256 of the SubjectPublicKeyInfo as it ships). Each value was derived from the certificate three times, with LibreSSL 3.3.6, OpenSSL 4.1.0 and node's crypto, refused if it came out as the SHA-256 of no input (e3b0c442...), and the eight RSA CAs' certificate fingerprints match Appendix C of bug 2083449 comment 82. The other two are the October code-signing CAs EM OV CS CA - G3B and G3C, matched by their four certificate fingerprints only (see their why). They are read where Wardlatch already reads a CA file by key on a Mac: /etc/ssl/cert.pem and the copies of it beside it. rsaN48 is the first 48 bytes of the RSA modulus, the match a Mac fix would need; nothing uses it yet.",
   "rootsPem": "emudhra-2026-10-roots.pem",
   "canaries": [
     "dv-g3b",
@@ -178,7 +395,7 @@
       }
     ]
   },
-  "notCovered": "A compiled program does not pick this change up from the system, so it has to be rebuilt or replaced: rebuild Go programs with Go 1.27.3 or 1.26.10 (on Linux and in containers: on a Mac, Go checks certificates through Apple's own trust, which Apple says blocks the 12 for apps that use it); update Electron apps to 44.9.1, 43.8.1 or 42.11.16; Rust: rustls-webpki 0.103.16, webpki-roots 1.0.10. Browsers: Chrome, Edge, Firefox and Safari block the intermediates through their own updates; check yours at the advisory's #check page.",
+  "notCovered": "A compiled program does not pick this change up from the system, so it has to be rebuilt or replaced: rebuild Go programs with Go 1.27.3 or 1.26.10 (on Linux and in containers: on a Mac, Go checks certificates through Apple's own trust, which Apple says blocks the 12 for apps that use it); update Electron apps to 44.9.1, 43.8.1 or 42.11.16; Rust: rustls-webpki 0.103.16, webpki-roots 1.0.10. Browsers: Chrome, Edge, Firefox and Safari block the intermediates through their own updates; check yours at the advisory's #check page. The eight RSA CAs eMudhra revoked on 7 Nov 2026 are looked for only in /etc/ssl on a Mac (REVIEW lines): certifi, Node.js and Linux bundles still hold emSign Root CA - G1, the root above six of them, no release of certifi or Node.js without it exists yet (11 Nov 2026), and the fixes named here are for the October keys.",
   "type": "trust",
   "binaries": [
     {

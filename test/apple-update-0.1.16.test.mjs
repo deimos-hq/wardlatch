@@ -193,6 +193,22 @@ test('U6 a venv\'s certifi tested through the built-in curl: read by key, SAFE w
   assert.match(standIn({ venvPem: APPLE_272 }).go(false).out, /EXPOSED +certifi 2026\.10\.19 .* holds AAA Certificate Services/);
 });
 
+test('U9 (0.1.17) the command, on the updated Mac: a cert.pem and a backup that hold only emSign Root CA - G1 are REVIEW rows; nothing else moves', () => {
+  // the measured hand-fixed file (the Mac fix's work on 27.2: no October root or key, G1, C1 and C3 still in it) as the
+  // live cert.pem and as the Mac fix's own backup. 0.1.16 gave neither a row.
+  const r = standIn({ pem: HANDFIXED, backups: { 'cert.pem.wardlatch-20261102-124354.bak': HANDFIXED, 'cert.pem.bak.1': APPLE_2721 } }).go();
+  assert.equal(r.curl.status, 'SAFE', 'the October verdict is unchanged: the file holds none of the withdrawn roots or keys');
+  const rows = r.out.results.filter((x) => x.kind === 'cert-pem' || x.kind === 'backup').map((x) => [x.kind, x.file, x.status, x.reviewHeld]);
+  assert.deepEqual(rows, [['cert-pem', '/etc/ssl/cert.pem', 'REVIEW', ['emSign Root CA - G1']], ['backup', '/etc/ssl/cert.pem.wardlatch-20261102-124354.bak', 'REVIEW', ['emSign Root CA - G1']]]);
+  // REVIEW never moves the exit code: the same as the clean Mac's
+  const clean = standIn().go();
+  assert.equal(r.code, clean.code);
+  assert.deepEqual(clean.out.results.filter((x) => x.kind === 'cert-pem' || x.kind === 'backup'), [], "the negative control: Apple's own 27.2.1 file gives no row");
+  const text = standIn({ pem: HANDFIXED }).go(false).out;
+  assert.match(text, /^REVIEW +\/etc\/ssl\/cert\.pem$/m);
+  assert.match(text, /emSign Root CA - G1 is the root above the six RSA TLS CAs eMudhra revoked on 7 Nov 2026: see the REVIEW line for \/etc\/ssl\/cert\.pem\./);
+});
+
 test('U7 a backup in /etc/ssl that still holds a withdrawn root is a REVIEW row, with Apple\'s words; read, never changed; only on a release Apple names', () => {
   const backups = { 'cert.pem.bak': APPLE_272, 'cert.pem.wardlatch-20261102-124354.bak': APPLE_272, 'cert.pem.bak.1': APPLE_2721, 'cert.pem.orig': null, 'other.pem': APPLE_272 };
   const r = standIn({ backups }).go();

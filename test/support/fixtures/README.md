@@ -89,3 +89,32 @@ file. Other Macs, and the 26.7.3 and 15.8.3 updates, were not measured. The two 
 byte-identical to `macos-27.2-cert.pem` above, so the tests use that file for them. The built-in tools kept their
 versions (curl 8.7.1, LibreSSL 3.3.6, Python 3.9.6, git 2.54.0 Apple Git-157). Public root certificates only, kept
 byte for byte (they are listed in `test/conventions.test.mjs`'s VERBATIM).
+
+## `emudhra-2026-11-g2-cas.pem`
+
+The 13 **public** certificates behind the eMudhra CAs revoked on 7 November 2026: the eight RSA-4096 subordinate CAs
+(`EM DV/OV/EV TLS CA - G2B/G2C` and `EM OV CS CA - G2B/G2C`), both certificates of `emSign Root TLS CA - G1` (the
+self-signed one and the one cross-signed by `emSign Root CA - G1`; one key), both of `emSign Root CS CA - G2` (self-signed
+and cross-signed by `emSign Root CA - G2`; one key), and `emSign Root CA - G1` itself, byte for byte the copy in
+`macos-27.2-cert.pem`. Each carries its subject, issuer, SHA-256 fingerprint and SPKI SHA-256 as comment lines above it.
+No private key is in this repository.
+
+**Why it is here.** `lib/incidents/emudhra-2026-10.json`'s `reviewKeys` names these keys, and the tests that show each
+one is found (and that Apple's 27.2.1 file is found clean) need the certificates, offline and in CI.
+
+**Provenance.** Downloaded from crt.sh by SHA-256 on 11 November 2026 (the eight by the fingerprints in Mozilla bug
+2083449, comment 82, Appendix C; the issuing CAs as crt.sh 12478656983, 14658191777, 12478657241 and 14658191773), and
+read offline after that. Every fingerprint and key hash was derived three ways: LibreSSL 3.3.6, OpenSSL 4.1.0 and
+node's `crypto`, all agreeing, none the SHA-256 of no input; `test/emudhra-g2-0.1.17.test.mjs` derives them again on
+every run. sha256 `d003d8444c9d51fc3906736ec4cbf9d3a71239f3434aae73bf5e1bf7c26f50c0`, 13 certificates.
+
+**Not here.** The two October code-signing CAs, `EM OV CS CA - G3B` and `G3C`, and their two cross-certificates under
+`AAA Certificate Services`. Their certificates were not saved, so the record matches them by the four fingerprints in
+comment 82 (Appendices A and B) only, and no test can add their bytes to a file.
+
+## `emudhra-2026-11-bug2083449-c82.tsv`
+
+eMudhra's own list of the certificates 0.1.17 adds: Appendix C of comment 82 (the eight RSA CAs) and the code-signing
+rows of Appendices A and B. Read on 11 November 2026 through Bugzilla's REST API, not through a summariser; its header
+says so. It is a witness, as `emudhra-2026-10-apple-ht149555.tsv` is: nothing is derived from it, and the test checks
+the PEM above and the incident record against it, so a fingerprint, a name, an issuer or a serial that differs fails.
