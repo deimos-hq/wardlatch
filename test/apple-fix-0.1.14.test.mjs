@@ -164,7 +164,10 @@ test('appleNote: one line per state, each naming what it read, and the three roo
   assert.match(fixedClean[0], /A version says what Apple shipped, not what is in the file now/);
   const fixedOld = at('27.2.1', APPLE_272);
   assert.equal(fixedOld.length, 2);
-  assert.match(fixedOld[1], /holds emSign Root CA - G1, emSign Root CA - C1, emSign ECC Root CA - C3: Apple's update removes these roots as well\. Apple did not say their keys were compromised, so they change no result here\./);
+  // 0.1.17: emSign Root CA - G1 is the root above six RSA TLS CAs eMudhra revoked on 7 Nov 2026, so it no longer
+  // "changes no result" (0.1.14 to 0.1.16 said it did): it points at its own REVIEW line; C1 and C3 keep the old words
+  assert.match(fixedOld[1], /holds emSign Root CA - G1, emSign Root CA - C1, emSign ECC Root CA - C3: Apple's update removes these roots as well\. emSign Root CA - G1 is the root above the six RSA TLS CAs eMudhra revoked on 7 Nov 2026: see the REVIEW line for \/etc\/ssl\/cert\.pem\. For emSign Root CA - C1 and emSign ECC Root CA - C3, Apple did not say their keys were compromised, so they change no result here\./);
+  assert.doesNotMatch(fixedOld[1], /G1[^.]*change(s)? no result/, 'G1 is never said to change no result');
   assert.match(fixedOld[1], /is not what Apple says the update installs/);
   const before = at('27.2', APPLE_272);
   assert.match(before[0], /This Mac doesn't have that update yet\./);
@@ -250,7 +253,11 @@ require('node:module').syncBuiltinESMExports();
   };
   return { go, files };
 }
-const shape = (o) => o.results.map((r) => [r.incident, r.kind, r.bin ?? null, r.status]);
+// 0.1.17: a cert.pem that holds emSign Root CA - G1 adds one REVIEW row of its own (lib/macos.mjs certPemReviewRow);
+// the invariance below is about every other row, and each test says where that row must and must not be
+const shape = (o) => o.results.filter((r) => r.kind !== 'cert-pem').map((r) => [r.incident, r.kind, r.bin ?? null, r.status]);
+const certPemRows = (o) => o.results.filter((r) => r.kind === 'cert-pem').map((r) => [r.status, r.file, r.reviewHeld]);
+const G1_ROW = [['REVIEW', '/etc/ssl/cert.pem', ['emSign Root CA - G1']]];
 function runAll(setups, want) {
   const runs = {};
   for (const [name, setup] of Object.entries(setups)) {
@@ -279,7 +286,13 @@ test('the command on a stand-in Mac: the built-in curl\'s fix follows the releas
   assert.equal(runs.fixed.out.macos.notes.length, 2);
   assert.equal(runs.unread.out.macos.appleFix, 'unknown');
   assert.match(runs.unread.text, /could not be read, so whether it holds the three other roots Apple's update removes was not checked/);
-  assert.match(runs.fixed.text, /Apple did not say their keys were compromised, so they change no result here/);
+  // 0.1.17: G1 no longer "changes no result"; C1 and C3 still don't
+  assert.match(runs.fixed.text, /For emSign Root CA - C1 and emSign ECC Root CA - C3, Apple did not say their keys were compromised, so they change no result here/);
+  assert.match(runs.fixed.text, /emSign Root CA - G1 is the root above the six RSA TLS CAs eMudhra revoked on 7 Nov 2026: see the REVIEW line for \/etc\/ssl\/cert\.pem/);
+  assert.match(runs.fixed.text, /^REVIEW +\/etc\/ssl\/cert\.pem$/m);
+  for (const n of ['fixed', 'before']) assert.deepEqual(certPemRows(runs[n].out), G1_ROW, n);
+  assert.deepEqual(certPemRows(runs.unread.out), [], 'a file that was not read gets no row (the note says so)');
+  assert.deepEqual(certPemRows(runs.baseline.out), [], 'no appleFix record, no row');
   // the baseline is what 0.1.13 would have done with this machine: no note, no macos field
   assert.equal(runs.baseline.out.macos, undefined);
   assert.doesNotMatch(runs.baseline.text, /SystemVersion\.plist/);
@@ -303,6 +316,10 @@ test('the command on a stand-in Mac where curl refuses: SAFE, and the note adds 
   assert.equal(runs.baseline.code, 0);
   assert.match(runs.held.text, /is not what Apple says the update installs/);
   assert.doesNotMatch(runs.fixed.text, /holds emSign/);
+  // 0.1.17: the REVIEW row is there exactly where the file holds G1, on every release, and never moves the exit code
+  for (const n of ['held', 'before', 'old']) assert.deepEqual(certPemRows(runs[n].out), G1_ROW, n);
+  for (const n of ['fixed', 'unread', 'baseline']) assert.deepEqual(certPemRows(runs[n].out), [], n);
+  assert.match(runs.old.out.results.find((r) => r.kind === 'cert-pem').reason, /names no update for macOS 14\. Wardlatch's Mac fix removes only the October roots and keys, not this one\./);
   assert.match(runs.old.text, /Apple names no update for macOS 14: if this Mac can run macOS 15 or later/);
 });
 
@@ -318,4 +335,5 @@ test('the command on a stand-in Mac whose curl refuses even with the roots force
   assert.equal(runs.baseline.curl.appleNote, undefined);
   for (const n of ['fixed', 'before']) { assert.deepEqual(shape(runs[n].out), shape(runs.baseline.out), n); assert.equal(runs[n].code, runs.baseline.code, n); }
   assert.equal(runs.baseline.code, 2);
+  assert.deepEqual(certPemRows(runs.before.out), G1_ROW); assert.deepEqual(certPemRows(runs.fixed.out), []);
 });
