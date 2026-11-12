@@ -11,6 +11,59 @@ each one's `gitHead`), and 0.1.3 onwards were built and attested by the release 
 
 ## [Unreleased]
 
+A release candidate for 0.1.18: two new incidents. The version number is not changed here; the release sets it.
+
+- **React Server Components, CVE-2026-126187** (`react-rsc-2026-11`). React's advisory names three npm packages,
+  `react-server-dom-webpack`, `react-server-dom-parcel` and `react-server-dom-turbopack`, in versions 19.0.0 through
+  19.0.8, 19.1.0 through 19.1.9, 19.2.0 through 19.2.8 and 19.3.0, fixed in 19.0.9, 19.1.10, 19.2.9 and 19.3.1 (released
+  14 Oct 2026; the CVE record was published on 10 Nov). It does not name `react` or `react-dom`. Wardlatch reads your
+  projects' lockfiles and names each one that pins an affected version. Next.js carries its own copies of two of these
+  packages, which no lockfile shows, and has its own advisory (GHSA-673q-mjm6-r5xr, no CVE number): `next` 16.0.0
+  through 16.4.0, fixed in 16.4.1, is reported under that advisory's name. Neither advisory names the other.
+- **Fortinet FortiClient for Mac, CVE-2026-121529** (`forticlient-2026-11`). Fortinet's advisory FG-IR-26-194 of
+  10 Nov 2026 lists FortiClientMac 7.4.0 through 7.4.7 as affected, fixed in 7.4.8, and FortiClientMac 8.0 and 7.2 as
+  not affected. Wardlatch reads the installed version from the app's `Info.plist` and never starts FortiClient. A
+  FortiClient at or past the fix reads REVIEW, not SAFE, and says why: no real FortiClient bundle has been read by
+  this check yet, and whether FortiClient can keep running an old version after an update is not known.
+
+CISA's catalog (version 2026.11.10, read on 11 Nov 2026) lists neither CVE. Fortinet's page says Known Exploited: No;
+React's advisory says nothing about exploitation. Neither check prints a CISA line.
+
+Sources: [React's advisory](https://github.com/react/react/security/advisories/GHSA-xqc2-xf4c-x3h3),
+[the CVE record for CVE-2026-126187](https://www.cve.org/CVERecord?id=CVE-2026-126187),
+[Next.js's advisory](https://github.com/vercel/next.js/security/advisories/GHSA-673q-mjm6-r5xr),
+[Fortinet's advisory FG-IR-26-194](https://fortiguard.fortinet.com/psirt/FG-IR-26-194),
+[the CVE record for CVE-2026-121529](https://www.cve.org/CVERecord?id=CVE-2026-121529),
+[CISA's catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog). The tests are
+`test/react-rsc-0.1.18.test.mjs` and `test/forticlient-0.1.18.test.mjs`.
+
+### Added
+
+- **`react-rsc-2026-11`, and a new kind of check: lockfiles** (`lib/lockfiles.mjs`). Under the folders searched (10
+  levels; `node_modules` and `.git` are not entered) it reads `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`
+  (Yarn 1 and Berry) and `pnpm-lock.yaml` as text. It runs and imports nothing from a project, does not open
+  `node_modules`, and asks no registry. A pinned version in an affected range is EXPOSED; one outside them is SAFE,
+  with the lockfile and the version as its receipt. UNKNOWN, never SAFE: a lockfile that can't be read, is not one, is
+  cut off, or holds an entry the reader does not understand (the whole file); a canary, experimental or pre-release
+  build, which the advisories do not name; Bun's lockfiles (`bun.lock`, `bun.lockb`), which are named and not read
+  yet; a folder that can't be opened, a link to a folder, and a folder past the depth limit. A lockfile says what an
+  install would fetch, not what is in `node_modules` or running on a server, and the line under the result says so.
+- **`forticlient-2026-11`.** Reads `/Applications/FortiClient.app/Contents/Info.plist` and the same path under
+  `~/Applications`. 7.4.0 through 7.4.7 is EXPOSED. 7.4.8 or later, the 8.0 line included, is REVIEW, not SAFE (the
+  owner, 12 Nov 2026), with the reason on the line: no real FortiClient bundle has been read by this check yet, and
+  whether FortiClient can keep running an old version after an update is not known. A REVIEW line does not change the
+  exit code, as with a fixed Chrome. The 7.2 line, which Fortinet says was never affected, is SAFE. A version older
+  than 7.2 is UNKNOWN, because Fortinet's table names no such line. A version that can't be read (no version
+  key, a binary plist, a file that can't be opened) is UNKNOWN. FortiClient for Windows, which the advisory also lists,
+  is named under what the check does not cover. No FortiClient was installed on the Mac this was written on: the
+  check was tested on an `Info.plist` written to Apple's format, not on a real bundle.
+- **`notNamedBelow`** in a version rule (`lib/binaries.mjs`): a version on a release line older than any the source
+  speaks of is UNKNOWN. Without it such a version read as older than the affected range, SAFE, on the strength of
+  a table that never mentioned it.
+- **`reviewFrom`** beside `reviewWhenFixed` on a version file (`lib/installs.mjs`): only a SAFE at or past that version
+  becomes REVIEW, so a version older than the affected range (FortiClient 7.2) is not told it has the fix. Without the
+  key, any SAFE does, as before (Chrome, GitLab).
+
 ## [0.1.17] - 2026-11-11
 
 eMudhra revoked eight more CAs on 7 November, for a different reason, and they are now REVIEW lines on a Mac. The

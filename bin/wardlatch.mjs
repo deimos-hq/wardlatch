@@ -27,6 +27,7 @@ import { safe, saw, withdrawUnreceipted } from '../lib/report.mjs';
 import { escapeHidden, escapeJsonHidden } from '../lib/escape.mjs';
 import { trustFix, readMacosVersion, appleNote, appleFixState, appleUnknownNote, appleFileCheck, appleSystemRow, backupRows, certPemReviewRow } from '../lib/macos.mjs';
 import { checkSshole } from '../lib/sshd.mjs';
+import { lockfilesUnder, checkLockfile, LOCK_DEPTH, NOT_WALKED as LOCK_NOT_WALKED } from '../lib/lockfiles.mjs';
 
 // npx puts the current project's node_modules/.bin, and each parent folder's, first on PATH. Wardlatch finds git,
 // python3, node, curl, php, go and the container engines on PATH and runs some of them, so a project could otherwise
@@ -74,7 +75,7 @@ if (flag('-h') || flag('--help')) {
   console.log(`wardlatch ${VERSION}: does the wrong key still turn?
 
   npx wardlatch@latest             check this machine against every current incident
-  npx wardlatch@latest --paths ~/code   where to look for Python environments, git repositories and WordPress sites (repeatable)
+  npx wardlatch@latest --paths ~/code   where to look for Python environments, git repositories, lockfiles and WordPress sites (repeatable)
   npx wardlatch@latest --incident <id>  only that incident (repeatable; --list shows them)
   npx wardlatch@latest --json      machine-readable output
   npx wardlatch@latest --no-containers  skip Docker and Podman (running containers and local images)
@@ -359,7 +360,7 @@ for (const inc of chosen) {
   // only where the home folder is read: the trust check (the probes' ~/.curlrc, the go env file, the engine's config),
   // installs and headers always; the folder checks only when their usual folders, in the home, are the ones searched;
   // never the version checks, which read PATH
-  const readsHome = ['trust', 'installs', 'bundled', 'headers'].includes(inc.type) || (['workflows', 'secrets', 'wordpress'].includes(inc.type) && !explicitPaths);
+  const readsHome = ['trust', 'installs', 'bundled', 'headers'].includes(inc.type) || (['workflows', 'secrets', 'wordpress', 'lockfiles'].includes(inc.type) && !explicitPaths);
   if (sudoHomeMissing && readsHome) { results.push({ incident: inc.id, kind: 'home', status: 'UNKNOWN', reason: sudoHomeMissing }); print('UNKNOWN', 'home folder'); note('33', sudoHomeMissing); }
   // Windows is not supported yet: the program checks look only for macOS and Linux names (no .exe), so on Windows they
   // would read SAFE without having looked. Say so instead (README). A malware's temp-folder trace still counts: the
@@ -758,6 +759,30 @@ for (const inc of chosen) {
     const looseSaid = loose.length ? `; ${loose.length} plugins folder${loose.length === 1 ? '' : 's'} with no WordPress core using ${loose.length === 1 ? 'it' : 'them'} checked, with none of the listed plugins` : '';
     if (!counted(results).length) allClear(results, inc, 'wordpress', `${sites.length ? `${sites.length} WordPress install${sites.length === 1 ? '' : 's'} found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched; none has any of the listed plugins` : `no WordPress installs found in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched (run it on the server, or pass --paths)`}${looseSaid}`, [...searchable, ...loose], [...WP_NOT_WALKED, LIBRARY]);
     else if (counted(results).some((r) => r.status === 'REVIEW')) note('2', `check: ${inc.reviewFix}`);
+  }
+  if (inc.type === 'lockfiles') {
+    // Read-only: the lockfiles of the projects under the folders searched, as text (lib/lockfiles.mjs). Nothing in a
+    // project is run or imported, node_modules is not opened, and no registry is asked.
+    const denied = [...lockedRoots], links = [], deep = [];
+    const found = lockfilesUnder(searchable, LOCK_DEPTH, denied, links, { deep });
+    const read = [];
+    for (const f of found) {
+      const r = checkLockfile(f, inc.lockfiles);
+      if (r.read) read.push(f.path);
+      for (const row of r.rows) {
+        results.push({ incident: inc.id, kind: 'lockfile', file: f.path, ...row });
+        print(row.status, `${row.what}  ${short(f.path)}`);
+        note({ EXPOSED: '31', SAFE: '2' }[row.status] ?? '33', row.reason);
+        if (row.status === 'EXPOSED') note('2', `fix: ${row.fix}`);
+      }
+    }
+    gaps(results, inc, 'lockfile', denied, { links, deep, levels: LOCK_DEPTH });
+    const files = (n) => `${n} lockfile${n === 1 ? '' : 's'}`;
+    // nothing pinned, nothing unread and no folder closed: the all-clear names the folders walked and every lockfile read
+    if (!counted(results).length) allClear(results, inc, 'lockfile', `${inc.safeText} (${files(read.length)} read in ${searchable.length} folder${searchable.length === 1 ? '' : 's'} searched; pass --paths for a folder elsewhere)`, [...searchable, ...read], [...LOCK_NOT_WALKED, LIBRARY]);
+    // beside any row, what the rows do not say: how many lockfiles were read in all (those with no row pin none of the packages)
+    else if (found.length) note('2', `${files(read.length)} read in all; one with no line above pins none of the packages looked for`);
+    note('2', `not covered: ${inc.notCovered}`);
   }
   if (inc.type === 'headers') {
     // your name and email are read from this machine to compare against; they are never printed or sent
