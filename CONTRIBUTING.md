@@ -87,6 +87,7 @@ can stop.
 | `test/incidents.test.mjs` | The incident data: shape, https sources, the bundled roots' fingerprints, the copyable fix commands, every window's start an explicit UTC instant |
 | `test/conventions.test.mjs` | The coding standard below, where a machine can check it |
 | `test/no-real-home.test.mjs` | The tests' safety net, `test/support/no-real-home.cjs`, against every way past it a review found, on a made-up home |
+| `test/reach.test.mjs` | `--reach`: the list and its sources; every state (reachable, blocked by `EACCES` and by `EPERM`, not there, could not tell, not applicable) and the errno that decides it; links, FIFOs, other systems, no home; that it reads nothing, under a stand-in for the disk and a spy (`test/support/reach-spy.cjs`), each shown to be able to fail; what is printed; exit 0, REVIEW as the only status word, and that it runs only on its own and only when asked |
 | `test/fix-macos.check.sh` | `fix/fix-macos.sh` on copies of a Mac's `/etc/ssl/cert.pem` (CI, macOS) |
 
 `npm run coverage` (Node 22.8 or later) reports line, branch and function coverage of `bin/` and `lib/` with Node's

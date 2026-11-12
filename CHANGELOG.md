@@ -63,6 +63,20 @@ Sources: [React's advisory](https://github.com/react/react/security/advisories/G
 - **`reviewFrom`** beside `reviewWhenFixed` on a version file (`lib/installs.mjs`): only a SAFE at or past that version
   becomes REVIEW, so a version older than the affected range (FortiClient 7.2) is not told it has the fix. Without the
   key, any SAFE does, as before (Chrome, GitLab).
+- **`--reach`, a new mode: what a program started from this terminal could open.** For a fixed list of places
+  (Messages, Mail, Safari and Notes data and the privacy database on a Mac; Chrome, Chromium, Edge, Brave, Vivaldi and
+  Firefox data folders; the login keychain file; `~/.ssh`, `~/.npmrc`, the GitHub CLI's hosts file, Docker's config,
+  AWS, Google Cloud, Azure, Kubernetes, PyPI, Cargo, `.netrc` and Git's credential store), Wardlatch opens each for
+  reading and closes it at once, and prints `reachable`, `blocked`, `not there`, `could not tell` or `not applicable`.
+  It never reads a byte and never lists a folder: one test runs it against a stand-in for the disk that fails on any
+  call but lstat, realpath, open and close, another runs the command under a spy on every read, and both are shown to be
+  able to fail. It is not a malware scan and has no signatures. It runs instead of the incident checks, never beside
+  them (`--reach` with `--incident`, `--paths` or `--no-containers` is refused), prints no SAFE, EXPOSED or UNKNOWN
+  line, and exits 0 whatever it finds; a `reachable` and a `could not tell` are REVIEW lines. "No such file" is not
+  taken for "not there" where the system keeps the file in every account, or where a variable the vendor documents
+  says the tool keeps it elsewhere; a link that leads outside the home folder is not followed; a FIFO or device is not
+  opened. Each place has the vendor page that names it, and each `reachable` line one fix line with the page it comes
+  from, in `lib/reach/items.json`. Off unless asked for: a run without `--reach` is unchanged. [docs/REACH.md](docs/REACH.md).
 
 ## [0.1.17] - 2026-11-11
 

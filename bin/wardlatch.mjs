@@ -28,6 +28,7 @@ import { escapeHidden, escapeJsonHidden } from '../lib/escape.mjs';
 import { trustFix, readMacosVersion, appleNote, appleFixState, appleUnknownNote, appleFileCheck, appleSystemRow, backupRows, certPemReviewRow } from '../lib/macos.mjs';
 import { checkSshole } from '../lib/sshd.mjs';
 import { lockfilesUnder, checkLockfile, LOCK_DEPTH, NOT_WALKED as LOCK_NOT_WALKED } from '../lib/lockfiles.mjs';
+import { measure as measureReach, lines as reachLines, toJson as reachJson } from '../lib/reach.mjs';
 
 // npx puts the current project's node_modules/.bin, and each parent folder's, first on PATH. Wardlatch finds git,
 // python3, node, curl, php, go and the container engines on PATH and runs some of them, so a project could otherwise
@@ -60,7 +61,7 @@ const flag = (f) => args.includes(f);
 const clean = escapeHidden;
 
 // Every option is a known one, and an option that takes a value has one: a typo is refused, not quietly ignored.
-const FLAGS = ['-h', '--help', '--list', '--json', '--no-containers'];
+const FLAGS = ['-h', '--help', '--list', '--json', '--no-containers', '--reach'];
 const VALUED = ['--paths', '--incident'];
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
@@ -79,6 +80,8 @@ if (flag('-h') || flag('--help')) {
   npx wardlatch@latest --incident <id>  only that incident (repeatable; --list shows them)
   npx wardlatch@latest --json      machine-readable output
   npx wardlatch@latest --no-containers  skip Docker and Podman (running containers and local images)
+  npx wardlatch@latest --reach     instead of the incident checks: which guarded data and credential files a program
+                                   started from this terminal could open now (opens and closes each, reads nothing, exit 0)
 
 Run it from your home folder, not inside a project: npx also starts Wardlatch with the project's own
 node_modules/.bin/node if it has one, and applies its .npmrc; Wardlatch can't undo either.
@@ -134,6 +137,24 @@ const short = (p) => p.replace(HOME, '~');
 // an EXPOSED line sets the exit code as it is printed, so a crash after it can't turn it into "could not be tested"
 const print = (status, what, extra = '') => { if (status === 'EXPOSED') process.exitCode = 1; if (!json) console.log(`${STATUS[status]}  ${clean(what)}${extra}`); };
 const note = (code, text) => { if (!json) console.log(c(code, `         ${text}`)); };
+
+// --reach (lib/reach.mjs, docs/REACH.md): a mode of its own, like --list. It runs instead of the incident checks, never
+// beside them, so nothing it finds can add to, change or soften a SAFE, EXPOSED or UNKNOWN line, and it exits 0 whatever
+// it finds: a "reachable" or a "could not tell" is a REVIEW line. Only a crash (exit 2, lib/crash.mjs) or a wrong
+// option (exit 2, here) leaves another code. Any option but --json beside it is refused, not ignored.
+if (flag('--reach')) {
+  const beside = args.filter((a) => a !== '--reach' && a !== '--json');
+  if (beside.length) { console.error('--reach runs on its own, with --json if wanted: it is not an incident check (try --help)'); process.exit(2); }
+  const reach = measureReach({ home: HOME });
+  // under sudo by someone whose home was not found, the home measured is root's: said in fixed words, with no name or path
+  const rootsHome = sudoHomeMissing ? 'Run under sudo, and the home folder of the person who ran it was not found: the places below are in root\'s home folder.' : '';
+  const text = json ? escapeJsonHidden(JSON.stringify({ ...reachJson(reach, VERSION), ...(rootsHome ? { note: rootsHome } : {}) }, null, 1))
+    : [`wardlatch ${VERSION}`, ...(rootsHome ? [c('33', rootsHome)] : []),
+      ...reachLines(reach).map((l) => (l.text === '' ? '' : `${l.review ? `${STATUS.REVIEW}  ` : l.row ? '         ' : ''}${c(l.tone === 'dim' ? '2' : l.tone === 'head' ? '1' : '0', l.text)}`))].join('\n');
+  // the whole text is written before the process ends (a pipe may take it in pieces)
+  await new Promise((done) => { process.stdout.write(`${text}\n`, done); });
+  process.exit(0);
+}
 // what lib/macos.mjs appleNote() said on a Mac, for --json: a note, not a result
 let appleSaid = null;
 const all = [];
