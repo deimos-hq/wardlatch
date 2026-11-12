@@ -3,8 +3,10 @@
 // Fortinet FortiClient for Mac, CVE-2026-121529 (forticlient-2026-11). Fortinet's advisory FG-IR-26-194 of 10 Nov 2026
 // lists FortiClientMac 7.4.0 through 7.4.7 as affected ("Upgrade to 7.4.8 or above") and FortiClientMac 8.0 and 7.2 as
 // "Not affected"; it names no older line. The check reads the installed version from the app's Info.plist and never
-// starts FortiClient. A version on a line Fortinet does not name is UNKNOWN, never SAFE. No FortiClient was installed
-// on the Mac this was written on: the Info.plist here is written to Apple's format, not copied from a real bundle.
+// starts FortiClient. A version on a line Fortinet does not name is UNKNOWN, never SAFE. A version at or past the fix
+// (7.4.8) is REVIEW, not SAFE (the owner, 12 Nov 2026): no real FortiClient bundle has been read by this check yet, and
+// whether FortiClient can keep running an old version after an update is not known. No FortiClient was installed on the
+// Mac this was written on: the Info.plist here is written to Apple's format, not copied from a real bundle.
 import './support/no-real-home.cjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -52,9 +54,9 @@ test('F1 the facts are Fortinet\'s: the affected range, the fix, the lines it na
   assert.match(INC.summary, /on 10 November 2026/); assert.match(INC.summary, /As read on 11 November 2026/);
 });
 
-test('F2 the Mac app: 7.4.0 to 7.4.7 is EXPOSED, 7.4.8 and later, 7.2 and 8.0 are SAFE with a receipt, and a line Fortinet does not name is UNKNOWN', () => {
+test('F2 the Mac app: 7.4.0 to 7.4.7 is EXPOSED, 7.4.8 and later (8.0 too) are REVIEW, 7.2 is SAFE with a receipt, and a line Fortinet does not name is UNKNOWN', () => {
   for (const [v, want] of [['7.4.0', 'EXPOSED'], ['7.4.1', 'EXPOSED'], ['7.4.7', 'EXPOSED'], ['7.4.3.1790', 'EXPOSED'], ['7.4.7.1811', 'EXPOSED'],
-    ['7.4.8', 'SAFE'], ['7.4.8.1820', 'SAFE'], ['7.4.10', 'SAFE'], ['7.2.0', 'SAFE'], ['7.2.14', 'SAFE'], ['8.0.0', 'SAFE'], ['8.0.2', 'SAFE'],
+    ['7.4.8', 'REVIEW'], ['7.4.8.1820', 'REVIEW'], ['7.4.10', 'REVIEW'], ['7.2.0', 'SAFE'], ['7.2.14', 'SAFE'], ['8.0.0', 'REVIEW'], ['8.0.2', 'REVIEW'],
     ['7.0.14', 'UNKNOWN'], ['6.4.10', 'UNKNOWN'], ['7.1.9', 'UNKNOWN']]) {
     const root = fresh(`mac-${v}`); const f = app(root, plist(v));
     const rows = judge(root);
@@ -62,11 +64,13 @@ test('F2 the Mac app: 7.4.0 to 7.4.7 is EXPOSED, 7.4.8 and later, 7.2 and 8.0 ar
     assert.equal(rows[0].status, want, `${v}: ${JSON.stringify(rows[0])}`); assert.equal(rows[0].version, v);
     if (want === 'SAFE') assert.deepEqual(rows[0].searched, [f, `version ${v}`], 'a SAFE names the file it read and the version it compared');
     if (want === 'UNKNOWN') assert.equal(rows[0].reason, INC.versionFiles.notNamedNote);
+    if (want === 'REVIEW') assert.equal(rows[0].reason, INC.versionFiles.files[0].reviewWhenFixed);
   }
   // the reasons a reader is given
   const reason = (v) => { const root = fresh(`why-${v}`); app(root, plist(v)); return judge(root)[0].reason; };
   assert.equal(reason('7.4.3'), 'version 7.4.3 is in the affected range 7.4.0 to 7.4.7');
   assert.equal(reason('7.4.7.1811'), 'fixed in 7.4.8');
+  assert.match(reason('7.4.8'), /no real FortiClient bundle has been read by this check yet, and whether FortiClient can keep running an old version after it is updated is not known/);
   assert.equal(reason('7.2.14'), 'older than the affected range (from 7.4.0)');
 });
 
@@ -102,7 +106,7 @@ test('F4 notNamedBelow: without it a line the source never mentions reads SAFE; 
   assert.equal(judgeVersion('1.0.0', { affectedFrom: '2.0.0', minVersion: '3.0.0' }).status, 'SAFE');
 });
 
-test('F5 the command: a FortiClient in ~/Applications is read; EXPOSED is exit 1 with Fortinet\'s fix, a fixed one exit 0 with a receipt, an unnamed line exit 2', () => {
+test('F5 the command: a FortiClient in ~/Applications is read; EXPOSED is exit 1 with Fortinet\'s fix, a fixed one REVIEW at exit 0, an unaffected 7.2 SAFE with a receipt, an unnamed line exit 2', () => {
   const home = fresh('cli-exposed'); app(home, plist('7.4.3'));
   const t = cli(home);
   assert.equal(t.status, 1, t.stdout + t.stderr);
@@ -115,11 +119,22 @@ test('F5 the command: a FortiClient in ~/Applications is read; EXPOSED is exit 1
   const j = JSON.parse(cli(home, ['--json']).stdout);
   assert.deepEqual(j.results.map((x) => [x.status, x.version]), [['EXPOSED', '7.4.3']]);
   assert.equal(j.incidents[0].kev, undefined);
-  // the fixed twin
-  const fixed = fresh('cli-fixed'); const f = app(fixed, plist('7.4.8'));
+  // the fixed twin: REVIEW, with the reason and the check, and the exit code a REVIEW line has everywhere (0)
+  const fixed = fresh('cli-fixed'); app(fixed, plist('7.4.8'));
   const s = cli(fixed, ['--json']);
   assert.equal(s.status, 0, s.stdout + s.stderr);
-  assert.deepEqual(JSON.parse(s.stdout).results.map((x) => [x.status, x.version, x.searched]), [['SAFE', '7.4.8', [f, 'version 7.4.8']]]);
+  assert.deepEqual(JSON.parse(s.stdout).results.map((x) => [x.status, x.version, x.reason, x.fix]), [['REVIEW', '7.4.8', INC.versionFiles.files[1].reviewWhenFixed, INC.reviewFix]]);
+  const st = cli(fixed);
+  assert.equal(st.status, 0, st.stdout + st.stderr);
+  assert.match(st.stdout, /^REVIEW +FortiClient \(Mac app\) 7\.4\.8 +~\/Applications\/FortiClient\.app\/Contents\/Info\.plist$/m);
+  assert.match(st.stdout, /no real FortiClient bundle has been read by this check yet/);
+  assert.match(st.stdout, /check: Quit and reopen FortiClient, or restart the Mac/);
+  assert.doesNotMatch(st.stdout, /^SAFE /m);
+  // a 7.2, which Fortinet says was never affected: SAFE, with the file and the version as its receipt
+  const unaffected = fresh('cli-72'); const f = app(unaffected, plist('7.2.14'));
+  const s72 = cli(unaffected, ['--json']);
+  assert.equal(s72.status, 0, s72.stdout + s72.stderr);
+  assert.deepEqual(JSON.parse(s72.stdout).results.map((x) => [x.status, x.version, x.searched]), [['SAFE', '7.2.14', [f, 'version 7.2.14']]]);
   // a line Fortinet does not name: could not be tested
   const old = fresh('cli-old'); app(old, plist('7.0.14'));
   const u = cli(old, ['--json']);
@@ -145,4 +160,18 @@ test('F6 FortiClient is never started: a program in the bundle that would leave 
   const t = cli(home);
   assert.equal(t.status, 1, t.stdout + t.stderr);
   assert.ok(!existsSync(mark), 'Wardlatch started the program in the bundle');
+});
+
+test('F7 a fixed FortiClient is REVIEW because of reviewWhenFixed, and only at or past 7.4.8 because of reviewFrom: each key, removed, changes the answer', () => {
+  const at = (rule, v) => { const root = fresh(`f7-${Math.random()}`); app(root, plist(v)); return checkVersionFiles(rule, { root })[0].status; };
+  const strip = (keys) => ({ ...RULE, files: RULE.files.map((f) => Object.fromEntries(Object.entries(f).filter(([k]) => !keys.includes(k)))) });
+  // as shipped
+  assert.deepEqual(['7.4.7', '7.4.8', '8.0.0', '7.2.14', '7.0.14'].map((v) => at(RULE, v)), ['EXPOSED', 'REVIEW', 'REVIEW', 'SAFE', 'UNKNOWN']);
+  // the control for reviewWhenFixed: without it, a fixed FortiClient reads SAFE, the answer the owner turned down
+  assert.deepEqual(['7.4.8', '8.0.0'].map((v) => at(strip(['reviewWhenFixed', 'reviewFrom']), v)), ['SAFE', 'SAFE']);
+  // the control for reviewFrom: without it, 7.2, which Fortinet says was never affected, would be told it "is 7.4.8 or later"
+  assert.equal(at(strip(['reviewFrom']), '7.2.14'), 'REVIEW');
+  // both Mac places carry the same two keys, so neither reads SAFE for a fixed version
+  for (const f of INC.versionFiles.files) assert.deepEqual([f.reviewFrom, f.reviewWhenFixed], [INC.versionFiles.minVersion, INC.versionFiles.files[0].reviewWhenFixed], f.path);
+  assert.ok(INC.reviewFix, 'a REVIEW line needs its own advice');
 });

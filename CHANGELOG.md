@@ -22,7 +22,9 @@ A release candidate for 0.1.18: two new incidents. The version number is not cha
   through 16.4.0, fixed in 16.4.1, is reported under that advisory's name. Neither advisory names the other.
 - **Fortinet FortiClient for Mac, CVE-2026-121529** (`forticlient-2026-11`). Fortinet's advisory FG-IR-26-194 of
   10 Nov 2026 lists FortiClientMac 7.4.0 through 7.4.7 as affected, fixed in 7.4.8, and FortiClientMac 8.0 and 7.2 as
-  not affected. Wardlatch reads the installed version from the app's `Info.plist` and never starts FortiClient.
+  not affected. Wardlatch reads the installed version from the app's `Info.plist` and never starts FortiClient. A
+  FortiClient at or past the fix reads REVIEW, not SAFE, and says why: no real FortiClient bundle has been read by
+  this check yet, and whether FortiClient can keep running an old version after an update is not known.
 
 CISA's catalog (version 2026.11.10, read on 11 Nov 2026) lists neither CVE. Fortinet's page says Known Exploited: No;
 React's advisory says nothing about exploitation. Neither check prints a CISA line.
@@ -47,14 +49,20 @@ Sources: [React's advisory](https://github.com/react/react/security/advisories/G
   yet; a folder that can't be opened, a link to a folder, and a folder past the depth limit. A lockfile says what an
   install would fetch, not what is in `node_modules` or running on a server, and the line under the result says so.
 - **`forticlient-2026-11`.** Reads `/Applications/FortiClient.app/Contents/Info.plist` and the same path under
-  `~/Applications`. 7.4.0 through 7.4.7 is EXPOSED; 7.4.8 or later, and the 7.2 and 8.0 lines, are SAFE; a version
-  older than 7.2 is UNKNOWN, because Fortinet's table names no such line. A version that can't be read (no version
+  `~/Applications`. 7.4.0 through 7.4.7 is EXPOSED. 7.4.8 or later, the 8.0 line included, is REVIEW, not SAFE (the
+  owner, 12 Nov 2026), with the reason on the line: no real FortiClient bundle has been read by this check yet, and
+  whether FortiClient can keep running an old version after an update is not known. A REVIEW line does not change the
+  exit code, as with a fixed Chrome. The 7.2 line, which Fortinet says was never affected, is SAFE. A version older
+  than 7.2 is UNKNOWN, because Fortinet's table names no such line. A version that can't be read (no version
   key, a binary plist, a file that can't be opened) is UNKNOWN. FortiClient for Windows, which the advisory also lists,
   is named under what the check does not cover. No FortiClient was installed on the Mac this was written on: the
   check was tested on an `Info.plist` written to Apple's format, not on a real bundle.
 - **`notNamedBelow`** in a version rule (`lib/binaries.mjs`): a version on a release line older than any the source
   speaks of is UNKNOWN. Without it such a version read as older than the affected range, SAFE, on the strength of
   a table that never mentioned it.
+- **`reviewFrom`** beside `reviewWhenFixed` on a version file (`lib/installs.mjs`): only a SAFE at or past that version
+  becomes REVIEW, so a version older than the affected range (FortiClient 7.2) is not told it has the fix. Without the
+  key, any SAFE does, as before (Chrome, GitLab).
 
 ## [0.1.17] - 2026-11-11
 

@@ -22,17 +22,22 @@
       {
         "path": "/Applications/FortiClient.app/Contents/Info.plist",
         "re": "<key>CFBundleShortVersionString</key>\\s*<string>(\\d+(?:\\.\\d+)+)</string>",
-        "label": "Mac app"
+        "label": "Mac app",
+        "reviewWhenFixed": "this FortiClient, as installed, is 7.4.8 or later, the version Fortinet says has the fix; but no real FortiClient bundle has been read by this check yet, and whether FortiClient can keep running an old version after it is updated is not known, so Wardlatch can't say that the version running is the one installed",
+        "reviewFrom": "7.4.8"
       },
       {
         "path": "~/Applications/FortiClient.app/Contents/Info.plist",
         "re": "<key>CFBundleShortVersionString</key>\\s*<string>(\\d+(?:\\.\\d+)+)</string>",
-        "label": "Mac app"
+        "label": "Mac app",
+        "reviewWhenFixed": "this FortiClient, as installed, is 7.4.8 or later, the version Fortinet says has the fix; but no real FortiClient bundle has been read by this check yet, and whether FortiClient can keep running an old version after it is updated is not known, so Wardlatch can't say that the version running is the one installed",
+        "reviewFrom": "7.4.8"
       }
     ],
     "fix": "Update FortiClient to 7.4.8 or later (Fortinet: \"Upgrade to 7.4.8 or above\"). If your organisation installs FortiClient for you, ask whoever manages it. After the update, quit and reopen FortiClient, or restart the Mac, so the version that runs is the one installed.",
     "lookedIn": "FortiClient's Info.plist in /Applications and ~/Applications"
   },
+  "reviewFix": "Quit and reopen FortiClient, or restart the Mac, so the version that runs is the one installed.",
   "safeText": "no FortiClient found in the places this check reads",
   "notCovered": "FortiClient for Windows and FortiClient Windows PAM, which Fortinet's advisory also lists as affected (7.4.0 through 7.4.7 and 7.2.0 through 7.2.14; Wardlatch does not run on Windows); FortiClient for Linux, which the advisory does not list; a FortiClient installed anywhere but /Applications or ~/Applications, or under another name; which version is running, if FortiClient was updated while it was open; FortiClient EMS and Fortinet's other products."
 }
