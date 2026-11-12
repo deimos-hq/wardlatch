@@ -32,6 +32,14 @@ file's times. On macOS, a refused attempt may be noted by the system, and the ap
 switched off, in a Privacy & Security list. This is from general experience of macOS, not from Apple's documentation,
 and was not measured here.
 
+### Known limit: a network share that never answers can hang the run
+
+If a place on the list, or a folder on the way to it, is on a network share that has stopped answering, `lstat` or
+`open` on it waits for the share, and `--reach` sets no timer. The run then does not finish until the share answers
+or you stop it (Ctrl-C). A home folder that is itself on a network share is where this can happen; a link that leads
+out of the home folder is not followed, so a share reached only through such a link is not touched. This is a known
+limit, not fixed here.
+
 ## What a line says
 
 | State | Means | Decided by |
@@ -209,5 +217,6 @@ it, or the home folder's own path, is printed (`test/reach.test.mjs`, R19).
 - Secrets in environment variables, which every program a shell starts is handed without opening anything.
 - Credentials a tool keeps somewhere a variable names. The line says "could not tell" and names the variable.
 - What the system's credential store would release if asked. `--reach` asks it nothing.
-- A file on a network share that never answers. `open` on it can wait; `--reach` sets no timer.
+- A file on a network share that never answers. `open` on it waits and `--reach` sets no timer, so the run can hang
+  ([Known limit](#known-limit-a-network-share-that-never-answers-can-hang-the-run)).
 - Whether anything was ever taken. This measures what can be opened now, by this process.
